@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Icon } from "@/components/common/Icon";
 import { DetectionScene } from "./DetectionScene";
 
@@ -50,8 +51,8 @@ export function HeroSection() {
             <span className="theme-copy theme-copy-night">AI가 수면의 흐름을 분석하고, 발견부터 매칭까지 안전하게 이어갑니다.</span>
           </p>
           <div className="hero-actions">
-            <a className="button button-primary" href="#recent-items">발견물 찾기 <Icon name="arrow" size={18} /></a>
-            <a className="button button-secondary" href="#process">서비스 소개 보기</a>
+            <Link className="button button-primary" href="/found-items">발견물 찾기 <Icon name="arrow" size={18} /></Link>
+            <Link className="button button-secondary" href="/#process">서비스 소개 보기</Link>
           </div>
           <RiversideLineArt />
         </div>
