@@ -1,7 +1,7 @@
 import { Icon, type IconName } from "@/components/common/Icon";
 
 const steps: { title: string; description: string; icon: IconName }[] = [
-  { title: "탐지", icon: "scan", description: "AI가 수변의 부유·유실물을 실시간으로 탐지합니다." },
+  { title: "탐지", icon: "scan", description: "업로드된 이미지와 영상에서 수변 부유 객체를 탐지합니다." },
   { title: "분류", icon: "cube", description: "물체 유형과 주요 특징을 분석해 데이터로 분류합니다." },
   { title: "매칭", icon: "match", description: "분실 신고 정보와 AI 분석을 기반으로 매칭합니다." },
   { title: "반환", icon: "return", description: "소유자 확인 후 안전하게 물건을 반환합니다." },

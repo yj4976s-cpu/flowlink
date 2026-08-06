@@ -26,10 +26,10 @@ export function RecentItems() {
   return (
     <section className="section recent-section" id="recent-items" aria-labelledby="recent-title">
       <div className="recent-heading">
-        <div><p>RECENT DETECTIONS</p><h2 id="recent-title">최근 발견된 물품</h2></div>
-        <a href="#all-items">전체 보기 <Icon name="arrow" size={18} /></a>
+        <div><p>RECENT DETECTIONS</p><h2 id="recent-title">최근 탐지된 객체</h2></div>
+        <span className="recent-more is-disabled" aria-disabled="true" title="발견물 목록 화면 준비 중">전체 보기 <Icon name="arrow" size={18} /></span>
       </div>
-      <div className="recent-grid" role="list" aria-label="최근 발견된 물품 목록">
+      <div className="recent-grid" role="list" aria-label="최근 탐지된 객체 목록">
         {recentItems.map((item) => <div role="listitem" key={item.id}><FoundItemCard item={item} /></div>)}
       </div>
     </section>

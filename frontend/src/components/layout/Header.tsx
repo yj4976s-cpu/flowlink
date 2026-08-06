@@ -6,12 +6,11 @@ import { Icon } from "@/components/common/Icon";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 
 const navigation = [
-  ["발견물 찾기", "#recent-items"],
-  ["분실 신고", "#report"],
-  ["서비스 소개", "#process"],
-  ["이용 안내", "#guide"],
-  ["공지사항", "#notice"],
-];
+  { label: "발견물 찾기", href: "#recent-items", enabled: true },
+  { label: "분실 신고", enabled: false },
+  { label: "서비스 소개", href: "#process", enabled: true },
+  { label: "이용 안내", enabled: false },
+] as const;
 
 export function Header() {
   const [open, setOpen] = useState(false);
@@ -42,12 +41,18 @@ export function Header() {
       <div className="header-inner">
         <FlowLinkLogo />
         <nav className="desktop-nav" aria-label="주요 메뉴">
-          {navigation.map(([label, href]) => <a key={label} href={href}>{label}</a>)}
+          {navigation.map((item) => (
+            item.enabled ? (
+              <a key={item.label} href={item.href}>{item.label}</a>
+            ) : (
+              <span key={item.label} className="nav-link is-disabled" aria-disabled="true" title="준비 중인 기능입니다">{item.label}</span>
+            )
+          ))}
         </nav>
         <div className="header-actions">
-          <a className="login-link" href="#login">로그인</a>
+          <span className="login-link is-disabled" aria-disabled="true" title="준비 중인 기능입니다">로그인</span>
           <ThemeToggle />
-          <a className="button button-primary header-cta" href="#report">분실 신고하기</a>
+          <button type="button" className="button button-primary header-cta is-disabled" disabled title="준비 중인 기능입니다">분실 신고하기</button>
           <button
             ref={buttonRef}
             type="button"
@@ -65,9 +70,15 @@ export function Header() {
       {open && (
         <div ref={menuRef} id="mobile-menu" className="mobile-menu is-open">
           <nav aria-label="모바일 메뉴">
-            {navigation.map(([label, href]) => <a key={label} href={href} onClick={closeMenu}>{label}</a>)}
-            <a href="#login" onClick={closeMenu}>로그인</a>
-            <a className="button button-primary" href="#report" onClick={closeMenu}>분실 신고하기</a>
+            {navigation.map((item) => (
+              item.enabled ? (
+                <a key={item.label} href={item.href} onClick={closeMenu}>{item.label}</a>
+              ) : (
+                <span key={item.label} className="nav-link is-disabled" aria-disabled="true" title="준비 중인 기능입니다">{item.label}</span>
+              )
+            ))}
+            <span className="nav-link is-disabled" aria-disabled="true" title="준비 중인 기능입니다">로그인</span>
+            <button type="button" className="button button-primary is-disabled" disabled title="준비 중인 기능입니다">분실 신고하기</button>
           </nav>
         </div>
       )}
