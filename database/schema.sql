@@ -1,33 +1,6 @@
 BEGIN;
 
 -- =========================================================
--- FlowLink 기존 구조 초기화
--- 주의: 기존 테이블과 데이터가 모두 삭제됩니다.
--- 개발 초기 또는 데이터 초기화가 필요할 때만 실행합니다.
--- =========================================================
-
-DROP TABLE IF EXISTS
-    processing_histories,
-    notifications,
-    ownership_claims,
-    match_candidates,
-    lost_reports,
-    found_items,
-    detected_objects,
-    video_jobs,
-    detection_events,
-    object_classes,
-    cameras,
-    users,
-    detected_items,
-    detections,
-    analyses
-CASCADE;
-
-DROP FUNCTION IF EXISTS flowlink_set_updated_at() CASCADE;
-
-
--- =========================================================
 -- updated_at 자동 변경 함수
 -- =========================================================
 
@@ -119,7 +92,8 @@ CREATE TABLE cameras (
 CREATE TABLE object_classes (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 
-    code VARCHAR(50) NOT NULL UNIQUE,
+    code VARCHAR(50) NOT NULL UNIQUE
+        CHECK (code = UPPER(code)),
     name_ko VARCHAR(50) NOT NULL,
 
     group_code VARCHAR(30) NOT NULL
@@ -127,7 +101,8 @@ CREATE TABLE object_classes (
             group_code IN (
                 'WASTE',
                 'NATURAL',
-                'PERSONAL_ITEM'
+                'PERSONAL_ITEM',
+                'UNKNOWN'
             )
         ),
 
@@ -303,8 +278,11 @@ CREATE TABLE detected_objects (
     bbox_height NUMERIC(10, 4) NOT NULL
         CHECK (bbox_height > 0),
 
-    cropped_image_url TEXT NOT NULL
-        CHECK (BTRIM(cropped_image_url) <> ''),
+    cropped_image_url TEXT
+        CHECK (
+            cropped_image_url IS NULL
+            OR BTRIM(cropped_image_url) <> ''
+        ),
 
     first_seen_ms BIGINT
         CHECK (
@@ -514,6 +492,14 @@ CREATE TABLE match_candidates (
     UNIQUE (
         lost_report_id,
         found_item_id
+    ),
+
+    CHECK (
+        total_score
+        = type_score
+        + area_score
+        + time_score
+        + keyword_score
     )
 );
 
@@ -805,7 +791,9 @@ VALUES
     ('BALL', '공', 'PERSONAL_ITEM', 10),
     ('BAG', '가방', 'PERSONAL_ITEM', 11),
     ('UMBRELLA', '우산', 'PERSONAL_ITEM', 12),
-    ('FOOTWEAR', '신발·슬리퍼류', 'PERSONAL_ITEM', 13)
+    ('FOOTWEAR', '신발·슬리퍼류', 'PERSONAL_ITEM', 13),
+    -- AI 모델 클래스가 아닌 관리자 재분류용 서비스 클래스
+    ('UNKNOWN', '미확인 부유물', 'UNKNOWN', 99)
 ON CONFLICT (code)
 DO UPDATE SET
     name_ko = EXCLUDED.name_ko,
