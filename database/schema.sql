@@ -269,6 +269,21 @@ CREATE TABLE detected_objects (
     object_class_id BIGINT NOT NULL
         REFERENCES object_classes(id),
 
+    -- 관리자 검수 후 확정한 클래스. NULL이면 최초 AI 분류를 사용합니다.
+    final_class_code VARCHAR(50)
+        REFERENCES object_classes(code),
+
+    processing_status VARCHAR(20) NOT NULL DEFAULT 'PENDING'
+        CHECK (
+            processing_status IN (
+                'PENDING',
+                'CONFIRMED',
+                'REJECTED'
+            )
+        ),
+
+    admin_memo TEXT,
+
     track_id BIGINT,
 
     confidence NUMERIC(5, 4) NOT NULL
@@ -514,9 +529,9 @@ CREATE TABLE ownership_claims (
         REFERENCES users(id)
         ON DELETE CASCADE,
 
-    lost_report_id BIGINT NOT NULL
+    lost_report_id BIGINT
         REFERENCES lost_reports(id)
-        ON DELETE CASCADE,
+        ON DELETE SET NULL,
 
     found_item_id BIGINT NOT NULL
         REFERENCES found_items(id)
@@ -543,15 +558,10 @@ CREATE TABLE ownership_claims (
 
     reviewed_at TIMESTAMPTZ,
     rejection_reason TEXT,
+    admin_memo TEXT,
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    UNIQUE (
-        user_id,
-        lost_report_id,
-        found_item_id
-    )
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 
@@ -695,6 +705,9 @@ CREATE INDEX idx_detected_objects_event
 CREATE INDEX idx_detected_objects_class
     ON detected_objects (object_class_id);
 
+CREATE INDEX idx_detected_objects_processing_status
+    ON detected_objects (processing_status);
+
 CREATE INDEX idx_detected_objects_track
     ON detected_objects (track_id)
     WHERE track_id IS NOT NULL;
@@ -734,6 +747,21 @@ CREATE INDEX idx_ownership_claims_status
         status,
         created_at DESC
     );
+
+CREATE UNIQUE INDEX uq_ownership_claims_with_report
+    ON ownership_claims (
+        user_id,
+        lost_report_id,
+        found_item_id
+    )
+    WHERE lost_report_id IS NOT NULL;
+
+CREATE UNIQUE INDEX uq_ownership_claims_without_report
+    ON ownership_claims (
+        user_id,
+        found_item_id
+    )
+    WHERE lost_report_id IS NULL;
 
 CREATE INDEX idx_notifications_user_created
     ON notifications (
