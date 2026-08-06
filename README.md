@@ -53,7 +53,7 @@ flowlink/
 ├─ backend/    # FastAPI API, 향후 DB 및 AI 추론 연동
 ├─ ai/         # 학습 자료, 클래스 정의, 평가 결과를 관리할 영역
 ├─ database/   # PostgreSQL 스키마와 초기 데이터
-├─ docs/       # API 명세와 프로젝트 문서(현재 비어 있음)
+├─ docs/       # API 명세와 프로젝트 문서
 ├─ .gitignore
 └─ README.md
 ```
