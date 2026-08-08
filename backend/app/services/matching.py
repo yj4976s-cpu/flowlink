@@ -40,14 +40,15 @@ def calculate_match_score(lost_report: LostReport, found_item: FoundItem) -> Mat
     if lost_report.object_class_id != found_item.object_class_id:
         return None
 
-    type_score = 40
-    area_score = 25 if normalize_text(lost_report.area_name) == normalize_text(found_item.area_name) else 0
-
     lost_at = to_utc(lost_report.lost_from)
     found_at = to_utc(found_item.found_at)
     if found_at < lost_at:
-        time_score = 0
-    elif found_at <= lost_at + timedelta(days=7):
+        return None
+
+    type_score = 40
+    area_score = 25 if normalize_text(lost_report.area_name) == normalize_text(found_item.area_name) else 0
+
+    if found_at <= lost_at + timedelta(days=7):
         time_score = 20
     elif found_at <= lost_at + timedelta(days=30):
         time_score = 10
@@ -96,7 +97,7 @@ def create_match_candidates_for_lost_report(db: Session, lost_report: LostReport
             updated_at=now,
         )
         add_match_candidate(db, candidate)
-        # 후보와 알림은 같은 transaction에서 저장한다. 후보만 있고 알림이 없는 반쪽 상태를 피하기 위함이다.
+        # 후보와 알림은 같은 transaction에 있어야 사용자가 후보 없는 알림을 받는 반쪽 상태를 피할 수 있다.
         add_notification(
             db,
             Notification(
@@ -110,4 +111,10 @@ def create_match_candidates_for_lost_report(db: Session, lost_report: LostReport
             ),
         )
         created.append(candidate)
+
+    if created:
+        now = utc_now()
+        lost_report.status = "MATCHED"
+        lost_report.updated_at = now
+
     return created

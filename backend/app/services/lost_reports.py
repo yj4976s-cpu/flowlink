@@ -31,7 +31,13 @@ def create_lost_report_for_user(
     if description is None or area_name is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Description and location are required")
 
-    lost_from = to_utc(request.lost_at)
+    try:
+        lost_from = to_utc(request.lost_at)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="lost_at must include timezone information",
+        ) from exc
     if lost_from > utc_now():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Lost time cannot be in the future")
 

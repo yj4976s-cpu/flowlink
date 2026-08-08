@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class RegisterRequest(BaseModel):
@@ -9,6 +9,11 @@ class RegisterRequest(BaseModel):
     nickname: str = Field(min_length=2, max_length=50)
     terms_agreed: bool
     privacy_agreed: bool
+
+    @field_validator("nickname", mode="before")
+    @classmethod
+    def strip_nickname(cls, value: str) -> str:
+        return value.strip() if isinstance(value, str) else value
 
 
 class LoginRequest(BaseModel):

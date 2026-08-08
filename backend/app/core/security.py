@@ -18,8 +18,8 @@ def utc_now() -> datetime:
 
 
 def to_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("Timezone-aware datetime is required")
     return value.astimezone(UTC)
 
 

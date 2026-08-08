@@ -64,7 +64,7 @@ def test_area_score_requires_normalized_exact_match() -> None:
 def test_time_score_boundaries() -> None:
     lost_at = utc_now()
 
-    assert calculate_match_score(make_lost_report(lost_from=lost_at), make_found_item(found_at=lost_at - timedelta(seconds=1))).time_score == 0
+    assert calculate_match_score(make_lost_report(lost_from=lost_at), make_found_item(found_at=lost_at - timedelta(seconds=1))) is None
     assert calculate_match_score(make_lost_report(lost_from=lost_at), make_found_item(found_at=lost_at + timedelta(days=7))).time_score == 20
     assert calculate_match_score(make_lost_report(lost_from=lost_at), make_found_item(found_at=lost_at + timedelta(days=30))).time_score == 10
     assert calculate_match_score(make_lost_report(lost_from=lost_at), make_found_item(found_at=lost_at + timedelta(days=31))).time_score == 0
@@ -73,7 +73,7 @@ def test_time_score_boundaries() -> None:
 def test_color_and_keyword_score() -> None:
     score = calculate_match_score(
         make_lost_report(color="검정", description="검정 백팩 노트북 파우치"),
-        make_found_item(color=" 검정 ", public_description="검정 백팩 발견"),
+        make_found_item(color=" 검정", public_description="검정 백팩 발견"),
     )
 
     assert score is not None

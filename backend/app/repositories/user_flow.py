@@ -16,7 +16,9 @@ from app.models import (
     User,
 )
 
-PUBLIC_FOUND_ITEM_STATUSES = ("DETECTED", "RECOVERED", "AVAILABLE")
+PUBLIC_FOUND_ITEM_STATUSES = ("RECOVERED", "AVAILABLE")
+MATCHABLE_FOUND_ITEM_STATUSES = ("AVAILABLE",)
+ACTIVE_OWNERSHIP_CLAIM_STATUSES = ("PENDING", "APPROVED")
 PERSONAL_ITEM_GROUP = "PERSONAL_ITEM"
 
 
@@ -118,6 +120,19 @@ def get_found_item_by_id(db: Session, found_item_id: int) -> FoundItem | None:
     return db.scalar(statement)
 
 
+def get_claimable_found_item_by_id(db: Session, found_item_id: int) -> FoundItem | None:
+    statement = (
+        select(FoundItem)
+        .options(joinedload(FoundItem.object_class))
+        .where(
+            FoundItem.id == found_item_id,
+            FoundItem.is_public.is_(True),
+            FoundItem.status == "AVAILABLE",
+        )
+    )
+    return db.scalar(statement)
+
+
 def add_lost_report(db: Session, lost_report: LostReport) -> LostReport:
     db.add(lost_report)
     db.flush()
@@ -157,8 +172,13 @@ def get_lost_report_by_id(db: Session, lost_report_id: int) -> LostReport | None
 
 def list_matchable_found_items(db: Session, object_class_id: int) -> Sequence[FoundItem]:
     statement = (
-        _public_found_items_statement()
-        .where(FoundItem.object_class_id == object_class_id)
+        select(FoundItem)
+        .options(joinedload(FoundItem.object_class))
+        .where(
+            FoundItem.is_public.is_(True),
+            FoundItem.status.in_(MATCHABLE_FOUND_ITEM_STATUSES),
+            FoundItem.object_class_id == object_class_id,
+        )
         .order_by(FoundItem.found_at.desc())
     )
     return db.scalars(statement).all()
@@ -222,6 +242,15 @@ def add_ownership_claim(db: Session, claim: OwnershipClaim) -> OwnershipClaim:
     db.add(claim)
     db.flush()
     return claim
+
+
+def has_other_active_ownership_claim(db: Session, *, found_item_id: int, claim_id: int) -> bool:
+    statement = select(OwnershipClaim.id).where(
+        OwnershipClaim.found_item_id == found_item_id,
+        OwnershipClaim.id != claim_id,
+        OwnershipClaim.status.in_(ACTIVE_OWNERSHIP_CLAIM_STATUSES),
+    )
+    return db.scalar(statement) is not None
 
 
 def list_ownership_claims(db: Session, *, skip: int, limit: int) -> Sequence[OwnershipClaim]:

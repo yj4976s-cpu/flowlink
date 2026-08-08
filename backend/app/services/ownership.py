@@ -11,16 +11,23 @@ from app.repositories.user_flow import (
     add_ownership_claim,
     add_processing_history,
     clean_optional_text,
+    get_claimable_found_item_by_id,
     get_existing_ownership_claim,
-    get_found_item_by_id,
     get_lost_report_for_user,
     get_ownership_claim_by_id,
+    has_other_active_ownership_claim,
 )
 from app.schemas.ownership_claim import OwnershipClaimCreateRequest, OwnershipClaimResponse, OwnershipClaimUpdateRequest
 from app.services.mappers import ownership_claim_response
 
-FINAL_FOUND_ITEM_STATUSES = {"RETURNED", "DISPOSED"}
 ADMIN_CLAIM_STATUSES = {"APPROVED", "REJECTED", "RETURNED"}
+CLAIMABLE_LOST_REPORT_STATUSES = {"OPEN", "MATCHED"}
+CLAIM_TRANSITIONS = {
+    "PENDING": {"APPROVED", "REJECTED"},
+    "APPROVED": {"RETURNED"},
+    "REJECTED": set(),
+    "RETURNED": set(),
+}
 
 
 def create_claim_for_user(
@@ -29,19 +36,29 @@ def create_claim_for_user(
     current_user: User,
     request: OwnershipClaimCreateRequest,
 ) -> OwnershipClaimResponse:
-    found_item = get_found_item_by_id(db, request.found_item_id)
+    found_item = get_claimable_found_item_by_id(db, request.found_item_id)
     if found_item is None:
+        # 비공개이거나 claim 불가능한 발견물도 404로 숨겨 ID 존재 여부를 노출하지 않는다.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Found item not found")
-    if found_item.status in FINAL_FOUND_ITEM_STATUSES:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Found item is not claimable")
+    if has_other_active_ownership_claim(db, found_item_id=found_item.id, claim_id=0):
+        # MVP에서는 AVAILABLE 발견물에 최초 claim 한 건만 활성화한다.
+        # 상태 데이터가 어긋난 경우에도 새 활성 claim을 만들지 않도록 claim 불가 대상으로 숨긴다.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Found item not found")
 
     lost_report = None
     if request.lost_report_id is not None:
-        # lost_report_id를 클라이언트가 전달하더라도 현재 사용자 소유인지 다시 확인한다.
+        # lost_report_id는 클라이언트가 전달하므로 현재 사용자 소유인지 반드시 다시 확인한다.
         # ID만 알고 타 사용자의 신고를 소유권 증빙으로 연결하는 IDOR를 막기 위한 검증이다.
         lost_report = get_lost_report_for_user(db, request.lost_report_id, current_user.id)
         if lost_report is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lost report not found")
+        if lost_report.status not in CLAIMABLE_LOST_REPORT_STATUSES:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Lost report is not claimable")
+        if lost_report.object_class_id != found_item.object_class_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Lost report category does not match found item",
+            )
 
     details = clean_optional_text(request.verification_details)
     if details is None:
@@ -70,7 +87,7 @@ def create_claim_for_user(
 
     try:
         add_ownership_claim(db, claim)
-        # 소유권 요청과 대상 상태 변경은 함께 성공하거나 함께 실패해야 프론트와 관리자 화면의 상태가 어긋나지 않는다.
+        # claim 생성과 상태 변경은 함께 성공하거나 함께 실패해야 관리자 화면에 반쪽 상태가 남지 않는다.
         found_item.status = "CLAIM_PENDING"
         found_item.updated_at = now
         if lost_report is not None:
@@ -123,8 +140,13 @@ def review_ownership_claim(
     if claim is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ownership claim not found")
 
-    now = utc_now()
     previous_claim_status = claim.status
+    if next_status == previous_claim_status:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ownership claim already has this status")
+    if next_status not in CLAIM_TRANSITIONS.get(previous_claim_status, set()):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Invalid ownership claim status transition")
+
+    now = utc_now()
     previous_found_status = claim.found_item.status
     previous_lost_status = claim.lost_report.status if claim.lost_report else None
 
@@ -135,9 +157,15 @@ def review_ownership_claim(
     claim.updated_at = now
 
     if next_status == "REJECTED":
-        claim.found_item.status = "AVAILABLE"
-        claim.found_item.updated_at = now
-        if claim.lost_report is not None:
+        has_other_active_claim = has_other_active_ownership_claim(
+            db,
+            found_item_id=claim.found_item_id,
+            claim_id=claim.id,
+        )
+        if not has_other_active_claim and claim.found_item.status == "CLAIM_PENDING":
+            claim.found_item.status = "AVAILABLE"
+            claim.found_item.updated_at = now
+        if claim.lost_report is not None and claim.lost_report.status == "CLAIM_PENDING":
             claim.lost_report.status = "MATCHED" if claim.lost_report.match_candidates else "OPEN"
             claim.lost_report.updated_at = now
     elif next_status == "RETURNED":

@@ -3,6 +3,7 @@ from datetime import UTC, timedelta
 import jwt
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from app.core.auth import ensure_active_user, ensure_admin
 from app.core.config import get_settings
@@ -47,6 +48,17 @@ def test_register_rejects_false_agreement() -> None:
         validate_registration_agreements(request)
 
     assert exc_info.value.status_code == 400
+
+
+def test_register_nickname_min_length_is_checked_after_strip() -> None:
+    with pytest.raises(ValidationError):
+        RegisterRequest(
+            email="user@example.com",
+            password="password123",
+            nickname=" a ",
+            terms_agreed=True,
+            privacy_agreed=True,
+        )
 
 
 def test_email_normalization() -> None:
