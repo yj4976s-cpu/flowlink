@@ -7,8 +7,9 @@ export function Footer() {
       <div className="footer-inner">
         <FlowLinkLogo />
         <nav aria-label="하단 메뉴">
-          <Link href="/#process">서비스 소개</Link>
+          <Link href="/about">서비스 소개</Link>
           <Link href="/guide">이용 안내</Link>
+          <Link href="/terms">이용약관</Link>
           <Link href="/privacy">개인정보처리방침</Link>
         </nav>
         <p>© 2026 FlowLink</p>
