@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 from app.models import FoundItem, LostReport, MatchCandidate, Notification, OwnershipClaim, User
+from app.schemas.admin import (
+    AdminClaimantSummary,
+    AdminFoundItemSummary,
+    AdminLostReportSummary,
+    AdminOwnershipClaimResponse,
+)
 from app.schemas.auth import UserResponse
 from app.schemas.found_item import FoundItemDetailResponse, FoundItemListItemResponse
 from app.schemas.lost_report import LostReportResponse
@@ -82,6 +88,46 @@ def ownership_claim_response(claim: OwnershipClaim) -> OwnershipClaimResponse:
         reviewed_at=claim.reviewed_at,
         admin_memo=claim.admin_memo,
         created_at=claim.created_at,
+    )
+
+
+def admin_ownership_claim_response(claim: OwnershipClaim) -> AdminOwnershipClaimResponse:
+    lost_report = claim.lost_report
+    return AdminOwnershipClaimResponse(
+        id=claim.id,
+        status=claim.status,
+        verification_details=claim.verification_details,
+        reviewed_by=claim.reviewed_by,
+        reviewed_at=claim.reviewed_at,
+        admin_memo=claim.admin_memo,
+        created_at=claim.created_at,
+        claimant=AdminClaimantSummary(
+            id=claim.user.id,
+            nickname=claim.user.nickname,
+        ),
+        found_item=AdminFoundItemSummary(
+            id=claim.found_item.id,
+            item_category=claim.found_item.object_class.code,
+            item_category_name=claim.found_item.object_class.name_ko,
+            color=claim.found_item.color,
+            public_description=claim.found_item.public_description,
+            private_features=claim.found_item.private_features,
+            area_name=claim.found_item.area_name,
+            found_at=claim.found_item.found_at,
+            status=claim.found_item.status,
+            is_public=claim.found_item.is_public,
+        ),
+        lost_report=AdminLostReportSummary(
+            id=lost_report.id,
+            item_category=lost_report.object_class.code,
+            item_category_name=lost_report.object_class.name_ko,
+            color=lost_report.color,
+            description=lost_report.description,
+            area_name=lost_report.area_name,
+            lost_from=lost_report.lost_from,
+            lost_to=lost_report.lost_to,
+            status=lost_report.status,
+        ) if lost_report is not None else None,
     )
 
 
