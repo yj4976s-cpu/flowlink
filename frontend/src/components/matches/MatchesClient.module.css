@@ -1,0 +1,444 @@
+.page {
+  min-height: calc(100vh - 172px);
+  width: min(100% - 72px, 1180px);
+  margin: 0 auto;
+  padding: 70px 0 96px;
+}
+
+.hero {
+  margin-bottom: 18px;
+  padding: clamp(30px, 5vw, 52px);
+  border: 1px solid var(--color-border);
+  border-radius: 30px;
+  background:
+    radial-gradient(circle at 82% 18%, color-mix(in srgb, var(--color-primary) 16%, transparent), transparent 32%),
+    linear-gradient(135deg, var(--color-surface), color-mix(in srgb, var(--color-primary-soft) 52%, var(--color-surface)));
+  box-shadow: var(--shadow-card);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 330px);
+  gap: 28px;
+  align-items: end;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: .12em;
+}
+
+.hero h1,
+.sectionHeading h2,
+.matchCard h2,
+.infoPanel h3 {
+  margin: 0;
+  color: var(--color-text);
+  letter-spacing: -.035em;
+}
+
+.hero h1 {
+  font-family: var(--font-editorial), Batang, serif;
+  font-size: clamp(38px, 5.7vw, 64px);
+  line-height: 1.14;
+}
+
+.hero p:last-child {
+  max-width: 690px;
+  margin: 22px 0 0;
+  color: var(--color-text-muted);
+  font-size: 16px;
+  line-height: 1.8;
+  word-break: keep-all;
+}
+
+.heroCard {
+  padding: 24px;
+  border: 1px solid var(--color-border);
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--color-surface) 84%, transparent);
+  box-shadow: var(--shadow-card);
+  display: grid;
+  gap: 14px;
+}
+
+.heroCard :global(.icon) {
+  color: var(--color-primary);
+}
+
+.heroCard strong {
+  color: var(--color-text);
+  font-size: 20px;
+  line-height: 1.45;
+}
+
+.heroCard span,
+.notice p,
+.stateCard p {
+  color: var(--color-text-muted);
+  line-height: 1.7;
+  word-break: keep-all;
+}
+
+.notice {
+  margin-bottom: 42px;
+  padding: 18px 20px;
+  border: 1px solid var(--color-border);
+  border-radius: 22px;
+  background: var(--color-surface);
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.notice :global(.icon) {
+  flex: 0 0 auto;
+  color: var(--color-primary);
+}
+
+.notice p {
+  margin: 0;
+  font-size: 14px;
+}
+
+.sectionHeading {
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: end;
+}
+
+.sectionHeading h2 {
+  font-family: var(--font-editorial), Batang, serif;
+  font-size: clamp(27px, 3vw, 36px);
+  line-height: 1.24;
+}
+
+.sectionHeading > span {
+  padding: 9px 13px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.matchList {
+  display: grid;
+  gap: 20px;
+}
+
+.matchCard,
+.stateCard {
+  border: 1px solid var(--color-border);
+  border-radius: 28px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
+.matchCard {
+  padding: clamp(22px, 3vw, 30px);
+}
+
+.cardHeader,
+.cardFooter {
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+}
+
+.cardHeader {
+  align-items: start;
+}
+
+.cardHeader p {
+  margin: 0 0 8px;
+  color: var(--color-primary);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .12em;
+}
+
+.matchCard h2 {
+  font-size: clamp(24px, 3vw, 34px);
+  line-height: 1.3;
+}
+
+.statusChip,
+.panelBadge {
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.statusChip {
+  padding: 9px 12px;
+  white-space: nowrap;
+}
+
+.scoreHero {
+  margin: 24px 0;
+  padding: 18px;
+  border: 1px solid var(--color-border);
+  border-radius: 22px;
+  background: var(--color-surface-soft);
+}
+
+.scoreHero > div:first-child {
+  margin-bottom: 14px;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: baseline;
+}
+
+.scoreHero span {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.scoreHero strong {
+  color: var(--color-text);
+  font-size: clamp(28px, 4vw, 44px);
+  line-height: 1;
+}
+
+.totalBar,
+.scoreList dd {
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-border) 52%, transparent);
+}
+
+.totalBar {
+  height: 12px;
+}
+
+.totalBar span,
+.scoreList dd span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 64%, var(--color-text)));
+}
+
+.compareGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 54px minmax(0, 1fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.infoPanel {
+  padding: 20px;
+  border: 1px solid var(--color-border);
+  border-radius: 22px;
+  background: var(--color-surface-soft);
+}
+
+.panelBadge {
+  display: inline-flex;
+  margin-bottom: 14px;
+  padding: 7px 10px;
+}
+
+.infoPanel h3 {
+  min-height: 56px;
+  font-size: 20px;
+  line-height: 1.42;
+  word-break: keep-all;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.infoPanel dl {
+  margin: 18px 0 0;
+  display: grid;
+  gap: 12px;
+}
+
+.infoPanel dl div {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.infoPanel dt,
+.scoreList dt span {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.infoPanel dd {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.55;
+  word-break: keep-all;
+}
+
+.bridge {
+  border: 1px solid var(--color-border);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--color-primary-soft) 70%, var(--color-surface));
+  color: var(--color-primary);
+  display: grid;
+  place-items: center;
+}
+
+.cardFooter {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--color-border);
+  align-items: end;
+}
+
+.scoreList {
+  width: min(100%, 620px);
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+}
+
+.scoreList dt {
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.scoreList dt b {
+  color: var(--color-text);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.scoreList dd {
+  height: 8px;
+  margin: 0;
+}
+
+.cardFooter :global(.button) {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.stateCard {
+  min-height: 180px;
+  padding: clamp(24px, 4vw, 36px);
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+}
+
+.stateCard > :global(.icon) {
+  flex: 0 0 auto;
+  color: var(--color-primary);
+}
+
+.stateCard strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--color-text);
+  font-size: 19px;
+}
+
+.stateCard p {
+  margin: 0;
+}
+
+.stateError {
+  border-color: color-mix(in srgb, var(--color-error) 45%, var(--color-border));
+  background: color-mix(in srgb, var(--color-error) 8%, var(--color-surface));
+}
+
+.stateError > :global(.icon) {
+  color: var(--color-error);
+}
+
+.stateActions {
+  margin-top: 18px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 1024px) {
+  .page {
+    width: min(100% - 40px, 860px);
+  }
+
+  .hero,
+  .compareGrid,
+  .cardFooter {
+    grid-template-columns: 1fr;
+  }
+
+  .hero {
+    align-items: start;
+  }
+
+  .bridge {
+    min-height: 52px;
+  }
+
+  .cardFooter {
+    display: grid;
+  }
+
+  .cardFooter :global(.button) {
+    justify-self: start;
+  }
+}
+
+@media (max-width: 640px) {
+  .page {
+    width: calc(100% - 36px);
+    padding: 52px 0 76px;
+  }
+
+  .hero,
+  .matchCard,
+  .stateCard {
+    border-radius: 22px;
+  }
+
+  .hero {
+    padding: 26px 22px;
+  }
+
+  .sectionHeading {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .scoreList,
+  .infoPanel dl div {
+    grid-template-columns: 1fr;
+  }
+
+  .infoPanel h3 {
+    min-height: auto;
+  }
+
+  .stateCard {
+    flex-direction: column;
+  }
+
+  .stateActions,
+  .stateActions :global(.button),
+  .cardFooter :global(.button) {
+    width: 100%;
+  }
+}
