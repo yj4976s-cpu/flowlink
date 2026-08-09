@@ -65,7 +65,13 @@ function canCreateOwnershipClaim(match: MatchCandidate) {
   return match.found_item.status === "AVAILABLE" && claimableLostReportStatuses.has(match.lost_report.status);
 }
 
-function getOwnershipClaimUnavailableMessage(match: MatchCandidate) {
+function getOwnershipClaimUnavailableMessage(match: MatchCandidate, hasSubmittedClaim: boolean, isClaimBlocked: boolean) {
+  if (hasSubmittedClaim) {
+    return "소유권 확인 진행 중";
+  }
+  if (isClaimBlocked) {
+    return "현재 확인 요청을 진행할 수 없습니다. 목록을 새로 확인해주세요.";
+  }
   if (match.found_item.status === "CLAIM_PENDING" || match.lost_report.status === "CLAIM_PENDING") {
     return "소유권 확인 진행 중";
   }
@@ -140,18 +146,27 @@ function MatchCard({
   isClaimFormOpen,
   onOpenClaimForm,
   onCloseClaimForm,
+  onClaimSubmitted,
+  onClaimBlocked,
   onMatchesRefresh,
+  hasSubmittedClaim,
+  isClaimBlocked,
 }: {
   match: MatchCandidate;
   isClaimFormOpen: boolean;
   onOpenClaimForm: () => void;
   onCloseClaimForm: () => void;
+  onClaimSubmitted: () => void;
+  onClaimBlocked: () => void;
   onMatchesRefresh: () => void;
+  hasSubmittedClaim: boolean;
+  isClaimBlocked: boolean;
 }) {
   const titleId = `match-${match.id}-title`;
   const canViewFoundItemDetail = canOpenFoundItemDetail(match.found_item.status);
-  const canRequestOwnershipClaim = canCreateOwnershipClaim(match);
-  const claimUnavailableMessage = getOwnershipClaimUnavailableMessage(match);
+  const canRequestOwnershipClaim = canCreateOwnershipClaim(match) && !hasSubmittedClaim && !isClaimBlocked;
+  const canKeepClaimFormOpen = canRequestOwnershipClaim || hasSubmittedClaim;
+  const claimUnavailableMessage = getOwnershipClaimUnavailableMessage(match, hasSubmittedClaim, isClaimBlocked);
 
   return (
     <article className={styles.matchCard} aria-labelledby={titleId}>
@@ -252,13 +267,14 @@ function MatchCard({
           ) : null}
         </div>
       </div>
-      {isClaimFormOpen && (
+      {isClaimFormOpen && canKeepClaimFormOpen && (
         <OwnershipClaimForm
           foundItemId={match.found_item.id}
           lostReportId={match.lost_report.id}
           foundItemLabel={match.found_item.public_description || match.found_item.item_category_name}
           onCancel={onCloseClaimForm}
-          onSubmitted={onMatchesRefresh}
+          onSubmitted={onClaimSubmitted}
+          onClaimUnavailable={onClaimBlocked}
           onRequestRefresh={onMatchesRefresh}
         />
       )}
@@ -272,6 +288,8 @@ export function MatchesClient() {
   const [error, setError] = useState<string | null>(null);
   const [errorStatus, setErrorStatus] = useState<number | null>(null);
   const [activeClaimMatchId, setActiveClaimMatchId] = useState<number | null>(null);
+  const [submittedClaimMatchIds, setSubmittedClaimMatchIds] = useState<Set<number>>(() => new Set());
+  const [blockedClaimMatchIds, setBlockedClaimMatchIds] = useState<Set<number>>(() => new Set());
 
   const loadMatches = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -305,6 +323,16 @@ export function MatchesClient() {
       return;
     }
   }, []);
+
+  const markClaimSubmitted = (matchId: number) => {
+    setSubmittedClaimMatchIds((current) => new Set(current).add(matchId));
+    void refreshMatches();
+  };
+
+  const markClaimBlocked = (matchId: number) => {
+    setBlockedClaimMatchIds((current) => new Set(current).add(matchId));
+    void refreshMatches();
+  };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -424,7 +452,11 @@ export function MatchesClient() {
                   isClaimFormOpen={activeClaimMatchId === match.id}
                   onOpenClaimForm={() => setActiveClaimMatchId(match.id)}
                   onCloseClaimForm={() => setActiveClaimMatchId(null)}
+                  onClaimSubmitted={() => markClaimSubmitted(match.id)}
+                  onClaimBlocked={() => markClaimBlocked(match.id)}
                   onMatchesRefresh={() => void refreshMatches()}
+                  hasSubmittedClaim={submittedClaimMatchIds.has(match.id)}
+                  isClaimBlocked={blockedClaimMatchIds.has(match.id)}
                 />
               </div>
             ))}

@@ -47,6 +47,7 @@ export function OwnershipClaimForm({
   foundItemLabel,
   onCancel,
   onSubmitted,
+  onClaimUnavailable,
   onRequestRefresh,
 }: {
   foundItemId: number;
@@ -54,6 +55,7 @@ export function OwnershipClaimForm({
   foundItemLabel: string;
   onCancel: () => void;
   onSubmitted: () => void;
+  onClaimUnavailable: () => void;
   onRequestRefresh: () => void;
 }) {
   const [verificationDetails, setVerificationDetails] = useState("");
@@ -105,7 +107,7 @@ export function OwnershipClaimForm({
           : "소유권 확인 요청을 보내지 못했습니다. 네트워크 상태를 확인한 뒤 다시 시도해주세요.",
       );
       setSubmitErrorStatus(isApiError ? caught.status ?? null : null);
-      if (isApiError && caught.status === 404) onRequestRefresh();
+      if (isApiError && caught.status === 404) onClaimUnavailable();
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
