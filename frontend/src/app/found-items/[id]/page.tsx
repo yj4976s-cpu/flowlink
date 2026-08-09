@@ -1,12 +1,12 @@
-import { FoundItemsClient } from "@/components/found-items/FoundItemsClient";
+import { FoundItemDetailClient } from "@/components/found-items/FoundItemDetailClient";
 import { Footer } from "@/components/layout/Footer";
 import { Header } from "@/components/layout/Header";
 
-export default function FoundItemsPage() {
+export default function FoundItemDetailPage() {
   return (
     <div className="site-shell">
       <Header />
-      <FoundItemsClient />
+      <FoundItemDetailClient />
       <Footer />
     </div>
   );
