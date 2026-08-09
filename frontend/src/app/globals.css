@@ -411,10 +411,10 @@ html[data-theme="night"] .found-card-backpack .confidence strong { color: #aebdf
 @media (max-width: 430px) {
   .header-inner { width: calc(100% - 36px); gap: 8px; }.brand { gap: 6px; font-size: 19px; }.brand-mark { width: 29px; }.header-actions { gap: 7px; }.theme-toggle { padding: 2px; }.theme-option { min-width: 39px; }.menu-button { width: 42px; }
   .hero-copy { width: calc(100% - 38px); min-height: 490px; padding-top: 52px; }.eyebrow { font-size: 12px; }.hero h1 { font-size: 31px; line-height: 1.36; }.hero-description { min-height: 105px; font-size: 14px; }.hero-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }.hero-actions .button { padding-inline: 10px; font-size: 13px; }
-  .detection-scene { width: calc(100% - 20px); height: 455px; background-position: 72% center; background-size: 185% 100%; }.detection-card { transform: scale(.82); }.detection-card:hover { transform: scale(.82); }.detection-backpack { left: 5%; top: 34%; }.detection-umbrella { left: 38%; top: 17%; }.detection-branch { left: 61%; right: auto; top: 40%; }.live-card { transform: scale(.86); right: 8px; bottom: 8px; }.promenade { width: 42%; }
-  html[data-theme="night"] .detection-backpack { left: 2%; top: 32%; width: 170px; height: 205px; }
-  html[data-theme="night"] .detection-umbrella { left: 33%; top: 15%; width: 184px; height: 194px; }
-  html[data-theme="night"] .detection-branch { left: 57%; top: 39%; width: 184px; height: 166px; }
+  .detection-scene { width: calc(100% - 20px); height: 410px; }.detection-card { transform: scale(.66); }.detection-card:hover { transform: scale(.66); }.detection-backpack { left: 30%; top: 32%; }.detection-umbrella { left: 47%; top: 18%; }.detection-branch { left: 62%; right: auto; top: 38%; }.live-card { transform: scale(.72); right: 8px; bottom: 6px; }.promenade { width: 42%; }
+  html[data-theme="night"] .detection-backpack { left: 31%; top: 31%; width: 170px; height: 205px; }
+  html[data-theme="night"] .detection-umbrella { left: 47.6%; top: 16.5%; width: 184px; height: 194px; }
+  html[data-theme="night"] .detection-branch { left: 60.8%; top: 37%; width: 184px; height: 166px; }
   .stats-wrap, .section { width: calc(100% - 38px); }.stats-strip { padding-inline: 4px; border-radius: 20px; }.stat { padding-inline: 7px; gap: 9px; justify-content: flex-start; }.stat-icon { width: 36px; height: 36px; }.stat-copy small { font-size: 10px; }.stat-copy strong { font-size: 21px; }
   .section-heading h2, .recent-heading h2 { font-size: 23px; }.process-card { padding: 21px 18px; }.recent-heading a { font-size: 12px; }.found-visual { min-height: 145px; height: 145px; }
   .info-page { width: calc(100% - 36px); padding-block: 52px; }.info-hero { margin-bottom: 40px; }.info-hero h1 br { display: none; }.info-steps, .info-steps-flow { grid-template-columns: 1fr; }.info-steps li { min-height: 96px; }.info-notice { margin-top: 48px; }.document-card { border-radius: 20px; }

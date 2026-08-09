@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Icon, type IconName } from "@/components/common/Icon";
 
 export type GuideStep = {
@@ -21,14 +21,6 @@ export function GuideFlow({ eyebrow, title, titleId, steps }: GuideFlowProps) {
   const [activeStep, setActiveStep] = useState(0);
   const active = steps[activeStep];
   const stepCountStyle = { "--guide-step-count": steps.length } as CSSProperties;
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setActiveStep((current) => (current + 1) % steps.length);
-    }, 2000);
-
-    return () => window.clearInterval(timer);
-  }, [steps.length]);
 
   const showNextStep = () => {
     setActiveStep((current) => (current + 1) % steps.length);
@@ -67,7 +59,6 @@ export function GuideFlow({ eyebrow, title, titleId, steps }: GuideFlowProps) {
           </div>
         </div>
       </div>
-      <p className="sr-only" aria-live="polite">현재 단계: {active.label}</p>
     </section>
   );
 }

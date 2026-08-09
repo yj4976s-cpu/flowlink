@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Icon, type IconName } from "@/components/common/Icon";
 
 const flowSteps: { label: string; icon: IconName }[] = [
@@ -15,14 +15,6 @@ const flowSteps: { label: string; icon: IconName }[] = [
 
 export function ServiceFlow() {
   const [activeStep, setActiveStep] = useState(0);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setActiveStep((current) => (current + 1) % flowSteps.length);
-    }, 2000);
-
-    return () => window.clearInterval(timer);
-  }, []);
 
   const showNextStep = () => {
     setActiveStep((current) => (current + 1) % flowSteps.length);
