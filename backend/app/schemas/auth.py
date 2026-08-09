@@ -32,10 +32,8 @@ class UserResponse(BaseModel):
     created_at: datetime
 
 
-class TokenResponse(BaseModel):
+class LoginResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    access_token: str
-    token_type: str = "bearer"
     expires_in: int
     user: UserResponse
