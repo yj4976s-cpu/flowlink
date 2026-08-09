@@ -6,6 +6,7 @@ import { Icon, type IconName } from "@/components/common/Icon";
 const flowSteps: { label: string; icon: IconName }[] = [
   { label: "개인 물품 후보 탐지", icon: "scan" },
   { label: "관리자 확인", icon: "check" },
+  { label: "회수", icon: "return" },
   { label: "발견물 공개", icon: "cube" },
   { label: "시민 분실 신고", icon: "document" },
   { label: "자동 매칭", icon: "match" },
