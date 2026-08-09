@@ -334,12 +334,32 @@
   white-space: nowrap;
 }
 
+.cardActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .detailUnavailable {
   max-width: 260px;
   padding: 12px 14px;
   border: 1px solid var(--color-border);
   border-radius: 999px;
   background: var(--color-surface-soft);
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.claimUnavailable {
+  max-width: 260px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-primary-soft) 58%, var(--color-surface));
   color: var(--color-text-muted);
   font-size: 13px;
   font-weight: 900;
@@ -451,6 +471,8 @@
 
   .stateActions,
   .stateActions :global(.button),
+  .cardActions,
+  .cardActions :global(.button),
   .cardFooter :global(.button) {
     width: 100%;
   }
