@@ -135,6 +135,7 @@ export function LostReportForm() {
   const [formData, setFormData] = useState<FormData>(emptyFormData);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitErrorStatus, setSubmitErrorStatus] = useState<number | null>(null);
   const [createdReport, setCreatedReport] = useState<LostReportResponse | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
@@ -143,12 +144,14 @@ export function LostReportForm() {
     setFormData((current) => ({ ...current, [field]: value }));
     setFieldErrors((current) => ({ ...current, [field]: undefined }));
     setSubmitError(null);
+    setSubmitErrorStatus(null);
   };
 
   const resetForm = () => {
     setFormData(emptyFormData);
     setFieldErrors({});
     setSubmitError(null);
+    setSubmitErrorStatus(null);
     setCreatedReport(null);
   };
 
@@ -159,6 +162,7 @@ export function LostReportForm() {
     const { errors, lostAt } = validateForm(formData);
     setFieldErrors(errors);
     setSubmitError(null);
+    setSubmitErrorStatus(null);
     setCreatedReport(null);
     if (Object.keys(errors).length > 0 || !lostAt) return;
 
@@ -168,10 +172,12 @@ export function LostReportForm() {
       const report = await createLostReport(createRequest(formData, lostAt));
       setCreatedReport(report);
     } catch (caught) {
-      const message = caught instanceof LostReportsApiError
+      const isApiError = caught instanceof LostReportsApiError;
+      const message = isApiError
         ? caught.message
         : "분실 신고를 등록하지 못했습니다. 네트워크 상태를 확인한 뒤 다시 시도해주세요.";
       setSubmitError(message);
+      setSubmitErrorStatus(isApiError ? caught.status ?? null : null);
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
@@ -211,7 +217,7 @@ export function LostReportForm() {
                   <Icon name="spark" size={22} />
                   <div>
                     <strong>{submitError}</strong>
-                    {submitError.includes("로그인") && <Link href="/login">로그인하러 가기</Link>}
+                    {submitErrorStatus === 401 && <Link href="/login">로그인하러 가기</Link>}
                   </div>
                 </div>
               )}

@@ -47,14 +47,12 @@ function getFallbackMessage(status: number) {
 }
 
 function normalizeDetailMessage(detail: unknown, status: number) {
+  if (status === 401) return getFallbackMessage(status);
   if (typeof detail !== "string") return getFallbackMessage(status);
   if (detail === "Invalid personal item category") return "선택한 물품 종류를 다시 확인해주세요.";
   if (detail === "Lost time cannot be in the future") return "분실 시각은 미래일 수 없습니다.";
   if (detail === "Description and location are required") return "물품 설명과 분실 위치를 입력해주세요.";
-  if (detail === "Not authenticated" || detail === "Invalid authentication credentials") {
-    return "로그인이 필요하거나 로그인 세션이 만료되었습니다.";
-  }
-  return detail;
+  return getFallbackMessage(status);
 }
 
 async function readErrorMessage(response: Response) {
