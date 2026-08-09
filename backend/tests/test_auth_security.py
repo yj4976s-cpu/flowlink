@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.core.auth import ensure_active_user, ensure_admin
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.security import (
     create_access_token,
     decode_access_token,
@@ -94,6 +94,11 @@ def test_expired_token_is_rejected() -> None:
         decode_access_token(expired_token)
 
     assert exc_info.value.status_code == 401
+
+
+def test_auth_cookie_secure_follows_app_env() -> None:
+    assert not Settings(APP_ENV="development").auth_cookie_secure
+    assert Settings(APP_ENV="production").auth_cookie_secure
 
 
 def test_user_and_admin_roles_are_separated() -> None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -13,8 +15,15 @@ from app.core.security import (
 )
 from app.models import User
 from app.repositories.user_flow import clean_optional_text, get_user_by_email
-from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserResponse
+from app.schemas.auth import LoginRequest, RegisterRequest, UserResponse
 from app.services.mappers import user_response
+
+
+@dataclass(frozen=True)
+class LoginResult:
+    access_token: str
+    expires_in: int
+    user: UserResponse
 
 
 def validate_registration_agreements(request: RegisterRequest) -> None:
@@ -59,7 +68,7 @@ def register_user(db: Session, request: RegisterRequest) -> UserResponse:
     return user_response(user)
 
 
-def login_user(db: Session, request: LoginRequest) -> TokenResponse:
+def login_user(db: Session, request: LoginRequest) -> LoginResult:
     email = normalize_email(str(request.email))
     user = get_user_by_email(db, email)
     if (
@@ -74,9 +83,8 @@ def login_user(db: Session, request: LoginRequest) -> TokenResponse:
     db.commit()
     db.refresh(user)
     access_token, expires_in = create_access_token(user.id, user.role)
-    return TokenResponse(
+    return LoginResult(
         access_token=access_token,
-        token_type="bearer",
         expires_in=expires_in,
         user=user_response(user),
     )
