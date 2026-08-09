@@ -261,6 +261,13 @@ export function NotificationsClient() {
       if (requestId !== requestSequence.current) return;
       if (!showLoading) {
         setLiveMessage("알림 목록을 최신 상태로 다시 불러오지 못했습니다.");
+        if (caught instanceof NotificationsApiError) {
+          setError(caught.message);
+          setErrorStatus(caught.status ?? null);
+        } else {
+          setError("알림을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.");
+          setErrorStatus(null);
+        }
         return;
       }
       if (caught instanceof NotificationsApiError) {
@@ -272,7 +279,7 @@ export function NotificationsClient() {
       }
       setNotifications([]);
     } finally {
-      if (showLoading && requestId === requestSequence.current) setLoading(false);
+      if (requestId === requestSequence.current) setLoading(false);
     }
   };
 
