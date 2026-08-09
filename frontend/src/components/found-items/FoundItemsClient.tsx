@@ -263,7 +263,11 @@ export function FoundItemsClient() {
         <form className="found-filter-form" onSubmit={handleSubmit}>
           <label>
             <span>검색어</span>
-            <input value={filters.q} onChange={(event) => setFilters((current) => ({ ...current, q: event.target.value }))} name="q" placeholder="설명, 구역, 색상" />
+            <input value={filters.q} onChange={(event) => {
+              setSelectedRegion("");
+              setAreaSearch("");
+              setFilters((current) => ({ ...current, q: event.target.value }));
+            }} name="q" placeholder="설명, 구역, 색상" />
           </label>
           <label>
             <span>물품 종류</span>
