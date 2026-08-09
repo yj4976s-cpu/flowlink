@@ -9,7 +9,7 @@ import { ThemeToggle } from "@/components/theme/ThemeToggle";
 const navigation = [
   { label: "발견물 찾기", href: "/found-items" },
   { label: "분실 신고", href: "/lost-reports/new" },
-  { label: "서비스 소개", href: "/#process" },
+  { label: "서비스 소개", href: "/about" },
   { label: "이용 안내", href: "/guide" },
 ] as const;
 

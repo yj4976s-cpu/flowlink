@@ -40,19 +40,19 @@ export function HeroSection() {
     <section className="hero" aria-labelledby="hero-title">
       <div className="hero-inner">
         <div className="hero-copy">
-          <p className="eyebrow"><Icon name="scan" size={18} /> AI 기반 수변 부유 객체 탐지</p>
+          <p className="eyebrow"><Icon name="scan" size={18} /> AI 기반 수면 부유 객체 탐지</p>
           <h1 id="hero-title">
-            <span className="theme-copy theme-copy-day">흐름을 따라,<br />다시 <em>연결</em>되는 순간</span>
-            <span className="theme-copy theme-copy-night">밤의 흐름 속에서도,<br />놓치지 않는 <em>연결</em></span>
+            <span className="theme-copy theme-copy-day">물길 위 발견을,<br />다시 <em>연결</em>하는 시간</span>
+            <span className="theme-copy theme-copy-night">어둠 속 발견도,<br />놓치지 않는 <em>연결</em></span>
           </h1>
           <div className="title-rule" aria-hidden="true"><i /></div>
           <p className="hero-description">
-            <span className="theme-copy theme-copy-day">강과 호수, 바다의 흐름을 읽어 소중한 물건이 다시 제자리로 돌아가도록 FlowLink가 연결합니다.</span>
-            <span className="theme-copy theme-copy-night">AI가 수면의 흐름을 분석하고, 발견부터 매칭까지 안전하게 이어갑니다.</span>
+            <span className="theme-copy theme-copy-day">AI가 수면 위 객체를 찾아내고, 시민의 분실 신고와 이어 관리자 확인·반환까지 돕습니다.</span>
+            <span className="theme-copy theme-copy-night">AI가 야간 수면 위 객체 후보를 포착하고, 발견부터 매칭과 반환까지 차분하게 이어줍니다.</span>
           </p>
           <div className="hero-actions">
             <Link className="button button-primary" href="/found-items">발견물 찾기 <Icon name="arrow" size={18} /></Link>
-            <Link className="button button-secondary" href="/#process">서비스 소개 보기</Link>
+            <Link className="button button-secondary" href="/about">서비스 소개 보기</Link>
           </div>
           <RiversideLineArt />
         </div>
