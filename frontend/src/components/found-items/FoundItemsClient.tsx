@@ -125,6 +125,7 @@ export function FoundItemsClient() {
       return !isAlreadyLoaded && matchesKeyword;
     });
   }, [areaSearch, filteredAreaOptions]);
+  const areaFieldValue = filters.area_name || (filters.q === areaSearch ? areaSearch : "");
 
   const loadItems = useCallback(async (nextFilters: typeof emptyFilters, signal?: AbortSignal) => {
     setLoading(true);
@@ -178,6 +179,7 @@ export function FoundItemsClient() {
 
   const resetFilters = () => {
     setFilters(emptyFilters);
+    setAreaSearch("");
     void loadItems(emptyFilters);
   };
 
@@ -207,11 +209,19 @@ export function FoundItemsClient() {
   };
 
   const searchRegionSuggestion = (region: string) => {
-    const nextFilters = { ...filters, area_name: region };
+    const nextFilters = { ...filters, q: region, area_name: "" };
     setFilters(nextFilters);
     setAreaSearch(region);
     setOpenFilter(null);
     void loadItems(nextFilters);
+  };
+
+  const clearAreaSearch = () => {
+    const currentAreaSearch = areaSearch.trim();
+    setAreaSearch("");
+    if (!filters.area_name && filters.q.trim() === currentAreaSearch) {
+      setFilters((current) => ({ ...current, q: "" }));
+    }
   };
 
   const toggleFilter = (filter: OpenFilter) => {
@@ -219,7 +229,7 @@ export function FoundItemsClient() {
   };
 
   const openAreaPicker = () => {
-    setAreaSearch(filters.area_name);
+    setAreaSearch(areaFieldValue);
     setOpenFilter("area_name");
   };
 
@@ -286,7 +296,14 @@ export function FoundItemsClient() {
           <label>
             <span>발견 구역</span>
             <div className="found-input-menu">
-              <input value={filters.area_name} onChange={(event) => setFilters((current) => ({ ...current, area_name: event.target.value }))} name="area_name" placeholder="예: 한강공원 A구역" />
+              <input value={areaFieldValue} onChange={(event) => {
+                setAreaSearch(event.target.value);
+                setFilters((current) => ({
+                  ...current,
+                  q: !current.area_name && current.q.trim() === areaSearch.trim() ? "" : current.q,
+                  area_name: event.target.value,
+                }));
+              }} name="area_name" placeholder="예: 한강공원 A구역" />
               <button type="button" aria-label="발견 구역 선택 팝업 열기" aria-expanded={openFilter === "area_name"} onClick={openAreaPicker}>
                 <Icon name="arrow" size={15} />
               </button>
@@ -323,6 +340,11 @@ export function FoundItemsClient() {
               <span className="sr-only">지역 검색</span>
               <Icon name="scan" size={20} />
               <input value={areaSearch} onChange={(event) => setAreaSearch(event.target.value)} placeholder="지역 검색" autoFocus />
+              {areaSearch && (
+                <button type="button" aria-label="지역 검색어 지우기" onClick={clearAreaSearch}>
+                  <Icon name="close" size={18} />
+                </button>
+              )}
             </label>
             {filteredAreaOptions.length > 0 ? (
               <div className="area-picker-grid" role="list" aria-label="등록된 발견 구역">
