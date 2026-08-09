@@ -187,9 +187,12 @@ export function NotificationsClient() {
   const [processingReadIds, setProcessingReadIds] = useState<Set<number>>(() => new Set());
   const [readErrors, setReadErrors] = useState<Record<number, ReadError>>({});
   const [liveMessage, setLiveMessage] = useState("");
+  const currentFilterRef = useRef<NotificationFilter>("all");
+  const processingReadIdsRef = useRef<Set<number>>(new Set());
   const requestSequence = useRef(0);
 
   useEffect(() => {
+    currentFilterRef.current = filter;
     const controller = new AbortController();
     const requestId = requestSequence.current + 1;
     requestSequence.current = requestId;
@@ -230,21 +233,36 @@ export function NotificationsClient() {
       : `현재 표시된 알림 ${notifications.length}개`;
   }, [error, filter, loading, notifications.length]);
 
-  const refreshNotifications = async (clearReadErrors = true) => {
+  const refreshNotifications = async ({
+    clearReadErrors = true,
+    showLoading = true,
+  }: {
+    clearReadErrors?: boolean;
+    showLoading?: boolean;
+  } = {}) => {
+    const targetFilter = currentFilterRef.current;
     const requestId = requestSequence.current + 1;
     requestSequence.current = requestId;
-    setLoading(true);
-    setError(null);
-    setErrorStatus(null);
+    if (showLoading) {
+      setLoading(true);
+      setError(null);
+      setErrorStatus(null);
+    }
     if (clearReadErrors) setReadErrors({});
 
     try {
-      const data = await listNotifications(filter);
+      const data = await listNotifications(targetFilter);
       if (requestId !== requestSequence.current) return;
       setNotifications(data);
+      setError(null);
+      setErrorStatus(null);
       setLiveMessage("알림 목록을 다시 불러왔습니다.");
     } catch (caught) {
       if (requestId !== requestSequence.current) return;
+      if (!showLoading) {
+        setLiveMessage("알림 목록을 최신 상태로 다시 불러오지 못했습니다.");
+        return;
+      }
       if (caught instanceof NotificationsApiError) {
         setError(caught.message);
         setErrorStatus(caught.status ?? null);
@@ -254,12 +272,13 @@ export function NotificationsClient() {
       }
       setNotifications([]);
     } finally {
-      if (requestId === requestSequence.current) setLoading(false);
+      if (showLoading && requestId === requestSequence.current) setLoading(false);
     }
   };
 
   const changeFilter = (nextFilter: NotificationFilter) => {
     if (nextFilter === filter) return;
+    currentFilterRef.current = nextFilter;
     setFilter(nextFilter);
     setNotifications([]);
     setReadErrors({});
@@ -270,9 +289,13 @@ export function NotificationsClient() {
   };
 
   const handleMarkRead = async (notificationId: number) => {
-    if (processingReadIds.has(notificationId)) return;
+    if (processingReadIdsRef.current.has(notificationId)) return;
+    const filterAtReadStart = currentFilterRef.current;
 
-    setProcessingReadIds((current) => new Set(current).add(notificationId));
+    const nextProcessingReadIds = new Set(processingReadIdsRef.current);
+    nextProcessingReadIds.add(notificationId);
+    processingReadIdsRef.current = nextProcessingReadIds;
+    setProcessingReadIds(nextProcessingReadIds);
     setReadErrors((current) => {
       const next = { ...current };
       delete next[notificationId];
@@ -281,8 +304,14 @@ export function NotificationsClient() {
 
     try {
       const updatedNotification = await markNotificationRead(notificationId);
+      const currentFilter = currentFilterRef.current;
+      if (currentFilter !== filterAtReadStart) {
+        setLiveMessage("알림을 읽음 처리하고 현재 필터를 최신 상태로 확인합니다.");
+        void refreshNotifications({ clearReadErrors: false, showLoading: false });
+        return;
+      }
       setNotifications((current) => {
-        if (filter === "unread" && updatedNotification.read_at !== null) {
+        if (currentFilter === "unread" && updatedNotification.read_at !== null) {
           return current.filter((notification) => notification.id !== notificationId);
         }
         return current.map((notification) => (
@@ -298,14 +327,13 @@ export function NotificationsClient() {
       setReadErrors((current) => ({ ...current, [notificationId]: readError }));
       if (readError.status === 404) {
         setLiveMessage(readError.message);
-        void refreshNotifications(false);
+        void refreshNotifications({ clearReadErrors: false });
       }
     } finally {
-      setProcessingReadIds((current) => {
-        const next = new Set(current);
-        next.delete(notificationId);
-        return next;
-      });
+      const nextProcessingReadIds = new Set(processingReadIdsRef.current);
+      nextProcessingReadIds.delete(notificationId);
+      processingReadIdsRef.current = nextProcessingReadIds;
+      setProcessingReadIds(nextProcessingReadIds);
     }
   };
 
