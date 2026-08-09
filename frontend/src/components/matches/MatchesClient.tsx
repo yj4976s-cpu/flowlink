@@ -34,6 +34,8 @@ const foundItemStatusLabels: Record<string, string> = {
   RECOVERED: "회수됨",
 };
 
+const publicFoundItemDetailStatuses = new Set(["AVAILABLE", "RECOVERED"]);
+
 const scoreParts = [
   { key: "type_score", label: "물품 종류", max: 40 },
   { key: "area_score", label: "발견 구역", max: 25 },
@@ -48,6 +50,10 @@ function formatDateTime(value: string) {
 
 function getLabel(labels: Record<string, string>, status: string) {
   return labels[status] ?? status;
+}
+
+function canOpenFoundItemDetail(status: string) {
+  return publicFoundItemDetailStatuses.has(status);
 }
 
 function scoreBarStyle(score: number, max: number): CSSProperties {
@@ -103,6 +109,7 @@ function ScoreBreakdown({ match }: { match: MatchCandidate }) {
 
 function MatchCard({ match }: { match: MatchCandidate }) {
   const titleId = `match-${match.id}-title`;
+  const canViewFoundItemDetail = canOpenFoundItemDetail(match.found_item.status);
 
   return (
     <article className={styles.matchCard} aria-labelledby={titleId}>
@@ -186,9 +193,13 @@ function MatchCard({ match }: { match: MatchCandidate }) {
 
       <div className={styles.cardFooter}>
         <ScoreBreakdown match={match} />
-        <Link className="button button-secondary" href={`/found-items/${match.found_item.id}`}>
-          발견물 상세 보기 <Icon name="arrow" size={17} />
-        </Link>
+        {canViewFoundItemDetail ? (
+          <Link className="button button-secondary" href={`/found-items/${match.found_item.id}`}>
+            발견물 상세 보기 <Icon name="arrow" size={17} />
+          </Link>
+        ) : (
+          <span className={styles.detailUnavailable}>현재 공개 상세 조회가 종료된 발견물입니다.</span>
+        )}
       </div>
     </article>
   );
@@ -251,7 +262,7 @@ export function MatchesClient() {
   const summaryText = useMemo(() => {
     if (loading) return "내 분실 신고와 공개 발견물을 비교하고 있습니다.";
     if (error) return error;
-    return `매칭 후보 ${matches.length}건`;
+    return `현재 표시된 후보 ${matches.length}개`;
   }, [error, loading, matches.length]);
 
   return (
@@ -286,7 +297,7 @@ export function MatchesClient() {
             <p className={styles.eyebrow}>MY MATCHES</p>
             <h2 id="matches-list-title">매칭 후보 목록</h2>
           </div>
-          {!loading && !error && <span>{matches.length}건</span>}
+          {!loading && !error && <span>표시 중 {matches.length}개</span>}
         </div>
 
         {loading && (
@@ -321,7 +332,7 @@ export function MatchesClient() {
           <MatchStateCard
             icon="document"
             title="아직 매칭 후보가 없습니다."
-            description="분실 신고가 등록되거나 새로운 공개 발견물이 생기면 후보가 표시됩니다."
+            description="현재 확인된 매칭 후보가 없습니다. 발견물 목록을 확인하거나 분실 신고 내용을 다시 확인해주세요."
             action={
               <div className={styles.stateActions}>
                 <Link className="button button-primary" href="/lost-reports/new">분실 신고하기</Link>

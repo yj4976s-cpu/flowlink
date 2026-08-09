@@ -334,6 +334,19 @@
   white-space: nowrap;
 }
 
+.detailUnavailable {
+  max-width: 260px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface-soft);
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.45;
+  text-align: center;
+}
+
 .stateCard {
   min-height: 180px;
   padding: clamp(24px, 4vw, 36px);
