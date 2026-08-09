@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { Icon } from "@/components/common/Icon";
+import { OwnershipClaimForm } from "@/components/ownership-claims/OwnershipClaimForm";
 import { MatchesApiError, listMyMatches } from "@/lib/matchesApi";
 import type { MatchCandidate } from "@/lib/matchesApi";
 import styles from "./MatchesClient.module.css";
@@ -32,9 +33,13 @@ const lostReportStatusLabels: Record<string, string> = {
 const foundItemStatusLabels: Record<string, string> = {
   AVAILABLE: "공개 중",
   RECOVERED: "회수됨",
+  CLAIM_PENDING: "소유권 확인 중",
+  RETURNED: "반환 완료",
+  DISPOSED: "처분됨",
 };
 
 const publicFoundItemDetailStatuses = new Set(["AVAILABLE", "RECOVERED"]);
+const claimableLostReportStatuses = new Set(["OPEN", "MATCHED"]);
 
 const scoreParts = [
   { key: "type_score", label: "물품 종류", max: 40 },
@@ -54,6 +59,35 @@ function getLabel(labels: Record<string, string>, status: string) {
 
 function canOpenFoundItemDetail(status: string) {
   return publicFoundItemDetailStatuses.has(status);
+}
+
+function canCreateOwnershipClaim(match: MatchCandidate) {
+  return match.found_item.status === "AVAILABLE" && claimableLostReportStatuses.has(match.lost_report.status);
+}
+
+function getOwnershipClaimUnavailableMessage(match: MatchCandidate, hasSubmittedClaim: boolean, isClaimBlocked: boolean) {
+  if (hasSubmittedClaim) {
+    return "소유권 확인 진행 중";
+  }
+  if (isClaimBlocked) {
+    return "현재 확인 요청을 진행할 수 없습니다. 목록을 새로 확인해주세요.";
+  }
+  if (match.found_item.status === "CLAIM_PENDING" || match.lost_report.status === "CLAIM_PENDING") {
+    return "소유권 확인 진행 중";
+  }
+  if (match.found_item.status === "RETURNED" || match.lost_report.status === "RESOLVED") {
+    return "반환 절차가 완료된 후보입니다.";
+  }
+  if (match.found_item.status === "DISPOSED" || match.lost_report.status === "CANCELLED") {
+    return "현재 확인 요청을 보낼 수 없는 후보입니다.";
+  }
+  if (match.found_item.status !== "AVAILABLE") {
+    return "현재 발견물 상태에서는 확인 요청을 보낼 수 없습니다.";
+  }
+  if (!claimableLostReportStatuses.has(match.lost_report.status)) {
+    return "현재 분실 신고 상태에서는 확인 요청을 보낼 수 없습니다.";
+  }
+  return null;
 }
 
 function scoreBarStyle(score: number, max: number): CSSProperties {
@@ -107,9 +141,32 @@ function ScoreBreakdown({ match }: { match: MatchCandidate }) {
   );
 }
 
-function MatchCard({ match }: { match: MatchCandidate }) {
+function MatchCard({
+  match,
+  isClaimFormOpen,
+  onOpenClaimForm,
+  onCloseClaimForm,
+  onClaimSubmitted,
+  onClaimBlocked,
+  onMatchesRefresh,
+  hasSubmittedClaim,
+  isClaimBlocked,
+}: {
+  match: MatchCandidate;
+  isClaimFormOpen: boolean;
+  onOpenClaimForm: () => void;
+  onCloseClaimForm: () => void;
+  onClaimSubmitted: () => void;
+  onClaimBlocked: () => void;
+  onMatchesRefresh: () => void;
+  hasSubmittedClaim: boolean;
+  isClaimBlocked: boolean;
+}) {
   const titleId = `match-${match.id}-title`;
   const canViewFoundItemDetail = canOpenFoundItemDetail(match.found_item.status);
+  const canRequestOwnershipClaim = canCreateOwnershipClaim(match) && !hasSubmittedClaim && !isClaimBlocked;
+  const canKeepClaimFormOpen = canRequestOwnershipClaim || hasSubmittedClaim;
+  const claimUnavailableMessage = getOwnershipClaimUnavailableMessage(match, hasSubmittedClaim, isClaimBlocked);
 
   return (
     <article className={styles.matchCard} aria-labelledby={titleId}>
@@ -193,14 +250,34 @@ function MatchCard({ match }: { match: MatchCandidate }) {
 
       <div className={styles.cardFooter}>
         <ScoreBreakdown match={match} />
-        {canViewFoundItemDetail ? (
-          <Link className="button button-secondary" href={`/found-items/${match.found_item.id}`}>
-            발견물 상세 보기 <Icon name="arrow" size={17} />
-          </Link>
-        ) : (
-          <span className={styles.detailUnavailable}>현재 공개 상세 조회가 종료된 발견물입니다.</span>
-        )}
+        <div className={styles.cardActions}>
+          {canViewFoundItemDetail ? (
+            <Link className="button button-secondary" href={`/found-items/${match.found_item.id}`}>
+              발견물 상세 보기 <Icon name="arrow" size={17} />
+            </Link>
+          ) : (
+            <span className={styles.detailUnavailable}>현재 공개 상세 조회가 종료된 발견물입니다.</span>
+          )}
+          {canRequestOwnershipClaim ? (
+            <button className="button button-primary" type="button" onClick={onOpenClaimForm} aria-expanded={isClaimFormOpen}>
+              내 물건 같아요
+            </button>
+          ) : claimUnavailableMessage ? (
+            <span className={styles.claimUnavailable}>{claimUnavailableMessage}</span>
+          ) : null}
+        </div>
       </div>
+      {isClaimFormOpen && canKeepClaimFormOpen && (
+        <OwnershipClaimForm
+          foundItemId={match.found_item.id}
+          lostReportId={match.lost_report.id}
+          foundItemLabel={match.found_item.public_description || match.found_item.item_category_name}
+          onCancel={onCloseClaimForm}
+          onSubmitted={onClaimSubmitted}
+          onClaimUnavailable={onClaimBlocked}
+          onRequestRefresh={onMatchesRefresh}
+        />
+      )}
     </article>
   );
 }
@@ -210,6 +287,9 @@ export function MatchesClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [errorStatus, setErrorStatus] = useState<number | null>(null);
+  const [activeClaimMatchId, setActiveClaimMatchId] = useState<number | null>(null);
+  const [submittedClaimMatchIds, setSubmittedClaimMatchIds] = useState<Set<number>>(() => new Set());
+  const [blockedClaimMatchIds, setBlockedClaimMatchIds] = useState<Set<number>>(() => new Set());
 
   const loadMatches = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -232,6 +312,27 @@ export function MatchesClient() {
       if (!signal?.aborted) setLoading(false);
     }
   }, []);
+
+  const refreshMatches = useCallback(async () => {
+    try {
+      const data = await listMyMatches();
+      setMatches(data);
+      setError(null);
+      setErrorStatus(null);
+    } catch {
+      return;
+    }
+  }, []);
+
+  const markClaimSubmitted = (matchId: number) => {
+    setSubmittedClaimMatchIds((current) => new Set(current).add(matchId));
+    void refreshMatches();
+  };
+
+  const markClaimBlocked = (matchId: number) => {
+    setBlockedClaimMatchIds((current) => new Set(current).add(matchId));
+    void refreshMatches();
+  };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -346,7 +447,17 @@ export function MatchesClient() {
           <div className={styles.matchList} role="list">
             {matches.map((match) => (
               <div key={match.id} role="listitem">
-                <MatchCard match={match} />
+                <MatchCard
+                  match={match}
+                  isClaimFormOpen={activeClaimMatchId === match.id}
+                  onOpenClaimForm={() => setActiveClaimMatchId(match.id)}
+                  onCloseClaimForm={() => setActiveClaimMatchId(null)}
+                  onClaimSubmitted={() => markClaimSubmitted(match.id)}
+                  onClaimBlocked={() => markClaimBlocked(match.id)}
+                  onMatchesRefresh={() => void refreshMatches()}
+                  hasSubmittedClaim={submittedClaimMatchIds.has(match.id)}
+                  isClaimBlocked={blockedClaimMatchIds.has(match.id)}
+                />
               </div>
             ))}
           </div>
