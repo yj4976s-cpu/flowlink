@@ -52,10 +52,7 @@ def login(request: LoginRequest, response: Response, db: Annotated[Session, Depe
 
 
 @router.post("/logout", response_model=MessageResponse, summary="로그아웃")
-def logout(
-    response: Response,
-    current_user: Annotated[User, Depends(get_current_user_dependency)],
-) -> MessageResponse:
+def logout(response: Response) -> MessageResponse:
     delete_login_cookie(response)
     return MessageResponse(message="Logged out")
 
@@ -67,8 +64,10 @@ def get_me(current_user: Annotated[User, Depends(get_current_user_dependency)]) 
 
 @router.delete("/me", response_model=MessageResponse, summary="회원 탈퇴")
 def delete_me(
+    response: Response,
     current_user: Annotated[User, Depends(get_current_user_dependency)],
     db: Annotated[Session, Depends(get_db)],
 ) -> MessageResponse:
     soft_delete_user(db, current_user)
+    delete_login_cookie(response)
     return MessageResponse(message="User deleted")

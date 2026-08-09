@@ -75,6 +75,14 @@ def login(client: TestClient, email: str = "user@example.com", password: str = "
     return client.post("/api/auth/login", json={"email": email, "password": password})
 
 
+def assert_cookie_deleted(set_cookie: str) -> None:
+    settings = get_settings()
+    assert f"{settings.AUTH_COOKIE_NAME}=" in set_cookie
+    assert "Max-Age=0" in set_cookie
+    assert "HttpOnly" in set_cookie
+    assert "SameSite=lax" in set_cookie
+
+
 def test_login_sets_httponly_cookie_without_exposing_access_token(client: TestClient, db: Session) -> None:
     settings = get_settings()
     seed_user(db)
@@ -129,7 +137,6 @@ def test_me_rejects_missing_or_tampered_cookie(client: TestClient) -> None:
 
 
 def test_logout_deletes_cookie_and_blocks_followup_me(client: TestClient, db: Session) -> None:
-    settings = get_settings()
     seed_user(db)
     assert login(client).status_code == 200
 
@@ -137,11 +144,36 @@ def test_logout_deletes_cookie_and_blocks_followup_me(client: TestClient, db: Se
     me_response = client.get("/api/auth/me")
 
     assert logout_response.status_code == 200
-    set_cookie = logout_response.headers["set-cookie"]
-    assert f"{settings.AUTH_COOKIE_NAME}=" in set_cookie
-    assert "Max-Age=0" in set_cookie
-    assert "HttpOnly" in set_cookie
-    assert "SameSite=lax" in set_cookie
+    assert_cookie_deleted(logout_response.headers["set-cookie"])
+    assert me_response.status_code == 401
+
+
+def test_logout_deletes_tampered_cookie_without_authentication(client: TestClient) -> None:
+    settings = get_settings()
+    client.cookies.set(settings.AUTH_COOKIE_NAME, "not-a-jwt")
+
+    response = client.post("/api/auth/logout")
+
+    assert response.status_code == 200
+    assert_cookie_deleted(response.headers["set-cookie"])
+
+
+def test_logout_without_cookie_is_successful(client: TestClient) -> None:
+    response = client.post("/api/auth/logout")
+
+    assert response.status_code == 200
+    assert_cookie_deleted(response.headers["set-cookie"])
+
+
+def test_delete_me_deletes_cookie_and_blocks_followup_me(client: TestClient, db: Session) -> None:
+    seed_user(db)
+    assert login(client).status_code == 200
+
+    delete_response = client.delete("/api/auth/me")
+    me_response = client.get("/api/auth/me")
+
+    assert delete_response.status_code == 200
+    assert_cookie_deleted(delete_response.headers["set-cookie"])
     assert me_response.status_code == 401
 
 
