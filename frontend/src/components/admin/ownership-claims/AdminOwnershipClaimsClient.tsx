@@ -147,7 +147,10 @@ function ClaimReviewCard({
   onRequestAction: (status: string) => void;
 }) {
   const actions = getAvailableActions(claim.status);
-  const activeConfirmStatus = confirmingAction?.claimId === claim.id ? confirmingAction.status : null;
+  const activeConfirmStatus =
+    confirmingAction?.claimId === claim.id && actions.includes(confirmingAction.status)
+      ? confirmingAction.status
+      : null;
 
   return (
     <article className={styles.card} aria-labelledby={`admin-claim-${claim.id}-title`}>
@@ -310,8 +313,9 @@ export function AdminOwnershipClaimsClient() {
       setClaims(data);
       setError(null);
       setErrorStatus(null);
+      return true;
     } catch {
-      return;
+      return false;
     }
   };
 
@@ -352,6 +356,14 @@ export function AdminOwnershipClaimsClient() {
     setActionErrors((current) => ({ ...current, [claimId]: "" }));
   };
 
+  const clearMemoDraft = (claimId: number) => {
+    setAdminMemos((current) => {
+      const next = { ...current };
+      delete next[claimId];
+      return next;
+    });
+  };
+
   const updateClaimStatus = async (claimId: number, status: string) => {
     if (processingClaimId !== null) return;
     setProcessingClaimId(claimId);
@@ -367,13 +379,24 @@ export function AdminOwnershipClaimsClient() {
       setActionMessages((current) => ({ ...current, [claimId]: successMessages[status] }));
       setConfirmingAction(null);
     } catch (caught) {
+      if (caught instanceof AdminOwnershipClaimsApiError && (caught.status === 404 || caught.status === 409)) {
+        setConfirmingAction(null);
+        const refreshed = await refreshClaims();
+        if (refreshed) clearMemoDraft(claimId);
+        const message = refreshed
+          ? caught.status === 404
+            ? "해당 요청을 찾을 수 없습니다. 최신 목록을 다시 불러왔습니다."
+            : "요청 상태가 이미 변경되었습니다. 최신 정보를 다시 불러왔습니다."
+          : caught.status === 404
+            ? "해당 요청을 찾을 수 없습니다. 최신 목록을 다시 불러오지 못했습니다. 다시 새로고침해주세요."
+            : "요청 상태가 이미 변경되었습니다. 최신 정보를 다시 불러오지 못했습니다. 다시 새로고침해주세요.";
+        setActionErrors((current) => ({ ...current, [claimId]: message }));
+        return;
+      }
       const message = caught instanceof AdminOwnershipClaimsApiError
         ? caught.message
         : "요청 상태를 변경하지 못했습니다. 잠시 후 다시 시도해주세요.";
       setActionErrors((current) => ({ ...current, [claimId]: message }));
-      if (caught instanceof AdminOwnershipClaimsApiError && (caught.status === 404 || caught.status === 409)) {
-        void refreshClaims();
-      }
     } finally {
       setProcessingClaimId(null);
     }
