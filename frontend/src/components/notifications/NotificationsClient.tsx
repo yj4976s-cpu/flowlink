@@ -291,6 +291,7 @@ export function NotificationsClient() {
   const handleMarkRead = async (notificationId: number) => {
     if (processingReadIdsRef.current.has(notificationId)) return;
     const filterAtReadStart = currentFilterRef.current;
+    const requestSequenceAtReadStart = requestSequence.current;
 
     const nextProcessingReadIds = new Set(processingReadIdsRef.current);
     nextProcessingReadIds.add(notificationId);
@@ -305,7 +306,8 @@ export function NotificationsClient() {
     try {
       const updatedNotification = await markNotificationRead(notificationId);
       const currentFilter = currentFilterRef.current;
-      if (currentFilter !== filterAtReadStart) {
+      const listRequestChanged = requestSequence.current !== requestSequenceAtReadStart;
+      if (currentFilter !== filterAtReadStart || listRequestChanged) {
         setLiveMessage("알림을 읽음 처리하고 현재 필터를 최신 상태로 확인합니다.");
         void refreshNotifications({ clearReadErrors: false, showLoading: false });
         return;
