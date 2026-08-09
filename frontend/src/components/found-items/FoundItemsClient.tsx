@@ -99,6 +99,7 @@ export function FoundItemsClient() {
   const [filters, setFilters] = useState(emptyFilters);
   const [openFilter, setOpenFilter] = useState<OpenFilter>(null);
   const [areaSearch, setAreaSearch] = useState("");
+  const [selectedRegion, setSelectedRegion] = useState("");
   const [items, setItems] = useState<FoundItemListItem[]>([]);
   const [areaOptions, setAreaOptions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -125,12 +126,14 @@ export function FoundItemsClient() {
       return !isAlreadyLoaded && matchesKeyword;
     });
   }, [areaSearch, filteredAreaOptions]);
+  const areaFieldValue = filters.area_name || selectedRegion;
 
-  const loadItems = useCallback(async (nextFilters: typeof emptyFilters, signal?: AbortSignal) => {
+  const loadItems = useCallback(async (nextFilters: typeof emptyFilters, signal?: AbortSignal, regionKeyword = selectedRegion) => {
     setLoading(true);
     setError(null);
     try {
-      const data = await listFoundItems(normalizeFilters(nextFilters), signal);
+      const requestFilters = normalizeFilters(nextFilters.area_name.trim() ? nextFilters : regionKeyword ? { ...nextFilters, q: regionKeyword, area_name: "" } : nextFilters);
+      const data = await listFoundItems(requestFilters, signal);
       setItems(data);
       setAreaOptions((current) => mergeAreaOptions(current, data));
     } catch (caught) {
@@ -144,7 +147,7 @@ export function FoundItemsClient() {
         setHasLoaded(true);
       }
     }
-  }, []);
+  }, [selectedRegion]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -179,14 +182,16 @@ export function FoundItemsClient() {
   const resetFilters = () => {
     setFilters(emptyFilters);
     setAreaSearch("");
-    void loadItems(emptyFilters);
+    setSelectedRegion("");
+    void loadItems(emptyFilters, undefined, "");
   };
 
   const applyQuickFilter = (patch: Partial<typeof emptyFilters>) => {
     const nextFilters = { ...filters, ...patch };
     setFilters(nextFilters);
+    if (patch.area_name !== undefined) setSelectedRegion("");
     setOpenFilter(null);
-    void loadItems(nextFilters);
+    void loadItems(nextFilters, undefined, patch.area_name !== undefined ? "" : selectedRegion);
   };
 
   const searchAreaAsKeyword = () => {
@@ -194,8 +199,9 @@ export function FoundItemsClient() {
     if (!areaKeyword) return;
     const nextFilters = { ...filters, q: areaKeyword, area_name: "" };
     setFilters(nextFilters);
+    setSelectedRegion("");
     setOpenFilter(null);
-    void loadItems(nextFilters);
+    void loadItems(nextFilters, undefined, "");
   };
 
   const searchAreaExactly = () => {
@@ -203,16 +209,23 @@ export function FoundItemsClient() {
     if (!areaName) return;
     const nextFilters = { ...filters, area_name: areaName };
     setFilters(nextFilters);
+    setSelectedRegion("");
     setOpenFilter(null);
-    void loadItems(nextFilters);
+    void loadItems(nextFilters, undefined, "");
   };
 
   const searchRegionSuggestion = (region: string) => {
-    const nextFilters = { ...filters, q: region, area_name: "" };
+    const nextFilters = { ...filters, q: "", area_name: "" };
     setFilters(nextFilters);
     setAreaSearch(region);
+    setSelectedRegion(region);
     setOpenFilter(null);
-    void loadItems(nextFilters);
+    void loadItems(nextFilters, undefined, region);
+  };
+
+  const clearAreaSearch = () => {
+    setAreaSearch("");
+    setSelectedRegion("");
   };
 
   const toggleFilter = (filter: OpenFilter) => {
@@ -220,7 +233,7 @@ export function FoundItemsClient() {
   };
 
   const openAreaPicker = () => {
-    setAreaSearch(filters.area_name);
+    setAreaSearch(areaFieldValue);
     setOpenFilter("area_name");
   };
 
@@ -287,7 +300,11 @@ export function FoundItemsClient() {
           <label>
             <span>발견 구역</span>
             <div className="found-input-menu">
-              <input value={filters.area_name} onChange={(event) => setFilters((current) => ({ ...current, area_name: event.target.value }))} name="area_name" placeholder="예: 한강공원 A구역" />
+              <input value={areaFieldValue} onChange={(event) => {
+                setSelectedRegion("");
+                setAreaSearch(event.target.value);
+                setFilters((current) => ({ ...current, area_name: event.target.value }));
+              }} name="area_name" placeholder="예: 한강공원 A구역" />
               <button type="button" aria-label="발견 구역 선택 팝업 열기" aria-expanded={openFilter === "area_name"} onClick={openAreaPicker}>
                 <Icon name="arrow" size={15} />
               </button>
@@ -324,6 +341,11 @@ export function FoundItemsClient() {
               <span className="sr-only">지역 검색</span>
               <Icon name="scan" size={20} />
               <input value={areaSearch} onChange={(event) => setAreaSearch(event.target.value)} placeholder="지역 검색" autoFocus />
+              {areaSearch && (
+                <button type="button" aria-label="지역 검색어 지우기" onClick={clearAreaSearch}>
+                  <Icon name="close" size={18} />
+                </button>
+              )}
             </label>
             {filteredAreaOptions.length > 0 ? (
               <div className="area-picker-grid" role="list" aria-label="등록된 발견 구역">
