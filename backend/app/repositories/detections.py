@@ -89,6 +89,12 @@ def complete_detection_event(
     event.processing_completed_at = completed_at
     event.error_message = None
     db.add(event)
+    if event.video_job is not None:
+        event.video_job.status = "COMPLETED"
+        event.video_job.processing_progress = 100
+        event.video_job.processing_completed_at = completed_at
+        event.video_job.error_message = None
+        db.add(event.video_job)
     for detected_object in objects:
         db.add(detected_object)
     db.flush()

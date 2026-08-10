@@ -245,8 +245,14 @@ def test_video_detection_creates_video_job(client: TestClient, db: Session) -> N
 
     assert response.status_code == 201
     assert response.json()["status"] == "COMPLETED"
+    event = db.query(DetectionEvent).one()
+    assert event.status == "COMPLETED"
     job = db.query(VideoJob).one()
     assert job.detection_event_id == response.json()["id"]
+    assert job.status == "COMPLETED"
+    assert job.processing_progress == 100
+    assert job.processing_completed_at is not None
+    assert job.error_message is None
 
 
 def test_zero_detection_is_completed_without_objects(client: TestClient, db: Session) -> None:
@@ -260,6 +266,7 @@ def test_zero_detection_is_completed_without_objects(client: TestClient, db: Ses
     assert response.json()["status"] == "COMPLETED"
     assert response.json()["detected_objects"] == []
     assert db.query(DetectedObject).count() == 0
+    assert db.query(VideoJob).count() == 0
 
 
 def test_unknown_or_inactive_class_fails_without_unknown_fallback(client: TestClient, db: Session) -> None:
