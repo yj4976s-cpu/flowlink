@@ -21,6 +21,7 @@ def create_lost_report_for_user(
     *,
     current_user: User,
     request: LostReportCreateRequest,
+    image_url: str | None = None,
 ) -> LostReportResponse:
     object_class = get_active_personal_object_class(db, request.item_category)
     if object_class is None:
@@ -49,6 +50,7 @@ def create_lost_report_for_user(
         description=description,
         area_name=area_name,
         lost_from=lost_from,
+        image_url=image_url,
         status="OPEN",
         created_at=now,
         updated_at=now,

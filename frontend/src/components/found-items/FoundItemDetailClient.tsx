@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Icon } from "@/components/common/Icon";
-import { FoundItemDetail, FoundItemsApiError, getFoundItem } from "@/lib/foundItemsApi";
+import { FoundItemDetail, FoundItemsApiError, getFoundItem, resolveFoundItemImageUrl } from "@/lib/foundItemsApi";
+import { listMyMatches, type MatchCandidate } from "@/lib/matchesApi";
 
 const dateFormatter = new Intl.DateTimeFormat("ko-KR", {
   dateStyle: "medium",
@@ -32,6 +33,8 @@ export function FoundItemDetailClient() {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [relatedMatch, setRelatedMatch] = useState<MatchCandidate | null>(null);
+  const [imageFailed, setImageFailed] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -48,6 +51,12 @@ export function FoundItemDetailClient() {
       try {
         const data = await getFoundItem(id, controller.signal);
         setItem(data);
+        try {
+          const matches = await listMyMatches(controller.signal);
+          setRelatedMatch(matches.find((match) => match.found_item.id === data.id) ?? null);
+        } catch {
+          setRelatedMatch(null);
+        }
       } catch (caught) {
         if (caught instanceof DOMException && caught.name === "AbortError") return;
         if (caught instanceof FoundItemsApiError && caught.status === 404) {
@@ -81,6 +90,7 @@ export function FoundItemDetailClient() {
       {!loading && error && <section className="found-state-card found-state-error" role="alert">{error}</section>}
       {!loading && item && (
         <article className="found-detail-card" aria-labelledby="found-detail-title">
+          <div className="found-detail-image">{resolveFoundItemImageUrl(item.image_url) && !imageFailed ? <img src={resolveFoundItemImageUrl(item.image_url)!} alt={`${item.item_category_name} 발견물 이미지`} onError={() => setImageFailed(true)} /> : <Icon name="fileSearch" size={42} />}</div>
           <div className="found-detail-summary">
             <p className="placeholder-eyebrow">FOUND ITEM DETAIL</p>
             <div className="found-detail-title-row">
@@ -116,6 +126,21 @@ export function FoundItemDetailClient() {
               <dd><time dateTime={item.created_at}>{formatDateTime(item.created_at)}</time></dd>
             </div>
           </dl>
+          {relatedMatch && (
+            <section className="found-detail-compare" aria-labelledby="found-compare-title">
+              <div className="found-detail-compare-heading">
+                <div><p className="placeholder-eyebrow">MY REPORT COMPARE</p><h2 id="found-compare-title">내 분실 신고와 비교</h2></div>
+                <strong>{relatedMatch.total_score}% 유사</strong>
+              </div>
+              <div className="found-detail-compare-grid">
+                <article><span>내 신고</span><h3>{relatedMatch.lost_report.item_category_name}</h3><p>{relatedMatch.lost_report.area_name} · {formatDateTime(relatedMatch.lost_report.lost_from)}</p></article>
+                <Icon name="match" size={24} />
+                <article><span>발견물</span><h3>{relatedMatch.found_item.item_category_name}</h3><p>{relatedMatch.found_item.area_name} · {formatDateTime(relatedMatch.found_item.found_at)}</p></article>
+              </div>
+              <p>신고 내용과 조건이 유사한 발견물입니다. 상세 점수와 공개되지 않은 특징 입력은 기존 확인 절차에서 진행합니다.</p>
+              <Link className="button button-primary" href="/matches">비교 결과 확인 및 내 물건으로 확인 요청</Link>
+            </section>
+          )}
         </article>
       )}
     </main>

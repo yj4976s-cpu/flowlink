@@ -15,6 +15,7 @@ export type LostReportResponse = {
   area_name: string;
   lost_from: string;
   lost_to: string | null;
+  image_url: string | null;
   status: string;
   created_at: string;
 };
@@ -43,6 +44,8 @@ function getFallbackMessage(status: number) {
   if (status === 400) return "입력한 신고 내용을 다시 확인해주세요.";
   if (status === 409) return "분실 신고를 저장하는 중 충돌이 발생했습니다. 잠시 후 다시 시도해주세요.";
   if (status === 422) return "입력값 검증에 실패했습니다. 필수 항목과 형식을 확인해주세요.";
+  if (status === 413) return "이미지는 5MB 이하만 업로드할 수 있습니다.";
+  if (status === 415) return "JPEG, PNG, WebP 이미지 파일만 업로드할 수 있습니다.";
   return "분실 신고를 등록하지 못했습니다. 잠시 후 다시 시도해주세요.";
 }
 
@@ -67,19 +70,29 @@ async function readErrorMessage(response: Response) {
   return getFallbackMessage(response.status);
 }
 
-export async function createLostReport(request: LostReportCreateRequest) {
-  const response = await fetch(buildApiUrl("/api/lost-reports"), {
-    method: "POST",
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(buildApiUrl(path), {
+    ...init,
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(request),
   });
+  if (!response.ok) throw new LostReportsApiError(await readErrorMessage(response), response.status);
+  return response.json() as Promise<T>;
+}
 
-  if (!response.ok) {
-    throw new LostReportsApiError(await readErrorMessage(response), response.status);
-  }
+export async function createLostReport(request: LostReportCreateRequest, image?: File) {
+  const body = new FormData();
+  body.set("item_category", request.item_category);
+  if (request.color) body.set("color", request.color);
+  body.set("description", request.description);
+  body.set("lost_location", request.lost_location);
+  body.set("lost_at", request.lost_at);
+  if (image) body.set("image", image);
+  return requestJson<LostReportResponse>("/api/lost-reports", {
+    method: "POST",
+    body,
+  });
+}
 
-  return response.json() as Promise<LostReportResponse>;
+export function listMyLostReports(signal?: AbortSignal) {
+  return requestJson<LostReportResponse[]>("/api/lost-reports/me?skip=0&limit=20", { signal });
 }

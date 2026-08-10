@@ -41,5 +41,6 @@ class LostReportResponse(BaseModel):
     area_name: str
     lost_from: datetime
     lost_to: datetime | None
+    image_url: str | None
     status: str
     created_at: datetime

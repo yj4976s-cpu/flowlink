@@ -174,6 +174,15 @@ export function FoundItemsClient() {
     return () => controller.abort();
   }, []);
 
+  useEffect(() => {
+    if (!openFilter) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpenFilter(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [openFilter]);
+
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     void loadItems(filters);
@@ -322,7 +331,13 @@ export function FoundItemsClient() {
         <div className="found-quick-filters" aria-label="빠른 검색 조건">
           <span>빠른 검색</span>
           {quickFilters.map((filter) => (
-            <button key={filter.label} type="button" onClick={() => applyQuickFilter(filter.patch)} disabled={loading}>
+            <button
+              key={filter.label}
+              type="button"
+              aria-pressed={Object.entries(filter.patch).every(([key, value]) => filters[key as keyof typeof filters] === value)}
+              onClick={() => applyQuickFilter(filter.patch)}
+              disabled={loading}
+            >
               {filter.label}
             </button>
           ))}
@@ -330,7 +345,9 @@ export function FoundItemsClient() {
       </section>
 
       {openFilter === "area_name" && (
-        <div className="area-picker-backdrop" role="presentation">
+        <div className="area-picker-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setOpenFilter(null);
+        }}>
           <section className="area-picker-dialog" role="dialog" aria-modal="true" aria-labelledby="area-picker-title">
             <div className="area-picker-heading">
               <div>
@@ -397,7 +414,12 @@ export function FoundItemsClient() {
           <div><p>PUBLIC LIST</p><h2 id="found-results-title">공개 발견물</h2></div>
         </div>
 
-        {loading && <div className="found-state-card" role="status"><Icon name="scan" size={24} /><span>발견물 목록을 불러오고 있습니다.</span></div>}
+        {loading && (
+          <div className="found-skeleton-grid" role="status" aria-label="발견물 목록을 불러오고 있습니다.">
+            <span className="sr-only">발견물 목록을 불러오고 있습니다.</span>
+            {[0, 1, 2].map((item) => <div className="found-skeleton-card" aria-hidden="true" key={item}><i /><i /><i /><i /></div>)}
+          </div>
+        )}
         {!loading && error && (
           <div className="found-state-card found-state-error" role="alert">
             <Icon name="spark" size={24} />

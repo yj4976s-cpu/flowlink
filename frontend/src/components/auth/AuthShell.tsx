@@ -9,27 +9,37 @@ import { useTheme } from "@/components/theme/ThemeProvider";
 import { AuthApiError, getCurrentUser, login, register } from "@/lib/authApi";
 
 type AuthMode = "login" | "register";
+type AuthPortal = "default" | "admin";
 type FieldErrors = Record<string, string>;
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const loginScene = {
   dawn: {
-    title: <>발견된 순간부터<br />다시 이어질 때까지</>,
+    moment: "FLOW 01 · DISCOVER",
+    title: <>새로운 발견이<br />흐름을 시작합니다</>,
+    description: <>수면 위 발견을 놓치지 않고<br />다시 연결될 가능성을 찾습니다.</>,
+    activeStep: 0,
     detections: [
       { id: "umbrella", object: "우산", confidence: 94, role: "main" },
       { id: "bag", object: "백팩", confidence: 88, role: "secondary" },
     ],
   },
   day: {
-    title: <>흐름을 따라<br />다시 만나는 순간</>,
+    moment: "FLOW 02 · CONNECT",
+    title: <>발견된 순간이<br />다시 연결되는 과정</>,
+    description: <>신고와 발견물 후보를 비교해<br />이어질 가능성을 확인합니다.</>,
+    activeStep: 1,
     detections: [
       { id: "bag", object: "백팩", confidence: 92, role: "main" },
       { id: "footwear", object: "신발", confidence: 87, role: "secondary" },
     ],
   },
   night: {
-    title: <>밤의 흐름 속에서도<br />놓치지 않는 연결</>,
+    moment: "FLOW 03 · RETURN",
+    title: <>하루가 지나도<br />연결은 계속됩니다</>,
+    description: <>확인 중인 발견과 신고의 흐름을<br />반환까지 이어갑니다.</>,
+    activeStep: 2,
     detections: [
       { id: "bag", object: "백팩", confidence: 92, role: "secondary" },
       { id: "footwear", object: "신발", confidence: 91, role: "main" },
@@ -124,7 +134,7 @@ function PasswordField({
         <button
           type="button"
           className="password-toggle"
-          aria-label={visible ? `${label} 숨기기` : `${label} 표시`}
+          aria-label={visible ? `${label} 숨기기` : `${label} 보기`}
           aria-pressed={visible}
           onClick={() => setVisible((value) => !value)}
         >
@@ -142,7 +152,7 @@ function PasswordField({
   );
 }
 
-function AuthVisual({ mode }: { mode: AuthMode }) {
+function AuthVisual({ mode, portal }: { mode: AuthMode; portal: AuthPortal }) {
   const isLogin = mode === "login";
   const { theme } = useTheme();
 
@@ -153,11 +163,15 @@ function AuthVisual({ mode }: { mode: AuthMode }) {
         <div key={theme} className="auth-login-sequence">
           <div className="auth-login-scene" aria-hidden="true" />
           <div className="auth-visual-content">
-            <p className="auth-visual-eyebrow">AI DETECTION</p>
+            <p className="auth-visual-eyebrow">{portal === "admin" ? "OPERATIONS FLOW" : "AI DETECTION"}</p>
             <h2>{scene.title}</h2>
-            <p>발견과 반환 사이의 흐름을<br />FlowLink가 연결합니다.</p>
-            <div className="auth-micro-flow auth-login-flow" aria-label="발견, 연결, 반환 흐름">
-              {["발견", "연결", "반환"].map((step) => <span key={step}><i />{step}</span>)}
+            <p>{scene.description}</p>
+            <div className="auth-micro-flow auth-login-flow" aria-label={`발견, 연결, 반환 흐름. 현재 단계: ${["발견", "연결", "반환"][scene.activeStep]}`}>
+              {["발견", "연결", "반환"].map((step, index) => (
+                <span key={step} className={index < scene.activeStep ? "is-complete" : index === scene.activeStep ? "is-current" : "is-pending"} aria-current={index === scene.activeStep ? "step" : undefined}>
+                  <i aria-hidden="true" />{step}
+                </span>
+              ))}
             </div>
           </div>
           {scene.detections.map((detection, index) => (
@@ -166,7 +180,7 @@ function AuthVisual({ mode }: { mode: AuthMode }) {
               <i className="auth-detection-leader" aria-hidden="true" />
               <div className="auth-detection-card">
                 <span className="auth-detection-name">{detection.object}</span>
-                <strong><span>신뢰도</span> <em><ConfidenceCount target={detection.confidence} delay={index === 0 ? 450 : 590} duration={600} /></em></strong>
+                <strong><span>신뢰도</span> <em>{detection.confidence}%</em></strong>
                 <i aria-hidden="true" />
               </div>
             </div>
@@ -190,13 +204,34 @@ function AuthVisual({ mode }: { mode: AuthMode }) {
   );
 }
 
-export function AuthShell({ mode }: { mode: AuthMode }) {
+export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal?: AuthPortal }) {
   const isLogin = mode === "login";
+  const isAdminPortal = isLogin && portal === "admin";
   const router = useRouter();
   const { theme } = useTheme();
   const [errors, setErrors] = useState<FieldErrors>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCheckingSession, setIsCheckingSession] = useState(isLogin);
   const [submitMessage, setSubmitMessage] = useState("");
+  const [roleMismatch, setRoleMismatch] = useState(false);
+
+  useEffect(() => {
+    if (!isLogin) return;
+    let active = true;
+    getCurrentUser().then((currentUser) => {
+      if (!active) return;
+      if (currentUser.role === "ADMIN") router.replace("/admin");
+      else if (isAdminPortal) {
+        setRoleMismatch(true);
+        setSubmitMessage("일반 사용자 계정입니다. FlowLink 사용자 서비스에서 이용해주세요.");
+      } else router.replace("/");
+    }).catch(() => {
+      // A missing or expired cookie simply means the login form should be shown.
+    }).finally(() => {
+      if (active) setIsCheckingSession(false);
+    });
+    return () => { active = false; };
+  }, [isAdminPortal, isLogin, router]);
 
   const validate = (form: HTMLFormElement) => {
     const data = new FormData(form);
@@ -224,6 +259,7 @@ export function AuthShell({ mode }: { mode: AuthMode }) {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSubmitMessage("");
+    setRoleMismatch(false);
     const nextErrors = validate(event.currentTarget);
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
@@ -247,11 +283,18 @@ export function AuthShell({ mode }: { mode: AuthMode }) {
       }
 
       const currentUser = await getCurrentUser();
-      setSubmitMessage(`${currentUser.nickname}님, 환영합니다.`);
-      router.replace(isLogin ? getSafeNextPath() : "/");
+      if (isAdminPortal && currentUser.role !== "ADMIN") {
+        setRoleMismatch(true);
+        setSubmitMessage("일반 사용자 계정입니다. FlowLink 사용자 서비스에서 이용해주세요.");
+        return;
+      }
+      setSubmitMessage(currentUser.role === "ADMIN" ? "운영자 계정을 확인했습니다. 운영 허브로 이동합니다." : "로그인되었습니다.");
+      router.replace(currentUser.role === "ADMIN" ? "/admin" : isLogin ? getSafeNextPath() : "/");
       router.refresh();
     } catch (error) {
-      const message = error instanceof AuthApiError
+      const message = error instanceof AuthApiError && error.status === 401
+        ? "이메일 또는 비밀번호를 확인해주세요."
+        : error instanceof AuthApiError
         ? error.message
         : "인증 요청 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
       setSubmitMessage(message);
@@ -261,7 +304,7 @@ export function AuthShell({ mode }: { mode: AuthMode }) {
   };
 
   return (
-    <div className={`auth-page auth-page-${mode}`}>
+    <div className={`auth-page auth-page-${mode}${isAdminPortal ? " auth-page-admin" : ""}`}>
       <header className="auth-header">
         <FlowLinkLogo />
         <div className="auth-header-actions">
@@ -270,12 +313,12 @@ export function AuthShell({ mode }: { mode: AuthMode }) {
         </div>
       </header>
       <main className="auth-main">
-        <AuthVisual mode={mode} />
+        <AuthVisual mode={mode} portal={portal} />
         <section className="auth-form-panel" aria-labelledby="auth-title">
           <form className="auth-form" noValidate onSubmit={handleSubmit}>
-            <p className="auth-form-eyebrow">{isLogin ? "WELCOME BACK" : "GET STARTED"}</p>
-            <h1 id="auth-title">{isLogin ? "다시 만나서 반가워요" : <>FlowLink를 <span>시작해볼까요?</span></>}</h1>
-            <p className="auth-form-description">{isLogin ? "FlowLink에 로그인해 매칭과 신고 내역을 확인하세요." : registerScene[theme].description}</p>
+            <p className="auth-form-eyebrow">{isLogin ? <span key={theme} className="auth-moment-label">{loginScene[theme].moment}</span> : "GET STARTED"}</p>
+            <h1 id="auth-title">{isLogin ? "다시, 연결을 이어가세요" : <>FlowLink를 <span>시작해볼까요?</span></>}</h1>
+            <p className="auth-form-description">{isLogin ? "로그인하고 신고와 발견의 진행 상황을 확인하세요." : registerScene[theme].description}</p>
 
             <div className="auth-fields">
               <div className="auth-field">
@@ -303,11 +346,13 @@ export function AuthShell({ mode }: { mode: AuthMode }) {
               </fieldset>
             )}
 
-            <button className="button button-primary auth-submit" type="submit" disabled={isSubmitting}>
-              {isSubmitting ? (isLogin ? "로그인 중..." : "가입 중...") : (isLogin ? "로그인" : "FlowLink 시작하기")}
+            <button className="button button-primary auth-submit" type="submit" disabled={isSubmitting || isCheckingSession}>
+              {isCheckingSession ? "로그인 확인 중..." : isSubmitting ? (isLogin ? "로그인 확인 중..." : "가입 중...") : (isAdminPortal ? "운영 허브 로그인" : isLogin ? "로그인" : "FlowLink 시작하기")}
             </button>
-            {submitMessage && <p className="auth-submit-message" role="status">{submitMessage}</p>}
-            <p className="auth-switch">{isLogin ? "계정이 없으신가요?" : "이미 계정이 있으신가요?"} <Link href={isLogin ? "/register" : "/login"}>{isLogin ? "회원가입" : "로그인"}</Link></p>
+            {submitMessage && <p className={`auth-submit-message${roleMismatch ? " is-error" : ""}`} role={roleMismatch ? "alert" : "status"}>{submitMessage}</p>}
+            {isAdminPortal ? <p className="auth-switch"><Link href="/login">일반 로그인으로 돌아가기</Link></p> : <p className="auth-switch">{isLogin ? "계정이 없으신가요?" : "이미 계정이 있으신가요?"} <Link href={isLogin ? "/register" : "/login"}>{isLogin ? "회원가입" : "로그인"}</Link></p>}
+            {roleMismatch && <Link className="auth-role-action" href="/">사용자 서비스로 이동</Link>}
+            {isLogin && !isAdminPortal && <p className="auth-portal-link">운영자이신가요? <Link href="/admin/login">운영 허브 로그인</Link></p>}
           </form>
         </section>
       </main>

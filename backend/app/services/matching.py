@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 
 from app.core.security import to_utc, utc_now
 from app.models import FoundItem, LostReport, MatchCandidate, Notification
@@ -117,4 +118,40 @@ def create_match_candidates_for_lost_report(db: Session, lost_report: LostReport
         lost_report.status = "MATCHED"
         lost_report.updated_at = now
 
+    return created
+
+
+def create_match_candidates_for_found_item(db: Session, found_item: FoundItem) -> list[MatchCandidate]:
+    created: list[MatchCandidate] = []
+    reports = db.scalars(
+        select(LostReport).where(
+            LostReport.object_class_id == found_item.object_class_id,
+            LostReport.status.in_(("OPEN", "MATCHED")),
+        )
+    ).all()
+    for lost_report in reports:
+        if lost_report.lost_from.tzinfo is None:
+            lost_report.lost_from = lost_report.lost_from.replace(tzinfo=utc_now().tzinfo)
+        score = calculate_match_score(lost_report, found_item)
+        if score is None or score.total_score < MATCH_THRESHOLD or match_candidate_exists(db, lost_report.id, found_item.id):
+            continue
+        now = utc_now()
+        candidate = MatchCandidate(
+            lost_report_id=lost_report.id, found_item_id=found_item.id,
+            total_score=score.total_score, type_score=score.type_score,
+            area_score=score.area_score, time_score=score.time_score,
+            keyword_score=score.keyword_score, status="NOTIFIED",
+            created_at=now, updated_at=now,
+        )
+        add_match_candidate(db, candidate)
+        db.flush()
+        add_notification(db, Notification(
+            user_id=lost_report.user_id, notification_type="MATCH_FOUND",
+            title="매칭 후보가 발견되었습니다",
+            message="등록한 분실 신고와 유사한 발견물이 있습니다.",
+            related_type="MATCH_CANDIDATE", related_id=candidate.id, created_at=now,
+        ))
+        lost_report.status = "MATCHED"
+        lost_report.updated_at = now
+        created.append(candidate)
     return created

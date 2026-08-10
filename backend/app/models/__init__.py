@@ -1,5 +1,7 @@
 from app.models.entities import (
     Camera,
+    CitizenReport,
+    CitizenSighting,
     DetectedObject,
     DetectionEvent,
     FoundItem,
@@ -15,6 +17,8 @@ from app.models.entities import (
 
 __all__ = [
     "Camera",
+    "CitizenReport",
+    "CitizenSighting",
     "DetectedObject",
     "DetectionEvent",
     "FoundItem",

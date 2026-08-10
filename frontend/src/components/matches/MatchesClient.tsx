@@ -1,46 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { Icon } from "@/components/common/Icon";
+import type { IconName } from "@/components/common/Icon";
 import { OwnershipClaimForm } from "@/components/ownership-claims/OwnershipClaimForm";
-import { MatchesApiError, listMyMatches } from "@/lib/matchesApi";
+import { listMyLostReports } from "@/lib/lostReportsApi";
+import type { LostReportResponse } from "@/lib/lostReportsApi";
+import { MatchesApiError, listMyMatches, resolveMatchImageUrl } from "@/lib/matchesApi";
 import type { MatchCandidate } from "@/lib/matchesApi";
+import { getItemTypeMeta } from "@/lib/itemTypeMeta";
 import styles from "./MatchesClient.module.css";
 
-const dateTimeFormatter = new Intl.DateTimeFormat("ko-KR", {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
-
-const matchStatusLabels: Record<string, string> = {
-  SUGGESTED: "후보 생성",
-  NOTIFIED: "매칭 알림",
-  VIEWED: "확인함",
-  DISMISSED: "제외됨",
-  CLAIMED: "확인 요청됨",
-};
-
-const lostReportStatusLabels: Record<string, string> = {
-  OPEN: "신고 접수",
-  MATCHED: "후보 확인 중",
-  CLAIM_PENDING: "소유권 확인 중",
-  RESOLVED: "처리 완료",
-  CANCELLED: "취소됨",
-};
-
-const foundItemStatusLabels: Record<string, string> = {
-  AVAILABLE: "공개 중",
-  RECOVERED: "회수됨",
-  CLAIM_PENDING: "소유권 확인 중",
-  RETURNED: "반환 완료",
-  DISPOSED: "처분됨",
-};
-
+const dateTimeFormatter = new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" });
+const matchStatusLabels: Record<string, string> = { SUGGESTED: "후보 생성", NOTIFIED: "새 후보", VIEWED: "확인함", DISMISSED: "제외됨", CLAIMED: "확인 요청됨" };
 const publicFoundItemDetailStatuses = new Set(["AVAILABLE", "RECOVERED"]);
 const claimableLostReportStatuses = new Set(["OPEN", "MATCHED"]);
-
 const scoreParts = [
   { key: "type_score", label: "물품 종류", max: 40 },
   { key: "area_score", label: "발견 구역", max: 25 },
@@ -53,415 +29,231 @@ function formatDateTime(value: string) {
   return Number.isNaN(date.getTime()) ? "일시 확인 중" : dateTimeFormatter.format(date);
 }
 
-function getLabel(labels: Record<string, string>, status: string) {
-  return labels[status] ?? status;
-}
-
-function canOpenFoundItemDetail(status: string) {
-  return publicFoundItemDetailStatuses.has(status);
-}
-
-function canCreateOwnershipClaim(match: MatchCandidate) {
-  return match.found_item.status === "AVAILABLE" && claimableLostReportStatuses.has(match.lost_report.status);
-}
-
-function getOwnershipClaimUnavailableMessage(match: MatchCandidate, hasSubmittedClaim: boolean, isClaimBlocked: boolean) {
-  if (hasSubmittedClaim) {
-    return "소유권 확인 진행 중";
-  }
-  if (isClaimBlocked) {
-    return "현재 확인 요청을 진행할 수 없습니다. 목록을 새로 확인해주세요.";
-  }
-  if (match.found_item.status === "CLAIM_PENDING" || match.lost_report.status === "CLAIM_PENDING") {
-    return "소유권 확인 진행 중";
-  }
-  if (match.found_item.status === "RETURNED" || match.lost_report.status === "RESOLVED") {
-    return "반환 절차가 완료된 후보입니다.";
-  }
-  if (match.found_item.status === "DISPOSED" || match.lost_report.status === "CANCELLED") {
-    return "현재 확인 요청을 보낼 수 없는 후보입니다.";
-  }
-  if (match.found_item.status !== "AVAILABLE") {
-    return "현재 발견물 상태에서는 확인 요청을 보낼 수 없습니다.";
-  }
-  if (!claimableLostReportStatuses.has(match.lost_report.status)) {
-    return "현재 분실 신고 상태에서는 확인 요청을 보낼 수 없습니다.";
-  }
-  return null;
+function categoryIcon(code: string): IconName {
+  return getItemTypeMeta(code).icon;
 }
 
 function scoreBarStyle(score: number, max: number): CSSProperties {
-  const ratio = max > 0 ? Math.min(Math.max(score / max, 0), 1) : 0;
-  return { width: `${ratio * 100}%` };
+  return { width: `${Math.min(Math.max(score / max, 0), 1) * 100}%` };
 }
 
-function MatchStateCard({
-  icon,
-  title,
-  description,
-  action,
-  tone = "default",
-}: {
-  icon: "scan" | "document" | "spark";
-  title: string;
-  description: string;
-  action?: ReactNode;
-  tone?: "default" | "error";
-}) {
+function scoreLabel(score: number) {
+  if (score >= 85) return "일치 가능성 높음";
+  if (score >= 65) return "확인 권장";
+  if (score >= 40) return "일부 조건 일치";
+  return "낮은 일치 가능성";
+}
+
+function CandidateVisual({ match }: { match: MatchCandidate }) {
+  const imageUrl = resolveMatchImageUrl(match.found_item.image_url);
+  const [failed, setFailed] = useState(false);
   return (
-    <div className={`${styles.stateCard} ${tone === "error" ? styles.stateError : ""}`} role={tone === "error" ? "alert" : "status"}>
-      <Icon name={icon} size={26} />
-      <div>
-        <strong>{title}</strong>
-        <p>{description}</p>
-        {action}
-      </div>
+    <div className={styles.candidateVisual}>
+      {imageUrl && !failed ? (
+        // Existing storage URLs can be external and are not constrained to Next Image host patterns.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={imageUrl} alt={`${match.found_item.item_category_name} 발견물`} onError={() => setFailed(true)} />
+      ) : (
+        <Icon name={categoryIcon(match.found_item.item_category)} size={52} />
+      )}
+      <span>공개 발견물</span>
     </div>
   );
 }
 
-function ScoreBreakdown({ match }: { match: MatchCandidate }) {
+function LostReportVisual({ report }: { report: LostReportResponse }) {
+  const imageUrl = resolveMatchImageUrl(report.image_url);
+  const [failed, setFailed] = useState(false);
+  return <span className={styles.objectIcon}>{imageUrl && !failed
+    ? <>
+      {/* Upload URLs may be external and are not constrained to Next Image host patterns. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={imageUrl} alt={`${report.item_category_name} 분실 신고 이미지`} onError={() => setFailed(true)} />
+    </>
+    : <Icon name={categoryIcon(report.item_category)} size={27} />}</span>;
+}
+
+function MatchState({ icon, title, description, action, error = false }: { icon: IconName; title: string; description: string; action?: ReactNode; error?: boolean }) {
   return (
-    <dl className={styles.scoreList} aria-label="규칙 기반 점수 세부 항목">
-      {scoreParts.map((part) => {
-        const score = match[part.key];
-        return (
-          <div key={part.key}>
-            <dt>
-              <span>{part.label}</span>
-              <b>{score} / {part.max}점</b>
-            </dt>
-            <dd>
-              <span style={scoreBarStyle(score, part.max)} />
-            </dd>
-          </div>
-        );
-      })}
-    </dl>
+    <div className={`${styles.state} ${error ? styles.errorState : ""}`} role={error ? "alert" : "status"}>
+      <span className={styles.stateIcon}><Icon name={icon} size={30} /></span>
+      <strong>{title}</strong>
+      <p>{description}</p>
+      {action}
+    </div>
   );
 }
 
-function MatchCard({
-  match,
-  isClaimFormOpen,
-  onOpenClaimForm,
-  onCloseClaimForm,
-  onClaimSubmitted,
-  onClaimBlocked,
-  onMatchesRefresh,
-  hasSubmittedClaim,
-  isClaimBlocked,
-}: {
-  match: MatchCandidate;
-  isClaimFormOpen: boolean;
-  onOpenClaimForm: () => void;
-  onCloseClaimForm: () => void;
-  onClaimSubmitted: () => void;
-  onClaimBlocked: () => void;
-  onMatchesRefresh: () => void;
-  hasSubmittedClaim: boolean;
-  isClaimBlocked: boolean;
-}) {
-  const titleId = `match-${match.id}-title`;
-  const canViewFoundItemDetail = canOpenFoundItemDetail(match.found_item.status);
-  const canRequestOwnershipClaim = canCreateOwnershipClaim(match) && !hasSubmittedClaim && !isClaimBlocked;
-  const canKeepClaimFormOpen = canRequestOwnershipClaim || hasSubmittedClaim;
-  const claimUnavailableMessage = getOwnershipClaimUnavailableMessage(match, hasSubmittedClaim, isClaimBlocked);
+function CriteriaPopover() {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
 
   return (
-    <article className={styles.matchCard} aria-labelledby={titleId}>
-      <div className={styles.cardHeader}>
-        <div>
-          <p>매칭 후보</p>
-          <h2 id={titleId}>{match.lost_report.item_category_name} 후보</h2>
+    <div className={styles.criteria} ref={rootRef}>
+      <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-controls="match-criteria-popover">
+        <Icon name="info" size={18} /> 어떤 기준으로 매칭하나요?
+      </button>
+      {open && (
+        <div className={styles.popover} id="match-criteria-popover" role="dialog" aria-label="매칭 기준">
+          <strong>매칭 기준</strong>
+          <dl>{scoreParts.map((part) => <div key={part.key}><dt>{part.label}</dt><dd>{part.max}점</dd></div>)}</dl>
+          <div className={styles.popoverTotal}><span>합계</span><b>100점</b></div>
+          <p>매칭 결과는 참고 정보이며, 동일한 물품이나 소유자를 확정하는 결과가 아닙니다.</p>
         </div>
-        <span className={styles.statusChip}>{getLabel(matchStatusLabels, match.status)}</span>
-      </div>
-
-      <div className={styles.scoreHero}>
-        <div>
-          <span>매칭 점수</span>
-          <strong>{match.total_score}점</strong>
-        </div>
-        <div className={styles.totalBar} aria-hidden="true">
-          <span style={scoreBarStyle(match.total_score, 100)} />
-        </div>
-      </div>
-
-      <div className={styles.compareGrid}>
-        <section className={styles.infoPanel} aria-label="내 분실 신고 정보">
-          <span className={styles.panelBadge}>내 분실 신고</span>
-          <h3>{match.lost_report.description}</h3>
-          <dl>
-            <div>
-              <dt>종류</dt>
-              <dd>{match.lost_report.item_category_name}</dd>
-            </div>
-            <div>
-              <dt>색상</dt>
-              <dd>{match.lost_report.color || "미상"}</dd>
-            </div>
-            <div>
-              <dt>분실 추정 구역</dt>
-              <dd>{match.lost_report.area_name}</dd>
-            </div>
-            <div>
-              <dt>분실 시각</dt>
-              <dd><time dateTime={match.lost_report.lost_from}>{formatDateTime(match.lost_report.lost_from)}</time></dd>
-            </div>
-            <div>
-              <dt>상태</dt>
-              <dd>{getLabel(lostReportStatusLabels, match.lost_report.status)}</dd>
-            </div>
-          </dl>
-        </section>
-
-        <div className={styles.bridge} aria-hidden="true">
-          <Icon name="match" size={24} />
-        </div>
-
-        <section className={styles.infoPanel} aria-label="공개 발견물 정보">
-          <span className={styles.panelBadge}>공개 발견물</span>
-          <h3>{match.found_item.public_description || `${match.found_item.item_category_name} 발견물`}</h3>
-          <dl>
-            <div>
-              <dt>종류</dt>
-              <dd>{match.found_item.item_category_name}</dd>
-            </div>
-            <div>
-              <dt>색상</dt>
-              <dd>{match.found_item.color || "미상"}</dd>
-            </div>
-            <div>
-              <dt>발견 구역</dt>
-              <dd>{match.found_item.area_name}</dd>
-            </div>
-            <div>
-              <dt>발견 시각</dt>
-              <dd><time dateTime={match.found_item.found_at}>{formatDateTime(match.found_item.found_at)}</time></dd>
-            </div>
-            <div>
-              <dt>상태</dt>
-              <dd>{getLabel(foundItemStatusLabels, match.found_item.status)}</dd>
-            </div>
-          </dl>
-        </section>
-      </div>
-
-      <div className={styles.cardFooter}>
-        <ScoreBreakdown match={match} />
-        <div className={styles.cardActions}>
-          {canViewFoundItemDetail ? (
-            <Link className="button button-secondary" href={`/found-items/${match.found_item.id}`}>
-              발견물 상세 보기 <Icon name="arrow" size={17} />
-            </Link>
-          ) : (
-            <span className={styles.detailUnavailable}>현재 공개 상세 조회가 종료된 발견물입니다.</span>
-          )}
-          {canRequestOwnershipClaim ? (
-            <button className="button button-primary" type="button" onClick={onOpenClaimForm} aria-expanded={isClaimFormOpen}>
-              내 물건 같아요
-            </button>
-          ) : claimUnavailableMessage ? (
-            <span className={styles.claimUnavailable}>{claimUnavailableMessage}</span>
-          ) : null}
-        </div>
-      </div>
-      {isClaimFormOpen && canKeepClaimFormOpen && (
-        <OwnershipClaimForm
-          foundItemId={match.found_item.id}
-          lostReportId={match.lost_report.id}
-          foundItemLabel={match.found_item.public_description || match.found_item.item_category_name}
-          onCancel={onCloseClaimForm}
-          onSubmitted={onClaimSubmitted}
-          onClaimUnavailable={onClaimBlocked}
-          onRequestRefresh={onMatchesRefresh}
-        />
       )}
+    </div>
+  );
+}
+
+function ReportSelect({ reports, selected, onSelect }: { reports: LostReportResponse[]; selected: LostReportResponse; onSelect: (id: number) => void }) {
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(() => Math.max(0, reports.findIndex((report) => report.id === selected.id)));
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false); };
+    window.addEventListener("pointerdown", close);
+    return () => window.removeEventListener("pointerdown", close);
+  }, [open]);
+  const choose = (index: number) => { onSelect(reports[index].id); setActive(index); setOpen(false); };
+  const onKeyDown = (event: ReactKeyboardEvent) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End") {
+      event.preventDefault(); setOpen(true);
+      setActive((current) => event.key === "Home" ? 0 : event.key === "End" ? reports.length - 1 : event.key === "ArrowDown" ? (current + 1) % reports.length : (current - 1 + reports.length) % reports.length);
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault(); if (open) choose(active); else setOpen(true);
+    } else if (event.key === "Escape") { setOpen(false); }
+  };
+  return <label className={styles.reportSelect}>비교할 분실 신고<div className={styles.reportSelectControl} ref={root}><button type="button" aria-haspopup="listbox" aria-expanded={open} onClick={() => { setActive(Math.max(0, reports.findIndex((report) => report.id === selected.id))); setOpen((value) => !value); }} onKeyDown={onKeyDown}>{selected.item_category_name} · {selected.area_name}<Icon name="chevron" size={15} /></button>{open && <div role="listbox" aria-label="비교할 분실 신고">{reports.map((report, index) => <button type="button" role="option" aria-selected={report.id === selected.id} data-active={active === index} key={report.id} onMouseEnter={() => setActive(index)} onClick={() => choose(index)}>{report.item_category_name} · {report.area_name}</button>)}</div>}</div></label>;
+}
+
+function ReportWorkspace({ reports, selectedId, onSelect, count }: { reports: LostReportResponse[]; selectedId: number | null; onSelect: (id: number) => void; count: number }) {
+  const selected = reports.find((report) => report.id === selectedId) ?? reports[0];
+  if (!selected) return null;
+  return (
+    <section className={styles.workspace} aria-labelledby="workspace-title">
+      <div className={styles.workspaceHeading}>
+        <div><p className={styles.eyebrow}>CURRENT REPORT</p><h2 id="workspace-title">비교 중인 신고</h2></div>
+        <span className={styles.countBadge}>후보 {count}건</span>
+      </div>
+      {reports.length > 1 && (
+        <ReportSelect reports={reports} selected={selected} onSelect={onSelect} />
+      )}
+      <div className={styles.reportSummary}>
+        <LostReportVisual report={selected} />
+        <div><strong>{selected.item_category_name}</strong><span>{selected.color || "색상 미상"} · {selected.area_name} · {formatDateTime(selected.lost_from)}</span></div>
+        <Link className={styles.reportLink} href="/mypage"><Icon name="fileSearch" size={19} /> 신고 내용 확인</Link>
+      </div>
+    </section>
+  );
+}
+
+function MatchCard({ match, isClaimFormOpen, onOpenClaimForm, onCloseClaimForm, onClaimSubmitted, onClaimBlocked, onMatchesRefresh, hasSubmittedClaim, isClaimBlocked }: {
+  match: MatchCandidate; isClaimFormOpen: boolean; onOpenClaimForm: () => void; onCloseClaimForm: () => void; onClaimSubmitted: () => void; onClaimBlocked: () => void; onMatchesRefresh: () => void; hasSubmittedClaim: boolean; isClaimBlocked: boolean;
+}) {
+  const canView = publicFoundItemDetailStatuses.has(match.found_item.status);
+  const canClaim = match.found_item.status === "AVAILABLE" && claimableLostReportStatuses.has(match.lost_report.status) && !hasSubmittedClaim && !isClaimBlocked;
+  return (
+    <article className={styles.matchCard} aria-labelledby={`match-${match.id}`}>
+      <CandidateVisual match={match} />
+      <div className={styles.candidateBody}>
+        <div className={styles.candidateTitle}>
+          <div><span className={styles.statusBadge}>{matchStatusLabels[match.status] ?? match.status}</span><h3 id={`match-${match.id}`}>{match.found_item.item_category_name}</h3><p>{match.found_item.public_description || "공개된 특징 정보가 없습니다."}</p></div>
+          <div className={styles.score}><strong>{match.total_score}점</strong><span>{scoreLabel(match.total_score)}</span></div>
+        </div>
+        <div className={styles.facts}>
+          <span><Icon name="location" size={17} />{match.found_item.area_name}</span>
+          <span><Icon name="clock" size={17} />{formatDateTime(match.found_item.found_at)}</span>
+        </div>
+        <div className={styles.comparison}>
+          <span className={match.type_score > 0 ? styles.isMatched : ""}>종류 {match.type_score}/{40}</span>
+          <span className={match.area_score > 0 ? styles.isMatched : ""}>위치 {match.area_score}/{25}</span>
+          <span className={match.time_score > 0 ? styles.isMatched : ""}>시간 {match.time_score}/{20}</span>
+          <span className={match.keyword_score > 0 ? styles.isMatched : ""}>특징 {match.keyword_score}/{15}</span>
+        </div>
+        <div className={styles.scoreBars} aria-label="매칭 점수 세부 항목">
+          {scoreParts.map((part) => <div key={part.key}><span>{part.label}</span><i><b style={scoreBarStyle(match[part.key], part.max)} /></i></div>)}
+        </div>
+        <div className={styles.cardActions}>
+          {canView ? <Link className="button button-secondary" href={`/found-items/${match.found_item.id}`}><Icon name="fileSearch" size={18} /> 발견물 상세 확인</Link> : <span className={styles.unavailable}>공개 상세 조회가 종료된 발견물입니다.</span>}
+          {canClaim && <button className="button button-primary" type="button" onClick={onOpenClaimForm} aria-expanded={isClaimFormOpen}>내 물건 같아요</button>}
+          {!canClaim && (hasSubmittedClaim || match.found_item.status === "CLAIM_PENDING") && <span className={styles.unavailable}>소유권 확인 진행 중</span>}
+        </div>
+        {isClaimFormOpen && (canClaim || hasSubmittedClaim) && <OwnershipClaimForm foundItemId={match.found_item.id} lostReportId={match.lost_report.id} foundItemLabel={match.found_item.public_description || match.found_item.item_category_name} onCancel={onCloseClaimForm} onSubmitted={onClaimSubmitted} onClaimUnavailable={onClaimBlocked} onRequestRefresh={onMatchesRefresh} />}
+      </div>
     </article>
   );
 }
 
 export function MatchesClient() {
   const [matches, setMatches] = useState<MatchCandidate[]>([]);
+  const [reports, setReports] = useState<LostReportResponse[]>([]);
+  const [selectedReportId, setSelectedReportId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [errorStatus, setErrorStatus] = useState<number | null>(null);
   const [activeClaimMatchId, setActiveClaimMatchId] = useState<number | null>(null);
-  const [submittedClaimMatchIds, setSubmittedClaimMatchIds] = useState<Set<number>>(() => new Set());
-  const [blockedClaimMatchIds, setBlockedClaimMatchIds] = useState<Set<number>>(() => new Set());
+  const [submitted, setSubmitted] = useState<Set<number>>(() => new Set());
+  const [blocked, setBlocked] = useState<Set<number>>(() => new Set());
 
-  const loadMatches = useCallback(async (signal?: AbortSignal) => {
-    setLoading(true);
-    setError(null);
-    setErrorStatus(null);
-
+  const loadData = useCallback(async (signal?: AbortSignal) => {
     try {
-      const data = await listMyMatches(signal);
-      setMatches(data);
+      const [matchData, reportData] = await Promise.all([listMyMatches(signal), listMyLostReports(signal)]);
+      setMatches(matchData); setReports(reportData);
+      setSelectedReportId((current) => current && reportData.some((report) => report.id === current) ? current : (matchData[0]?.lost_report.id ?? reportData[0]?.id ?? null));
     } catch (caught) {
       if (caught instanceof DOMException && caught.name === "AbortError") return;
-      if (caught instanceof MatchesApiError) {
-        setError(caught.message);
-        setErrorStatus(caught.status ?? null);
-        return;
-      }
-      setError("매칭 후보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.");
-      setErrorStatus(null);
-    } finally {
-      if (!signal?.aborted) setLoading(false);
-    }
+      setErrorStatus(caught instanceof MatchesApiError ? (caught.status ?? null) : null);
+      setError(caught instanceof MatchesApiError ? caught.message : "잠시 후 다시 시도해 주세요.");
+    } finally { if (!signal?.aborted) setLoading(false); }
   }, []);
-
-  const refreshMatches = useCallback(async () => {
-    try {
-      const data = await listMyMatches();
-      setMatches(data);
-      setError(null);
-      setErrorStatus(null);
-    } catch {
-      return;
-    }
-  }, []);
-
-  const markClaimSubmitted = (matchId: number) => {
-    setSubmittedClaimMatchIds((current) => new Set(current).add(matchId));
-    void refreshMatches();
-  };
-
-  const markClaimBlocked = (matchId: number) => {
-    setBlockedClaimMatchIds((current) => new Set(current).add(matchId));
-    void refreshMatches();
-  };
 
   useEffect(() => {
     const controller = new AbortController();
-    const loadInitialMatches = async () => {
-      try {
-        const data = await listMyMatches(controller.signal);
-        setMatches(data);
-        setError(null);
-        setErrorStatus(null);
-      } catch (caught) {
-        if (caught instanceof DOMException && caught.name === "AbortError") return;
-        if (caught instanceof MatchesApiError) {
-          setError(caught.message);
-          setErrorStatus(caught.status ?? null);
-          return;
-        }
-        setError("매칭 후보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.");
-        setErrorStatus(null);
-      } finally {
-        if (!controller.signal.aborted) setLoading(false);
-      }
-    };
-
-    void loadInitialMatches();
-    return () => controller.abort();
-  }, []);
-
-  const summaryText = useMemo(() => {
-    if (loading) return "내 분실 신고와 공개 발견물을 비교하고 있습니다.";
-    if (error) return error;
-    return `현재 표시된 후보 ${matches.length}개`;
-  }, [error, loading, matches.length]);
+    const requestId = window.setTimeout(() => void loadData(controller.signal), 0);
+    return () => { window.clearTimeout(requestId); controller.abort(); };
+  }, [loadData]);
+  const visibleMatches = useMemo(() => selectedReportId ? matches.filter((match) => match.lost_report.id === selectedReportId) : matches, [matches, selectedReportId]);
+  const refresh = useCallback(() => loadData(), [loadData]);
 
   return (
     <main className={styles.page}>
-      <section className={styles.hero} aria-labelledby="matches-title">
-        <div>
-          <p className={styles.eyebrow}>MATCH CANDIDATES</p>
-          <h1 id="matches-title">내 물건과 닮은<br />발견물을 확인해요</h1>
-          <p>
-            내가 작성한 분실 신고와 공개 발견물 정보를 규칙 기반으로 비교해 후보를 보여줍니다.
-            점수는 참고용이며, 동일 물품이나 소유자를 확정하는 결과가 아닙니다.
-          </p>
-        </div>
-        <div className={styles.heroCard} aria-label="매칭 후보 조회 요약">
-          <Icon name="match" size={34} />
-          <strong>{summaryText}</strong>
-          <span>최종 확인과 반환 절차는 관리자 검토를 거쳐 진행됩니다.</span>
-        </div>
-      </section>
+      <header className={styles.hero}>
+        <p className={styles.eyebrow}>MATCH CANDIDATES</p>
+        <h1>내 신고와 일치 가능성이 높은 발견물</h1>
+        <p>발견 위치·시간·물품 특징을 비교해 내 신고와 조건이 가까운 발견물을 보여드립니다.</p>
+      </header>
 
-      <section className={styles.notice} aria-label="매칭 점수 안내">
-        <Icon name="spark" size={22} />
-        <p>
-          매칭 점수는 물품 종류, 구역, 시간 범위, 색상·특징을 더한 참고 정보입니다.
-          비공개 검증 정보나 정확한 보관 장소는 이 화면에 표시하지 않습니다.
-        </p>
-      </section>
+      {!loading && !error && reports.length > 0 && <ReportWorkspace reports={reports} selectedId={selectedReportId} onSelect={setSelectedReportId} count={visibleMatches.length} />}
 
       <section className={styles.results} aria-labelledby="matches-list-title" aria-busy={loading}>
         <div className={styles.sectionHeading}>
-          <div>
-            <p className={styles.eyebrow}>MY MATCHES</p>
-            <h2 id="matches-list-title">매칭 후보 목록</h2>
-          </div>
-          {!loading && !error && <span>표시 중 {matches.length}개</span>}
+          <div><p className={styles.eyebrow}>MY MATCHES</p><h2 id="matches-list-title">내 매칭 후보</h2></div>
+          {!loading && !error && <span>{visibleMatches.length}건</span>}
         </div>
+        <CriteriaPopover />
 
-        {loading && (
-          <MatchStateCard
-            icon="scan"
-            title="매칭 후보를 불러오고 있습니다."
-            description="분실 신고와 공개 발견물의 후보 정보를 확인하는 중입니다."
-          />
-        )}
-
-        {!loading && error && (
-          <MatchStateCard
-            icon="spark"
-            title={errorStatus === 401 ? "로그인이 필요합니다." : "매칭 후보를 불러오지 못했습니다."}
-            description={error}
-            tone="error"
-            action={
-              <div className={styles.stateActions}>
-                {errorStatus === 401 ? (
-                  <Link className="button button-primary" href="/login">로그인하러 가기</Link>
-                ) : (
-                  <button className="button button-secondary" type="button" onClick={() => void loadMatches()}>
-                    다시 시도
-                  </button>
-                )}
-              </div>
-            }
-          />
-        )}
-
-        {!loading && !error && matches.length === 0 && (
-          <MatchStateCard
-            icon="document"
-            title="아직 매칭 후보가 없습니다."
-            description="현재 확인된 매칭 후보가 없습니다. 발견물 목록을 확인하거나 분실 신고 내용을 다시 확인해주세요."
-            action={
-              <div className={styles.stateActions}>
-                <Link className="button button-primary" href="/lost-reports/new">분실 신고하기</Link>
-                <Link className="button button-secondary" href="/found-items">발견물 둘러보기</Link>
-              </div>
-            }
-          />
-        )}
-
-        {!loading && !error && matches.length > 0 && (
-          <div className={styles.matchList} role="list">
-            {matches.map((match) => (
-              <div key={match.id} role="listitem">
-                <MatchCard
-                  match={match}
-                  isClaimFormOpen={activeClaimMatchId === match.id}
-                  onOpenClaimForm={() => setActiveClaimMatchId(match.id)}
-                  onCloseClaimForm={() => setActiveClaimMatchId(null)}
-                  onClaimSubmitted={() => markClaimSubmitted(match.id)}
-                  onClaimBlocked={() => markClaimBlocked(match.id)}
-                  onMatchesRefresh={() => void refreshMatches()}
-                  hasSubmittedClaim={submittedClaimMatchIds.has(match.id)}
-                  isClaimBlocked={blockedClaimMatchIds.has(match.id)}
-                />
-              </div>
-            ))}
-          </div>
-        )}
+        {loading && <div className={styles.skeleton} aria-label="매칭 후보를 불러오는 중"><i /><i /><i /></div>}
+        {!loading && error && <MatchState icon="search" title={errorStatus === 401 ? "로그인이 필요해요" : "매칭 정보를 불러오지 못했어요"} description={error} error action={<div className={styles.stateActions}>{errorStatus === 401 ? <Link className="button button-primary" href="/login">로그인하러 가기</Link> : <button className="button button-secondary" type="button" onClick={() => { setLoading(true); setError(null); void loadData(); }}>다시 불러오기</button>}</div>} />}
+        {!loading && !error && reports.length === 0 && <MatchState icon="fileSearch" title="아직 비교할 신고가 없어요" description="분실 신고를 등록하면 발견된 물품과 자동으로 비교해 드립니다." action={<div className={styles.stateActions}><Link className="button button-primary" href="/lost-reports/new">분실 신고하기</Link><Link className="button button-secondary" href="/found-items">발견물 센터 둘러보기</Link></div>} />}
+        {!loading && !error && reports.length > 0 && visibleMatches.length === 0 && <MatchState icon="scan" title="아직 조건이 가까운 발견물이 없어요" description="새로운 발견물이 등록되면 내 신고와 자동으로 다시 비교합니다." action={<div className={styles.stateActions}><Link className="button button-primary" href="/found-items">발견물 센터 둘러보기</Link><Link className={styles.inlineAction} href="/mypage"><Icon name="fileSearch" size={18} /> 신고 내용 확인</Link></div>} />}
+        {!loading && !error && visibleMatches.length > 0 && <div className={styles.matchList}>{visibleMatches.map((match) => <MatchCard key={match.id} match={match} isClaimFormOpen={activeClaimMatchId === match.id} onOpenClaimForm={() => setActiveClaimMatchId(match.id)} onCloseClaimForm={() => setActiveClaimMatchId(null)} onClaimSubmitted={() => { setSubmitted((current) => new Set(current).add(match.id)); void refresh(); }} onClaimBlocked={() => { setBlocked((current) => new Set(current).add(match.id)); void refresh(); }} onMatchesRefresh={() => void refresh()} hasSubmittedClaim={submitted.has(match.id)} isClaimBlocked={blocked.has(match.id)} />)}</div>}
       </section>
     </main>
   );

@@ -14,6 +14,8 @@ class FoundItemListItemResponse(BaseModel):
     area_name: str
     found_at: datetime
     status: str
+    source_type: str
+    image_url: str | None
 
 
 class FoundItemDetailResponse(FoundItemListItemResponse):
