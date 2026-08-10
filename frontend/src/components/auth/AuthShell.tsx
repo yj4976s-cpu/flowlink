@@ -310,7 +310,7 @@ export function AuthShell({ mode }: { mode: AuthMode }) {
             {!isLogin && (
               <fieldset className="auth-agreements" aria-describedby={errors.agreements ? "agreements-error" : undefined}>
                 <legend className="sr-only">필수 동의</legend>
-                <div className="auth-agreement-row"><label><input type="checkbox" name="terms" /><span className="auth-checkbox" aria-hidden="true" /><b>이용약관에 동의합니다.</b></label><button type="button" disabled title="이용약관 페이지 준비 중">보기</button></div>
+                <div className="auth-agreement-row"><label><input type="checkbox" name="terms" /><span className="auth-checkbox" aria-hidden="true" /><b>이용약관에 동의합니다.</b></label><Link href="/terms">보기</Link></div>
                 <div className="auth-agreement-row"><label><input type="checkbox" name="privacy" /><span className="auth-checkbox" aria-hidden="true" /><b>개인정보 처리방침에 동의합니다.</b></label><Link href="/privacy">보기</Link></div>
                 {errors.agreements && <p className="auth-error" id="agreements-error">{errors.agreements}</p>}
               </fieldset>

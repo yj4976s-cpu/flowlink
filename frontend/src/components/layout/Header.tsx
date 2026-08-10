@@ -55,9 +55,10 @@ export function Header() {
   const handleLogout = async () => {
     try {
       await logoutRequest();
-    } finally {
       setCurrentUser(null);
       closeMenu();
+    } catch {
+      // Keep the authenticated UI when the server could not clear the cookie.
     }
   };
 

@@ -9,7 +9,7 @@ from app.db.session import get_db
 from app.models import User
 from app.schemas.auth import LoginRequest, LoginResponse, RegisterRequest, UserResponse
 from app.schemas.common import MessageResponse
-from app.services.auth import login_user, register_user, soft_delete_user
+from app.services.auth import login_user, register_and_login_user, soft_delete_user
 from app.services.mappers import user_response
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -45,10 +45,9 @@ def register(
     response: Response,
     db: Annotated[Session, Depends(get_db)],
 ) -> UserResponse:
-    user = register_user(db, request)
-    result = login_user(db, LoginRequest(email=request.email, password=request.password))
+    result = register_and_login_user(db, request)
     set_login_cookie(response, result.access_token, result.expires_in)
-    return user
+    return result.user
 
 
 @router.post("/login", response_model=LoginResponse, summary="로그인")
