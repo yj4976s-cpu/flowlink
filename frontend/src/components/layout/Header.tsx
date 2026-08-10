@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { FlowLinkLogo } from "@/components/common/FlowLinkLogo";
 import { Icon } from "@/components/common/Icon";
@@ -8,6 +9,7 @@ import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { AuthUser, getCurrentUser, logout as logoutRequest } from "@/lib/authApi";
 
 const navigation = [
+  { label: "AI 탐지", href: "/detect" },
   { label: "발견물 찾기", href: "/found-items" },
   { label: "분실 신고", href: "/lost-reports/new" },
   { label: "서비스 소개", href: "/about" },
@@ -15,6 +17,8 @@ const navigation = [
 ] as const;
 
 export function Header() {
+  const pathname = usePathname();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -57,6 +61,9 @@ export function Header() {
       await logoutRequest();
       setCurrentUser(null);
       closeMenu();
+      if (pathname === "/detect") {
+        router.replace(`/login?next=${encodeURIComponent(pathname)}`);
+      }
     } catch {
       // Keep the authenticated UI when the server could not clear the cookie.
     }

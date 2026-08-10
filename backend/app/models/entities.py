@@ -34,6 +34,23 @@ class User(Base):
         back_populates="reviewer", foreign_keys="OwnershipClaim.reviewed_by"
     )
     notifications: Mapped[list[Notification]] = relationship(back_populates="user")
+    detection_events: Mapped[list[DetectionEvent]] = relationship(back_populates="user")
+
+
+class Camera(Base):
+    __tablename__ = "cameras"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    code: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    area_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    latitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
+    longitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+    detection_events: Mapped[list[DetectionEvent]] = relationship(back_populates="camera")
 
 
 class ObjectClass(Base):
@@ -50,13 +67,97 @@ class ObjectClass(Base):
 
     found_items: Mapped[list[FoundItem]] = relationship(back_populates="object_class")
     lost_reports: Mapped[list[LostReport]] = relationship(back_populates="object_class")
+    detected_objects: Mapped[list[DetectedObject]] = relationship(
+        back_populates="object_class",
+        foreign_keys="DetectedObject.object_class_id",
+    )
+
+
+class DetectionEvent(Base):
+    __tablename__ = "detection_events"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    camera_id: Mapped[int | None] = mapped_column(ForeignKey("cameras.id", ondelete="SET NULL"))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    purpose: Mapped[str] = mapped_column(String(20), nullable=False, default="OPERATION")
+    source_type: Mapped[str] = mapped_column(String(10), nullable=False)
+    original_media_url: Mapped[str] = mapped_column(Text, nullable=False)
+    result_media_url: Mapped[str | None] = mapped_column(Text)
+    media_width: Mapped[int | None] = mapped_column(Integer)
+    media_height: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")
+    captured_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    processing_started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    processing_completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+    user: Mapped[User | None] = relationship(back_populates="detection_events")
+    camera: Mapped[Camera | None] = relationship(back_populates="detection_events")
+    detected_objects: Mapped[list[DetectedObject]] = relationship(back_populates="detection_event")
+    video_job: Mapped[VideoJob | None] = relationship(back_populates="detection_event", uselist=False)
+
+
+class VideoJob(Base):
+    __tablename__ = "video_jobs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    detection_event_id: Mapped[int] = mapped_column(
+        ForeignKey("detection_events.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")
+    processing_progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tracking_algorithm: Mapped[str] = mapped_column(String(20), nullable=False, default="BYTE_TRACK")
+    video_duration_seconds: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    processing_started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    processing_completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+    detection_event: Mapped[DetectionEvent] = relationship(back_populates="video_job")
+
+
+class DetectedObject(Base):
+    __tablename__ = "detected_objects"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    detection_event_id: Mapped[int] = mapped_column(
+        ForeignKey("detection_events.id", ondelete="CASCADE"), nullable=False
+    )
+    object_class_id: Mapped[int] = mapped_column(ForeignKey("object_classes.id"), nullable=False)
+    final_class_code: Mapped[str | None] = mapped_column(String(50), ForeignKey("object_classes.code"))
+    processing_status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")
+    admin_memo: Mapped[str | None] = mapped_column(Text)
+    track_id: Mapped[int | None] = mapped_column(BigInteger)
+    confidence: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
+    bbox_x: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    bbox_y: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    bbox_width: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    bbox_height: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    cropped_image_url: Mapped[str | None] = mapped_column(Text)
+    first_seen_ms: Mapped[int | None] = mapped_column(BigInteger)
+    last_seen_ms: Mapped[int | None] = mapped_column(BigInteger)
+    appearance_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    detected_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+    detection_event: Mapped[DetectionEvent] = relationship(back_populates="detected_objects")
+    object_class: Mapped[ObjectClass] = relationship(
+        back_populates="detected_objects",
+        foreign_keys=[object_class_id],
+    )
+    found_item: Mapped[FoundItem | None] = relationship(back_populates="detected_object")
 
 
 class FoundItem(Base):
     __tablename__ = "found_items"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    detected_object_id: Mapped[int | None] = mapped_column(BigInteger)
+    detected_object_id: Mapped[int | None] = mapped_column(
+        ForeignKey("detected_objects.id", ondelete="SET NULL"), unique=True
+    )
     object_class_id: Mapped[int] = mapped_column(ForeignKey("object_classes.id"), nullable=False)
     registered_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     color: Mapped[str | None] = mapped_column(String(50))
@@ -74,6 +175,7 @@ class FoundItem(Base):
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
 
     object_class: Mapped[ObjectClass] = relationship(back_populates="found_items")
+    detected_object: Mapped[DetectedObject | None] = relationship(back_populates="found_item")
     match_candidates: Mapped[list[MatchCandidate]] = relationship(back_populates="found_item")
     ownership_claims: Mapped[list[OwnershipClaim]] = relationship(back_populates="found_item")
 

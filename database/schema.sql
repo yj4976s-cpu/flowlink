@@ -128,6 +128,18 @@ CREATE TABLE detection_events (
         REFERENCES cameras(id)
         ON DELETE SET NULL,
 
+    user_id BIGINT
+        REFERENCES users(id)
+        ON DELETE SET NULL,
+
+    purpose VARCHAR(20) NOT NULL DEFAULT 'OPERATION'
+        CHECK (
+            purpose IN (
+                'USER_ANALYSIS',
+                'OPERATION'
+            )
+        ),
+
     source_type VARCHAR(10) NOT NULL
         CHECK (
             source_type IN (
@@ -140,6 +152,18 @@ CREATE TABLE detection_events (
         CHECK (BTRIM(original_media_url) <> ''),
 
     result_media_url TEXT,
+
+    media_width INTEGER
+        CHECK (
+            media_width IS NULL
+            OR media_width > 0
+        ),
+
+    media_height INTEGER
+        CHECK (
+            media_height IS NULL
+            OR media_height > 0
+        ),
 
     status VARCHAR(20) NOT NULL DEFAULT 'PENDING'
         CHECK (
@@ -684,6 +708,13 @@ CREATE INDEX idx_detection_events_status
 
 CREATE INDEX idx_detection_events_captured_at
     ON detection_events (captured_at DESC);
+
+CREATE INDEX idx_detection_events_user_purpose_created
+    ON detection_events (
+        user_id,
+        purpose,
+        created_at DESC
+    );
 
 CREATE INDEX idx_detected_objects_event
     ON detected_objects (detection_event_id);
