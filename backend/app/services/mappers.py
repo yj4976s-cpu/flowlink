@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.models import FoundItem, LostReport, MatchCandidate, Notification, OwnershipClaim, User
+from app.models import DetectedObject, DetectionEvent, FoundItem, LostReport, MatchCandidate, Notification, OwnershipClaim, User
 from app.schemas.admin import (
     AdminClaimantSummary,
     AdminFoundItemSummary,
@@ -8,6 +8,7 @@ from app.schemas.admin import (
     AdminOwnershipClaimResponse,
 )
 from app.schemas.auth import UserResponse
+from app.schemas.detection import DetectionBBoxResponse, DetectionEventResponse, DetectionObjectResponse
 from app.schemas.found_item import FoundItemDetailResponse, FoundItemListItemResponse
 from app.schemas.lost_report import LostReportResponse
 from app.schemas.match import MatchCandidateResponse
@@ -141,4 +142,40 @@ def notification_response(notification: Notification) -> NotificationResponse:
         related_id=notification.related_id,
         read_at=notification.read_at,
         created_at=notification.created_at,
+    )
+
+
+def detection_object_response(detected_object: DetectedObject) -> DetectionObjectResponse:
+    object_class = detected_object.object_class
+    return DetectionObjectResponse(
+        id=detected_object.id,
+        class_code=object_class.code,
+        class_name_ko=object_class.name_ko,
+        group_code=object_class.group_code,
+        confidence=float(detected_object.confidence),
+        bbox=DetectionBBoxResponse(
+            x=float(detected_object.bbox_x),
+            y=float(detected_object.bbox_y),
+            width=float(detected_object.bbox_width),
+            height=float(detected_object.bbox_height),
+        ),
+        track_id=detected_object.track_id,
+        first_seen_ms=detected_object.first_seen_ms,
+        last_seen_ms=detected_object.last_seen_ms,
+        appearance_count=detected_object.appearance_count,
+    )
+
+
+def detection_event_response(event: DetectionEvent) -> DetectionEventResponse:
+    return DetectionEventResponse(
+        id=event.id,
+        source_type=event.source_type,
+        status=event.status,
+        purpose=event.purpose,
+        media_width=event.media_width,
+        media_height=event.media_height,
+        created_at=event.created_at,
+        processing_started_at=event.processing_started_at,
+        processing_completed_at=event.processing_completed_at,
+        detected_objects=[detection_object_response(detected_object) for detected_object in event.detected_objects],
     )

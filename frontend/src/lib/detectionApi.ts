@@ -1,0 +1,116 @@
+export type DetectionBBox = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type DetectionObject = {
+  id: number;
+  class_code: string;
+  class_name_ko: string;
+  group_code: string;
+  confidence: number;
+  bbox: DetectionBBox;
+  track_id: number | null;
+  first_seen_ms: number | null;
+  last_seen_ms: number | null;
+  appearance_count: number;
+};
+
+export type DetectionEvent = {
+  id: number;
+  source_type: "IMAGE" | "VIDEO";
+  status: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED";
+  purpose: "USER_ANALYSIS" | "OPERATION";
+  media_width: number | null;
+  media_height: number | null;
+  created_at: string;
+  processing_started_at: string | null;
+  processing_completed_at: string | null;
+  detected_objects: DetectionObject[];
+};
+
+export class DetectionApiError extends Error {
+  constructor(message: string, readonly status?: number) {
+    super(message);
+    this.name = "DetectionApiError";
+  }
+}
+
+function getApiBaseUrl() {
+  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+  if (!baseUrl) {
+    throw new DetectionApiError("NEXT_PUBLIC_API_BASE_URL 환경 변수가 설정되지 않았습니다.");
+  }
+  return baseUrl.replace(/\/+$/, "");
+}
+
+function buildApiUrl(path: string, params?: Record<string, string | number | undefined>) {
+  const url = new URL(`${getApiBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`);
+  Object.entries(params ?? {}).forEach(([key, value]) => {
+    if (value === undefined) return;
+    const normalized = String(value).trim();
+    if (normalized) url.searchParams.set(key, normalized);
+  });
+  return url.toString();
+}
+
+function getFallbackMessage(status: number) {
+  if (status === 401) return "로그인이 필요하거나 로그인 세션이 만료되었습니다.";
+  if (status === 413) return "파일 크기가 너무 큽니다. 안내된 최대 용량을 확인해주세요.";
+  if (status === 415 || status === 422) return "지원하지 않는 파일 형식입니다.";
+  if (status === 503) return "AI 모델 연결을 준비하고 있습니다. 모델 파일이 연결되면 다시 시도해주세요.";
+  return "AI 탐지를 처리하지 못했습니다. 잠시 후 다시 시도해주세요.";
+}
+
+async function readErrorMessage(response: Response) {
+  try {
+    const body: unknown = await response.json();
+    if (body && typeof body === "object" && "detail" in body) {
+      const detail = (body as { detail: unknown }).detail;
+      if (detail === "AI detection model is not configured") return getFallbackMessage(503);
+    }
+  } catch {
+    return getFallbackMessage(response.status);
+  }
+  return getFallbackMessage(response.status);
+}
+
+async function requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(url, {
+    ...init,
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    throw new DetectionApiError(await readErrorMessage(response), response.status);
+  }
+
+  return response.json() as Promise<T>;
+}
+
+function uploadDetection(path: string, file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+  return requestJson<DetectionEvent>(buildApiUrl(path), {
+    method: "POST",
+    body: formData,
+  });
+}
+
+export function uploadDetectionImage(file: File) {
+  return uploadDetection("/api/detections/images", file);
+}
+
+export function uploadDetectionVideo(file: File) {
+  return uploadDetection("/api/detections/videos", file);
+}
+
+export function listMyDetections(signal?: AbortSignal) {
+  return requestJson<DetectionEvent[]>(buildApiUrl("/api/detections/me", { skip: 0, limit: 20 }), { signal });
+}
+
+export function getMyDetection(id: number, signal?: AbortSignal) {
+  return requestJson<DetectionEvent>(buildApiUrl(`/api/detections/${id}`), { signal });
+}

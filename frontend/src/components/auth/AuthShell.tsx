@@ -41,24 +41,12 @@ const loginScene = {
 const registerScene = {
   dawn: {
     description: "분실 신고부터 매칭 결과 확인까지, 놓친 순간을 다시 연결합니다.",
-    detections: [
-      { id: "footwear", object: "신발", confidence: 94, role: "main" },
-      { id: "plastic", object: "플라스틱", confidence: 87, role: "secondary" },
-    ],
   },
   day: {
     description: "분실 신고부터 매칭 결과 확인까지, 가장 선명한 흐름으로 이어집니다.",
-    detections: [
-      { id: "ball", object: "공", confidence: 93, role: "main" },
-      { id: "can", object: "캔", confidence: 89, role: "secondary" },
-    ],
   },
   night: {
     description: "분실 신고부터 매칭 결과 확인까지, 잃어버린 가능성을 끝까지 추적합니다.",
-    detections: [
-      { id: "umbrella", object: "우산", confidence: 94, role: "main" },
-      { id: "bag", object: "백팩", confidence: 91, role: "secondary" },
-    ],
   },
 } as const;
 
@@ -188,28 +176,16 @@ function AuthVisual({ mode }: { mode: AuthMode }) {
     );
   }
 
-  const scene = registerScene[theme];
   return (
-    <section key={theme} className={`auth-visual auth-register-visual auth-theme-${theme}`} aria-label={`${scene.detections.map((item) => item.object).join(", ")}을 탐지한 FlowLink 회원가입 수변 장면`}>
-      <div className="auth-visual-content">
+    <section key={theme} className={`auth-visual auth-register-visual auth-theme-${theme}`} aria-label="FlowLink 회원가입 수변 소개 장면">
+      <div className="auth-register-copy-card">
         <p className="auth-visual-eyebrow">AI DETECTION</p>
-        <h2>잃어버린 물건과<br />다시 만날 가능성을 연결합니다</h2>
-        <p>분실 신고와 수면 위 발견을 연결해<br />소중한 물건의 귀환을 시작합니다.</p>
+        <h2>잃어버린 순간을<br />다시 이어질 흐름으로</h2>
+        <p>분실 신고와 수면 위 발견을 연결해 소중한 물건의 귀환을 시작합니다.</p>
         <div className="auth-micro-flow" aria-hidden="true">
           {["신고", "발견", "연결"].map((step) => <span key={step}><i />{step}</span>)}
         </div>
       </div>
-      {scene.detections.map((detection, index) => (
-        <div
-          key={detection.id}
-          className={`auth-detection auth-register-detection auth-register-detection-${detection.id} is-${detection.role} sequence-${index + 1}`}
-          aria-label={`${detection.object}, 탐지 신뢰도 ${detection.confidence}%`}
-        >
-          <span>{detection.object}</span>
-          <strong>신뢰도 <ConfidenceCount target={detection.confidence} delay={index === 0 ? 420 : 850} /></strong>
-          <i aria-hidden="true" />
-        </div>
-      ))}
     </section>
   );
 }

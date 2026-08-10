@@ -1,4 +1,7 @@
 from app.models.entities import (
+    Camera,
+    DetectedObject,
+    DetectionEvent,
     FoundItem,
     LostReport,
     MatchCandidate,
@@ -7,9 +10,13 @@ from app.models.entities import (
     OwnershipClaim,
     ProcessingHistory,
     User,
+    VideoJob,
 )
 
 __all__ = [
+    "Camera",
+    "DetectedObject",
+    "DetectionEvent",
     "FoundItem",
     "LostReport",
     "MatchCandidate",
@@ -18,4 +25,5 @@ __all__ = [
     "OwnershipClaim",
     "ProcessingHistory",
     "User",
+    "VideoJob",
 ]
