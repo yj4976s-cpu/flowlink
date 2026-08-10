@@ -31,6 +31,7 @@ const loginScene = {
   night: {
     title: <>밤의 흐름 속에서도<br />놓치지 않는 연결</>,
     detections: [
+      { id: "bag", object: "백팩", confidence: 92, role: "secondary" },
       { id: "footwear", object: "신발", confidence: 91, role: "main" },
       { id: "umbrella", object: "우산", confidence: 86, role: "secondary" },
     ],
@@ -60,6 +61,16 @@ const registerScene = {
     ],
   },
 } as const;
+
+function getSafeNextPath() {
+  const fallbackPath = "/";
+  const nextPath = new URLSearchParams(window.location.search).get("next")?.trim();
+  if (!nextPath || !nextPath.startsWith("/") || nextPath.startsWith("//")) return fallbackPath;
+
+  const url = new URL(nextPath, window.location.origin);
+  if (url.origin !== window.location.origin) return fallbackPath;
+  return `${url.pathname}${url.search}${url.hash}`;
+}
 
 function ConfidenceCount({ target, delay = 470, duration = 950 }: { target: number; delay?: number; duration?: number }) {
   const [value, setValue] = useState(0);
@@ -261,7 +272,7 @@ export function AuthShell({ mode }: { mode: AuthMode }) {
 
       const currentUser = await getCurrentUser();
       setSubmitMessage(`${currentUser.nickname}님, 환영합니다.`);
-      router.replace("/");
+      router.replace(isLogin ? getSafeNextPath() : "/");
       router.refresh();
     } catch (error) {
       const message = error instanceof AuthApiError
