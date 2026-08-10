@@ -40,20 +40,24 @@ export function HeroSection() {
     <section className="hero" aria-labelledby="hero-title">
       <div className="hero-inner">
         <div className="hero-copy">
-          <p className="eyebrow"><Icon name="scan" size={18} /> AI 기반 수면 부유 객체 탐지</p>
+          <p className="eyebrow"><Icon name="scan" size={18} />
+            <span className="theme-copy theme-copy-dawn">AI로 시작하는 수면 위 발견</span>
+            <span className="theme-copy theme-copy-day">AI 기반 수면 위 물품 탐지</span>
+            <span className="theme-copy theme-copy-night">밤에도 이어지는 AI 탐지</span>
+          </p>
           <h1 id="hero-title">
-            <span className="theme-copy theme-copy-dawn">새벽빛을 따라,<br />다시 <em>이어지는</em> 흐름</span>
-            <span className="theme-copy theme-copy-day">물길 위 발견을,<br />다시 <em>연결</em>하는 시간</span>
-            <span className="theme-copy theme-copy-night">어둠 속 발견도,<br />놓치지 않는 <em>연결</em></span>
+            <span className="theme-copy theme-copy-dawn">발견한 순간부터<br /><em>다시 만나는</em> 순간까지</span>
+            <span className="theme-copy theme-copy-day">수면 위 발견을<br /><em>주인을 찾는</em> 단서로</span>
+            <span className="theme-copy theme-copy-night">어두운 물길에서도<br />발견은 <em>계속됩니다</em></span>
           </h1>
           <div className="title-rule" aria-hidden="true"><i /></div>
           <p className="hero-description">
-            <span className="theme-copy theme-copy-dawn">하루의 시작과 함께 수면 위 발견을 포착하고, 잃어버린 물건과 다시 연결합니다.</span>
-            <span className="theme-copy theme-copy-day">AI가 수면 위 객체를 찾아내고, 시민의 분실 신고와 이어 관리자 확인·반환까지 돕습니다.</span>
-            <span className="theme-copy theme-copy-night">AI가 야간 수면 위 객체 후보를 포착하고, 발견부터 매칭과 반환까지 차분하게 이어줍니다.</span>
+            <span className="theme-copy theme-copy-dawn">AI가 수면 위 물품을 발견하고 분실 신고와 연결해,<br />다시 주인을 만나는 과정을 이어갑니다.</span>
+            <span className="theme-copy theme-copy-day">AI가 발견한 물품과 분실 신고를 비교해,<br />확인부터 반환까지 하나의 흐름으로 연결합니다.</span>
+            <span className="theme-copy theme-copy-night">밤에도 수면 위 물품을 탐지하고,<br />발견된 물품과 분실 신고를 연결해 확인과 반환까지 이어갑니다.</span>
           </p>
           <div className="hero-actions">
-            <Link className="button button-primary" href="/found-items">발견물 찾기 <Icon name="arrow" size={18} /></Link>
+            <Link className="button button-primary hero-search-cta" href="/found-items">발견물 찾기 <span className="hero-search-icon" aria-hidden="true"><Icon name="search" size={16} /></span></Link>
             <Link className="button button-secondary" href="/about">서비스 소개 보기</Link>
           </div>
           <RiversideLineArt />
