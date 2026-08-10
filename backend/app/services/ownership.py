@@ -14,6 +14,7 @@ from app.repositories.user_flow import (
     get_claimable_found_item_by_id,
     get_existing_ownership_claim,
     get_lost_report_for_user,
+    get_match_candidate,
     get_ownership_claim_by_id,
     has_other_active_ownership_claim,
 )
@@ -93,6 +94,12 @@ def create_claim_for_user(
         if lost_report is not None:
             lost_report.status = "CLAIM_PENDING"
             lost_report.updated_at = now
+            match_candidate = get_match_candidate(
+                db, lost_report_id=lost_report.id, found_item_id=found_item.id
+            )
+            if match_candidate is not None:
+                match_candidate.status = "CLAIMED"
+                match_candidate.updated_at = now
         add_processing_history(
             db,
             ProcessingHistory(
@@ -168,6 +175,12 @@ def review_ownership_claim(
         if claim.lost_report is not None and claim.lost_report.status == "CLAIM_PENDING":
             claim.lost_report.status = "MATCHED" if claim.lost_report.match_candidates else "OPEN"
             claim.lost_report.updated_at = now
+            match_candidate = get_match_candidate(
+                db, lost_report_id=claim.lost_report.id, found_item_id=claim.found_item_id
+            )
+            if match_candidate is not None and match_candidate.status == "CLAIMED":
+                match_candidate.status = "NOTIFIED"
+                match_candidate.updated_at = now
     elif next_status == "RETURNED":
         claim.found_item.status = "RETURNED"
         claim.found_item.updated_at = now

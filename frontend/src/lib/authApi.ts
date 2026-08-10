@@ -2,7 +2,7 @@ export type AuthUser = {
   id: number;
   email: string;
   nickname: string;
-  role: string;
+  role: "USER" | "ADMIN";
   active: boolean;
   created_at: string;
 };
@@ -91,4 +91,25 @@ export function getCurrentUser() {
 
 export function logout() {
   return request<{ message: string }>("/api/auth/logout", { method: "POST" });
+}
+
+export function updateNickname(nickname: string) {
+  return request<AuthUser>("/api/auth/me", {
+    method: "PATCH",
+    body: JSON.stringify({ nickname }),
+  });
+}
+
+export function changePassword(currentPassword: string, newPassword: string) {
+  return request<{ message: string }>("/api/auth/me/password", {
+    method: "PATCH",
+    body: JSON.stringify({
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+  });
+}
+
+export function deleteAccount() {
+  return request<{ message: string }>("/api/auth/me", { method: "DELETE" });
 }

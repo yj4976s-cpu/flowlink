@@ -7,6 +7,7 @@ export type MatchLostReport = {
   area_name: string;
   lost_from: string;
   lost_to: string | null;
+  image_url: string | null;
   status: string;
   created_at: string;
 };
@@ -20,6 +21,8 @@ export type MatchFoundItem = {
   area_name: string;
   found_at: string;
   status: string;
+  source_type: "AI" | "CITIZEN" | "ADMIN";
+  image_url: string | null;
 };
 
 export type MatchCandidate = {
@@ -71,6 +74,16 @@ export function listMyMatches(signal?: AbortSignal) {
     buildApiUrl("/api/matches/me", { skip: 0, limit: 20 }),
     signal,
   );
+}
+
+export function resolveMatchImageUrl(value: string | null) {
+  if (!value) return null;
+  try {
+    const resolved = new URL(value, `${getApiBaseUrl()}/`);
+    return resolved.protocol === "http:" || resolved.protocol === "https:" ? resolved.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
 async function requestJson<T>(url: string, signal?: AbortSignal): Promise<T> {

@@ -5,7 +5,7 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.core.auth import ensure_active_user, ensure_admin
+from app.core.auth import ensure_active_user, ensure_admin, ensure_user
 from app.core.config import Settings, get_settings
 from app.core.security import (
     create_access_token,
@@ -107,6 +107,10 @@ def test_user_and_admin_roles_are_separated() -> None:
 
     assert exc_info.value.status_code == 403
     assert ensure_admin(make_user(role="ADMIN")).role == "ADMIN"
+    assert ensure_user(make_user(role="USER")).role == "USER"
+    with pytest.raises(HTTPException) as user_exc_info:
+        ensure_user(make_user(role="ADMIN"))
+    assert user_exc_info.value.status_code == 403
 
 
 def test_inactive_user_is_rejected() -> None:

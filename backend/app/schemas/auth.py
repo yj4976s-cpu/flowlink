@@ -21,6 +21,20 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class NicknameUpdateRequest(BaseModel):
+    nickname: str = Field(min_length=2, max_length=50)
+
+    @field_validator("nickname", mode="before")
+    @classmethod
+    def strip_nickname(cls, value: str) -> str:
+        return value.strip() if isinstance(value, str) else value
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8)
+
+
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

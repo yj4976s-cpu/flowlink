@@ -6,12 +6,16 @@ from app.schemas.found_item import FoundItemListItemResponse
 from app.schemas.lost_report import LostReportResponse
 
 
+class MatchFoundItemResponse(FoundItemListItemResponse):
+    pass
+
+
 class MatchCandidateResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     lost_report: LostReportResponse
-    found_item: FoundItemListItemResponse
+    found_item: MatchFoundItemResponse
     total_score: int
     type_score: int
     area_score: int

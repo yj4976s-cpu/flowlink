@@ -11,9 +11,10 @@ from app.schemas.auth import UserResponse
 from app.schemas.detection import DetectionBBoxResponse, DetectionEventResponse, DetectionObjectResponse
 from app.schemas.found_item import FoundItemDetailResponse, FoundItemListItemResponse
 from app.schemas.lost_report import LostReportResponse
-from app.schemas.match import MatchCandidateResponse
+from app.schemas.match import MatchCandidateResponse, MatchFoundItemResponse
 from app.schemas.notification import NotificationResponse
 from app.schemas.ownership_claim import OwnershipClaimResponse
+from app.services.found_item_images import representative_found_item_image_url
 
 
 def user_response(user: User) -> UserResponse:
@@ -37,6 +38,8 @@ def found_item_list_response(found_item: FoundItem) -> FoundItemListItemResponse
         area_name=found_item.area_name,
         found_at=found_item.found_at,
         status=found_item.status,
+        source_type=found_item.source_type,
+        image_url=representative_found_item_image_url(found_item),
     )
 
 
@@ -57,6 +60,7 @@ def lost_report_response(lost_report: LostReport) -> LostReportResponse:
         area_name=lost_report.area_name,
         lost_from=lost_report.lost_from,
         lost_to=lost_report.lost_to,
+        image_url=lost_report.image_url,
         status=lost_report.status,
         created_at=lost_report.created_at,
     )
@@ -66,7 +70,9 @@ def match_candidate_response(candidate: MatchCandidate) -> MatchCandidateRespons
     return MatchCandidateResponse(
         id=candidate.id,
         lost_report=lost_report_response(candidate.lost_report),
-        found_item=found_item_list_response(candidate.found_item),
+        found_item=MatchFoundItemResponse(
+            **found_item_list_response(candidate.found_item).model_dump(),
+        ),
         total_score=candidate.total_score,
         type_score=candidate.type_score,
         area_score=candidate.area_score,

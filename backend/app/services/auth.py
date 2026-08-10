@@ -26,6 +26,14 @@ class LoginResult:
     user: UserResponse
 
 
+def _release_deleted_email(user: User) -> None:
+    if user.active or user.deleted_at is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+    # 탈퇴 이력의 FK는 보존하되 로그인 식별자는 비식별화해 같은 이메일로 새 계정을 만들 수 있게 한다.
+    user.email = f"deleted-user-{user.id}@flowlink.invalid"
+    user.updated_at = utc_now()
+
+
 def validate_registration_agreements(request: RegisterRequest) -> None:
     if not request.terms_agreed or not request.privacy_agreed:
         raise HTTPException(
@@ -41,8 +49,9 @@ def register_user(db: Session, request: RegisterRequest) -> UserResponse:
     if nickname is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Nickname is required")
 
-    if get_user_by_email(db, email) is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+    existing_user = get_user_by_email(db, email)
+    if existing_user is not None:
+        _release_deleted_email(existing_user)
 
     now = utc_now()
     user = User(
@@ -96,8 +105,9 @@ def register_and_login_user(db: Session, request: RegisterRequest) -> LoginResul
     nickname = clean_optional_text(request.nickname)
     if nickname is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Nickname is required")
-    if get_user_by_email(db, email) is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+    existing_user = get_user_by_email(db, email)
+    if existing_user is not None:
+        _release_deleted_email(existing_user)
 
     now = utc_now()
     user = User(
@@ -141,5 +151,25 @@ def soft_delete_user(db: Session, user: User) -> None:
     # 신고/소유권 기록의 참조 무결성을 유지하면서 이후 보호 API 접근은 active=false로 차단한다.
     user.active = False
     user.deleted_at = now
+    user.email = f"deleted-user-{user.id}@flowlink.invalid"
     user.updated_at = now
+    db.commit()
+
+
+def update_nickname(db: Session, user: User, nickname: str) -> UserResponse:
+    normalized = clean_optional_text(nickname)
+    if normalized is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Nickname is required")
+    user.nickname = normalized
+    user.updated_at = utc_now()
+    db.commit()
+    db.refresh(user)
+    return user_response(user)
+
+
+def change_password(db: Session, user: User, current_password: str, new_password: str) -> None:
+    if not verify_password(current_password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
+    user.password_hash = hash_password(new_password)
+    user.updated_at = utc_now()
     db.commit()

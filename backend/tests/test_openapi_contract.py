@@ -28,6 +28,7 @@ EXPECTED_OPERATIONS = {
     "/api/admin/detections": {"get"},
     "/api/admin/detected-objects/{id}": {"patch"},
     "/api/admin/found-items/{id}": {"patch"},
+    "/api/admin/dashboard": {"get"},
     "/api/admin/ownership-claims": {"get"},
     "/api/admin/ownership-claims/{id}": {"patch"},
 }

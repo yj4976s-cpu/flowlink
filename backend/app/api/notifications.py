@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.auth import get_current_user
+from app.core.auth import require_user
 from app.core.security import utc_now
 from app.db.session import get_db
 from app.models import User
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 
 @router.get("", response_model=list[NotificationResponse], summary="내 알림 목록 조회")
 def list_my_notifications(
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(require_user)],
     db: Annotated[Session, Depends(get_db)],
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -35,7 +35,7 @@ def list_my_notifications(
 @router.patch("/{id}/read", response_model=NotificationResponse, summary="내 알림 읽음 처리")
 def mark_notification_as_read(
     id: Annotated[int, Path(ge=1)],
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User, Depends(require_user)],
     db: Annotated[Session, Depends(get_db)],
 ) -> NotificationResponse:
     notification = get_notification_for_user(db, id, current_user.id)

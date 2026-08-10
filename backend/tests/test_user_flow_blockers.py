@@ -121,6 +121,7 @@ def seed_found_item(
     item = FoundItem(
         id=item_id,
         object_class_id=object_class_id,
+        source_type="ADMIN",
         color="검정",
         public_description="검정 백팩 발견",
         area_name="잠실 한강공원",
@@ -345,6 +346,19 @@ def test_match_creation_marks_lost_report_matched(db: Session, monkeypatch: pyte
 
     assert len(candidates) == 1
     assert lost_report.status == "MATCHED"
+
+
+def test_ownership_claim_marks_related_match_claimed(db: Session) -> None:
+    user, _ = seed_basic_claim_data(db)
+    seed_found_item(db, 10, status="AVAILABLE", is_public=True)
+    seed_lost_report(db, 20, status="MATCHED")
+    match = MatchCandidate(id=50, lost_report_id=20, found_item_id=10, total_score=85, type_score=40, area_score=25, time_score=20, keyword_score=0, status="NOTIFIED", created_at=utc_now(), updated_at=utc_now())
+    db.add(match)
+    db.commit()
+
+    create_claim_for_user(db, current_user=user, request=OwnershipClaimCreateRequest(found_item_id=10, lost_report_id=20, verification_details="안쪽 라벨 위치와 스티커를 자세히 설명합니다."))
+
+    assert db.get(MatchCandidate, 50).status == "CLAIMED"
 
 
 def test_found_item_before_lost_time_is_excluded_from_matching(db: Session, monkeypatch: pytest.MonkeyPatch) -> None:

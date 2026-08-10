@@ -114,6 +114,24 @@ def test_register_returns_created(client: TestClient) -> None:
     assert response.status_code == 201
 
 
+def test_register_ignores_client_supplied_admin_role(client: TestClient) -> None:
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "email": "role-injection@example.com",
+            "password": "password123",
+            "nickname": "role-test",
+            "terms_agreed": True,
+            "privacy_agreed": True,
+            "role": "ADMIN",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["role"] == "USER"
+    assert client.get("/api/auth/me").json()["role"] == "USER"
+
+
 def test_register_sets_httponly_cookie(client: TestClient) -> None:
     settings = get_settings()
     response = register(client)
@@ -142,6 +160,34 @@ def test_duplicate_registration_does_not_set_cookie(client: TestClient) -> None:
 
     assert response.status_code == 409
     assert settings.AUTH_COOKIE_NAME not in response.headers.get("set-cookie", "")
+
+
+def test_deleted_user_can_register_again_as_a_new_account(client: TestClient, db: Session) -> None:
+    old_user = seed_user(db, email="new-user@example.com")
+    assert login(client, email="new-user@example.com").status_code == 200
+    assert client.delete("/api/auth/me").status_code == 200
+
+    response = register(client, email="new-user@example.com")
+
+    assert response.status_code == 201
+    assert response.json()["email"] == "new-user@example.com"
+    new_user = db.query(User).filter(User.email == "new-user@example.com").one()
+    db.refresh(old_user)
+    assert new_user.id != old_user.id
+    assert old_user.active is False and old_user.deleted_at is not None
+    assert old_user.email == f"deleted-user-{old_user.id}@flowlink.invalid"
+    assert client.get("/api/auth/me").json()["id"] == new_user.id
+
+
+def test_legacy_deleted_user_email_is_released_during_registration(client: TestClient, db: Session) -> None:
+    old_user = seed_user(db, email="new-user@example.com", active=False, deleted=True)
+
+    response = register(client, email="new-user@example.com")
+
+    assert response.status_code == 201
+    db.refresh(old_user)
+    assert old_user.email == f"deleted-user-{old_user.id}@flowlink.invalid"
+    assert db.query(User).filter(User.email == "new-user@example.com", User.active.is_(True)).count() == 1
 
 
 def test_registration_without_required_agreement_does_not_set_cookie(client: TestClient) -> None:
@@ -209,6 +255,49 @@ def test_me_uses_login_cookie(client: TestClient, db: Session) -> None:
 
     assert response.status_code == 200
     assert response.json()["email"] == "user@example.com"
+
+
+def test_update_nickname_returns_safe_user_response(client: TestClient, db: Session) -> None:
+    seed_user(db)
+    assert login(client).status_code == 200
+
+    response = client.patch("/api/auth/me", json={"nickname": "river-user"})
+
+    assert response.status_code == 200
+    assert response.json()["nickname"] == "river-user"
+    assert "password" not in response.json()
+    assert "password_hash" not in response.json()
+
+
+def test_change_password_requires_current_password(client: TestClient, db: Session) -> None:
+    seed_user(db)
+    assert login(client).status_code == 200
+
+    response = client.patch(
+        "/api/auth/me/password",
+        json={"current_password": "incorrect", "new_password": "new-password123"},
+    )
+
+    assert response.status_code == 400
+    client.cookies.clear()
+    assert login(client, password="password123").status_code == 200
+
+
+def test_change_password_replaces_password_hash(client: TestClient, db: Session) -> None:
+    seed_user(db)
+    assert login(client).status_code == 200
+
+    response = client.patch(
+        "/api/auth/me/password",
+        json={"current_password": "password123", "new_password": "new-password123"},
+    )
+
+    assert response.status_code == 200
+    assert "password" not in response.json()
+    assert "password_hash" not in response.json()
+    client.cookies.clear()
+    assert login(client, password="password123").status_code == 401
+    assert login(client, password="new-password123").status_code == 200
 
 
 def test_me_rejects_missing_or_tampered_cookie(client: TestClient) -> None:
@@ -297,13 +386,23 @@ def test_admin_cookie_allows_admin_dependency_and_user_cookie_is_forbidden(clien
     admin_login = login(client, email="admin@example.com")
     assert admin_login.status_code == 200
     admin_response = client.get("/api/admin/detections")
-    assert admin_response.status_code == 501
+    assert admin_response.status_code == 200
+    assert admin_response.json() == []
 
     client.cookies.clear()
     user_login = login(client, email="user@example.com")
     assert user_login.status_code == 200
     user_response = client.get("/api/admin/detections")
     assert user_response.status_code == 403
+
+
+def test_admin_cookie_is_forbidden_from_user_personal_activity_api(client: TestClient, db: Session) -> None:
+    seed_user(db, user_id=1, email="admin-personal@example.com", role="ADMIN")
+    assert login(client, email="admin-personal@example.com").status_code == 200
+
+    response = client.get("/api/matches/me")
+
+    assert response.status_code == 403
 
 
 def test_expired_cookie_token_is_rejected(client: TestClient, db: Session) -> None:

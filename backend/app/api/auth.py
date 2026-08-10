@@ -7,9 +7,22 @@ from app.core.auth import get_current_user as get_current_user_dependency
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.models import User
-from app.schemas.auth import LoginRequest, LoginResponse, RegisterRequest, UserResponse
+from app.schemas.auth import (
+    LoginRequest,
+    LoginResponse,
+    NicknameUpdateRequest,
+    PasswordChangeRequest,
+    RegisterRequest,
+    UserResponse,
+)
 from app.schemas.common import MessageResponse
-from app.services.auth import login_user, register_and_login_user, soft_delete_user
+from app.services.auth import (
+    change_password,
+    login_user,
+    register_and_login_user,
+    soft_delete_user,
+    update_nickname,
+)
 from app.services.mappers import user_response
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -66,6 +79,25 @@ def logout(response: Response) -> MessageResponse:
 @router.get("/me", response_model=UserResponse, summary="현재 사용자 조회")
 def get_me(current_user: Annotated[User, Depends(get_current_user_dependency)]) -> UserResponse:
     return user_response(current_user)
+
+
+@router.patch("/me", response_model=UserResponse, summary="닉네임 수정")
+def patch_me(
+    request: NicknameUpdateRequest,
+    current_user: Annotated[User, Depends(get_current_user_dependency)],
+    db: Annotated[Session, Depends(get_db)],
+) -> UserResponse:
+    return update_nickname(db, current_user, request.nickname)
+
+
+@router.patch("/me/password", response_model=MessageResponse, summary="비밀번호 변경")
+def patch_password(
+    request: PasswordChangeRequest,
+    current_user: Annotated[User, Depends(get_current_user_dependency)],
+    db: Annotated[Session, Depends(get_db)],
+) -> MessageResponse:
+    change_password(db, current_user, request.current_password, request.new_password)
+    return MessageResponse(message="Password changed")
 
 
 @router.delete("/me", response_model=MessageResponse, summary="회원 탈퇴")

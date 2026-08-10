@@ -35,22 +35,8 @@ class User(Base):
     )
     notifications: Mapped[list[Notification]] = relationship(back_populates="user")
     detection_events: Mapped[list[DetectionEvent]] = relationship(back_populates="user")
-
-
-class Camera(Base):
-    __tablename__ = "cameras"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    code: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
-    name: Mapped[str] = mapped_column(String(100), nullable=False)
-    area_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    latitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
-    longitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
-
-    detection_events: Mapped[list[DetectionEvent]] = relationship(back_populates="camera")
+    citizen_reports: Mapped[list[CitizenReport]] = relationship(back_populates="user", foreign_keys="CitizenReport.user_id")
+    citizen_sightings: Mapped[list[CitizenSighting]] = relationship(back_populates="user")
 
 
 class ObjectClass(Base):
@@ -71,6 +57,23 @@ class ObjectClass(Base):
         back_populates="object_class",
         foreign_keys="DetectedObject.object_class_id",
     )
+    citizen_reports: Mapped[list[CitizenReport]] = relationship(back_populates="object_class")
+
+
+class Camera(Base):
+    __tablename__ = "cameras"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    code: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    area_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    latitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
+    longitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+    detection_events: Mapped[list[DetectionEvent]] = relationship(back_populates="camera")
 
 
 class DetectionEvent(Base):
@@ -148,18 +151,20 @@ class DetectedObject(Base):
         back_populates="detected_objects",
         foreign_keys=[object_class_id],
     )
-    found_item: Mapped[FoundItem | None] = relationship(back_populates="detected_object")
+    final_class: Mapped[ObjectClass | None] = relationship(foreign_keys=[final_class_code])
+    found_item: Mapped[FoundItem | None] = relationship(back_populates="detected_object", uselist=False)
 
 
 class FoundItem(Base):
     __tablename__ = "found_items"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
     detected_object_id: Mapped[int | None] = mapped_column(
         ForeignKey("detected_objects.id", ondelete="SET NULL"), unique=True
     )
     object_class_id: Mapped[int] = mapped_column(ForeignKey("object_classes.id"), nullable=False)
     registered_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    source_type: Mapped[str] = mapped_column(String(10), nullable=False)
     color: Mapped[str | None] = mapped_column(String(50))
     public_description: Mapped[str | None] = mapped_column(String(500))
     private_features: Mapped[str | None] = mapped_column(Text)
@@ -178,12 +183,61 @@ class FoundItem(Base):
     detected_object: Mapped[DetectedObject | None] = relationship(back_populates="found_item")
     match_candidates: Mapped[list[MatchCandidate]] = relationship(back_populates="found_item")
     ownership_claims: Mapped[list[OwnershipClaim]] = relationship(back_populates="found_item")
+    citizen_reports: Mapped[list[CitizenReport]] = relationship(back_populates="linked_found_item")
+
+
+class CitizenReport(Base):
+    __tablename__ = "citizen_reports"
+
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    object_class_id: Mapped[int] = mapped_column(ForeignKey("object_classes.id"), nullable=False)
+    color: Mapped[str | None] = mapped_column(String(50))
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    image_url: Mapped[str | None] = mapped_column(Text)
+    area_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    latitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
+    longitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
+    found_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")
+    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    reviewed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    rejection_reason: Mapped[str | None] = mapped_column(Text)
+    admin_memo: Mapped[str | None] = mapped_column(Text)
+    linked_found_item_id: Mapped[int | None] = mapped_column(ForeignKey("found_items.id", ondelete="SET NULL"))
+    linked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+    user: Mapped[User] = relationship(back_populates="citizen_reports", foreign_keys=[user_id])
+    reviewer: Mapped[User | None] = relationship(foreign_keys=[reviewed_by])
+    object_class: Mapped[ObjectClass] = relationship(back_populates="citizen_reports")
+    linked_found_item: Mapped[FoundItem | None] = relationship(back_populates="citizen_reports")
+    sightings: Mapped[list[CitizenSighting]] = relationship(back_populates="citizen_report", order_by="CitizenSighting.sighted_at")
+
+
+class CitizenSighting(Base):
+    __tablename__ = "citizen_sightings"
+
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    citizen_report_id: Mapped[int] = mapped_column(ForeignKey("citizen_reports.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    sighted_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    location_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    latitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
+    longitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    image_url: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+    citizen_report: Mapped[CitizenReport] = relationship(back_populates="sightings")
+    user: Mapped[User] = relationship(back_populates="citizen_sightings")
 
 
 class LostReport(Base):
     __tablename__ = "lost_reports"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     object_class_id: Mapped[int] = mapped_column(ForeignKey("object_classes.id"), nullable=False)
     color: Mapped[str | None] = mapped_column(String(50))
@@ -207,7 +261,7 @@ class LostReport(Base):
 class MatchCandidate(Base):
     __tablename__ = "match_candidates"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
     lost_report_id: Mapped[int] = mapped_column(
         ForeignKey("lost_reports.id", ondelete="CASCADE"), nullable=False
     )
@@ -255,7 +309,7 @@ class OwnershipClaim(Base):
 class Notification(Base):
     __tablename__ = "notifications"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     notification_type: Mapped[str] = mapped_column(String(30), nullable=False)
     title: Mapped[str] = mapped_column(String(150), nullable=False)
@@ -271,7 +325,7 @@ class Notification(Base):
 class ProcessingHistory(Base):
     __tablename__ = "processing_histories"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
     actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     entity_type: Mapped[str] = mapped_column(String(30), nullable=False)
     entity_id: Mapped[int] = mapped_column(BigInteger, nullable=False)

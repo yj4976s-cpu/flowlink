@@ -100,6 +100,7 @@ def seed_found_item(db: Session, *, status: str = "CLAIM_PENDING") -> FoundItem:
     found_item = FoundItem(
         id=10,
         object_class_id=1,
+        source_type="ADMIN",
         color="검정",
         public_description="검정 백팩 발견",
         private_features="안쪽 라벨에 FLOW 스티커",
@@ -207,6 +208,36 @@ def test_admin_ownership_claims_keep_admin_authorization(client: TestClient, db:
 
     assert unauthenticated.status_code == 401
     assert forbidden.status_code == 403
+
+
+def test_admin_dashboard_returns_today_operational_summary(client: TestClient, db: Session) -> None:
+    seed_admin_claim_data(db)
+    login(client, "admin@example.com")
+
+    response = client.get("/api/admin/dashboard")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["metrics"]["discovered"] == 1
+    assert body["metrics"]["ai_detections"] == 0
+    assert body["metrics"]["official_found_items"] == 1
+    assert body["metrics"]["claims"] == 1
+    assert body["recent_items"][0]["item_category"] == "BAG"
+    assert body["category_counts"] == []
+    assert body["claim_status_counts"] == [{"status": "PENDING", "count": 1}]
+
+
+def test_admin_dashboard_supports_operational_periods(client: TestClient, db: Session) -> None:
+    seed_admin_claim_data(db)
+    login(client, "admin@example.com")
+
+    for period in ("today", "7d", "all"):
+        response = client.get("/api/admin/dashboard", params={"period": period})
+        assert response.status_code == 200
+        assert response.json()["period"] == period
+        assert isinstance(response.json()["trend"], list)
+
+    assert client.get("/api/admin/dashboard", params={"period": "30d"}).status_code == 422
 
 
 def test_admin_ownership_claim_patch_returns_rich_response(client: TestClient, db: Session) -> None:

@@ -7,6 +7,8 @@ export type FoundItemListItem = {
   area_name: string;
   found_at: string;
   status: string;
+  source_type: "AI" | "CITIZEN" | "ADMIN";
+  image_url: string | null;
 };
 
 export type FoundItemDetail = FoundItemListItem & {
@@ -33,6 +35,10 @@ function getApiBaseUrl() {
     throw new FoundItemsApiError("NEXT_PUBLIC_API_BASE_URL 환경 변수가 설정되지 않았습니다.");
   }
   return baseUrl.replace(/\/+$/, "");
+}
+
+export function resolveFoundItemImageUrl(value: string | null) {
+  return value ? new URL(value, `${getApiBaseUrl()}/`).toString() : null;
 }
 
 function buildApiUrl(path: string, params?: Record<string, string | number | undefined>) {

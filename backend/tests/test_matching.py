@@ -26,6 +26,7 @@ def make_found_item(**overrides: object) -> FoundItem:
     values = {
         "id": 20,
         "object_class_id": 11,
+        "source_type": "ADMIN",
         "color": "검정",
         "public_description": "검정 백팩 발견",
         "area_name": "잠실 한강공원",

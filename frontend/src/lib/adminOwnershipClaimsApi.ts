@@ -36,6 +36,7 @@ export type AdminOwnershipClaim = {
   reviewed_at: string | null;
   admin_memo: string | null;
   created_at: string;
+  updated_at?: string;
   claimant: AdminClaimantSummary;
   found_item: AdminFoundItemSummary;
   lost_report: AdminLostReportSummary | null;
