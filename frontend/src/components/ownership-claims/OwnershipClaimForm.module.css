@@ -1,0 +1,241 @@
+.panel {
+  margin-top: 20px;
+  padding: clamp(18px, 3vw, 24px);
+  border: 1px solid var(--color-border);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 92% 12%, color-mix(in srgb, var(--color-primary) 12%, transparent), transparent 32%),
+    var(--color-surface-soft);
+}
+
+.heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.heading h3,
+.panel h3 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: clamp(22px, 3vw, 28px);
+  line-height: 1.32;
+  letter-spacing: -.03em;
+}
+
+.heading button {
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.heading button:disabled {
+  cursor: wait;
+  opacity: .62;
+}
+
+.eyebrow {
+  margin: 0 0 9px;
+  color: var(--color-primary);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .12em;
+}
+
+.description {
+  margin: 16px 0 0;
+  color: var(--color-text-muted);
+  font-size: 14px;
+  line-height: 1.75;
+  word-break: keep-all;
+}
+
+.description strong {
+  color: var(--color-text);
+  font-weight: 900;
+}
+
+.field {
+  margin-top: 18px;
+  display: grid;
+  gap: 9px;
+}
+
+.field span {
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.field em {
+  margin-left: 6px;
+  color: var(--color-primary);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.field textarea {
+  width: 100%;
+  min-height: 138px;
+  padding: 15px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 18px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.65;
+  outline: 0;
+  resize: vertical;
+  transition: border-color .2s ease, box-shadow .2s ease, background-color .2s ease;
+}
+
+.field textarea::placeholder {
+  color: var(--color-text-muted);
+  opacity: .72;
+}
+
+.field textarea:focus {
+  border-color: color-mix(in srgb, var(--color-primary) 56%, var(--color-border));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-primary) 13%, transparent);
+}
+
+.field textarea[aria-invalid="true"] {
+  border-color: color-mix(in srgb, var(--color-error) 62%, var(--color-border));
+}
+
+.field b,
+.field small {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.55;
+}
+
+.field small {
+  justify-self: end;
+}
+
+.fieldError {
+  justify-self: start;
+  color: var(--color-error) !important;
+}
+
+.alert {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--color-error) 38%, var(--color-border));
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--color-error) 8%, var(--color-surface));
+  color: var(--color-text);
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.alert > :global(.icon) {
+  flex: 0 0 auto;
+  color: var(--color-error);
+}
+
+.alert strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.alert a,
+.alert button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 900;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.actions {
+  margin-top: 18px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.actions button:disabled {
+  cursor: wait;
+  opacity: .68;
+}
+
+.successIcon {
+  width: 50px;
+  height: 50px;
+  margin-bottom: 16px;
+  border-radius: 18px;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  display: grid;
+  place-items: center;
+}
+
+.summary {
+  margin: 20px 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.summary div {
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  background: var(--color-surface);
+}
+
+.summary dt {
+  margin-bottom: 7px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.summary dd {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.45;
+}
+
+@media (max-width: 640px) {
+  .heading,
+  .actions {
+    flex-direction: column;
+  }
+
+  .heading button {
+    align-self: flex-end;
+  }
+
+  .actions :global(.button),
+  .panel > :global(.button) {
+    width: 100%;
+  }
+
+  .summary {
+    grid-template-columns: 1fr;
+  }
+}

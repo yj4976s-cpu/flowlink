@@ -1,0 +1,33 @@
+from app.models.entities import (
+    Camera,
+    CitizenReport,
+    CitizenSighting,
+    DetectedObject,
+    DetectionEvent,
+    FoundItem,
+    LostReport,
+    MatchCandidate,
+    Notification,
+    ObjectClass,
+    OwnershipClaim,
+    ProcessingHistory,
+    User,
+    VideoJob,
+)
+
+__all__ = [
+    "Camera",
+    "CitizenReport",
+    "CitizenSighting",
+    "DetectedObject",
+    "DetectionEvent",
+    "FoundItem",
+    "LostReport",
+    "MatchCandidate",
+    "Notification",
+    "ObjectClass",
+    "OwnershipClaim",
+    "ProcessingHistory",
+    "User",
+    "VideoJob",
+]
