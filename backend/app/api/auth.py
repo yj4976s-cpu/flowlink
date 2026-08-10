@@ -40,8 +40,15 @@ def delete_login_cookie(response: Response) -> None:
 
 
 @router.post("/register", response_model=UserResponse, status_code=201, summary="회원가입")
-def register(request: RegisterRequest, db: Annotated[Session, Depends(get_db)]) -> UserResponse:
-    return register_user(db, request)
+def register(
+    request: RegisterRequest,
+    response: Response,
+    db: Annotated[Session, Depends(get_db)],
+) -> UserResponse:
+    user = register_user(db, request)
+    result = login_user(db, LoginRequest(email=request.email, password=request.password))
+    set_login_cookie(response, result.access_token, result.expires_in)
+    return user
 
 
 @router.post("/login", response_model=LoginResponse, summary="로그인")

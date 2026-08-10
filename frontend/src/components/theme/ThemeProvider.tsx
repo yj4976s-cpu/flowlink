@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 
-type Theme = "day" | "night";
+type Theme = "dawn" | "day" | "night";
 
 interface ThemeContextValue {
   theme: Theme;
@@ -17,7 +17,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const syncTheme = window.setTimeout(() => {
       const active = document.documentElement.dataset.theme;
-      setThemeState(active === "night" ? "night" : "day");
+      setThemeState(active === "dawn" || active === "night" ? active : "day");
     }, 0);
     return () => window.clearTimeout(syncTheme);
   }, []);

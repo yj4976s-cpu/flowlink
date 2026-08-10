@@ -28,7 +28,7 @@ export function RecentItems() {
     <section className="section recent-section" id="recent-items" aria-labelledby="recent-title">
       <div className="recent-heading">
         <div><p>RECENT DETECTIONS</p><h2 id="recent-title">최근 탐지된 객체</h2></div>
-        <Link className="recent-more" href="/found-items">전체 보기 <Icon name="arrow" size={18} /></Link>
+        <Link className="recent-more" href="/found-items">전체 보기</Link>
       </div>
       <div className="recent-grid" role="list" aria-label="최근 탐지된 객체 목록">
         {recentItems.map((item) => <div role="listitem" key={item.id}><FoundItemCard item={item} /></div>)}

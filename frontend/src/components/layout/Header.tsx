@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { FlowLinkLogo } from "@/components/common/FlowLinkLogo";
 import { Icon } from "@/components/common/Icon";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
+import { AuthUser, getCurrentUser, logout as logoutRequest } from "@/lib/authApi";
 
 const navigation = [
   { label: "발견물 찾기", href: "/found-items" },
@@ -15,8 +16,23 @@ const navigation = [
 
 export function Header() {
   const [open, setOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    let active = true;
+    getCurrentUser()
+      .then((user) => {
+        if (active) setCurrentUser(user);
+      })
+      .catch(() => {
+        if (active) setCurrentUser(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -36,6 +52,14 @@ export function Header() {
   }, [open]);
 
   const closeMenu = () => setOpen(false);
+  const handleLogout = async () => {
+    try {
+      await logoutRequest();
+    } finally {
+      setCurrentUser(null);
+      closeMenu();
+    }
+  };
 
   return (
     <header className="site-header" id="top">
@@ -45,7 +69,13 @@ export function Header() {
           {navigation.map((item) => <Link key={item.label} href={item.href}>{item.label}</Link>)}
         </nav>
         <div className="header-actions">
-          <Link className="login-link" href="/login">로그인</Link>
+          {currentUser ? (
+            <button className="login-link" type="button" onClick={handleLogout}>
+              {currentUser.nickname}님 · 로그아웃
+            </button>
+          ) : (
+            <Link className="login-link" href="/login">로그인</Link>
+          )}
           <ThemeToggle />
           <Link className="button button-primary header-cta" href="/lost-reports/new">분실 신고하기</Link>
           <button
@@ -68,7 +98,13 @@ export function Header() {
             {navigation.map((item) => (
               <Link key={item.label} href={item.href} onClick={closeMenu}>{item.label}</Link>
             ))}
-            <Link href="/login" onClick={closeMenu}>로그인</Link>
+            {currentUser ? (
+              <button className="mobile-auth-button" type="button" onClick={handleLogout}>
+                {currentUser.nickname}님 · 로그아웃
+              </button>
+            ) : (
+              <Link href="/login" onClick={closeMenu}>로그인</Link>
+            )}
             <Link className="button button-primary" href="/lost-reports/new" onClick={closeMenu}>분실 신고하기</Link>
           </nav>
         </div>
