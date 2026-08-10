@@ -35,7 +35,7 @@ KST = ZoneInfo("Asia/Seoul")
 FOUND_ITEM_STATUSES = {"DETECTED", "RECOVERED", "AVAILABLE", "CLAIM_PENDING", "RETURNED", "DISPOSED"}
 
 
-def detected_object_payload(item, *, collected_ids: set[int] | None = None) -> dict:
+def detected_object_payload(item, *, collected_ids: set[int] | None = None, operational: bool = True) -> dict:
     group = effective_group(item)
     return {
         "id": item.id,
@@ -55,7 +55,7 @@ def detected_object_payload(item, *, collected_ids: set[int] | None = None) -> d
         "first_seen_ms": item.first_seen_ms,
         "last_seen_ms": item.last_seen_ms,
         "appearance_count": item.appearance_count,
-        "follow_up_kind": "FOUND_ITEM" if group == "PERSONAL_ITEM" else "WASTE" if group == "WASTE" else "NONE",
+        "follow_up_kind": "FOUND_ITEM" if operational and group == "PERSONAL_ITEM" else "WASTE" if operational and group == "WASTE" else "NONE",
         "found_item_id": item.found_item.id if item.found_item is not None else None,
         "waste_collection_completed": item.id in (collected_ids or set()),
     }
@@ -64,6 +64,7 @@ def detected_object_payload(item, *, collected_ids: set[int] | None = None) -> d
 def detection_event_payload(event, *, collected_ids: set[int] | None = None) -> dict:
     return {
         "id": event.id,
+        "purpose": event.purpose,
         "source_type": event.source_type,
         "original_media_url": event.original_media_url,
         "result_media_url": event.result_media_url,
@@ -73,7 +74,7 @@ def detection_event_payload(event, *, collected_ids: set[int] | None = None) -> 
         "processing_completed_at": event.processing_completed_at,
         "error_message": event.error_message,
         "camera_id": event.camera_id,
-        "detected_objects": [detected_object_payload(item, collected_ids=collected_ids) for item in event.detected_objects],
+        "detected_objects": [detected_object_payload(item, collected_ids=collected_ids, operational=event.purpose == "OPERATION") for item in event.detected_objects],
     }
 
 

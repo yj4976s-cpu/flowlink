@@ -11,8 +11,13 @@
 .countBadge, .sectionHeading > span, .statusBadge { border: 1px solid color-mix(in srgb, var(--color-primary) 28%, var(--color-border)); border-radius: 999px; background: var(--color-primary-soft); color: var(--color-primary); font-size: 12px; font-weight: 900; }
 .countBadge, .sectionHeading > span { padding: 8px 12px; white-space: nowrap; }
 .reportSelect { max-width: 360px; margin: 20px 0 0; color: var(--color-text-muted); display: grid; gap: 7px; font-size: 12px; font-weight: 800; }
-.reportSelect select { min-height: 43px; padding: 0 38px 0 13px; border: 1px solid var(--color-border); border-radius: 13px; background: var(--color-surface-soft); color: var(--color-text); font: inherit; cursor: pointer; }
-.reportSelect select:focus-visible, .criteria button:focus-visible, .reportLink:focus-visible, .inlineAction:focus-visible { outline: 3px solid color-mix(in srgb, var(--color-primary) 28%, transparent); outline-offset: 3px; }
+.reportSelectControl { position: relative; }
+.reportSelectControl > button { width: 100%; min-height: 43px; padding: 0 13px; border: 1px solid var(--color-border); border-radius: 13px; background: var(--color-surface-soft); color: var(--color-text); display: flex; justify-content: space-between; align-items: center; gap: 12px; font: inherit; text-align: left; cursor: pointer; }
+.reportSelectControl > div { position: absolute; top: calc(100% + 7px); left: 0; z-index: 30; width: 100%; padding: 6px; border: 1px solid var(--color-border); border-radius: 13px; background: var(--color-surface-elevated, var(--color-surface)); box-shadow: var(--shadow-floating); }
+.reportSelectControl > div button { width: 100%; padding: 10px; border: 0; border-radius: 9px; background: transparent; color: var(--color-text); font: inherit; text-align: left; cursor: pointer; }
+.reportSelectControl > div button[data-active="true"] { background: var(--color-primary-soft); color: var(--color-primary); }
+.reportSelectControl > div button[aria-selected="true"] { font-weight: 900; }
+.reportSelectControl > button:focus-visible, .reportSelectControl > div button:focus-visible, .criteria button:focus-visible, .reportLink:focus-visible, .inlineAction:focus-visible { outline: 3px solid color-mix(in srgb, var(--color-primary) 28%, transparent); outline-offset: 3px; }
 .reportSummary { margin-top: 20px; align-items: center; }
 .objectIcon, .stateIcon { flex: 0 0 auto; border-radius: 17px; background: var(--color-primary-soft); color: var(--color-primary); display: grid; place-items: center; }
 .objectIcon { width: 56px; height: 56px; }

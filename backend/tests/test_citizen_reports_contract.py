@@ -40,6 +40,7 @@ def seed(db: Session) -> None:
         User(id=2, email="other@example.com", password_hash=hash_password("password123"), nickname="other", role="USER", active=True, terms_agreed_at=now, privacy_agreed_at=now, created_at=now, updated_at=now),
         User(id=9, email="admin@example.com", password_hash=hash_password("password123"), nickname="admin", role="ADMIN", active=True, terms_agreed_at=now, privacy_agreed_at=now, created_at=now, updated_at=now),
         ObjectClass(id=1, code="BAG", name_ko="가방", group_code="PERSONAL_ITEM", display_order=1, is_active=True, created_at=now, updated_at=now),
+        ObjectClass(id=2, code="TRASH", name_ko="폐기물", group_code="WASTE", display_order=2, is_active=True, created_at=now, updated_at=now),
         LostReport(id=10, user_id=2, object_class_id=1, color="검정", description="검정 가방", area_name="잠실", lost_from=now - timedelta(hours=1), status="OPEN", created_at=now, updated_at=now),
     ])
     db.commit()
@@ -108,6 +109,22 @@ def test_sighting_is_stored_as_one_to_many_history(client: TestClient, db: Sessi
     assert len(sightings.json()) == 1
     assert sightings.json()[0]["location_name"] == "잠실 산책로"
     assert client.get("/api/citizen-reports/999999/sightings").status_code == 404
+
+
+def test_patch_rejects_non_personal_and_unknown_categories(client: TestClient, db: Session) -> None:
+    seed(db); login(client, "user@example.com"); report = create_report(client)
+    assert client.patch(f"/api/citizen-reports/{report['id']}", json={"object_class": "BAG"}).status_code == 200
+    assert client.patch(f"/api/citizen-reports/{report['id']}", json={"object_class": "TRASH"}).status_code == 422
+    assert client.patch(f"/api/citizen-reports/{report['id']}", json={"object_class": "UNKNOWN"}).status_code == 422
+
+
+def test_failed_sighting_removes_uploaded_file(client: TestClient, db: Session, tmp_path, monkeypatch) -> None:
+    seed(db); login(client, "user@example.com")
+    monkeypatch.setattr("app.api.citizen_reports.upload_root", lambda: tmp_path)
+    image = BytesIO(); Image.new("RGB", (8, 8), "blue").save(image, format="PNG")
+    response = client.post("/api/citizen-reports/999999/sightings", data={"sighted_at": "2026-08-10T02:00:00Z", "location_name": "잠실", "description": "벤치 옆에서 다시 봤습니다"}, files={"image": ("photo.png", image.getvalue(), "image/png")})
+    assert response.status_code == 404
+    assert list(tmp_path.rglob("*.*")) == []
 
 
 def test_resolve_creates_citizen_found_item_and_reverse_match_atomically(client: TestClient, db: Session) -> None:

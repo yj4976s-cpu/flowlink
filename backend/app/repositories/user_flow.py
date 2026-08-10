@@ -87,6 +87,8 @@ def list_public_found_items(
     color: str | None = None,
     area_name: str | None = None,
     q: str | None = None,
+    status: str | None = None,
+    found_date: datetime | None = None,
 ) -> Sequence[FoundItem]:
     statement = _public_found_items_statement().join(FoundItem.object_class)
     if item_category:
@@ -113,6 +115,12 @@ def list_public_found_items(
                 ObjectClass.code.ilike(pattern),
             )
         )
+    if status:
+        statement = statement.where(FoundItem.status == status.strip().upper())
+    if found_date:
+        start = found_date.replace(tzinfo=KST).astimezone(UTC)
+        end = (found_date + timedelta(days=1)).replace(tzinfo=KST).astimezone(UTC)
+        statement = statement.where(FoundItem.found_at >= start, FoundItem.found_at < end)
 
     return db.scalars(statement.order_by(FoundItem.found_at.desc()).offset(skip).limit(limit)).all()
 

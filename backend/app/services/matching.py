@@ -126,7 +126,7 @@ def create_match_candidates_for_found_item(db: Session, found_item: FoundItem) -
     reports = db.scalars(
         select(LostReport).where(
             LostReport.object_class_id == found_item.object_class_id,
-            LostReport.status == "OPEN",
+            LostReport.status.in_(("OPEN", "MATCHED")),
         )
     ).all()
     for lost_report in reports:

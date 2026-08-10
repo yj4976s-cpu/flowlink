@@ -23,6 +23,8 @@ def create_ai_found_item(db: Session, *, admin: User, detected_object_id: int) -
     item = get_detected_object_by_id(db, detected_object_id, for_update=True)
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Detected object not found")
+    if item.detection_event.purpose != "OPERATION":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User analysis detections cannot create found items")
     if item.processing_status != "CONFIRMED":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Detected object review is not confirmed")
     final_class = item.final_class or item.object_class
@@ -79,6 +81,8 @@ def complete_waste_collection(db: Session, *, admin: User, detected_object_id: i
     item = get_detected_object_by_id(db, detected_object_id, for_update=True)
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Detected object not found")
+    if item.detection_event.purpose != "OPERATION":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User analysis detections cannot be collected")
     if item.processing_status != "CONFIRMED":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Detected object review is not confirmed")
     if effective_group(item) != WASTE_GROUP:

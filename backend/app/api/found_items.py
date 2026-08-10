@@ -1,3 +1,4 @@
+from datetime import date, datetime, time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
@@ -20,6 +21,8 @@ def list_found_items(
     color: Annotated[str | None, Query()] = None,
     area_name: Annotated[str | None, Query()] = None,
     q: Annotated[str | None, Query()] = None,
+    status: Annotated[str | None, Query()] = None,
+    found_date: Annotated[date | None, Query()] = None,
 ) -> list[FoundItemListItemResponse]:
     items = list_public_found_items(
         db,
@@ -29,6 +32,8 @@ def list_found_items(
         color=color,
         area_name=area_name,
         q=q,
+        status=status,
+        found_date=datetime.combine(found_date, time.min) if found_date else None,
     )
     return [found_item_list_response(item) for item in items]
 

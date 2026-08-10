@@ -50,6 +50,7 @@ class AdminDetectedObjectCollectionResponse(BaseModel):
 
 class AdminDetectionEventResponse(BaseModel):
     id: int
+    purpose: Literal["OPERATION", "USER_ANALYSIS"]
     source_type: str
     original_media_url: str
     result_media_url: str | None

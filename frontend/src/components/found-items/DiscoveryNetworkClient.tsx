@@ -121,7 +121,7 @@ function OfficialCard({ item }: { item: FoundItemListItem }) {
 function RecommendationCard({ match }: { match: MatchCandidate }) {
   return <article className={styles.recommendCard}>
     <ItemVisual item={match.found_item} />
-    <div><span className={styles.similarity}>{match.total_score}% 유사</span><h3>{match.found_item.public_description || match.found_item.item_category_name}</h3>
+    <div><span className={styles.similarity}>{match.total_score}점 · 일치 가능성 높음</span><h3>{match.found_item.public_description || match.found_item.item_category_name}</h3>
       <p>{match.found_item.area_name}</p><p>{format(match.found_item.found_at)} · AI 탐지</p>
       <Link className="button button-secondary" href="/matches">비교하기</Link></div>
   </article>;
@@ -168,11 +168,7 @@ export function DiscoveryNetworkClient() {
     const controller = new AbortController();
     const load = async () => {
       setLoading(true);
-      const [foundResult, citizenResult, userResult] = await Promise.allSettled([
-        listFoundItems({}, controller.signal), listCitizenReports(), getCurrentUser(),
-      ]);
-      if (foundResult.status === "fulfilled") setItems(foundResult.value.filter((item) => personalCategories.some((name) => item.item_category_name.includes(name))));
-      else setSectionError("공식 발견물을 불러오지 못했습니다.");
+      const [citizenResult, userResult] = await Promise.allSettled([listCitizenReports(), getCurrentUser()]);
       if (citizenResult.status === "fulfilled") setReports(citizenResult.value);
       else setCitizenError("시민 제보를 불러오지 못했습니다.");
       if (userResult.status === "fulfilled") {
@@ -187,6 +183,19 @@ export function DiscoveryNetworkClient() {
   }, []);
 
   useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setLoading(true);
+      setSectionError(null);
+      void listFoundItems({ q: query, item_category: category, area_name: area, status, found_date: foundDate }, controller.signal)
+        .then((result) => setItems(result.filter((item) => personalCategories.some((name) => item.item_category_name.includes(name)))))
+        .catch((error) => { if (!(error instanceof DOMException && error.name === "AbortError")) setSectionError("공식 발견물을 불러오지 못했습니다."); })
+        .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    }, query ? 250 : 0);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [area, category, foundDate, query, status]);
+
+  useEffect(() => {
     if (!modal && !selectedReport) return;
     const close = (event: KeyboardEvent) => {
       if (event.key === "Escape") { setModal(null); detailRequest.current += 1; setDetailRefreshing(false); setSelectedReport(null); }
@@ -195,10 +204,7 @@ export function DiscoveryNetworkClient() {
     return () => window.removeEventListener("keydown", close);
   }, [modal, selectedReport]);
 
-  const filteredItems = useMemo(() => items.filter((item) => {
-    const text = `${item.item_category_name} ${item.public_description ?? ""} ${item.area_name} ${item.color ?? ""}`.toLowerCase();
-    return (!query || text.includes(query.toLowerCase())) && (!category || item.item_category_name.includes(category)) && (!area || item.area_name.includes(area)) && (!status || item.status === status) && (!foundDate || item.found_at.startsWith(foundDate));
-  }), [area, category, foundDate, items, query, status]);
+  const filteredItems = items;
   const filteredReports = useMemo(() => reports.filter((report) => `${report.title} ${report.description} ${report.areaName}`.toLowerCase().includes(query.toLowerCase()) && (!category || report.category.includes(category)) && (!area || report.areaName.includes(area)) && (!foundDate || report.foundAt.startsWith(foundDate))), [area, category, foundDate, query, reports]);
   const activeReport = lostReports.find((report) => ["OPEN", "MATCHED", "CLAIM_PENDING"].includes(report.status));
 

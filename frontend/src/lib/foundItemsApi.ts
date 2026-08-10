@@ -20,6 +20,8 @@ export type FoundItemFilters = {
   item_category?: string;
   color?: string;
   area_name?: string;
+  status?: string;
+  found_date?: string;
 };
 
 export class FoundItemsApiError extends Error {
@@ -61,7 +63,7 @@ async function requestJson<T>(url: string, signal?: AbortSignal): Promise<T> {
 
 export function listFoundItems(filters: FoundItemFilters, signal?: AbortSignal) {
   return requestJson<FoundItemListItem[]>(
-    buildApiUrl("/api/found-items", { skip: 0, limit: 20, ...filters }),
+    buildApiUrl("/api/found-items", { skip: 0, limit: 100, ...filters }),
     signal,
   );
 }

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { Icon } from "@/components/common/Icon";
 import type { IconName } from "@/components/common/Icon";
 import { OwnershipClaimForm } from "@/components/ownership-claims/OwnershipClaimForm";
@@ -121,6 +121,28 @@ function CriteriaPopover() {
   );
 }
 
+function ReportSelect({ reports, selected, onSelect }: { reports: LostReportResponse[]; selected: LostReportResponse; onSelect: (id: number) => void }) {
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(() => Math.max(0, reports.findIndex((report) => report.id === selected.id)));
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false); };
+    window.addEventListener("pointerdown", close);
+    return () => window.removeEventListener("pointerdown", close);
+  }, [open]);
+  const choose = (index: number) => { onSelect(reports[index].id); setActive(index); setOpen(false); };
+  const onKeyDown = (event: ReactKeyboardEvent) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End") {
+      event.preventDefault(); setOpen(true);
+      setActive((current) => event.key === "Home" ? 0 : event.key === "End" ? reports.length - 1 : event.key === "ArrowDown" ? (current + 1) % reports.length : (current - 1 + reports.length) % reports.length);
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault(); if (open) choose(active); else setOpen(true);
+    } else if (event.key === "Escape") { setOpen(false); }
+  };
+  return <label className={styles.reportSelect}>비교할 분실 신고<div className={styles.reportSelectControl} ref={root}><button type="button" aria-haspopup="listbox" aria-expanded={open} onClick={() => { setActive(Math.max(0, reports.findIndex((report) => report.id === selected.id))); setOpen((value) => !value); }} onKeyDown={onKeyDown}>{selected.item_category_name} · {selected.area_name}<Icon name="chevron" size={15} /></button>{open && <div role="listbox" aria-label="비교할 분실 신고">{reports.map((report, index) => <button type="button" role="option" aria-selected={report.id === selected.id} data-active={active === index} key={report.id} onMouseEnter={() => setActive(index)} onClick={() => choose(index)}>{report.item_category_name} · {report.area_name}</button>)}</div>}</div></label>;
+}
+
 function ReportWorkspace({ reports, selectedId, onSelect, count }: { reports: LostReportResponse[]; selectedId: number | null; onSelect: (id: number) => void; count: number }) {
   const selected = reports.find((report) => report.id === selectedId) ?? reports[0];
   if (!selected) return null;
@@ -131,11 +153,7 @@ function ReportWorkspace({ reports, selectedId, onSelect, count }: { reports: Lo
         <span className={styles.countBadge}>후보 {count}건</span>
       </div>
       {reports.length > 1 && (
-        <label className={styles.reportSelect}>비교할 분실 신고
-          <select value={selected.id} onChange={(event) => onSelect(Number(event.target.value))}>
-            {reports.map((report) => <option key={report.id} value={report.id}>{report.item_category_name} · {report.area_name}</option>)}
-          </select>
-        </label>
+        <ReportSelect reports={reports} selected={selected} onSelect={onSelect} />
       )}
       <div className={styles.reportSummary}>
         <LostReportVisual report={selected} />

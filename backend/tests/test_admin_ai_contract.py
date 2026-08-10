@@ -56,14 +56,14 @@ def login_user(client: TestClient) -> None:
     assert client.post("/api/auth/login", json={"email": "user@example.com", "password": "password123"}).status_code == 200
 
 
-def seed_detection(db: Session, *, object_id: int, event_id: int, detected_at: datetime, confidence: str = "0.8750", source_type: str = "IMAGE", include_crop: bool = True, admin_memo: str | None = None) -> None:
+def seed_detection(db: Session, *, object_id: int, event_id: int, detected_at: datetime, confidence: str = "0.8750", source_type: str = "IMAGE", include_crop: bool = True, admin_memo: str | None = None, purpose: str = "OPERATION") -> None:
     now = detected_at
     if db.get(ObjectClass, 1) is None:
         db.add(ObjectClass(id=1, code="BAG", name_ko="가방", group_code="PERSONAL_ITEM", display_order=1, is_active=True, created_at=now, updated_at=now))
     if db.get(Camera, 1) is None:
         db.add(Camera(id=1, code="CAM-1", name="테스트 카메라", area_name="잠실", is_active=True, created_at=now, updated_at=now))
     extension = "jpg" if source_type == "IMAGE" else "mp4"
-    db.add(DetectionEvent(id=event_id, camera_id=1, source_type=source_type, original_media_url=f"/uploads/{event_id}.{extension}", result_media_url=None, status="COMPLETED", captured_at=detected_at, processing_started_at=detected_at, processing_completed_at=detected_at, created_at=now, updated_at=now))
+    db.add(DetectionEvent(id=event_id, camera_id=1, purpose=purpose, source_type=source_type, original_media_url=f"/uploads/{event_id}.{extension}", result_media_url=None, status="COMPLETED", captured_at=detected_at, processing_started_at=detected_at, processing_completed_at=detected_at, created_at=now, updated_at=now))
     db.add(DetectedObject(id=object_id, detection_event_id=event_id, object_class_id=1, processing_status="CONFIRMED", confidence=Decimal(confidence), bbox_x=Decimal("1"), bbox_y=Decimal("2"), bbox_width=Decimal("30"), bbox_height=Decimal("40"), cropped_image_url=f"/uploads/crop-{object_id}.jpg" if include_crop else None, appearance_count=1, admin_memo=admin_memo, detected_at=detected_at, created_at=now))
     db.commit()
 
@@ -131,6 +131,8 @@ def test_admin_creates_ai_found_item_reverse_match_and_prevents_duplicate(client
     seed_detection(db, object_id=10, event_id=20, detected_at=found_at)
     db.add(LostReport(id=50, user_id=2, object_class_id=1, color=None, description="검정 가방", area_name="잠실", lost_from=found_at - timedelta(hours=1), status="OPEN", created_at=found_at, updated_at=found_at))
     db.add(LostReport(id=51, user_id=2, object_class_id=1, color=None, description="가방", area_name="강남", lost_from=found_at - timedelta(days=40), status="OPEN", created_at=found_at, updated_at=found_at))
+    for report_id, report_status in ((52, "MATCHED"), (53, "CLAIM_PENDING"), (54, "RESOLVED"), (55, "CANCELLED")):
+        db.add(LostReport(id=report_id, user_id=2, object_class_id=1, color=None, description="검정 가방", area_name="잠실", lost_from=found_at - timedelta(hours=1), status=report_status, created_at=found_at, updated_at=found_at))
     db.commit(); login(client)
 
     response = client.post("/api/admin/detected-objects/10/found-item")
@@ -144,12 +146,14 @@ def test_admin_creates_ai_found_item_reverse_match_and_prevents_duplicate(client
     assert found.area_name == "잠실"
     assert db.query(MatchCandidate).filter_by(lost_report_id=50, found_item_id=found.id).count() == 1
     assert db.query(MatchCandidate).filter_by(lost_report_id=51, found_item_id=found.id).count() == 0
-    assert db.query(Notification).filter_by(user_id=2, notification_type="MATCH_FOUND").count() == 1
+    assert db.query(MatchCandidate).filter_by(lost_report_id=52, found_item_id=found.id).count() == 1
+    assert all(db.query(MatchCandidate).filter_by(lost_report_id=report_id, found_item_id=found.id).count() == 0 for report_id in (53, 54, 55))
+    assert db.query(Notification).filter_by(user_id=2, notification_type="MATCH_FOUND").count() == 2
     if found.found_at.tzinfo is None:  # SQLite fixture loses TIMESTAMPTZ metadata; PostgreSQL does not.
         found.found_at = found.found_at.replace(tzinfo=UTC)
     create_match_candidates_for_found_item(db, found)
     assert db.query(MatchCandidate).filter_by(lost_report_id=50, found_item_id=found.id).count() == 1
-    assert db.query(Notification).filter_by(user_id=2, notification_type="MATCH_FOUND").count() == 1
+    assert db.query(Notification).filter_by(user_id=2, notification_type="MATCH_FOUND").count() == 2
     history = db.query(ProcessingHistory).filter_by(entity_type="DETECTED_OBJECT", entity_id=10, action_type="DETECTED_OBJECT_FOUND_ITEM_CREATED").one()
     assert f"found_item_id={found.id}" == history.note
     assert client.post("/api/admin/detected-objects/10/found-item").status_code == 409
@@ -187,6 +191,21 @@ def test_user_cannot_run_detection_follow_up(client: TestClient, db: Session) ->
     seed_user(db); seed_detection(db, object_id=10, event_id=20, detected_at=datetime(2026, 1, 2, tzinfo=UTC)); seed_waste_detection(db); login_user(client)
     assert client.post("/api/admin/detected-objects/10/found-item").status_code == 403
     assert client.post("/api/admin/detected-objects/30/collect").status_code == 403
+
+
+def test_user_analysis_has_no_follow_up_and_is_blocked_by_services(client: TestClient, db: Session) -> None:
+    seed_admin(db)
+    seed_detection(db, object_id=10, event_id=20, detected_at=datetime(2026, 1, 2, tzinfo=UTC), purpose="USER_ANALYSIS")
+    seed_waste_detection(db, object_id=30, event_id=40)
+    db.get(DetectionEvent, 40).purpose = "USER_ANALYSIS"
+    db.commit(); login(client)
+    events = client.get("/api/admin/detections").json()
+    assert {event["purpose"] for event in events} == {"USER_ANALYSIS"}
+    assert all(item["follow_up_kind"] == "NONE" for event in events for item in event["detected_objects"])
+    assert client.post("/api/admin/detected-objects/10/found-item").status_code == 409
+    assert client.post("/api/admin/detected-objects/30/collect").status_code == 409
+    assert db.query(FoundItem).count() == 0
+    assert db.query(ProcessingHistory).filter_by(action_type="WASTE_COLLECTION_COMPLETED").count() == 0
 
 
 def test_dashboard_uses_kst_today_boundary_and_ai_categories(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:

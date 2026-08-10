@@ -9,7 +9,7 @@ export type DetectionObject = {
   waste_collection_completed: boolean;
 };
 export type DetectionEvent = {
-  id: number; source_type: string; original_media_url: string; result_media_url: string | null; status: string;
+  id: number; purpose: "OPERATION" | "USER_ANALYSIS"; source_type: string; original_media_url: string; result_media_url: string | null; status: string;
   captured_at: string; processing_started_at: string | null; processing_completed_at: string | null;
   error_message: string | null; camera_id: number | null; detected_objects: DetectionObject[];
 };
