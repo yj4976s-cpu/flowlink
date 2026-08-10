@@ -6,7 +6,8 @@ from datetime import timedelta
 import jwt
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import BigInteger, create_engine
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -15,6 +16,11 @@ from app.core.security import hash_password, utc_now
 from app.db.session import Base, get_db
 from app.main import app
 from app.models import User
+
+
+@compiles(BigInteger, "sqlite")
+def compile_big_integer_for_sqlite(_type, _compiler, **_kwargs) -> str:
+    return "INTEGER"
 
 
 @pytest.fixture
@@ -75,12 +81,92 @@ def login(client: TestClient, email: str = "user@example.com", password: str = "
     return client.post("/api/auth/login", json={"email": email, "password": password})
 
 
+def register(
+    client: TestClient,
+    *,
+    email: str = "new-user@example.com",
+    terms_agreed: bool = True,
+    privacy_agreed: bool = True,
+):
+    return client.post(
+        "/api/auth/register",
+        json={
+            "email": email,
+            "password": "password123",
+            "nickname": "new-user",
+            "terms_agreed": terms_agreed,
+            "privacy_agreed": privacy_agreed,
+        },
+    )
+
+
 def assert_cookie_deleted(set_cookie: str) -> None:
     settings = get_settings()
     assert f"{settings.AUTH_COOKIE_NAME}=" in set_cookie
     assert "Max-Age=0" in set_cookie
     assert "HttpOnly" in set_cookie
     assert "SameSite=lax" in set_cookie
+
+
+def test_register_returns_created(client: TestClient) -> None:
+    response = register(client)
+
+    assert response.status_code == 201
+
+
+def test_register_sets_httponly_cookie(client: TestClient) -> None:
+    settings = get_settings()
+    response = register(client)
+
+    set_cookie = response.headers["set-cookie"]
+    assert f"{settings.AUTH_COOKIE_NAME}=" in set_cookie
+    assert "HttpOnly" in set_cookie
+    assert "SameSite=lax" in set_cookie
+
+
+def test_register_cookie_authenticates_me(client: TestClient) -> None:
+    assert register(client).status_code == 201
+
+    response = client.get("/api/auth/me")
+
+    assert response.status_code == 200
+    assert response.json()["email"] == "new-user@example.com"
+
+
+def test_duplicate_registration_does_not_set_cookie(client: TestClient) -> None:
+    settings = get_settings()
+    assert register(client).status_code == 201
+    client.cookies.clear()
+
+    response = register(client)
+
+    assert response.status_code == 409
+    assert settings.AUTH_COOKIE_NAME not in response.headers.get("set-cookie", "")
+
+
+def test_registration_without_required_agreement_does_not_set_cookie(client: TestClient) -> None:
+    settings = get_settings()
+
+    response = register(client, terms_agreed=False)
+
+    assert response.status_code == 400
+    assert settings.AUTH_COOKIE_NAME not in response.headers.get("set-cookie", "")
+
+
+def test_registration_rolls_back_when_token_creation_fails(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_token_creation(*_args, **_kwargs):
+        raise RuntimeError("token creation failed")
+
+    monkeypatch.setattr("app.services.auth.create_access_token", fail_token_creation)
+
+    with pytest.raises(RuntimeError, match="token creation failed"):
+        register(client)
+
+    assert db.query(User).filter(User.email == "new-user@example.com").one_or_none() is None
 
 
 def test_login_sets_httponly_cookie_without_exposing_access_token(client: TestClient, db: Session) -> None:

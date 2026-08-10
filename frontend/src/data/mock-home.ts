@@ -5,7 +5,7 @@ export const homeStats = [
   { label: "최근 발견", value: "24", suffix: "건", icon: "scan" as const },
   { label: "매칭 진행", value: "7", suffix: "건", icon: "document" as const },
   { label: "반환 완료", value: "5", suffix: "건", icon: "check" as const },
-  { label: "분석 대상", value: "2", suffix: "종류", icon: "spark" as const },
+  { label: "오늘 탐지", value: "12", suffix: "건", icon: "spark" as const },
 ];
 
 export const recentItems: FoundItem[] = [

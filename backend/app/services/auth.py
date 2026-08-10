@@ -90,6 +90,48 @@ def login_user(db: Session, request: LoginRequest) -> LoginResult:
     )
 
 
+def register_and_login_user(db: Session, request: RegisterRequest) -> LoginResult:
+    validate_registration_agreements(request)
+    email = normalize_email(str(request.email))
+    nickname = clean_optional_text(request.nickname)
+    if nickname is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Nickname is required")
+    if get_user_by_email(db, email) is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+
+    now = utc_now()
+    user = User(
+        email=email,
+        password_hash=hash_password(request.password),
+        nickname=nickname,
+        role="USER",
+        active=True,
+        terms_agreed_at=now,
+        privacy_agreed_at=now,
+        created_at=now,
+        updated_at=now,
+        last_login_at=now,
+    )
+    db.add(user)
+    try:
+        db.flush()
+        access_token, expires_in = create_access_token(user.id, user.role)
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered") from exc
+    except Exception:
+        db.rollback()
+        raise
+
+    db.refresh(user)
+    return LoginResult(
+        access_token=access_token,
+        expires_in=expires_in,
+        user=user_response(user),
+    )
+
+
 def soft_delete_user(db: Session, user: User) -> None:
     if not user.active or user.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User is already deleted")

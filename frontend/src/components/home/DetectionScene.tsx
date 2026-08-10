@@ -12,7 +12,7 @@ function DetectionCard({ kind, label, confidence, className }: (typeof detection
   return (
     <article className={`detection-card ${className}`} aria-label={`${label}, 탐지 신뢰도 ${confidence}%`}>
       <div className="detection-copy">
-        <span>{label}</span><strong>{confidence}%</strong><i aria-hidden="true">✓</i>
+        <span>{label}</span><strong>신뢰도 {confidence}%</strong><i aria-hidden="true" />
       </div>
       <ObjectIllustration kind={kind} />
       <div className="ripple" aria-hidden="true"><i /><i /><i /></div>
@@ -45,17 +45,17 @@ export function DetectionScene() {
           </marker>
         </defs>
         <g className="scan-rings">
-          <ellipse cx="490" cy="425" rx="86" ry="27" />
-          <ellipse cx="490" cy="425" rx="62" ry="19" />
-          <ellipse cx="490" cy="425" rx="40" ry="12" />
+          <ellipse cx="490" cy="441" rx="86" ry="27" />
+          <ellipse cx="490" cy="441" rx="62" ry="19" />
+          <ellipse cx="490" cy="441" rx="40" ry="12" />
           <g className="umbrella-scan">
             <ellipse cx="665" cy="317" rx="76" ry="24" />
             <ellipse cx="665" cy="317" rx="54" ry="17" />
             <ellipse cx="665" cy="317" rx="31" ry="10" />
           </g>
-          <ellipse cx="785" cy="411" rx="88" ry="27" />
-          <ellipse cx="785" cy="411" rx="62" ry="19" />
-          <ellipse cx="785" cy="411" rx="38" ry="11" />
+          <ellipse cx="785" cy="427" rx="88" ry="27" />
+          <ellipse cx="785" cy="427" rx="62" ry="19" />
+          <ellipse cx="785" cy="427" rx="38" ry="11" />
         </g>
         <g className="flow-lines flow-lines-day">
           <path className="flow-halo" d="M490 407C548 342 610 350 665 317S724 365 785 399" />

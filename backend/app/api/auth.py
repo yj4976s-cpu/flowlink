@@ -9,7 +9,7 @@ from app.db.session import get_db
 from app.models import User
 from app.schemas.auth import LoginRequest, LoginResponse, RegisterRequest, UserResponse
 from app.schemas.common import MessageResponse
-from app.services.auth import login_user, register_user, soft_delete_user
+from app.services.auth import login_user, register_and_login_user, soft_delete_user
 from app.services.mappers import user_response
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -40,8 +40,14 @@ def delete_login_cookie(response: Response) -> None:
 
 
 @router.post("/register", response_model=UserResponse, status_code=201, summary="회원가입")
-def register(request: RegisterRequest, db: Annotated[Session, Depends(get_db)]) -> UserResponse:
-    return register_user(db, request)
+def register(
+    request: RegisterRequest,
+    response: Response,
+    db: Annotated[Session, Depends(get_db)],
+) -> UserResponse:
+    result = register_and_login_user(db, request)
+    set_login_cookie(response, result.access_token, result.expires_in)
+    return result.user
 
 
 @router.post("/login", response_model=LoginResponse, summary="로그인")

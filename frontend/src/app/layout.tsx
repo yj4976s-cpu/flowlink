@@ -29,7 +29,7 @@ const themeScript = `
   (() => {
     try {
       const stored = localStorage.getItem("flowlink-theme");
-      const theme = stored === "night" || stored === "day" ? stored : "day";
+      const theme = stored === "dawn" || stored === "night" || stored === "day" ? stored : "day";
       if (stored !== theme) localStorage.setItem("flowlink-theme", theme);
       document.documentElement.dataset.theme = theme;
     } catch (_) {

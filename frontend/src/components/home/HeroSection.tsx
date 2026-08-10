@@ -42,11 +42,13 @@ export function HeroSection() {
         <div className="hero-copy">
           <p className="eyebrow"><Icon name="scan" size={18} /> AI 기반 수면 부유 객체 탐지</p>
           <h1 id="hero-title">
+            <span className="theme-copy theme-copy-dawn">새벽빛을 따라,<br />다시 <em>이어지는</em> 흐름</span>
             <span className="theme-copy theme-copy-day">물길 위 발견을,<br />다시 <em>연결</em>하는 시간</span>
             <span className="theme-copy theme-copy-night">어둠 속 발견도,<br />놓치지 않는 <em>연결</em></span>
           </h1>
           <div className="title-rule" aria-hidden="true"><i /></div>
           <p className="hero-description">
+            <span className="theme-copy theme-copy-dawn">하루의 시작과 함께 수면 위 발견을 포착하고, 잃어버린 물건과 다시 연결합니다.</span>
             <span className="theme-copy theme-copy-day">AI가 수면 위 객체를 찾아내고, 시민의 분실 신고와 이어 관리자 확인·반환까지 돕습니다.</span>
             <span className="theme-copy theme-copy-night">AI가 야간 수면 위 객체 후보를 포착하고, 발견부터 매칭과 반환까지 차분하게 이어줍니다.</span>
           </p>

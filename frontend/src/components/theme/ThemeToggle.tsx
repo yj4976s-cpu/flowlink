@@ -11,6 +11,16 @@ export function ThemeToggle() {
       <button
         type="button"
         className="theme-option"
+        aria-label="DAWN 테마로 전환"
+        aria-pressed={theme === "dawn"}
+        onClick={() => setTheme("dawn")}
+      >
+        <Icon name="sunrise" size={17} />
+        <span>DAWN</span>
+      </button>
+      <button
+        type="button"
+        className="theme-option"
         aria-label="DAY 테마로 전환"
         aria-pressed={theme === "day"}
         onClick={() => setTheme("day")}
