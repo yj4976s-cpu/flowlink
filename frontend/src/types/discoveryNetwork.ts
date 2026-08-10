@@ -1,4 +1,4 @@
-export type DiscoverySource = "AI 탐지" | "시민 제보";
+export type DiscoverySource = "AI 탐지" | "발견 제보";
 export type CitizenReportStatus = "검토 대기" | "관리자 확인 중" | "기존 발견물 연결" | "반려" | "취소";
 
 export type DiscoveryHistory = {

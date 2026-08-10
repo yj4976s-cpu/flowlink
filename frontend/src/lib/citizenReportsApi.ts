@@ -7,7 +7,7 @@ const categoryCodes: Record<string, string> = { "공": "BALL", "가방": "BAG", 
 const statusLabels: Record<string, CitizenReport["status"]> = { PENDING: "검토 대기", UNDER_REVIEW: "관리자 확인 중", LINKED: "기존 발견물 연결", REJECTED: "반려", CANCELLED: "취소" };
 
 function baseUrl() { const value = process.env.NEXT_PUBLIC_API_BASE_URL?.trim(); if (!value) throw new Error("API 서버 주소가 설정되지 않았습니다."); return value.replace(/\/+$/, ""); }
-async function request<T>(path: string, init?: RequestInit) { const response = await fetch(`${baseUrl()}${path}`, { ...init, credentials: "include" }); if (!response.ok) throw new Error("시민 제보 요청을 처리하지 못했습니다."); return response.json() as Promise<T>; }
+async function request<T>(path: string, init?: RequestInit) { const response = await fetch(`${baseUrl()}${path}`, { ...init, credentials: "include" }); if (!response.ok) throw new Error("발견 제보 요청을 처리하지 못했습니다."); return response.json() as Promise<T>; }
 function imageUrl(value: string | null) { return value ? new URL(value, `${baseUrl()}/`).toString() : null; }
 function mapReport(report: ApiReport): CitizenReport {
   const category = report.item_category_name;
@@ -15,8 +15,8 @@ function mapReport(report: ApiReport): CitizenReport {
     description: report.description, areaName: report.area_name, foundAt: report.found_at, imageUrl: imageUrl(report.image_url),
     imageClass: category.includes("우산") ? "umbrella" : category.includes("가방") ? "backpack" : category.includes("공") ? "ball" : "shoe",
     status: statusLabels[report.status] ?? "검토 대기", mapPosition: { x: 24 + report.id % 55, y: 28 + report.id % 38 },
-    history: [{ id: `report-${report.id}`, at: report.found_at, label: "최초 시민 제보", place: report.area_name, detail: report.description, source: "시민 제보" },
-      ...report.sightings.map((item) => ({ id: String(item.id), at: item.sighted_at, label: "다른 시민 추가 목격", place: item.location_name, detail: item.description, imageUrl: imageUrl(item.image_url), source: "시민 제보" as const }))] };
+    history: [{ id: `report-${report.id}`, at: report.found_at, label: "최초 발견 제보", place: report.area_name, detail: report.description, source: "발견 제보" },
+      ...report.sightings.map((item) => ({ id: String(item.id), at: item.sighted_at, label: "다른 시민 추가 목격", place: item.location_name, detail: item.description, imageUrl: imageUrl(item.image_url), source: "발견 제보" as const }))] };
 }
 export async function listCitizenReports() { return (await request<ApiReport[]>("/api/citizen-reports")).map(mapReport); }
 export async function getCitizenReport(reportId: string, signal?: AbortSignal) { return mapReport(await request<ApiReport>(`/api/citizen-reports/${reportId}`, { signal })); }
