@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "@/components/common/Icon";
 import {
@@ -302,10 +302,11 @@ export function AdminOwnershipClaimsClient() {
   const [error, setError] = useState<string | null>(null);
   const [errorStatus, setErrorStatus] = useState<number | null>(null);
   const [adminMemos, setAdminMemos] = useState<Record<number, string>>({});
-  const [processingClaimId, setProcessingClaimId] = useState<number | null>(null);
+  const [processingClaimIds, setProcessingClaimIds] = useState<Set<number>>(() => new Set());
   const [confirmingAction, setConfirmingAction] = useState<ConfirmingAction>(null);
   const [actionMessages, setActionMessages] = useState<Record<number, string>>({});
   const [actionErrors, setActionErrors] = useState<Record<number, string>>({});
+  const processingClaimIdsRef = useRef<Set<number>>(new Set());
 
   const refreshClaims = async () => {
     try {
@@ -365,8 +366,11 @@ export function AdminOwnershipClaimsClient() {
   };
 
   const updateClaimStatus = async (claimId: number, status: string) => {
-    if (processingClaimId !== null) return;
-    setProcessingClaimId(claimId);
+    if (processingClaimIdsRef.current.has(claimId)) return;
+    const nextProcessingClaimIds = new Set(processingClaimIdsRef.current);
+    nextProcessingClaimIds.add(claimId);
+    processingClaimIdsRef.current = nextProcessingClaimIds;
+    setProcessingClaimIds(nextProcessingClaimIds);
     setActionMessages((current) => ({ ...current, [claimId]: "" }));
     setActionErrors((current) => ({ ...current, [claimId]: "" }));
 
@@ -398,7 +402,10 @@ export function AdminOwnershipClaimsClient() {
         : "요청 상태를 변경하지 못했습니다. 잠시 후 다시 시도해주세요.";
       setActionErrors((current) => ({ ...current, [claimId]: message }));
     } finally {
-      setProcessingClaimId(null);
+      const nextProcessingClaimIds = new Set(processingClaimIdsRef.current);
+      nextProcessingClaimIds.delete(claimId);
+      processingClaimIdsRef.current = nextProcessingClaimIds;
+      setProcessingClaimIds(nextProcessingClaimIds);
     }
   };
 
@@ -481,7 +488,7 @@ export function AdminOwnershipClaimsClient() {
                 <ClaimReviewCard
                   claim={claim}
                   adminMemo={adminMemos[claim.id] ?? claim.admin_memo ?? ""}
-                  processing={processingClaimId === claim.id}
+                  processing={processingClaimIds.has(claim.id)}
                   confirmingAction={confirmingAction}
                   actionMessage={actionMessages[claim.id] || null}
                   actionError={actionErrors[claim.id] || null}

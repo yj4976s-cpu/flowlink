@@ -217,7 +217,7 @@ export function LostReportForm() {
                   <Icon name="spark" size={22} />
                   <div>
                     <strong>{submitError}</strong>
-                    {submitErrorStatus === 401 && <Link href="/login">로그인하러 가기</Link>}
+                    {submitErrorStatus === 401 && <Link href="/login?next=%2Flost-reports%2Fnew">로그인하러 가기</Link>}
                   </div>
                 </div>
               )}
