@@ -499,19 +499,16 @@ export function LostReportForm() {
   };
   const chooseColor = (color: string) => {
     setColorNotice("");
-    setSelectedColors((current) => {
-      if (current.includes(color)) {
-        const next = current.filter((item) => item !== color);
-        setColorBalance((balance) => validColorBalance(balance, next));
-        return next;
-      }
-      if (color === "여러 색") { setColorBalance(""); return [color]; }
-      const withoutMixed = current.filter((item) => item !== "여러 색");
-      if (withoutMixed.length >= 3) { setColorNotice("색상은 최대 3개까지 선택할 수 있어요."); return current; }
-      const next = [...withoutMixed, color];
-      setColorBalance((balance) => validColorBalance(balance, next));
-      return next;
-    });
+    let nextColors: string[];
+    if (selectedColors.includes(color)) nextColors = selectedColors.filter((item) => item !== color);
+    else if (color === "여러 색") nextColors = [color];
+    else {
+      const withoutMixed = selectedColors.filter((item) => item !== "여러 색");
+      if (withoutMixed.length >= 3) { setColorNotice("색상은 최대 3개까지 선택할 수 있어요."); return; }
+      nextColors = [...withoutMixed, color];
+    }
+    setSelectedColors(nextColors);
+    setColorBalance((balance) => validColorBalance(balance, nextColors));
     setFieldErrors((current) => ({ ...current, color: undefined }));
   };
   const addCustomColor = () => {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import UTC, timedelta
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
@@ -14,6 +15,7 @@ from app.services.mappers import detection_event_response, lost_report_response,
 
 USER_TOOL_NAMES = {"get_my_lost_reports", "get_my_matches", "get_match_detail", "get_my_analysis_results", "get_my_ownership_claims", "get_my_notifications"}
 ADMIN_TOOL_NAMES = {"get_operations_summary"}
+KST = ZoneInfo("Asia/Seoul")
 
 
 def tool_definitions(role: str | None) -> list[dict]:
@@ -33,6 +35,11 @@ def tool_definitions(role: str | None) -> list[dict]:
 
 def _limit(arguments: dict) -> int:
     return max(1, min(int(arguments.get("limit", 5)), 10))
+
+
+def operations_today_since(now: datetime) -> datetime:
+    today_kst = now.astimezone(KST).replace(hour=0, minute=0, second=0, microsecond=0)
+    return today_kst.astimezone(UTC)
 
 
 def _user_ownership_claim_payload(claim: OwnershipClaim) -> dict:
@@ -77,7 +84,7 @@ def execute_tool(db: Session, current_user: User | None, name: str, arguments: d
         return [_user_ownership_claim_payload(item) for item in items]
     if name == "get_operations_summary":
         now = utc_now()
-        since = now.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        since = operations_today_since(now)
         data = get_admin_dashboard_data(db, since=since, period="today", now=now)
         allowed = ("summary", "kpis", "status_counts", "claim_status_counts", "average_confidence")
         return {key: data[key] for key in allowed if key in data}

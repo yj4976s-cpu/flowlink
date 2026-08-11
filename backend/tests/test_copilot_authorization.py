@@ -1,7 +1,9 @@
 from datetime import UTC, datetime
 from unittest.mock import Mock
 
-from app.services.copilot_tools import execute_tool, tool_definitions
+import pytest
+
+from app.services.copilot_tools import execute_tool, operations_today_since, tool_definitions
 
 
 def test_guest_has_no_personal_or_admin_tools() -> None:
@@ -59,3 +61,12 @@ def test_user_ownership_claim_tool_projects_only_owner_safe_fields() -> None:
     assert 7 in statement.compile().params.values()
     assert "admin_memo" not in result[0]
     assert "reviewed_by" not in result[0]
+
+
+@pytest.mark.parametrize(("now", "expected"), [
+    (datetime(2026, 8, 10, 23, 0, tzinfo=UTC), datetime(2026, 8, 10, 15, 0, tzinfo=UTC)),  # KST 08:00
+    (datetime(2026, 8, 11, 6, 0, tzinfo=UTC), datetime(2026, 8, 10, 15, 0, tzinfo=UTC)),   # KST 15:00
+    (datetime(2026, 8, 11, 16, 0, tzinfo=UTC), datetime(2026, 8, 11, 15, 0, tzinfo=UTC)),  # UTC/KST date boundary
+])
+def test_operations_today_since_uses_kst_midnight(now: datetime, expected: datetime) -> None:
+    assert operations_today_since(now) == expected

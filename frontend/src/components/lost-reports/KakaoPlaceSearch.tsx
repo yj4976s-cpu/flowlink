@@ -48,6 +48,7 @@ export function KakaoPlaceSearch({ value, selectedLocation, invalid, describedBy
     if (selectedLocation || normalizedQuery.length < 2) return;
     const sequence = ++requestSequence.current;
     const timer = window.setTimeout(() => {
+      setLoadingMore(false);
       setState("loading");
       setOpen(true);
       void searchKakaoPlacesPage(normalizedQuery).then(({ places, hasNextPage }) => {
@@ -74,10 +75,15 @@ export function KakaoPlaceSearch({ value, selectedLocation, invalid, describedBy
       setResults([]);
       setState("idle");
       setActiveIndex(-1);
+      setPage(1);
+      setHasMore(false);
+      setLoadingMore(false);
       if (normalizedQuery.length < 2) setOpen(false);
     });
     return () => window.clearTimeout(timer);
   }, [normalizedQuery, selectedLocation]);
+
+  useEffect(() => () => { requestSequence.current += 1; }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -88,6 +94,7 @@ export function KakaoPlaceSearch({ value, selectedLocation, invalid, describedBy
 
   const choose = (place: KakaoPlace) => {
     requestSequence.current += 1;
+    setLoadingMore(false);
     const address = place.road_address_name || place.address_name;
     const [region1, region2, region3] = place.address_name.split(" ");
     onSelect({ displayName: place.place_name, placeName: place.place_name, address, roadAddress: place.road_address_name || undefined, region1, region2, region3, latitude: Number(place.y), longitude: Number(place.x), source: "SEARCH", precision: "PLACE" });
@@ -95,6 +102,22 @@ export function KakaoPlaceSearch({ value, selectedLocation, invalid, describedBy
     setResults([]);
     setState("idle");
     setActiveIndex(-1);
+    setPage(1);
+    setHasMore(false);
+  };
+
+  const changeQuery = (nextValue: string) => {
+    requestSequence.current += 1;
+    setLoadingMore(false);
+    if (nextValue.trim().length < 2) {
+      setResults([]);
+      setState("idle");
+      setOpen(false);
+      setActiveIndex(-1);
+      setPage(1);
+      setHasMore(false);
+    } else setOpen(true);
+    onValueChange(nextValue);
   };
 
   const loadMore = () => {
@@ -120,7 +143,7 @@ export function KakaoPlaceSearch({ value, selectedLocation, invalid, describedBy
 
   return <div className={styles.locationCombobox} data-selected={Boolean(selectedLocation) || undefined} ref={rootRef}>
     <div className={styles.controlWithIcon}>
-      <input id="lost-report-location" role="combobox" aria-autocomplete="list" aria-controls="lost-report-location-options" aria-expanded={open} aria-activedescendant={open && activeIndex >= 0 ? `lost-location-option-${results[activeIndex]?.id}` : undefined} value={value} onFocus={() => { if (!selectedLocation && normalizedQuery.length >= 2) setOpen(true); }} onChange={(event) => { onValueChange(event.target.value); setOpen(event.target.value.trim().length >= 2); }} onKeyDown={keyDown} maxLength={100} placeholder="장소명이나 지역명을 입력해 주세요" aria-invalid={invalid} aria-describedby={describedBy} required />
+      <input id="lost-report-location" role="combobox" aria-autocomplete="list" aria-controls="lost-report-location-options" aria-expanded={open} aria-activedescendant={open && activeIndex >= 0 ? `lost-location-option-${results[activeIndex]?.id}` : undefined} value={value} onFocus={() => { if (!selectedLocation && normalizedQuery.length >= 2) setOpen(true); }} onChange={(event) => changeQuery(event.target.value)} onKeyDown={keyDown} maxLength={100} placeholder="장소명이나 지역명을 입력해 주세요" aria-invalid={invalid} aria-describedby={describedBy} required />
       <Icon name="search" size={18} />
       <button ref={mapButtonRef} className={styles.mapOpenButton} type="button" title="지도에서 위치 선택" aria-label="지도에서 위치 선택" onClick={onOpenMap}><Icon name="location" size={18} /></button>
     </div>
