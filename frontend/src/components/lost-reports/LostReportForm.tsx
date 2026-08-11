@@ -186,7 +186,13 @@ type LostReportDescriptionDetails = {
   colorBalance: string;
 };
 
-export function buildLostReportDescription(description: string, details: LostReportDescriptionDetails) {
+function validColorBalance(colorBalance: string, colors: string[]) {
+  if (colors.length < 2) return "";
+  if (colorBalance === "비슷하게 섞여 있었어요" || colorBalance === "잘 모르겠어요") return colorBalance;
+  return colors.some((color) => colorBalance === `${color}이 가장 많았어요`) ? colorBalance : "";
+}
+
+export function buildLostReportDescription(description: string, details: LostReportDescriptionDetails, colors: string[]) {
   const lines: string[] = [];
   const subtype = details.subtypeLabel.trim();
   if (subtype && subtype !== "기타" && subtype !== "잘 모르겠어요") lines.push(`세부 종류: ${subtype}`);
@@ -195,7 +201,8 @@ export function buildLostReportDescription(description: string, details: LostRep
     lines.push(`분실 상태: ${details.footwearCondition}${side ? ` · ${side}` : ""}`);
   }
   if (details.ballSize && details.ballSize !== "잘 모르겠어요") lines.push(`크기: ${details.ballSize}`);
-  if (details.colorBalance && details.colorBalance !== "잘 모르겠어요") lines.push(`색상 비중: ${details.colorBalance}`);
+  const colorBalance = validColorBalance(details.colorBalance, colors);
+  if (colorBalance && colorBalance !== "잘 모르겠어요") lines.push(`색상 비중: ${colorBalance}`);
   const featureDescription = description.trim();
   if (featureDescription) lines.push(`구별 특징: ${featureDescription}`);
   return lines.join("\n");
@@ -206,7 +213,7 @@ function createRequest(formData: FormData, lostAt: Date, colors: string[], locat
     item_category: formData.item_category,
     color: colors[0] ?? null,
     colors,
-    description: buildLostReportDescription(formData.description, details),
+    description: buildLostReportDescription(formData.description, details, colors),
     lost_location: formData.lost_location.trim(),
     ...(location?.latitude !== undefined && location?.longitude !== undefined
       ? { latitude: location.latitude, longitude: location.longitude }
@@ -493,11 +500,17 @@ export function LostReportForm() {
   const chooseColor = (color: string) => {
     setColorNotice("");
     setSelectedColors((current) => {
-      if (current.includes(color)) return current.filter((item) => item !== color);
+      if (current.includes(color)) {
+        const next = current.filter((item) => item !== color);
+        setColorBalance((balance) => validColorBalance(balance, next));
+        return next;
+      }
       if (color === "여러 색") { setColorBalance(""); return [color]; }
       const withoutMixed = current.filter((item) => item !== "여러 색");
       if (withoutMixed.length >= 3) { setColorNotice("색상은 최대 3개까지 선택할 수 있어요."); return current; }
-      return [...withoutMixed, color];
+      const next = [...withoutMixed, color];
+      setColorBalance((balance) => validColorBalance(balance, next));
+      return next;
     });
     setFieldErrors((current) => ({ ...current, color: undefined }));
   };
