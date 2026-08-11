@@ -9,7 +9,8 @@ import styles from "./AdminAiReportClient.module.css";
 
 type Tab = "overview" | "operations" | "models";
 type Period = 7 | 30;
-type Report = { objects: Array<DetectionObject & { event: DetectionEvent }>; pending: Array<DetectionObject & { event: DetectionEvent }>; reviewed: Array<DetectionObject & { event: DetectionEvent }>; corrected: Array<DetectionObject & { event: DetectionEvent }>; kept: Array<DetectionObject & { event: DetectionEvent }>; classes: Array<{ code: string; name: string; count: number; confidence: number; pending: number; corrected: number }>; trend: Array<{ label: string; total: number; personal: number }>; average: number | null; averageTime: number | null; personal: number };
+type ReportObject = DetectionObject & { event: DetectionEvent };
+type Report = { objects: ReportObject[]; pending: ReportObject[]; reviewed: ReportObject[]; corrected: ReportObject[]; kept: ReportObject[]; rejected: ReportObject[]; classes: Array<{ code: string; name: string; count: number; confidence: number; pending: number; corrected: number }>; trend: Array<{ label: string; total: number; personal: number }>; average: number | null; averageTime: number | null; personal: number };
 const personalCodes = new Set(["BALL", "BACKPACK", "BAG", "UMBRELLA", "SHOE", "SLIPPER", "FOOTWEAR"]);
 const dateTime = new Intl.DateTimeFormat("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
@@ -21,6 +22,15 @@ function duration(event: DetectionEvent) {
 function finalCode(item: DetectionObject) { return item.final_class_code || item.object_class; }
 function isCorrection(item: DetectionObject) { return Boolean(item.final_class_code && item.final_class_code !== item.object_class); }
 function pct(value: number, total: number) { return total ? `${(value / total * 100).toFixed(1)}%` : "–"; }
+
+export function reviewBuckets(objects: ReportObject[]) {
+  const rejected = objects.filter((item) => item.processing_status === "REJECTED");
+  const pending = objects.filter((item) => item.processing_status === "PENDING");
+  const confirmed = objects.filter((item) => item.processing_status === "CONFIRMED");
+  const corrected = confirmed.filter(isCorrection);
+  const kept = confirmed.filter((item) => !isCorrection(item));
+  return { pending, reviewed: [...kept, ...corrected, ...rejected], corrected, kept, rejected };
+}
 
 export function AdminAiReportClient() {
   const [events, setEvents] = useState<DetectionEvent[]>([]);
@@ -36,16 +46,13 @@ export function AdminAiReportClient() {
     const cutoff = reportNow - period * 86400000;
     const scopedEvents = events.filter((event) => new Date(event.captured_at).getTime() >= cutoff);
     const objects = scopedEvents.flatMap((event) => event.detected_objects.map((item) => ({ ...item, event })));
-    const pending = objects.filter((item) => item.processing_status === "PENDING");
-    const reviewed = objects.filter((item) => item.processing_status !== "PENDING");
-    const corrected = reviewed.filter(isCorrection);
-    const kept = reviewed.filter((item) => item.processing_status === "CONFIRMED" && !isCorrection(item));
+    const { pending, reviewed, corrected, kept, rejected } = reviewBuckets(objects);
     const times = scopedEvents.map(duration).filter((value): value is number => value !== null);
     const classes = new Map<string, { code: string; name: string; count: number; confidence: number; pending: number; corrected: number }>();
-    objects.forEach((item) => { const current = classes.get(item.object_class) ?? { code: item.object_class, name: item.object_class_name, count: 0, confidence: 0, pending: 0, corrected: 0 }; current.count += 1; current.confidence += Number(item.confidence); current.pending += item.processing_status === "PENDING" ? 1 : 0; current.corrected += isCorrection(item) ? 1 : 0; classes.set(item.object_class, current); });
+    objects.forEach((item) => { const current = classes.get(item.object_class) ?? { code: item.object_class, name: item.object_class_name, count: 0, confidence: 0, pending: 0, corrected: 0 }; current.count += 1; current.confidence += Number(item.confidence); current.pending += item.processing_status === "PENDING" ? 1 : 0; current.corrected += item.processing_status === "CONFIRMED" && isCorrection(item) ? 1 : 0; classes.set(item.object_class, current); });
     const days = Array.from({ length: period }, (_, index) => { const day = new Date(); day.setHours(0, 0, 0, 0); day.setDate(day.getDate() - (period - 1 - index)); return day; });
     const trend = days.map((day) => { const key = day.toDateString(); const found = objects.filter((item) => new Date(item.detected_at).toDateString() === key); return { label: `${day.getMonth() + 1}.${day.getDate()}`, total: found.length, personal: found.filter((item) => personalCodes.has(finalCode(item))).length }; });
-    return { objects, pending, reviewed, corrected, kept, classes: [...classes.values()].sort((a, b) => b.count - a.count), trend, average: objects.length ? objects.reduce((sum, item) => sum + Number(item.confidence), 0) / objects.length : null, averageTime: times.length ? times.reduce((sum, value) => sum + value, 0) / times.length : null, personal: objects.filter((item) => personalCodes.has(finalCode(item))).length };
+    return { objects, pending, reviewed, corrected, kept, rejected, classes: [...classes.values()].sort((a, b) => b.count - a.count), trend, average: objects.length ? objects.reduce((sum, item) => sum + Number(item.confidence), 0) / objects.length : null, averageTime: times.length ? times.reduce((sum, value) => sum + value, 0) / times.length : null, personal: objects.filter((item) => personalCodes.has(finalCode(item))).length };
   }, [events, period, reportNow]);
 
   return <main className={styles.page}>
@@ -73,7 +80,7 @@ function Operations({ report }: { report: Report }) { return <><section classNam
 function Metric({ label, value, note, tone }: { label: string; value: string; note: string; tone?: boolean }) { return <article data-tone={tone ? "warning" : "normal"}><span>{label}</span><strong>{value}</strong><small>{note}</small></article>; }
 function TrendChart({ data }: { data: Report["trend"] }) { const max = Math.max(1, ...data.flatMap((item) => [item.total, item.personal])); const x = (i: number) => data.length === 1 ? 50 : i / (data.length - 1) * 100; const y = (v: number) => 92 - v / max * 78; const shown = data.length > 10 ? data.filter((_, index) => index % 5 === 0 || index === data.length - 1) : data; return <div className={styles.trend}><svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="날짜별 전체 탐지 및 개인 물품 후보 추이">{(["total", "personal"] as const).map((key) => <g key={key}><polyline data-line={key} points={data.map((item, index) => `${x(index)},${y(item[key])}`).join(" ")} />{data.map((item, index) => <circle key={`${key}-${item.label}`} cx={x(index)} cy={y(item[key])} r="1.2"><title>{item.label} · {key === "total" ? "전체" : "개인 물품"} {item[key]}건</title></circle>)}</g>)}</svg><div className={styles.axis}>{shown.map((item) => <span key={item.label}>{item.label}</span>)}</div><div className={styles.legend}><span><i />전체 탐지</span><span><i />개인 물품 후보</span></div></div>; }
 function Composition({ total, personal, waste }: { total: number; personal: number; waste: number }) { const split = total ? personal / total * 100 : 0; return <div className={styles.composition}><div className={styles.donut} style={{ "--split": `${split}%` } as CSSProperties}><span><strong>{total}</strong><small>전체 탐지</small></span></div><dl><div><dt><i />개인 물품 후보</dt><dd>{personal}건</dd></div><div><dt><i />폐기물</dt><dd>{waste}건</dd></div></dl></div>; }
-function ReviewSummary({ report }: { report: Report }) { const total = report.objects.length; return <div className={styles.review}><div><span style={{ width: pct(report.kept.length, total) }} /><span style={{ width: pct(report.corrected.length, total) }} /><span style={{ width: pct(report.pending.length, total) }} /></div><dl><div><dt>AI 분류 그대로</dt><dd>{pct(report.kept.length, total)}</dd></div><div><dt>관리자 수정</dt><dd>{pct(report.corrected.length, total)}</dd></div><div><dt>확인 대기</dt><dd>{pct(report.pending.length, total)}</dd></div></dl></div>; }
+function ReviewSummary({ report }: { report: Report }) { const total = report.objects.length; return <div className={styles.review}><div><span style={{ width: pct(report.kept.length, total) }} /><span style={{ width: pct(report.corrected.length, total) }} /><span style={{ width: pct(report.rejected.length, total) }} /><span style={{ width: pct(report.pending.length, total) }} /></div><dl><div><dt>AI 분류 유지</dt><dd>{pct(report.kept.length, total)}</dd></div><div><dt>관리자 분류 수정</dt><dd>{pct(report.corrected.length, total)}</dd></div><div><dt>탐지 제외</dt><dd>{pct(report.rejected.length, total)}</dd></div><div><dt>확인 대기</dt><dd>{pct(report.pending.length, total)}</dd></div></dl></div>; }
 function NeedsReview({ items }: { items: Report["pending"] }) { if (!items.length) return <p className={styles.empty}>현재 확인을 기다리는 탐지가 없습니다.</p>; return <div className={styles.reviewCards}>{items.map((item) => <Link href={`/admin/detections?detection=${item.event.id}`} key={item.id}><Thumb item={item} /><div><strong>{item.object_class_name}</strong><span>AI 신뢰도 {Math.round(Number(item.confidence) * 100)}%</span><small>{item.event.camera_id ? `카메라 #${item.event.camera_id}` : "위치 정보 없음"} · {dateTime.format(new Date(item.detected_at))}</small><em>신뢰도와 분류를 관리자 확인 중입니다.</em></div></Link>)}</div>; }
 function Corrections({ items }: { items: Report["corrected"] }) { if (!items.length) return <p className={styles.empty}>선택 기간에 관리자 분류 수정 기록이 없습니다.</p>; return <div className={styles.corrections}>{items.map((item) => <Link href={`/admin/detections?detection=${item.event.id}`} key={item.id}><span><small>AI 판단</small><strong>{item.object_class_name} · {Math.round(Number(item.confidence) * 100)}%</strong></span><b aria-hidden="true">→</b><span><small>관리자 확인</small><strong>{item.final_class_code}</strong></span></Link>)}</div>; }
 function ClassTable({ data }: { data: Report["classes"] }) { const max = Math.max(1, ...data.map((item) => item.count)); return <div className={styles.classTable}><div><span>클래스</span><span>탐지</span><span>평균 신뢰도</span><span>관리자 수정</span><span>확인 필요</span></div>{data.map((item) => <article key={item.code}><strong>{item.name}<small>{item.code}</small></strong><span><i><b style={{ width: `${item.count / max * 100}%` }} /></i>{item.count}건</span><span>{(item.confidence / item.count * 100).toFixed(1)}%</span><span>{item.corrected}건</span><span>{item.pending}건</span></article>)}</div>; }

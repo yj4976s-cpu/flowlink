@@ -47,11 +47,16 @@ export function CommunityFeed() {
   const [sortOpen, setSortOpen] = useState(false);
   const [view, setView] = useState<"feed" | "map">("feed");
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreError, setMoreError] = useState("");
   const [error, setError] = useState(false);
   const [skip, setSkip] = useState(0);
   const [reload, setReload] = useState(0);
   const sortRef = useRef<HTMLDivElement>(null);
   const placeRef = useRef<HTMLDivElement>(null);
+  const paginationAbortRef = useRef<AbortController | null>(null);
+  const requestKey = JSON.stringify({ category, query, place: place?.placeName ?? "", sort });
+  const requestKeyRef = useRef(requestKey);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setQuery(input.trim()), 300);
@@ -60,8 +65,13 @@ export function CommunityFeed() {
 
   useEffect(() => {
     const controller = new AbortController();
+    requestKeyRef.current = requestKey;
+    paginationAbortRef.current?.abort();
+    paginationAbortRef.current = null;
     void Promise.resolve()
       .then(() => {
+        setLoadingMore(false);
+        setMoreError("");
         setLoading(true);
         setError(false);
         return getCommunityFeed({ category: category || undefined, query: query || undefined, place: place?.placeName, sort, skip: 0, limit: 15 }, controller.signal);
@@ -73,7 +83,12 @@ export function CommunityFeed() {
       .catch(() => !controller.signal.aborted && setError(true))
       .finally(() => !controller.signal.aborted && setLoading(false));
     return () => controller.abort();
-  }, [category, place?.placeName, query, reload, sort]);
+  }, [category, place?.placeName, query, reload, requestKey, sort]);
+
+  useEffect(() => () => {
+    paginationAbortRef.current?.abort();
+    paginationAbortRef.current = null;
+  }, []);
 
   useEffect(() => {
     if (!sortOpen && !placeOpen) return;
@@ -119,14 +134,25 @@ export function CommunityFeed() {
   };
 
   const more = async () => {
-    if (!data) return;
-    setLoading(true);
+    if (!data || loadingMore || paginationAbortRef.current) return;
+    const requestKeySnapshot = requestKey;
+    const skipSnapshot = skip;
+    const controller = new AbortController();
+    paginationAbortRef.current = controller;
+    setLoadingMore(true);
+    setMoreError("");
     try {
-      const next = await getCommunityFeed({ category: category || undefined, query: query || undefined, place: place?.placeName, sort, skip, limit: 15 });
-      setData({ ...data, posts: [...data.posts, ...next.posts], has_more: next.has_more });
-      setSkip((value) => value + next.posts.length);
+      const next = await getCommunityFeed({ category: category || undefined, query: query || undefined, place: place?.placeName, sort, skip: skipSnapshot, limit: 15 }, controller.signal);
+      if (controller.signal.aborted || requestKeySnapshot !== requestKeyRef.current) return;
+      setData((current) => current ? { ...current, posts: [...current.posts, ...next.posts], has_more: next.has_more } : current);
+      setSkip(skipSnapshot + next.posts.length);
+    } catch {
+      if (!controller.signal.aborted && requestKeySnapshot === requestKeyRef.current) setMoreError("추가 이야기를 불러오지 못했어요. 다시 시도해주세요.");
     } finally {
-      setLoading(false);
+      if (paginationAbortRef.current === controller) {
+        paginationAbortRef.current = null;
+        setLoadingMore(false);
+      }
     }
   };
 
@@ -221,7 +247,8 @@ export function CommunityFeed() {
           ) : (
             <div className={styles.emptyState}><Icon name="document" size={26} /><h2>아직 이 조건에 맞는 이야기가 없어요.</h2><p>{query || category || place ? "검색 조건을 바꾸거나 첫 번째 정보를 남겨보세요." : "첫 번째 정보를 남겨보세요."}</p>{query || category || place ? <button type="button" onClick={reset}>필터 초기화</button> : <Link href="/community/new">글 작성하기</Link>}</div>
           )}
-          {data?.has_more && view === "feed" && <button className={styles.more} type="button" disabled={loading} onClick={() => void more()}>{loading ? "불러오는 중" : "이야기 더 보기"}</button>}
+          {moreError && view === "feed" && <p className={styles.moreError} role="alert">{moreError}</p>}
+          {data?.has_more && view === "feed" && <button className={styles.more} type="button" disabled={loadingMore} onClick={() => void more()}>{loadingMore ? "불러오는 중" : "이야기 더 보기"}</button>}
         </section>
 
       </div>

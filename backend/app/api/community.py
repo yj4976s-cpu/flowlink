@@ -42,7 +42,7 @@ def feed(db: Annotated[Session, Depends(get_db)], category: str | None = None, q
 
 
 @router.post("/posts", response_model=CommunityPostResponse, status_code=201)
-async def create_post(current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)], category: Annotated[str, Form()], title: Annotated[str, Form()], content: Annotated[str, Form()], place_name: Annotated[str | None, Form()] = None, address: Annotated[str | None, Form()] = None, latitude: Annotated[float | None, Form()] = None, longitude: Annotated[float | None, Form()] = None, is_notice: Annotated[bool, Form()] = False, image: Annotated[UploadFile | None, File()] = None) -> CommunityPostResponse:
+async def create_post(current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)], category: Annotated[str, Form()], title: Annotated[str, Form()], content: Annotated[str, Form()], place_name: Annotated[str | None, Form()] = None, address: Annotated[str | None, Form()] = None, latitude: Annotated[float | None, Form(ge=-90, le=90)] = None, longitude: Annotated[float | None, Form(ge=-180, le=180)] = None, is_notice: Annotated[bool, Form()] = False, image: Annotated[UploadFile | None, File()] = None) -> CommunityPostResponse:
     category, title, content = validate_input(category, title, content, latitude, longitude)
     if is_notice and current_user.role != "ADMIN": raise HTTPException(status_code=403, detail="공지 작성은 관리자만 가능합니다.")
     root = upload_root(); image_url = await save_public_image(image, root, folder="community")
@@ -59,7 +59,7 @@ def detail(id: Annotated[int, ApiPath(ge=1)], db: Annotated[Session, Depends(get
 
 
 @router.patch("/posts/{id}", response_model=CommunityPostResponse)
-async def update_post(id: Annotated[int, ApiPath(ge=1)], current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)], category: Annotated[str, Form()], title: Annotated[str, Form()], content: Annotated[str, Form()], place_name: Annotated[str | None, Form()] = None, address: Annotated[str | None, Form()] = None, latitude: Annotated[float | None, Form()] = None, longitude: Annotated[float | None, Form()] = None, is_notice: Annotated[bool, Form()] = False, remove_image: Annotated[bool, Form()] = False, image: Annotated[UploadFile | None, File()] = None) -> CommunityPostResponse:
+async def update_post(id: Annotated[int, ApiPath(ge=1)], current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)], category: Annotated[str, Form()], title: Annotated[str, Form()], content: Annotated[str, Form()], place_name: Annotated[str | None, Form()] = None, address: Annotated[str | None, Form()] = None, latitude: Annotated[float | None, Form(ge=-90, le=90)] = None, longitude: Annotated[float | None, Form(ge=-180, le=180)] = None, is_notice: Annotated[bool, Form()] = False, remove_image: Annotated[bool, Form()] = False, image: Annotated[UploadFile | None, File()] = None) -> CommunityPostResponse:
     post = get_post(db, id)
     if post is None: raise HTTPException(status_code=404, detail="게시글을 찾을 수 없습니다.")
     if not can_edit_post(current_user, post): raise HTTPException(status_code=403, detail="본인 게시글만 수정할 수 있습니다.")

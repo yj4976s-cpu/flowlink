@@ -6,8 +6,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.db.session import Base
-from app.models import User
-from app.services.copilot_memory import detail, get_or_create, model_history, rename, save_message, soft_delete, summaries
+from app.models import LostReport, ObjectClass, User
+from app.services.copilot_memory import detail, get_or_create, model_history, rename, save_message, soft_delete, summaries, validated_context
 
 
 @pytest.fixture
@@ -53,3 +53,18 @@ def test_owner_scope_rename_order_and_soft_delete(db: Session) -> None:
     assert soft_delete(db, owner, conversation.public_id)
     assert detail(db, owner, conversation.public_id) is None
     assert summaries(db, owner, 0, 15) == []
+
+
+def test_entity_context_requires_the_authenticated_owner(db: Session) -> None:
+    owner = user(db, 1, "owner@example.com")
+    stranger = user(db, 2, "stranger@example.com")
+    now = datetime.now(timezone.utc)
+    object_class = ObjectClass(id=1, code="BAG", name_ko="가방", group_code="PERSONAL_ITEM", display_order=1, is_active=True, created_at=now, updated_at=now)
+    db.add(object_class)
+    db.flush()
+    report = LostReport(user_id=owner.id, object_class_id=object_class.id, description="검정 가방", area_name="잠실역", lost_from=now, status="OPEN", created_at=now, updated_at=now)
+    db.add(report)
+    db.commit()
+
+    assert validated_context(db, owner, "LOST_REPORT_DETAIL", report.id) == ("LOST_REPORT", report.id)
+    assert validated_context(db, stranger, "LOST_REPORT_DETAIL", report.id) == ("GENERAL", None)

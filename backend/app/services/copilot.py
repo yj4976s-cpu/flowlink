@@ -18,6 +18,28 @@ logger = logging.getLogger(__name__)
 
 ALLOWED_PATHS = {"/", "/guide", "/login", "/detect", "/found-items", "/map", "/lost-reports/new", "/matches", "/mypage", "/notifications", "/community", "/admin", "/admin/detections", "/admin/ownership-claims", "/admin/found-items", "/admin/map"}
 
+PAGE_CONTEXT_PATHS = {
+    "HOME": "/",
+    "GUIDE": "/guide",
+    "FOUND_ITEMS": "/found-items",
+    "FOUND_ITEM_DETAIL": "/found-items",
+    "LOST_REPORT_NEW": "/lost-reports/new",
+    "LOST_REPORT_DETAIL": "/mypage",
+    "MATCH_LIST": "/matches",
+    "MATCH_DETAIL": "/matches",
+    "OWNERSHIP_CLAIM": "/mypage",
+    "ANALYSIS_DETAIL": "/detect",
+    "NOTIFICATIONS": "/notifications",
+    "MY_PAGE": "/mypage",
+    "DETECTION": "/detect",
+    "COMMUNITY": "/community",
+    "ADMIN_DASHBOARD": "/admin",
+    "ADMIN_DETECTIONS": "/admin/detections",
+    "ADMIN_OWNERSHIP_CLAIMS": "/admin/ownership-claims",
+    "ADMIN_FOUND_ITEMS": "/admin/found-items",
+    "ADMIN_OPERATIONS": "/admin",
+}
+
 SYSTEM_PROMPT = """당신은 FlowLink AI Copilot이다. 한국어로 간결하고 정확하게 답한다.
 FlowLink는 AI 탐지→발견물→시민 분실 신고→규칙 기반 자동 매칭→소유권 확인→관리자 확인→반환을 연결한다.
 실제 사용자 상태를 추측하지 말고 필요한 경우에만 허용된 도구를 호출한다. 조회 결과가 없으면 없다고 말한다.
@@ -43,6 +65,20 @@ def _mode(user: User | None) -> str:
 def _tool_free_greeting(message: str) -> bool:
     normalized = message.strip().lower().rstrip("!?.~ ")
     return normalized in {"안녕", "안녕하세요", "반가워", "반가워요", "hello", "hi"}
+
+
+def _model_context(db: Session, request: CopilotRequest, user: User | None) -> tuple[str, str, int | None]:
+    """Build model context only from server-known page names and owned entities."""
+    requested_page = request.context.page if request.context.page in PAGE_CONTEXT_PATHS else "GENERAL"
+    context_type, entity_id = "GENERAL", None
+    if user is not None:
+        context_type, entity_id = validated_context(db, user, requested_page, request.context.entity_id)
+    if requested_page in {"FOUND_ITEM_DETAIL", "LOST_REPORT_DETAIL", "MATCH_DETAIL", "OWNERSHIP_CLAIM", "ANALYSIS_DETAIL"} and context_type == "GENERAL":
+        requested_page = "GENERAL"
+    canonical_path = PAGE_CONTEXT_PATHS.get(requested_page, "/")
+    role = user.role if user else "GUEST"
+    value = f"mode={_mode(user)}, role={role}, page={requested_page}, path={canonical_path}, context_type={context_type}, entity_id={entity_id or 'none'}"
+    return value, context_type, entity_id
 
 
 def create_copilot_briefing(db: Session, current_user: User) -> CopilotResponse:
@@ -118,14 +154,10 @@ def _safe_response(raw: str, *, user: User | None, model: str, provider: str) ->
 
 async def create_copilot_response(db: Session, request: CopilotRequest, current_user: User | None) -> CopilotResponse:
     settings = get_settings()
-    role = current_user.role if current_user else "GUEST"
-    context = f"mode={_mode(current_user)}, role={role}, page={request.context.page}, path={request.context.path}, entity_id={request.context.entity_id or 'none'}"
+    context, context_type, context_entity_id = _model_context(db, request, current_user)
     conversation = None
     current_text = request.messages[-1].content
     if current_user:
-        context_type, context_entity_id = validated_context(
-            db, current_user, request.context.page, request.context.entity_id
-        )
         conversation = get_or_create(
             db, current_user, request.conversation_public_id, current_text,
             context_type, context_entity_id
