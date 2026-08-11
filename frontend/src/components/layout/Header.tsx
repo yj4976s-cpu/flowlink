@@ -18,7 +18,7 @@ const userNavigation = [
       { label: "발견물 지도", href: "/map" },
     ],
   },
-  { label: "분실 신고", href: "/lost-reports/new" },
+  { label: "커뮤니티", href: "/community" },
   { label: "서비스 소개", href: "/about" },
   { label: "이용 안내", href: "/guide" },
 ] as const;
