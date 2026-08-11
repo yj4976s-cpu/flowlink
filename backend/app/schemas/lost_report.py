@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class LostReportCreateRequest(BaseModel):
@@ -9,7 +9,15 @@ class LostReportCreateRequest(BaseModel):
     colors: list[str] = Field(default_factory=list, max_length=3)
     description: str = Field(min_length=1)
     lost_location: str = Field(min_length=1, max_length=100)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
     lost_at: datetime
+
+    @model_validator(mode="after")
+    def require_coordinate_pair(self) -> "LostReportCreateRequest":
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("latitude and longitude must be provided together")
+        return self
 
     @field_validator("item_category", "description", "lost_location", mode="before")
     @classmethod
@@ -55,6 +63,8 @@ class LostReportResponse(BaseModel):
     colors: list[str]
     description: str
     area_name: str
+    latitude: float | None
+    longitude: float | None
     lost_from: datetime
     lost_to: datetime | None
     image_url: str | None

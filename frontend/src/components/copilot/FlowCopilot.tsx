@@ -249,6 +249,7 @@ export function FlowCopilot() {
   const abortRef = useRef<AbortController | null>(null);
   const sendingRef = useRef(false);
   const sessionRef = useRef<string | null | undefined>(undefined);
+  const sessionGenerationRef = useRef(0);
   const context = pageContext(pathname);
 
   const closeConversationMenu = useCallback(
@@ -270,6 +271,11 @@ export function FlowCopilot() {
         if (!active) return;
         const key = `${current.role}:${current.id}`;
         if (sessionRef.current !== undefined && sessionRef.current !== key) {
+          sessionGenerationRef.current += 1;
+          abortRef.current?.abort();
+          abortRef.current = null;
+          sendingRef.current = false;
+          setLoading(false);
           setMessages([]);
           setValue("");
           setBriefing(null);
@@ -305,6 +311,11 @@ export function FlowCopilot() {
       .catch(() => {
         if (active) {
           if (sessionRef.current !== undefined && sessionRef.current !== null) {
+            sessionGenerationRef.current += 1;
+            abortRef.current?.abort();
+            abortRef.current = null;
+            sendingRef.current = false;
+            setLoading(false);
             setMessages([]);
             setValue("");
           }
@@ -344,6 +355,11 @@ export function FlowCopilot() {
   }, [user]);
   useEffect(() => {
     const changed = () => {
+      sessionGenerationRef.current += 1;
+      abortRef.current?.abort();
+      abortRef.current = null;
+      sendingRef.current = false;
+      setLoading(false);
       setAuthReady(false);
       setAuthVersion((value) => value + 1);
     };
@@ -474,8 +490,15 @@ export function FlowCopilot() {
     setLoading(false);
     setMemoryLoading(true);
     setMemoryError(false);
+    const requestGeneration = sessionGenerationRef.current;
+    const requestSession = sessionRef.current;
     try {
       const item = await getCopilotConversation(id);
+      if (
+        requestGeneration !== sessionGenerationRef.current ||
+        requestSession !== sessionRef.current
+      )
+        return;
       setConversationId(item.public_id);
       setMessages(
         item.messages.map((message) => ({
@@ -489,9 +512,14 @@ export function FlowCopilot() {
       );
       setMemoryOpen(false);
     } catch {
-      setMemoryError(true);
+      if (
+        requestGeneration === sessionGenerationRef.current &&
+        requestSession === sessionRef.current
+      )
+        setMemoryError(true);
     } finally {
-      setMemoryLoading(false);
+      if (requestGeneration === sessionGenerationRef.current)
+        setMemoryLoading(false);
     }
   };
 
@@ -509,6 +537,8 @@ export function FlowCopilot() {
     setLoading(true);
     const controller = new AbortController();
     abortRef.current = controller;
+    const requestGeneration = sessionGenerationRef.current;
+    const requestSession = sessionRef.current;
     try {
       const activeConversation = conversationId;
       const response = await sendCopilotMessage(
@@ -520,6 +550,12 @@ export function FlowCopilot() {
           clientMessageId: userMessage.id,
         },
       );
+      if (
+        controller.signal.aborted ||
+        requestGeneration !== sessionGenerationRef.current ||
+        requestSession !== sessionRef.current
+      )
+        return;
       if (activeConversation !== conversationId) return;
       if (response.conversation_public_id)
         setConversationId(response.conversation_public_id);
@@ -538,7 +574,12 @@ export function FlowCopilot() {
       setShowExamples(false);
       setUnread(0);
     } catch (error) {
-      if (controller.signal.aborted) return;
+      if (
+        controller.signal.aborted ||
+        requestGeneration !== sessionGenerationRef.current ||
+        requestSession !== sessionRef.current
+      )
+        return;
       setMessages((current) => [
         ...current,
         {
@@ -551,8 +592,10 @@ export function FlowCopilot() {
         },
       ]);
     } finally {
-      sendingRef.current = false;
-      if (!controller.signal.aborted) setLoading(false);
+      if (requestGeneration === sessionGenerationRef.current) {
+        sendingRef.current = false;
+        if (!controller.signal.aborted) setLoading(false);
+      }
     }
   };
   const submit = (event: FormEvent) => {

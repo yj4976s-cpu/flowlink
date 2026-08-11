@@ -67,6 +67,8 @@ def lost_report_response(lost_report: LostReport) -> LostReportResponse:
         colors=lost_report.colors or ([lost_report.color] if lost_report.color else []),
         description=lost_report.description,
         area_name=lost_report.area_name,
+        latitude=float(lost_report.latitude) if lost_report.latitude is not None else None,
+        longitude=float(lost_report.longitude) if lost_report.longitude is not None else None,
         lost_from=lost_report.lost_from,
         lost_to=lost_report.lost_to,
         image_url=lost_report.image_url,

@@ -4,6 +4,8 @@ export type LostReportCreateRequest = {
   colors: string[];
   description: string;
   lost_location: string;
+  latitude?: number;
+  longitude?: number;
   lost_at: string;
 };
 
@@ -15,6 +17,8 @@ export type LostReportResponse = {
   colors: string[];
   description: string;
   area_name: string;
+  latitude: number | null;
+  longitude: number | null;
   lost_from: string;
   lost_to: string | null;
   image_url: string | null;
@@ -88,6 +92,8 @@ export async function createLostReport(request: LostReportCreateRequest, image?:
   request.colors.forEach((color) => body.append("colors", color));
   body.set("description", request.description);
   body.set("lost_location", request.lost_location);
+  if (request.latitude !== undefined) body.set("latitude", String(request.latitude));
+  if (request.longitude !== undefined) body.set("longitude", String(request.longitude));
   body.set("lost_at", request.lost_at);
   if (image) body.set("image", image);
   return requestJson<LostReportResponse>("/api/lost-reports", {

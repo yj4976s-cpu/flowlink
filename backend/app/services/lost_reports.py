@@ -50,6 +50,8 @@ def create_lost_report_for_user(
         colors=request.colors,
         description=description,
         area_name=area_name,
+        latitude=request.latitude,
+        longitude=request.longitude,
         lost_from=lost_from,
         image_url=image_url,
         status="OPEN",

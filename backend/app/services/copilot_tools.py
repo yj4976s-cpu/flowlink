@@ -9,7 +9,7 @@ from app.core.security import utc_now
 from app.models import FoundItem, LostReport, MatchCandidate, OwnershipClaim, User
 from app.repositories.user_flow import get_admin_dashboard_data, list_lost_reports_for_user, list_matches_for_user, list_notifications_for_user
 from app.repositories.detections import list_user_detection_events
-from app.services.mappers import detection_event_response, lost_report_response, match_candidate_response, notification_response, ownership_claim_response
+from app.services.mappers import detection_event_response, lost_report_response, match_candidate_response, notification_response
 
 
 USER_TOOL_NAMES = {"get_my_lost_reports", "get_my_matches", "get_match_detail", "get_my_analysis_results", "get_my_ownership_claims", "get_my_notifications"}
@@ -33,6 +33,19 @@ def tool_definitions(role: str | None) -> list[dict]:
 
 def _limit(arguments: dict) -> int:
     return max(1, min(int(arguments.get("limit", 5)), 10))
+
+
+def _user_ownership_claim_payload(claim: OwnershipClaim) -> dict:
+    """Project only owner-visible fields before data reaches an LLM provider."""
+    return {
+        "id": claim.id,
+        "found_item_id": claim.found_item_id,
+        "lost_report_id": claim.lost_report_id,
+        "status": claim.status,
+        "verification_details": claim.verification_details,
+        "reviewed_at": claim.reviewed_at.isoformat() if claim.reviewed_at else None,
+        "created_at": claim.created_at.isoformat(),
+    }
 
 
 def execute_tool(db: Session, current_user: User | None, name: str, arguments: dict) -> dict | list:
@@ -61,7 +74,7 @@ def execute_tool(db: Session, current_user: User | None, name: str, arguments: d
         return [detection_event_response(item).model_dump(mode="json") for item in items]
     if name == "get_my_ownership_claims":
         items = db.scalars(select(OwnershipClaim).options(joinedload(OwnershipClaim.lost_report).joinedload(LostReport.object_class), joinedload(OwnershipClaim.found_item).joinedload(FoundItem.object_class)).where(OwnershipClaim.user_id == current_user.id).order_by(OwnershipClaim.created_at.desc()).limit(_limit(arguments))).all()
-        return [ownership_claim_response(item).model_dump(mode="json") for item in items]
+        return [_user_ownership_claim_payload(item) for item in items]
     if name == "get_operations_summary":
         now = utc_now()
         since = now.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)

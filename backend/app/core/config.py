@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     OPENAI_MODEL: str = "gpt-4o-mini"
     OPENAI_BASE_URL: str = "https://api.openai.com/v1"
     COPILOT_TIMEOUT_SECONDS: float = 30.0
+    COPILOT_RATE_LIMIT_WINDOW_SECONDS: int = 60
+    COPILOT_GUEST_RATE_LIMIT: int = 10
+    COPILOT_USER_RATE_LIMIT: int = 30
+    COPILOT_ADMIN_RATE_LIMIT: int = 60
 
     @property
     def auth_cookie_secure(self) -> bool:

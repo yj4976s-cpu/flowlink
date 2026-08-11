@@ -178,13 +178,16 @@ function validateForm(formData: FormData) {
   return { errors, lostAt };
 }
 
-function createRequest(formData: FormData, lostAt: Date, colors: string[]): LostReportCreateRequest {
+function createRequest(formData: FormData, lostAt: Date, colors: string[], location: SelectedLostLocation | null): LostReportCreateRequest {
   return {
     item_category: formData.item_category,
     color: colors[0] ?? null,
     colors,
     description: formData.description.trim(),
     lost_location: formData.lost_location.trim(),
+    ...(location?.latitude !== undefined && location?.longitude !== undefined
+      ? { latitude: location.latitude, longitude: location.longitude }
+      : {}),
     lost_at: lostAt.toISOString(),
   };
 }
@@ -552,7 +555,7 @@ export function LostReportForm() {
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      const report = await createLostReport(createRequest(formData, lostAt, selectedColors), selectedImage ?? undefined);
+      const report = await createLostReport(createRequest(formData, lostAt, selectedColors, selectedLocation), selectedImage ?? undefined);
       setCreatedReport(report);
       clearImage();
     } catch (caught) {
