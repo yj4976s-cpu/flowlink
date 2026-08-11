@@ -206,6 +206,7 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange }: WebcamDetectio
   function runDetectionLoop(generation: number) {
     void (async () => {
       const blob = await captureFrame();
+      if (!mountedRef.current || generation !== loopGenerationRef.current) return;
       if (!blob) {
         if (generation === loopGenerationRef.current) {
           timeoutRef.current = setTimeout(() => runDetectionLoop(generation), WEBCAM_FRAME_INTERVAL_MS);
