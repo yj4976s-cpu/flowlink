@@ -1,6 +1,7 @@
 export type LostReportCreateRequest = {
   item_category: string;
   color: string | null;
+  colors: string[];
   description: string;
   lost_location: string;
   lost_at: string;
@@ -11,6 +12,7 @@ export type LostReportResponse = {
   item_category: string;
   item_category_name: string;
   color: string | null;
+  colors: string[];
   description: string;
   area_name: string;
   lost_from: string;
@@ -83,6 +85,7 @@ export async function createLostReport(request: LostReportCreateRequest, image?:
   const body = new FormData();
   body.set("item_category", request.item_category);
   if (request.color) body.set("color", request.color);
+  request.colors.forEach((color) => body.append("colors", color));
   body.set("description", request.description);
   body.set("lost_location", request.lost_location);
   body.set("lost_at", request.lost_at);

@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 class LostReportCreateRequest(BaseModel):
     item_category: str = Field(min_length=1, max_length=50)
     color: str | None = Field(default=None, max_length=50)
+    colors: list[str] = Field(default_factory=list, max_length=3)
     description: str = Field(min_length=1)
     lost_location: str = Field(min_length=1, max_length=100)
     lost_at: datetime
@@ -22,6 +23,20 @@ class LostReportCreateRequest(BaseModel):
             return None
         return value.strip() if isinstance(value, str) else value
 
+    @field_validator("colors", mode="before")
+    @classmethod
+    def normalize_colors(cls, value: list[str] | None) -> list[str]:
+        normalized: list[str] = []
+        for item in value or []:
+            color = item.strip() if isinstance(item, str) else ""
+            if color and color not in normalized:
+                normalized.append(color)
+        if len(normalized) > 3 or any(len(color) > 50 for color in normalized):
+            raise ValueError("colors must contain up to 3 values of 50 characters or fewer")
+        if "여러 색" in normalized and len(normalized) > 1:
+            raise ValueError("여러 색 cannot be combined with other colors")
+        return normalized
+
     @field_validator("lost_at")
     @classmethod
     def require_timezone_aware_lost_at(cls, value: datetime) -> datetime:
@@ -37,6 +52,7 @@ class LostReportResponse(BaseModel):
     item_category: str
     item_category_name: str
     color: str | None
+    colors: list[str]
     description: str
     area_name: str
     lost_from: datetime

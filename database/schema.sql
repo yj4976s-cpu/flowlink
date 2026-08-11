@@ -484,6 +484,9 @@ CREATE TABLE lost_reports (
 
     image_url TEXT,
 
+    colors JSONB NOT NULL DEFAULT '[]'::JSONB
+        CHECK (jsonb_typeof(colors) = 'array' AND jsonb_array_length(colors) <= 3),
+
     status VARCHAR(20) NOT NULL DEFAULT 'OPEN'
         CHECK (
             status IN (

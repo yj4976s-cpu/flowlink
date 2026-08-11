@@ -47,6 +47,7 @@ def create_lost_report_for_user(
         user_id=current_user.id,
         object_class_id=object_class.id,
         color=clean_optional_text(request.color),
+        colors=request.colors,
         description=description,
         area_name=area_name,
         lost_from=lost_from,

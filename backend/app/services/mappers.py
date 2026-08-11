@@ -64,6 +64,7 @@ def lost_report_response(lost_report: LostReport) -> LostReportResponse:
         item_category=lost_report.object_class.code,
         item_category_name=lost_report.object_class.name_ko,
         color=lost_report.color,
+        colors=lost_report.colors or ([lost_report.color] if lost_report.color else []),
         description=lost_report.description,
         area_name=lost_report.area_name,
         lost_from=lost_report.lost_from,

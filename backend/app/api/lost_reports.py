@@ -34,10 +34,11 @@ async def create_lost_report(
     lost_location: Annotated[str, Form(min_length=1, max_length=100)],
     lost_at: Annotated[datetime, Form()],
     color: Annotated[str | None, Form(max_length=50)] = None,
+    colors: Annotated[list[str] | None, Form()] = None,
     image: Annotated[UploadFile | None, File()] = None,
 ) -> LostReportResponse:
     try:
-        request = LostReportCreateRequest(item_category=item_category, color=color, description=description, lost_location=lost_location, lost_at=lost_at)
+        request = LostReportCreateRequest(item_category=item_category, color=color, colors=colors or ([color] if color else []), description=description, lost_location=lost_location, lost_at=lost_at)
     except ValidationError as exc:
         raise RequestValidationError(exc.errors()) from exc
     root = upload_root()
