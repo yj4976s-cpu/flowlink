@@ -7,19 +7,24 @@ import {
   DetectionApiError,
   DetectionEvent,
   DetectionObject,
+  WebcamDetectionFrame,
+  deleteAllMyDetections,
+  deleteMyDetection,
   getMyDetection,
   listMyDetections,
   uploadDetectionImage,
   uploadDetectionVideo,
 } from "@/lib/detectionApi";
+import { WebcamDetectionPanel, WebcamPanelStatus } from "./WebcamDetectionPanel";
 import styles from "./DetectionWorkbench.module.css";
 
-type DetectionTab = "image" | "video";
+type DetectionTab = "image" | "video" | "webcam";
 type SubmitState = "idle" | "selected" | "analyzing" | "success" | "error";
 
 const IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 const VIDEO_MAX_BYTES = 100 * 1024 * 1024;
 const VIDEO_MAX_SECONDS = 30;
+const HISTORY_PAGE_SIZE = 8;
 const imageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 const videoTypes = new Set(["video/mp4"]);
 
@@ -33,6 +38,14 @@ const statusLabels: Record<string, string> = {
   PROCESSING: "분석 중",
   COMPLETED: "완료",
   FAILED: "실패",
+};
+
+const webcamStatusLabels: Record<WebcamPanelStatus, string> = {
+  idle: "대기",
+  requesting: "권한 요청 중",
+  ready: "카메라 준비",
+  running: "실시간 분석 중",
+  error: "확인 필요",
 };
 
 const groupLabels: Record<string, string> = {
@@ -58,6 +71,7 @@ function formatConfidence(value: number) {
 }
 
 function validateFile(file: File, tab: DetectionTab) {
+  if (tab === "webcam") return "";
   if (tab === "image") {
     if (!imageTypes.has(file.type)) return "JPG, PNG, WEBP 이미지만 업로드할 수 있습니다.";
     if (file.size > IMAGE_MAX_BYTES) return "이미지는 최대 20MB까지 업로드할 수 있습니다.";
@@ -111,6 +125,46 @@ function ResultList({ event }: { event: DetectionEvent | null }) {
   );
 }
 
+function WebcamResultList({ frame, status }: { frame: WebcamDetectionFrame | null; status: WebcamPanelStatus }) {
+  if (!frame) {
+    return (
+      <div className={styles.emptyResult}>
+        <Icon name="scanLine" size={24} />
+        <p>
+          {status === "running"
+            ? "웹캠 프레임을 분석하고 있습니다. 첫 결과가 도착하면 여기에 표시됩니다."
+            : "카메라를 켜고 실시간 탐지를 시작하면 결과가 여기에 표시됩니다."}
+        </p>
+      </div>
+    );
+  }
+
+  if (frame.detected_objects.length === 0) {
+    return (
+      <div className={styles.emptyResult}>
+        <Icon name="check" size={24} />
+        <p>현재 프레임에서 탐지된 객체가 없습니다. 카메라 각도나 조명을 조정해보세요.</p>
+      </div>
+    );
+  }
+
+  return (
+    <ul className={styles.resultList} aria-label="실시간 웹캠 탐지 객체 목록">
+      {frame.detected_objects.map((object, index) => (
+        <li key={`${object.label}-${index}-${object.bbox.x}-${object.bbox.y}`}>
+          <div>
+            <strong>{object.label}</strong>
+            <span>
+              {Math.round(object.bbox.width)}×{Math.round(object.bbox.height)}px · 실시간 프레임
+            </span>
+          </div>
+          <em>탐지 신뢰도 {formatConfidence(object.confidence)}</em>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function ImageOverlay({
   event,
   previewUrl,
@@ -140,7 +194,6 @@ function ImageOverlay({
 
   return (
     <div className={styles.previewFrame}>
-      {/* Object URL preview needs the rendered <img> box for bbox scaling. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img ref={imageRef} src={previewUrl} alt="업로드한 이미지 미리보기" onLoad={updateSize} />
       {canRenderOverlay && (
@@ -198,9 +251,14 @@ export function DetectionWorkbench() {
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
   const [error, setError] = useState("");
   const [currentEvent, setCurrentEvent] = useState<DetectionEvent | null>(null);
+  const [webcamFrame, setWebcamFrame] = useState<WebcamDetectionFrame | null>(null);
+  const [webcamStatus, setWebcamStatus] = useState<WebcamPanelStatus>("idle");
   const [history, setHistory] = useState<DetectionEvent[]>([]);
   const [historyError, setHistoryError] = useState("");
   const [historyLoading, setHistoryLoading] = useState(true);
+  const [deletingHistoryIds, setDeletingHistoryIds] = useState<Set<number>>(() => new Set());
+  const [deletingAllHistory, setDeletingAllHistory] = useState(false);
+  const [historyPage, setHistoryPage] = useState(1);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewUrlRef = useRef("");
@@ -209,11 +267,18 @@ export function DetectionWorkbench() {
     () => currentEvent?.detected_objects.some((object) => object.group_code === "PERSONAL_ITEM") ?? false,
     [currentEvent],
   );
+  const historyPageCount = Math.max(1, Math.ceil(history.length / HISTORY_PAGE_SIZE));
+  const activeHistoryPage = Math.min(historyPage, historyPageCount);
+  const pagedHistory = useMemo(() => {
+    const start = (activeHistoryPage - 1) * HISTORY_PAGE_SIZE;
+    return history.slice(start, start + HISTORY_PAGE_SIZE);
+  }, [history, activeHistoryPage]);
 
   const refreshHistory = useCallback(async (signal?: AbortSignal) => {
     try {
       const data = await listMyDetections(signal);
       setHistory(data);
+      setHistoryPage(1);
     } catch (caught) {
       if (caught instanceof DOMException && caught.name === "AbortError") return;
       const message = caught instanceof DetectionApiError ? caught.message : "탐지 기록을 불러오지 못했습니다.";
@@ -246,6 +311,8 @@ export function DetectionWorkbench() {
     setFile(null);
     setVideoDuration(null);
     setCurrentEvent(null);
+    setWebcamFrame(null);
+    setWebcamStatus("idle");
     setError("");
     setSubmitState("idle");
     replacePreviewUrl(null);
@@ -259,7 +326,7 @@ export function DetectionWorkbench() {
   };
 
   const acceptFile = (nextFile: File | undefined) => {
-    if (!nextFile) return;
+    if (!nextFile || tab === "webcam") return;
     const validationMessage = validateFile(nextFile, tab);
     setCurrentEvent(null);
     setVideoDuration(null);
@@ -288,7 +355,7 @@ export function DetectionWorkbench() {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!file || submitState === "analyzing") return;
+    if (tab === "webcam" || !file || submitState === "analyzing") return;
     const validationMessage = validateFile(file, tab);
     if (validationMessage) {
       setError(validationMessage);
@@ -296,7 +363,7 @@ export function DetectionWorkbench() {
       return;
     }
     if (tab === "video" && videoDuration !== null && videoDuration > VIDEO_MAX_SECONDS) {
-      setError("영상은 최대 30초까지 권장됩니다. 더 짧은 MP4 파일을 선택해주세요.");
+      setError("영상은 최대 30초까지 권장합니다. 짧은 MP4 파일을 선택해주세요.");
       setSubmitState("error");
       return;
     }
@@ -326,6 +393,9 @@ export function DetectionWorkbench() {
       setFile(null);
       replacePreviewUrl(null);
       setVideoDuration(null);
+      setTab(result.source_type === "VIDEO" ? "video" : "image");
+      setWebcamFrame(null);
+      setWebcamStatus("idle");
     } catch (caught) {
       const message = caught instanceof DetectionApiError ? caught.message : "탐지 상세를 불러오지 못했습니다.";
       setError(message);
@@ -333,12 +403,67 @@ export function DetectionWorkbench() {
     }
   };
 
+  const handleDeleteHistory = async (id: number) => {
+    if (deletingHistoryIds.has(id) || deletingAllHistory) return;
+    setHistoryError("");
+    setDeletingHistoryIds((current) => new Set(current).add(id));
+    try {
+      await deleteMyDetection(id);
+      setHistory((current) => current.filter((event) => event.id !== id));
+      setCurrentEvent((event) => (event?.id === id ? null : event));
+      if (currentEvent?.id === id) {
+        setSubmitState(file ? "selected" : "idle");
+      }
+    } catch (caught) {
+      const message = caught instanceof DetectionApiError ? caught.message : "탐지 기록을 삭제하지 못했습니다.";
+      setHistoryError(message);
+    } finally {
+      setDeletingHistoryIds((current) => {
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  const handleDeleteAllHistory = async () => {
+    if (deletingAllHistory || history.length === 0) return;
+    const confirmed = window.confirm("내 AI 탐지 기록을 모두 삭제할까요? 업로드한 이미지·영상 기록도 함께 정리됩니다.");
+    if (!confirmed) return;
+
+    setHistoryError("");
+    setDeletingAllHistory(true);
+    try {
+      await deleteAllMyDetections();
+      setHistory([]);
+      setHistoryPage(1);
+      setCurrentEvent(null);
+      setSubmitState(file ? "selected" : "idle");
+    } catch (caught) {
+      const message = caught instanceof DetectionApiError ? caught.message : "탐지 기록을 모두 삭제하지 못했습니다.";
+      setHistoryError(message);
+    } finally {
+      setDeletingAllHistory(false);
+      setDeletingHistoryIds(new Set());
+    }
+  };
+
+  const displayedStatus = tab === "webcam"
+    ? webcamStatusLabels[webcamStatus]
+    : currentEvent
+      ? statusLabels[currentEvent.status] ?? currentEvent.status
+      : "대기";
+  const displayedObjectCount = tab === "webcam"
+    ? webcamFrame?.detected_objects.length ?? 0
+    : currentEvent?.detected_objects.length ?? 0;
+  const displayedSourceType = tab === "webcam" ? "WEBCAM" : currentEvent?.source_type ?? (tab === "image" ? "IMAGE" : "VIDEO");
+
   return (
     <main className={styles.page}>
       <section className={styles.hero} aria-labelledby="detect-title">
         <p className={styles.eyebrow}>AI DETECTION</p>
-        <h1 id="detect-title">AI 객체 탐지</h1>
-        <p>이미지나 영상을 업로드하면 수면 위 객체를 AI가 분석합니다. 결과는 참고용이며 실제 객체와 다를 수 있습니다.</p>
+        <h1 id="detect-title">AI 수면 객체 탐지</h1>
+        <p>사진·영상·웹캠으로 수면 위 객체 후보를 빠르게 확인합니다. 결과는 참고용이며 관리자 확인 전 실제 객체와 다를 수 있습니다.</p>
       </section>
 
       <section className={styles.workbench} aria-labelledby="workbench-title">
@@ -349,77 +474,88 @@ export function DetectionWorkbench() {
           <button type="button" role="tab" aria-selected={tab === "video"} onClick={() => handleTabChange("video")}>
             영상 분석
           </button>
+          <button type="button" role="tab" aria-selected={tab === "webcam"} onClick={() => handleTabChange("webcam")}>
+            실시간 웹캠
+          </button>
         </div>
 
         <div className={styles.grid}>
-          <section className={styles.uploadPanel} aria-labelledby="workbench-title">
-            <div className={styles.panelHeading}>
-              <div>
-                <p className={styles.eyebrow}>UPLOAD</p>
-                <h2 id="workbench-title">{tab === "image" ? "이미지 업로드" : "영상 업로드"}</h2>
-              </div>
-              <span>{tab === "image" ? "JPG · PNG · WEBP / 20MB" : "MP4 / 100MB · 최대 30초 안내"}</span>
-            </div>
-
-            <form onSubmit={handleSubmit}>
-              <label
-                className={`${styles.dropzone} ${dragActive ? styles.dropzoneActive : ""}`}
-                onDragOver={(event) => {
-                  event.preventDefault();
-                  setDragActive(true);
-                }}
-                onDragLeave={() => setDragActive(false)}
-                onDrop={handleDrop}
-              >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept={tab === "image" ? "image/jpeg,image/png,image/webp" : "video/mp4"}
-                  onChange={handleFileChange}
-                />
-                <Icon name="scan" size={32} />
-                <strong>파일을 끌어오거나 선택해주세요.</strong>
-                <span>{tab === "image" ? "이미지는 20MB 이하로 업로드할 수 있습니다." : "영상은 MP4, 100MB 이하를 권장하며 30초 안내를 표시합니다."}</span>
-              </label>
-
-              {file && (
-                <div className={styles.fileMeta}>
-                  <span>{file.name}</span>
-                  <b>{formatBytes(file.size)}</b>
-                  <button type="button" onClick={resetSelectedFile}>파일 변경</button>
+          {tab === "webcam" ? (
+            <WebcamDetectionPanel onFrame={setWebcamFrame} onStatusChange={setWebcamStatus} />
+          ) : (
+            <section className={styles.uploadPanel} aria-labelledby="workbench-title">
+              <div className={styles.panelHeading}>
+                <div>
+                  <p className={styles.eyebrow}>UPLOAD</p>
+                  <h2 id="workbench-title">{tab === "image" ? "이미지 업로드" : "영상 업로드"}</h2>
                 </div>
-              )}
+                <span>{tab === "image" ? "JPG · PNG · WEBP / 20MB" : "MP4 / 100MB · 최대 30초 안내"}</span>
+              </div>
 
-              {previewUrl && tab === "image" && <ImageOverlay previewUrl={previewUrl} event={currentEvent} />}
-              {previewUrl && tab === "video" && (
-                <div className={styles.previewFrame}>
-                  <video
-                    src={previewUrl}
-                    controls
-                    onLoadedMetadata={(event) => {
-                      const duration = event.currentTarget.duration;
-                      setVideoDuration(Number.isFinite(duration) ? duration : null);
-                    }}
+              <form onSubmit={handleSubmit}>
+                <label
+                  className={`${styles.dropzone} ${previewUrl ? styles.dropzoneSelected : ""} ${dragActive ? styles.dropzoneActive : ""}`}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    setDragActive(true);
+                  }}
+                  onDragLeave={() => setDragActive(false)}
+                  onDrop={handleDrop}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept={tab === "image" ? "image/jpeg,image/png,image/webp" : "video/mp4"}
+                    onChange={handleFileChange}
                   />
-                  {videoDuration !== null && (
-                    <span className={styles.durationBadge}>재생 시간 {Math.round(videoDuration)}초</span>
+                  {previewUrl && file ? (
+                    <div className={styles.dropzonePreview}>
+                      {tab === "image" ? (
+                        <ImageOverlay previewUrl={previewUrl} event={currentEvent} />
+                      ) : (
+                        <div className={styles.previewFrame}>
+                          <video
+                            src={previewUrl}
+                            muted
+                            playsInline
+                            onLoadedMetadata={(event) => {
+                              const duration = event.currentTarget.duration;
+                              setVideoDuration(Number.isFinite(duration) ? duration : null);
+                            }}
+                          />
+                          {videoDuration !== null && (
+                            <span className={styles.durationBadge}>재생 시간 {Math.round(videoDuration)}초</span>
+                          )}
+                        </div>
+                      )}
+                      <div className={styles.previewMeta}>
+                        <strong>{file.name}</strong>
+                        <span>{formatBytes(file.size)} · 클릭해서 파일 교체</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <Icon name="scan" size={32} />
+                      <strong>파일을 끌어오거나 선택해주세요.</strong>
+                      <span>{tab === "image" ? "이미지는 20MB 이하로 업로드할 수 있습니다." : "영상은 MP4, 100MB 이하를 권장하며 30초 이내를 표시합니다."}</span>
+                    </>
                   )}
+                </label>
+
+                {error && <p className={styles.error} role="alert">{error}</p>}
+
+                <div className={styles.actions}>
+                  <button className="button button-primary" type="submit" disabled={!file || submitState === "analyzing"}>
+                    {submitState === "analyzing" ? "AI 탐지 중..." : "AI 탐지 시작"}
+                    <Icon name="arrow" size={18} />
+                  </button>
+                  <button className="button button-secondary" type="button" onClick={resetSelectedFile} disabled={submitState === "analyzing"}>
+                    초기화
+                  </button>
                 </div>
-              )}
-
-              {error && <p className={styles.error} role="alert">{error}</p>}
-
-              <div className={styles.actions}>
-                <button className="button button-primary" type="submit" disabled={!file || submitState === "analyzing"}>
-                  {submitState === "analyzing" ? "AI 탐지 중..." : "AI 탐지 시작"}
-                  <Icon name="arrow" size={18} />
-                </button>
-                <button className="button button-secondary" type="button" onClick={resetSelectedFile} disabled={submitState === "analyzing"}>
-                  초기화
-                </button>
-              </div>
-            </form>
-          </section>
+              </form>
+            </section>
+          )}
 
           <aside className={styles.resultPanel} aria-live="polite">
             <div className={styles.panelHeading}>
@@ -427,25 +563,25 @@ export function DetectionWorkbench() {
                 <p className={styles.eyebrow}>RESULT</p>
                 <h2>분석 상태</h2>
               </div>
-              <span>{currentEvent ? statusLabels[currentEvent.status] ?? currentEvent.status : "대기"}</span>
+              <span>{displayedStatus}</span>
             </div>
 
             <div className={styles.summaryCards}>
               <div>
                 <span>탐지 객체</span>
-                <strong>{currentEvent?.detected_objects.length ?? 0}개</strong>
+                <strong>{displayedObjectCount}개</strong>
               </div>
               <div>
                 <span>분석 유형</span>
-                <strong>{currentEvent?.source_type ?? (tab === "image" ? "IMAGE" : "VIDEO")}</strong>
+                <strong>{displayedSourceType}</strong>
               </div>
             </div>
 
-            <ResultList event={currentEvent} />
+            {tab === "webcam" ? <WebcamResultList frame={webcamFrame} status={webcamStatus} /> : <ResultList event={currentEvent} />}
 
             <p className={styles.notice}>AI 분석 결과는 참고용이며 동일 물품 또는 소유권을 확정하지 않습니다.</p>
 
-            {personalItemDetected && (
+            {personalItemDetected && tab !== "webcam" && (
               <div className={styles.ctaBox}>
                 <strong>개인 물품 후보가 탐지되었습니다.</strong>
                 <div>
@@ -464,7 +600,38 @@ export function DetectionWorkbench() {
             <p className={styles.eyebrow}>MY HISTORY</p>
             <h2 id="history-title">최근 내 탐지 기록</h2>
           </div>
-          <span>{historyLoading ? "불러오는 중" : `최근 표시된 기록 ${history.length}건`}</span>
+          <div className={styles.historyActions}>
+            <span>
+              {historyLoading
+                ? "불러오는 중"
+                : `총 ${history.length}건 · ${activeHistoryPage} / ${historyPageCount}`}
+            </span>
+            <div className={styles.historyPager} aria-label="탐지 기록 페이지">
+              <button
+                type="button"
+                onClick={() => setHistoryPage((current) => Math.max(1, current - 1))}
+                disabled={historyLoading || activeHistoryPage <= 1 || deletingAllHistory}
+                aria-label="이전 탐지 기록 페이지"
+              >
+                ←
+              </button>
+              <button
+                type="button"
+                onClick={() => setHistoryPage((current) => Math.min(historyPageCount, current + 1))}
+                disabled={historyLoading || activeHistoryPage >= historyPageCount || deletingAllHistory}
+                aria-label="다음 탐지 기록 페이지"
+              >
+                →
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleDeleteAllHistory()}
+              disabled={historyLoading || history.length === 0 || deletingAllHistory}
+            >
+              {deletingAllHistory ? "삭제 중" : "모두 삭제"}
+            </button>
+          </div>
         </div>
 
         {historyError && <p className={styles.error} role="alert">{historyError}</p>}
@@ -477,14 +644,33 @@ export function DetectionWorkbench() {
         )}
         {!historyLoading && !historyError && history.length > 0 && (
           <div className={styles.historyGrid} role="list">
-            {history.map((event) => (
-              <button key={event.id} type="button" role="listitem" onClick={() => void loadHistoryDetail(event.id)}>
-                <span>{event.source_type}</span>
-                <strong>{statusLabels[event.status] ?? event.status}</strong>
-                <em>{formatDateTime(event.created_at)}</em>
-                <b>{event.detected_objects.length}개 · {event.detected_objects[0]?.class_name_ko ?? "탐지 객체 없음"}</b>
-              </button>
-            ))}
+            {pagedHistory.map((event) => {
+              const isDeleting = deletingHistoryIds.has(event.id);
+              return (
+                <article key={event.id} className={styles.historyCard} role="listitem" aria-busy={isDeleting}>
+                  <button
+                    type="button"
+                    className={styles.historyDetailButton}
+                    onClick={() => void loadHistoryDetail(event.id)}
+                    disabled={isDeleting || deletingAllHistory}
+                  >
+                    <span>{event.source_type}</span>
+                    <strong>{statusLabels[event.status] ?? event.status}</strong>
+                    <em>{formatDateTime(event.created_at)}</em>
+                    <b>{event.detected_objects.length}개 · {event.detected_objects[0]?.class_name_ko ?? "탐지 객체 없음"}</b>
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.historyDeleteButton}
+                    onClick={() => void handleDeleteHistory(event.id)}
+                    disabled={isDeleting || deletingAllHistory}
+                    aria-label={`탐지 기록 ${event.id} 삭제`}
+                  >
+                    {isDeleting ? "삭제 중" : "삭제"}
+                  </button>
+                </article>
+              );
+            })}
           </div>
         )}
       </section>

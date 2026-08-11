@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     ROBOFLOW_MODEL_VERSION: str = ""
     UPLOAD_DIR: str = "uploads"
     FRONTEND_URL: str = "http://localhost:3000"
+    DETECTION_MODEL: str = "yolo11n.pt"
+    DETECTION_CONFIDENCE: float = 0.25
+    DETECTION_IMGSZ: int = 640
 
     @property
     def auth_cookie_secure(self) -> bool:
