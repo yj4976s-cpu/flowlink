@@ -1,40 +1,49 @@
 .page {
   width: min(1320px, calc(100% - 40px));
   margin: 0 auto;
-  padding: 72px 0 96px;
+  padding: 52px 0 96px;
 }
 
 .hero {
+  display: block;
+  margin-bottom: 28px;
+}
+
+.heroCopy {
   display: grid;
-  gap: 18px;
-  max-width: 760px;
-  margin-bottom: 34px;
+  gap: 14px;
+  min-width: 0;
 }
 
 .hero h1 {
   font-family: var(--font-editorial);
-  font-size: clamp(3rem, 7vw, 5.6rem);
-  line-height: 1.05;
+  display: grid;
+  gap: 2px;
+  max-width: 680px;
+  font-size: clamp(3rem, 5.1vw, 4.65rem);
+  line-height: 1.02;
   color: var(--color-text);
-  letter-spacing: -0.06em;
+  letter-spacing: -0.055em;
+  text-wrap: balance;
 }
 
 .hero p {
-  max-width: 620px;
+  max-width: 610px;
   color: var(--color-text-muted);
-  font-size: 1.06rem;
-  line-height: 1.8;
+  font-size: 1rem;
+  line-height: 1.75;
+  word-break: keep-all;
 }
 
 .toolbar {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) auto auto;
-  gap: 16px;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 0.8fr) auto auto;
+  gap: 12px;
   align-items: end;
-  padding: 18px;
-  margin-bottom: 22px;
+  padding: 16px;
+  margin-bottom: 18px;
   border: 1px solid var(--color-border);
-  border-radius: 28px;
+  border-radius: 24px;
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--color-surface) 90%, transparent), color-mix(in srgb, var(--color-surface-soft) 72%, transparent)),
     var(--color-surface);
@@ -46,7 +55,12 @@
   gap: 8px;
 }
 
-.searchField span,
+.areaPicker {
+  position: relative;
+  min-width: 0;
+}
+
+.searchField > span:not(.areaInputWrap),
 .panelHead span {
   color: var(--color-primary);
   font-size: 0.74rem;
@@ -57,9 +71,9 @@
 
 .searchField input {
   width: 100%;
-  min-height: 48px;
+  min-height: 46px;
   border: 1px solid var(--color-border);
-  border-radius: 16px;
+  border-radius: 14px;
   background: var(--color-surface-soft);
   color: var(--color-text);
   padding: 0 16px;
@@ -75,21 +89,104 @@
 .categoryChips {
   display: flex;
   flex-wrap: wrap;
+  gap: 7px;
+}
+
+.areaInputWrap {
+  position: relative;
+  display: block;
+}
+
+.areaInputWrap input {
+  padding-right: 46px;
+}
+
+.areaInputWrap button {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 30%, var(--color-border));
+  border-radius: 11px;
+  background: var(--color-surface);
+  color: var(--color-primary);
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+
+.areaSuggestions {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  display: grid;
+  gap: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 18px;
+  background: var(--color-surface-elevated);
+  box-shadow: var(--shadow-floating);
+  padding: 10px;
+}
+
+.areaSuggestions strong {
+  padding: 4px 6px 7px;
+  color: var(--color-text-muted);
+  font-size: 0.74rem;
+}
+
+.areaSuggestions button {
+  min-height: 42px;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  background: transparent;
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
   gap: 8px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 850;
+  text-align: left;
+  cursor: pointer;
+}
+
+.areaSuggestions button:hover,
+.areaSuggestions button:focus-visible {
+  border-color: color-mix(in srgb, var(--color-primary) 25%, var(--color-border));
+  background: color-mix(in srgb, var(--color-primary) 9%, var(--color-surface));
+}
+
+.areaSuggestions .icon {
+  color: var(--color-primary);
+}
+
+.areaSuggestions p {
+  margin: 0;
+  padding: 16px 10px;
+  color: var(--color-text-muted);
+  font-size: 0.86rem;
 }
 
 .categoryChips button,
 .resetButton,
 .stateBox button,
 .mapState button {
-  min-height: 44px;
+  min-height: 42px;
   border: 1px solid var(--color-border);
   border-radius: 999px;
   background: var(--color-surface);
   color: var(--color-text);
-  padding: 0 16px;
+  padding: 0 15px;
   font: inherit;
-  font-weight: 800;
+  font-size: 0.94rem;
+  font-weight: 850;
   cursor: pointer;
   transition: border-color 0.18s ease, transform 0.18s ease, background 0.18s ease;
 }
@@ -110,7 +207,7 @@
 
 .categoryChips button,
 .resetButton {
-  border-radius: 14px;
+  border-radius: 13px;
 }
 
 .resetButton:disabled {
@@ -627,6 +724,7 @@
 }
 
 html[data-theme="night"] .toolbar,
+html[data-theme="night"] .areaSuggestions,
 html[data-theme="night"] .listPanel,
 html[data-theme="night"] .mapPanel,
 html[data-theme="night"] .resultCard,
@@ -647,7 +745,11 @@ html[data-theme="night"] .mapTint {
 @media (max-width: 920px) {
   .page {
     width: min(100% - 28px, 720px);
-    padding: 44px 0 72px;
+    padding: 40px 0 72px;
+  }
+
+  .hero {
+    align-items: start;
   }
 
   .toolbar,
@@ -699,11 +801,26 @@ html[data-theme="night"] .mapTint {
 @media (max-width: 560px) {
   .page {
     width: min(100% - 20px, 440px);
-    padding-top: 34px;
+    padding-top: 30px;
   }
 
   .hero {
-    margin-bottom: 24px;
+    gap: 12px;
+    margin-bottom: 22px;
+  }
+
+  .hero h1 {
+    font-size: clamp(2.45rem, 12vw, 3.15rem);
+    line-height: 1.12;
+  }
+
+  .hero p {
+    font-size: 0.94rem;
+    line-height: 1.7;
+  }
+
+  .toolbar {
+    padding: 14px;
   }
 
   .toolbar,
