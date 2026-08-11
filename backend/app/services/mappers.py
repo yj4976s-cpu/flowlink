@@ -9,7 +9,7 @@ from app.schemas.admin import (
 )
 from app.schemas.auth import UserResponse
 from app.schemas.detection import DetectionBBoxResponse, DetectionEventResponse, DetectionObjectResponse
-from app.schemas.found_item import FoundItemDetailResponse, FoundItemListItemResponse
+from app.schemas.found_item import FoundItemDetailResponse, FoundItemListItemResponse, FoundItemMapItemResponse
 from app.schemas.lost_report import LostReportResponse
 from app.schemas.match import MatchCandidateResponse, MatchFoundItemResponse
 from app.schemas.notification import NotificationResponse
@@ -47,6 +47,14 @@ def found_item_detail_response(found_item: FoundItem) -> FoundItemDetailResponse
     return FoundItemDetailResponse(
         **found_item_list_response(found_item).model_dump(),
         created_at=found_item.created_at,
+    )
+
+
+def found_item_map_response(found_item: FoundItem) -> FoundItemMapItemResponse:
+    return FoundItemMapItemResponse(
+        **found_item_list_response(found_item).model_dump(),
+        latitude=float(found_item.latitude),
+        longitude=float(found_item.longitude),
     )
 
 

@@ -1,14 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { CSSProperties, FormEvent, ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/common/Icon";
 import { getCurrentUser } from "@/lib/authApi";
 import { addCitizenSighting, createCitizenReport, getCitizenReport, listCitizenReports } from "@/lib/citizenReportsApi";
-import { FoundItemListItem, listFoundItems, resolveFoundItemImageUrl } from "@/lib/foundItemsApi";
+import { FoundItemListItem, FoundItemMapItem, listFoundItems, listMapFoundItems, resolveFoundItemImageUrl } from "@/lib/foundItemsApi";
+import { loadKakaoMaps } from "@/lib/kakaoMapLoader";
 import { listMyLostReports, LostReportResponse } from "@/lib/lostReportsApi";
 import { listMyMatches, MatchCandidate } from "@/lib/matchesApi";
 import { discoveryCategoryOptions, getItemTypeMeta, ITEM_TYPE_META, type ItemTypeFamily } from "@/lib/itemTypeMeta";
+import type { KakaoCustomOverlay, KakaoMap, KakaoMapsNamespace } from "@/types/kakao-maps";
 import type { CitizenReport, CitizenReportDraft, SightingDraft } from "@/types/discoveryNetwork";
 import styles from "./DiscoveryNetworkClient.module.css";
 
@@ -16,6 +19,27 @@ type Tab = "items" | "citizen" | "map";
 type Modal = "report" | "sighting" | null;
 const personalCategories = ["공", "가방", "백팩", "우산", "신발", "슬리퍼"];
 const statusLabels: Record<string, string> = { AVAILABLE: "보관 중", RECOVERED: "확인된 발견물", CLAIM_PENDING: "소유자 확인 중", RETURNED: "반환 완료" };
+const DEFAULT_MAP_CENTER = { latitude: 37.5665, longitude: 126.978 };
+const MAJOR_AREAS = [
+  { name: "서울", latitude: 37.5665, longitude: 126.978, level: 7 },
+  { name: "경기", latitude: 37.4138, longitude: 127.5183, level: 9 },
+  { name: "인천", latitude: 37.4563, longitude: 126.7052, level: 7 },
+  { name: "부산", latitude: 35.1796, longitude: 129.0756, level: 7 },
+  { name: "대구", latitude: 35.8714, longitude: 128.6014, level: 7 },
+  { name: "대전", latitude: 36.3504, longitude: 127.3845, level: 7 },
+  { name: "광주", latitude: 35.1595, longitude: 126.8526, level: 7 },
+  { name: "울산", latitude: 35.5384, longitude: 129.3114, level: 7 },
+  { name: "세종", latitude: 36.4801, longitude: 127.289, level: 7 },
+  { name: "강원", latitude: 37.8228, longitude: 128.1555, level: 9 },
+  { name: "충북", latitude: 36.8, longitude: 127.7, level: 9 },
+  { name: "충남", latitude: 36.5184, longitude: 126.8, level: 9 },
+  { name: "전북", latitude: 35.7175, longitude: 127.153, level: 9 },
+  { name: "전남", latitude: 34.8679, longitude: 126.991, level: 9 },
+  { name: "경북", latitude: 36.4919, longitude: 128.8889, level: 9 },
+  { name: "경남", latitude: 35.4606, longitude: 128.2132, level: 9 },
+  { name: "제주", latitude: 33.4996, longitude: 126.5312, level: 8 },
+] as const;
+const MAJOR_AREA_NAMES: ReadonlySet<string> = new Set(MAJOR_AREAS.map((area) => area.name));
 const date = new Intl.DateTimeFormat("ko-KR", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 const day = new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "2-digit", day: "2-digit" });
 const categoryOptions: SelectOption[] = discoveryCategoryOptions.map((item) => ({ value: item.filterValue, label: item.label, icon: item.icon, family: item.family }));
@@ -93,6 +117,96 @@ function format(value: string, withTime = false) {
   return Number.isNaN(parsed.getTime()) ? "일시 확인 중" : (withTime ? date : day).format(parsed);
 }
 
+function matchesMapFilters(item: FoundItemMapItem, query: string, category: string, area: string, status: string, foundDate: string) {
+  const normalizedQuery = query.trim().toLowerCase();
+  const text = `${item.public_description ?? ""} ${item.item_category_name} ${item.item_category} ${item.color ?? ""} ${item.area_name}`.toLowerCase();
+  return personalCategories.some((name) => item.item_category_name.includes(name))
+    && (!normalizedQuery || text.includes(normalizedQuery))
+    && (!category || item.item_category === category || item.item_category_name.includes(category))
+    && (!area || item.area_name.toLowerCase().includes(area.trim().toLowerCase()))
+    && (!status || item.status === status)
+    && (!foundDate || item.found_at.startsWith(foundDate));
+}
+
+function getAreaOptions(...groups: Array<Array<{ area_name?: string; areaName?: string }>>) {
+  const registeredAreas = groups.flatMap((items) => items.map((item) => item.area_name ?? item.areaName ?? "").filter(Boolean)).sort((a, b) => a.localeCompare(b, "ko"));
+  return Array.from(new Set([...MAJOR_AREAS.map((area) => area.name), ...registeredAreas]));
+}
+
+function getMajorAreaTarget(area: string) {
+  const keyword = area.trim().toLowerCase();
+  return MAJOR_AREAS.find((item) => item.name.toLowerCase() === keyword);
+}
+
+function AreaPicker({ value, options, onChange, onSelect }: { value: string; options: string[]; onChange: (value: string) => void; onSelect?: (value: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [suggestionsStyle, setSuggestionsStyle] = useState<CSSProperties>();
+  const root = useRef<HTMLDivElement>(null);
+  const suggestionsRef = useRef<HTMLDivElement>(null);
+  const id = useId();
+  const visibleOptions = useMemo(() => {
+    const keyword = value.trim().toLowerCase();
+    const majorOptions = options.filter((option) => MAJOR_AREA_NAMES.has(option));
+    const registeredOptions = options.filter((option) => !MAJOR_AREA_NAMES.has(option) && (!keyword || option.toLowerCase().includes(keyword))).slice(0, 8);
+    return [...majorOptions, ...registeredOptions];
+  }, [options, value]);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!root.current?.contains(target) && !suggestionsRef.current?.contains(target)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", escape);
+    return () => { window.removeEventListener("pointerdown", close); window.removeEventListener("keydown", escape); };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const updatePosition = () => {
+      const rect = root.current?.getBoundingClientRect();
+      if (!rect) return;
+      const width = Math.min(360, Math.max(260, window.innerWidth - rect.left - 16));
+      const left = Math.max(16, Math.min(rect.left, window.innerWidth - width - 16));
+      setSuggestionsStyle({ left, top: rect.bottom + 7, width });
+    };
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [open]);
+
+  const choose = (nextArea: string) => {
+    onChange(nextArea);
+    onSelect?.(nextArea);
+    setOpen(false);
+  };
+
+  const suggestions = open ? <div className={styles.areaSuggestions} id={id} style={suggestionsStyle} ref={suggestionsRef}><strong>주요 지역 / 등록 구역</strong>{visibleOptions.length ? visibleOptions.map((option) => <button type="button" key={option} onClick={() => choose(option)}><Icon name="location" size={15} /><span>{option}</span></button>) : <p>일치하는 지역이 없습니다.</p>}</div> : null;
+
+  return <div className={`${styles.locationField} ${styles.areaPicker}`} ref={root}><span>지역</span><div><Icon name="location" size={16} /><input value={value} onChange={(event) => { onChange(event.target.value); setOpen(true); }} onFocus={() => setOpen(true)} placeholder="대략적인 발견 구역" aria-controls={id} /><button className={styles.areaSearchButton} type="button" onClick={() => setOpen((current) => !current)} aria-label="지역 목록 열기" aria-controls={id} aria-expanded={open}><Icon name="search" size={15} /></button></div>{suggestions && typeof document !== "undefined" ? createPortal(suggestions, document.body) : suggestions}</div>;
+}
+
+function createAreaMapMarker(item: FoundItemMapItem, selected: boolean, onSelect: () => void) {
+  const marker = document.createElement("button");
+  marker.type = "button";
+  marker.className = `${styles.mapMarker} ${selected ? styles.mapMarkerSelected : ""}`;
+  marker.setAttribute("aria-label", `${item.item_category_name} 지도 마커 선택`);
+  const dot = document.createElement("span");
+  dot.className = styles.mapMarkerDot;
+  const label = document.createElement("span");
+  label.className = styles.mapMarkerLabel;
+  label.textContent = item.item_category_name;
+  marker.append(dot, label);
+  marker.addEventListener("click", onSelect);
+  return marker;
+}
+
 function itemVisualClass(item: Pick<FoundItemListItem, "item_category" | "item_category_name">) {
   const meta = getItemTypeMeta(item.item_category, item.item_category_name);
   if (meta.family === "umbrella") return styles.umbrella;
@@ -160,7 +274,6 @@ export function DiscoveryNetworkClient() {
   const [foundDate, setFoundDate] = useState("");
   const [selectedReport, setSelectedReport] = useState<CitizenReport | null>(null);
   const [detailRefreshing, setDetailRefreshing] = useState(false);
-  const [selectedMapItem, setSelectedMapItem] = useState<FoundItemListItem | CitizenReport | null>(null);
   const [modal, setModal] = useState<Modal>(null);
   const detailRequest = useRef(0);
 
@@ -206,6 +319,7 @@ export function DiscoveryNetworkClient() {
 
   const filteredItems = items;
   const filteredReports = useMemo(() => reports.filter((report) => `${report.title} ${report.description} ${report.areaName}`.toLowerCase().includes(query.toLowerCase()) && (!category || report.category.includes(category)) && (!area || report.areaName.includes(area)) && (!foundDate || report.foundAt.startsWith(foundDate))), [area, category, foundDate, query, reports]);
+  const areaOptions = useMemo(() => getAreaOptions(items, reports), [items, reports]);
   const activeReport = lostReports.find((report) => ["OPEN", "MATCHED", "CLAIM_PENDING"].includes(report.status));
 
   const resetFilters = () => { setQuery(""); setCategory(""); setArea(""); setStatus(""); setFoundDate(""); };
@@ -256,7 +370,7 @@ export function DiscoveryNetworkClient() {
 
     <section className={styles.filters} aria-label="검색 및 필터"><label className={styles.search}><span className="sr-only">검색</span><Icon name="search" size={19} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="물품명이나 기억나는 특징을 검색해보세요" /></label><div className={styles.filterRow}>
       <FilterSelect label="물품 종류" value={category} options={categoryOptions} onChange={setCategory} />
-      <label className={styles.locationField}><span>지역</span><div><Icon name="location" size={16} /><input value={area} onChange={(event) => setArea(event.target.value)} placeholder="대략적인 발견 구역" /></div></label>
+      <AreaPicker value={area} options={areaOptions} onChange={setArea} />
       <DateFilter value={foundDate} onChange={setFoundDate} />
       {tab === "items" && <FilterSelect label="상태" value={status} options={statusOptions} onChange={setStatus} selectedIndicator={false} />}
       <button className={styles.reset} type="button" onClick={resetFilters} disabled={!query && !category && !area && !status && !foundDate}>필터 초기화</button></div>
@@ -268,7 +382,7 @@ export function DiscoveryNetworkClient() {
     {tab === "citizen" && <section aria-labelledby="citizen-title"><div className={styles.sectionHeading}><div><p>CITIZEN SIGHTINGS</p><h2 id="citizen-title">시민 발견 제보</h2></div><button className="button button-primary" type="button" onClick={() => { setSubmitError(""); setModal("report"); }}>+ 발견물 제보하기</button></div>
       {loading ? <SkeletonGrid /> : citizenError ? <State title="발견 제보를 가져오지 못했어요" text="API 오류는 빈 목록과 구분해 표시됩니다." error action={<button className="button button-secondary" onClick={() => window.location.reload()}>다시 불러오기</button>} /> : filteredReports.length ? <div className={styles.grid}>{filteredReports.map((report) => <CitizenCard report={report} key={report.id} onOpen={() => openCitizenReport(report)} />)}</div> : <State title="아직 등록된 발견 제보가 없어요." text="수변에서 발견한 물건이 있다면 첫 제보를 남겨주세요." action={<button className="button button-primary" onClick={() => { setSubmitError(""); setModal("report"); }}>발견물 제보하기</button>} />}</section>}
 
-    {tab === "map" && <MapPanel items={filteredItems} reports={filteredReports} selected={selectedMapItem} onSelect={setSelectedMapItem} onCitizenOpen={openCitizenReport} />}
+    {tab === "map" && <MapPanel query={query} category={category} area={area} status={status} foundDate={foundDate} />}
     {activeReport && <Progress report={activeReport} hasMatch={matches.length > 0} />}
     {selectedReport && <CitizenDetail report={selectedReport} refreshing={detailRefreshing} onClose={closeCitizenReport} onSighting={() => { setSubmitError(""); setModal("sighting"); }} />}
     {modal === "report" && <ReportModal onClose={() => setModal(null)} onSubmit={submitReport} pending={submitKind === "report"} error={submitError} />}
@@ -279,12 +393,135 @@ export function DiscoveryNetworkClient() {
 function SkeletonGrid() { return <div className={styles.skeletonGrid} role="status"><span className="sr-only">목록을 불러오는 중입니다.</span>{[0, 1, 2].map((key) => <i key={key} />)}</div>; }
 function State({ title, text, error, action }: { title: string; text: string; error?: boolean; action?: ReactNode }) { return <div className={`${styles.state} ${error ? styles.error : ""}`}><Icon name={error ? "spark" : "document"} size={25} /><div><strong>{title}</strong><p>{text}</p>{action}</div></div>; }
 
-function MapPanel({ items, reports, selected, onSelect, onCitizenOpen }: { items: FoundItemListItem[]; reports: CitizenReport[]; selected: FoundItemListItem | CitizenReport | null; onSelect: (item: FoundItemListItem | CitizenReport) => void; onCitizenOpen: (report: CitizenReport) => void }) {
-  return <section aria-labelledby="map-title"><div className={styles.sectionHeading}><div><p>AREA MAP</p><h2 id="map-title">지도에서 찾기</h2></div><span>대략적인 발견 구역</span></div><div className={styles.map}><div className={styles.river} />
-    {reports.map((report) => <button key={report.id} className={`${styles.marker} ${styles.citizenMarker}`} style={{ left: `${report.mapPosition.x}%`, top: `${report.mapPosition.y}%` }} onClick={() => onSelect(report)} aria-label={`${report.title} 지도 미리보기`}><Icon name="location" size={20} /></button>)}
-    {items.slice(0, 4).map((item, index) => <button key={item.id} className={styles.marker} style={{ left: `${22 + index * 17}%`, top: `${62 - (index % 2) * 18}%` }} onClick={() => onSelect(item)} aria-label={`${item.item_category_name} 지도 미리보기`}><Icon name="location" size={20} /></button>)}
-    <div className={styles.legend}><span><i /> AI 탐지</span><span><i /> 발견 제보</span></div>
-    {selected && <div className={styles.mapPreview}>{"title" in selected ? <><b>발견 제보</b><h3>{selected.title}</h3><p>{format(selected.foundAt, true)}</p><button onClick={() => onCitizenOpen(selected)}>발견물 보기 · 추가 목격 {selected.history.length - 1}건</button></> : <><b>AI 탐지</b><h3>{selected.public_description || selected.item_category_name}</h3><p>{format(selected.found_at, true)}</p><Link href={`/found-items/${selected.id}`}>발견물 보기</Link></>}</div>}
+function MapPanel({ query, category, area, status, foundDate }: { query: string; category: string; area: string; status: string; foundDate: string }) {
+  const [mapItems, setMapItems] = useState<FoundItemMapItem[]>([]);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [loadingMapItems, setLoadingMapItems] = useState(true);
+  const [itemsError, setItemsError] = useState("");
+  const [mapLoadError, setMapLoadError] = useState("");
+  const [mapReady, setMapReady] = useState(false);
+  const [mapExpanded, setMapExpanded] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<KakaoMap | null>(null);
+  const mapsRef = useRef<KakaoMapsNamespace | null>(null);
+  const overlaysRef = useRef<Map<number, KakaoCustomOverlay>>(new Map());
+  const filteredMapItems = useMemo(() => mapItems.filter((item) => matchesMapFilters(item, query, category, area, status, foundDate)), [area, category, foundDate, mapItems, query, status]);
+  const selected = filteredMapItems.find((item) => item.id === selectedId) ?? filteredMapItems[0] ?? null;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void listMapFoundItems(controller.signal)
+      .then((result) => setMapItems(result))
+      .catch((error) => { if (!(error instanceof DOMException && error.name === "AbortError")) setItemsError(error instanceof Error ? error.message : "지도 발견물을 불러오지 못했습니다."); })
+      .finally(() => { if (!controller.signal.aborted) setLoadingMapItems(false); });
+    return () => controller.abort();
+  }, [retryKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const overlays = overlaysRef.current;
+    void loadKakaoMaps().then((maps) => {
+      if (cancelled || !mapContainerRef.current) return;
+      mapsRef.current = maps;
+      if (!mapRef.current) {
+        const center = new maps.LatLng(DEFAULT_MAP_CENTER.latitude, DEFAULT_MAP_CENTER.longitude);
+        const map = new maps.Map(mapContainerRef.current, { center, level: 7 });
+        mapRef.current = map;
+      }
+      setMapReady(true);
+    }).catch((error) => setMapLoadError(error instanceof Error ? error.message : "지도를 불러오지 못했습니다."));
+    return () => { cancelled = true; overlays.forEach((overlay) => overlay.setMap(null)); overlays.clear(); };
+  }, []);
+
+  const selectMapItem = useCallback((item: FoundItemMapItem) => {
+    setSelectedId(item.id);
+    const maps = mapsRef.current;
+    const map = mapRef.current;
+    if (maps && map) map.panTo(new maps.LatLng(item.latitude, item.longitude));
+  }, []);
+
+  const fitMapToItems = useCallback(() => {
+    const maps = mapsRef.current;
+    const map = mapRef.current;
+    if (!maps || !map) return;
+    if (!filteredMapItems.length) {
+      const target = getMajorAreaTarget(area);
+      if (target) {
+        map.setCenter(new maps.LatLng(target.latitude, target.longitude));
+        map.setLevel(target.level);
+      }
+      return;
+    }
+    if (filteredMapItems.length === 1) {
+      map.setCenter(new maps.LatLng(filteredMapItems[0].latitude, filteredMapItems[0].longitude));
+      map.setLevel(5);
+      return;
+    }
+    const bounds = new maps.LatLngBounds();
+    filteredMapItems.forEach((item) => bounds.extend(new maps.LatLng(item.latitude, item.longitude)));
+    map.setBounds(bounds);
+  }, [area, filteredMapItems]);
+
+  const zoomMap = useCallback((direction: "in" | "out") => {
+    const map = mapRef.current;
+    if (!map) return;
+    map.setLevel(direction === "in" ? Math.max(1, map.getLevel() - 1) : Math.min(14, map.getLevel() + 1));
+  }, []);
+
+  useEffect(() => {
+    if (!mapExpanded) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") setMapExpanded(false); };
+    window.addEventListener("keydown", close);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", close);
+    };
+  }, [mapExpanded]);
+
+  useEffect(() => {
+    if (!mapReady) return;
+    const timeoutId = window.setTimeout(() => {
+      mapRef.current?.relayout?.();
+      fitMapToItems();
+    }, 160);
+    return () => window.clearTimeout(timeoutId);
+  }, [fitMapToItems, mapExpanded, mapReady]);
+
+  useEffect(() => {
+    const maps = mapsRef.current;
+    const map = mapRef.current;
+    if (!maps || !map || !mapReady) return;
+    overlaysRef.current.forEach((overlay) => overlay.setMap(null));
+    overlaysRef.current.clear();
+    if (!filteredMapItems.length) {
+      const target = getMajorAreaTarget(area);
+      map.setCenter(new maps.LatLng(target?.latitude ?? DEFAULT_MAP_CENTER.latitude, target?.longitude ?? DEFAULT_MAP_CENTER.longitude));
+      map.setLevel(target?.level ?? 8);
+      return;
+    }
+    const bounds = new maps.LatLngBounds();
+    filteredMapItems.forEach((item) => {
+      const position = new maps.LatLng(item.latitude, item.longitude);
+      bounds.extend(position);
+      const overlay = new maps.CustomOverlay({ position, content: createAreaMapMarker(item, item.id === selected?.id, () => selectMapItem(item)), yAnchor: 1.05, zIndex: item.id === selected?.id ? 20 : 10 });
+      overlay.setMap(map);
+      overlaysRef.current.set(item.id, overlay);
+    });
+    if (filteredMapItems.length === 1) {
+      map.setCenter(new maps.LatLng(filteredMapItems[0].latitude, filteredMapItems[0].longitude));
+      map.setLevel(5);
+    } else {
+      map.setBounds(bounds);
+    }
+  }, [area, filteredMapItems, mapReady, selected?.id, selectMapItem]);
+
+  return <section aria-labelledby="map-title"><div className={styles.sectionHeading}><div><p>AREA MAP</p><h2 id="map-title">지도에서 찾기</h2></div><span>대략적인 발견 구역</span></div><div className={styles.mapLayout}>
+    <aside className={styles.mapListPanel}><div className={styles.mapListHead}><span>PUBLIC MAP</span><strong>현재 표시 {filteredMapItems.length}개</strong></div>
+      {loadingMapItems ? <div className={styles.mapSideState}>지도 발견물을 불러오는 중입니다.</div> : itemsError ? <div className={`${styles.mapSideState} ${styles.mapSideError}`}>지도 정보를 불러오지 못했습니다.<button type="button" onClick={() => { setLoadingMapItems(true); setItemsError(""); setRetryKey((value) => value + 1); }}>다시 시도</button></div> : filteredMapItems.length ? <div className={styles.mapList}>{filteredMapItems.map((item) => <button key={item.id} type="button" className={item.id === selected?.id ? styles.mapListSelected : undefined} onClick={() => selectMapItem(item)}><span>{item.item_category_name}</span><strong>{item.public_description || `${item.color ?? "색상 미상"} ${item.item_category_name}`}</strong><small>{item.area_name} · {format(item.found_at, true)}</small></button>)}</div> : <div className={styles.mapSideState}>지도에 표시할 공개 발견물이 아직 없습니다.</div>}
+    </aside><div className={`${styles.map} ${mapExpanded ? styles.mapExpanded : ""}`} role={mapExpanded ? "dialog" : undefined} aria-modal={mapExpanded ? "true" : undefined} aria-label={mapExpanded ? "확대된 발견물 센터 지도" : undefined}><div ref={mapContainerRef} className={styles.mapCanvas} aria-label="공개 발견물 지도" /><div className={styles.mapTopControls}><button type="button" onClick={fitMapToItems} disabled={!filteredMapItems.length}>전체 보기</button><button type="button" onClick={() => setMapExpanded((current) => !current)}>{mapExpanded ? "닫기" : "크게 보기"}</button></div><div className={styles.mapZoomControls} aria-label="지도 확대 축소"><button type="button" onClick={() => zoomMap("in")} aria-label="지도 확대">+</button><button type="button" onClick={() => zoomMap("out")} aria-label="지도 축소">−</button></div>{mapLoadError ? <div className={`${styles.mapOverlayState} ${styles.mapSideError}`}>{mapLoadError}</div> : !mapReady && <div className={styles.mapOverlayState}>Kakao 지도를 준비하고 있습니다.</div>}{selected && <div className={styles.mapPreview}><b>{statusLabels[selected.status] ?? selected.status}</b><h3>{selected.public_description || selected.item_category_name}</h3><p>{selected.area_name} · {format(selected.found_at, true)}</p><Link href={`/found-items/${selected.id}`}>발견물 보기</Link></div>}<div className={styles.legend}><span><i /> 공개 발견물</span><span>대략 위치</span></div></div>
   </div><p className={styles.mapNotice}>개인정보와 보관 안전을 위해 정확한 위치가 아닌 대략적인 발견 구역만 표시합니다.</p></section>;
 }
 

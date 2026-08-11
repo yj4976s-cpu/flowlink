@@ -1,0 +1,941 @@
+.page {
+  width: min(1320px, calc(100% - 40px));
+  margin: 0 auto;
+  padding: 52px 0 96px;
+}
+
+.hero {
+  display: block;
+  margin-bottom: 28px;
+}
+
+.heroCopy {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.hero h1 {
+  font-family: var(--font-editorial);
+  display: grid;
+  gap: 2px;
+  max-width: 680px;
+  font-size: clamp(3rem, 5.1vw, 4.65rem);
+  line-height: 1.02;
+  color: var(--color-text);
+  letter-spacing: -0.055em;
+  text-wrap: balance;
+}
+
+.hero p {
+  max-width: 610px;
+  color: var(--color-text-muted);
+  font-size: 1rem;
+  line-height: 1.75;
+  word-break: keep-all;
+}
+
+.toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 0.8fr) auto auto;
+  gap: 12px;
+  align-items: end;
+  padding: 16px;
+  margin-bottom: 18px;
+  border: 1px solid var(--color-border);
+  border-radius: 24px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--color-surface) 90%, transparent), color-mix(in srgb, var(--color-surface-soft) 72%, transparent)),
+    var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
+.searchField {
+  display: grid;
+  gap: 8px;
+}
+
+.areaPicker {
+  position: relative;
+  min-width: 0;
+}
+
+.searchField > span:not(.areaInputWrap),
+.panelHead span {
+  color: var(--color-primary);
+  font-size: 0.74rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.searchField input {
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface-soft);
+  color: var(--color-text);
+  padding: 0 16px;
+  font: inherit;
+  outline: none;
+}
+
+.searchField input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-primary) 18%, transparent);
+}
+
+.categoryChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.areaInputWrap {
+  position: relative;
+  display: block;
+}
+
+.areaInputWrap input {
+  padding-right: 46px;
+}
+
+.areaInputWrap button {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 30%, var(--color-border));
+  border-radius: 11px;
+  background: var(--color-surface);
+  color: var(--color-primary);
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+
+.areaSuggestions {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  display: grid;
+  gap: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 18px;
+  background: var(--color-surface-elevated);
+  box-shadow: var(--shadow-floating);
+  padding: 10px;
+}
+
+.areaSuggestions strong {
+  padding: 4px 6px 7px;
+  color: var(--color-text-muted);
+  font-size: 0.74rem;
+}
+
+.areaSuggestions button {
+  min-height: 42px;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  background: transparent;
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 850;
+  text-align: left;
+  cursor: pointer;
+}
+
+.areaSuggestions button:hover,
+.areaSuggestions button:focus-visible {
+  border-color: color-mix(in srgb, var(--color-primary) 25%, var(--color-border));
+  background: color-mix(in srgb, var(--color-primary) 9%, var(--color-surface));
+}
+
+.areaSuggestions .icon {
+  color: var(--color-primary);
+}
+
+.areaSuggestions p {
+  margin: 0;
+  padding: 16px 10px;
+  color: var(--color-text-muted);
+  font-size: 0.86rem;
+}
+
+.categoryChips button,
+.resetButton,
+.stateBox button,
+.mapState button {
+  min-height: 42px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  padding: 0 15px;
+  font: inherit;
+  font-size: 0.94rem;
+  font-weight: 850;
+  cursor: pointer;
+  transition: border-color 0.18s ease, transform 0.18s ease, background 0.18s ease;
+}
+
+.categoryChips button:hover,
+.resetButton:not(:disabled):hover,
+.stateBox button:hover,
+.mapState button:hover {
+  transform: translateY(-1px);
+  border-color: var(--color-primary);
+}
+
+.categoryChips button[aria-pressed="true"] {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.categoryChips button,
+.resetButton {
+  border-radius: 13px;
+}
+
+.resetButton:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.content {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 34px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--color-surface) 90%, transparent), color-mix(in srgb, var(--color-surface-soft) 76%, transparent)),
+    var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
+.listPanel,
+.mapPanel {
+  min-height: 620px;
+  border: 1px solid var(--color-border);
+  border-radius: 26px;
+  background: color-mix(in srgb, var(--color-surface) 90%, transparent);
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.listPanel {
+  display: flex;
+  flex-direction: column;
+  padding: 22px;
+}
+
+.panelHead {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.panelHead strong {
+  color: var(--color-text);
+  font-size: 0.94rem;
+}
+
+.resultList {
+  display: grid;
+  gap: 12px;
+  max-height: 548px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.resultCard {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--color-border);
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--color-surface) 82%, transparent);
+  color: var(--color-text);
+  padding: 18px;
+  cursor: pointer;
+  transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.resultCard:hover,
+.resultCard[aria-pressed="true"] {
+  transform: translateY(-1px);
+  border-color: var(--color-primary);
+  box-shadow: 0 16px 38px color-mix(in srgb, var(--color-primary) 16%, transparent);
+}
+
+.resultCard span {
+  width: fit-content;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-primary) 11%, transparent);
+  color: var(--color-primary);
+  padding: 5px 9px;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.resultCard strong {
+  font-size: 1.04rem;
+  line-height: 1.45;
+}
+
+.resultCard em,
+.resultCard small {
+  color: var(--color-text-muted);
+  font-style: normal;
+  line-height: 1.5;
+}
+
+.stateBox {
+  display: grid;
+  gap: 14px;
+  align-content: center;
+  min-height: 220px;
+  border: 1px dashed var(--color-border);
+  border-radius: 24px;
+  color: var(--color-text-muted);
+  padding: 24px;
+  line-height: 1.7;
+}
+
+.errorBox {
+  border-color: var(--color-error);
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
+}
+
+.mapPanel {
+  position: relative;
+  min-width: 0;
+  padding: 10px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--color-surface) 72%, transparent), color-mix(in srgb, var(--color-surface-soft) 62%, transparent)),
+    var(--color-surface);
+}
+
+.mapCanvas {
+  width: 100%;
+  min-height: 600px;
+  height: 100%;
+  border: 1px solid color-mix(in srgb, var(--color-border) 78%, transparent);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 30% 20%, color-mix(in srgb, var(--color-secondary) 28%, transparent), transparent 42%),
+    var(--color-surface-soft);
+  overflow: hidden;
+}
+
+.mapTint {
+  position: absolute;
+  inset: 10px;
+  z-index: 1;
+  border-radius: 22px;
+  background: rgba(248, 251, 255, 0.055);
+  pointer-events: none;
+}
+
+.mapTopBar {
+  position: absolute;
+  top: 24px;
+  left: 24px;
+  right: 24px;
+  z-index: 6;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+  pointer-events: none;
+}
+
+.mapTitle {
+  display: grid;
+  gap: 2px;
+  max-width: min(320px, 58vw);
+  border: 1px solid color-mix(in srgb, var(--color-border) 76%, transparent);
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--color-surface) 90%, transparent);
+  padding: 10px 14px;
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--color-text) 8%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.mapTitle span {
+  color: var(--color-primary);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+
+.mapTitle strong {
+  color: var(--color-text);
+  font-size: 0.94rem;
+}
+
+.mapTopActions {
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.mapTopActions button,
+.mapExpandButton {
+  min-height: 42px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 42%, var(--color-border));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--color-surface) 92%, transparent);
+  color: var(--color-primary);
+  padding: 0 16px;
+  font: inherit;
+  font-weight: 900;
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--color-primary) 14%, transparent);
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.mapTopActions button:hover,
+.mapExpandButton:hover {
+  transform: translateY(-1px);
+  background: var(--color-primary);
+  color: #fff;
+  box-shadow: 0 16px 34px color-mix(in srgb, var(--color-primary) 26%, transparent);
+}
+
+.mapTopActions button:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.mapTopActions button:disabled:hover {
+  transform: none;
+  background: color-mix(in srgb, var(--color-surface) 92%, transparent);
+  color: var(--color-primary);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--color-primary) 14%, transparent);
+}
+
+.mapZoomControls {
+  position: absolute;
+  right: 24px;
+  top: 88px;
+  z-index: 6;
+  display: grid;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-border) 84%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--color-surface) 92%, transparent);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--color-text) 10%, transparent);
+}
+
+.mapZoomControls button {
+  width: 42px;
+  height: 42px;
+  border: 0;
+  border-bottom: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 1.3rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.mapZoomControls button:last-child {
+  border-bottom: 0;
+}
+
+.mapZoomControls button:hover {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.mapEmptyPill {
+  position: absolute;
+  left: 50%;
+  bottom: 28px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 52px);
+  transform: translateX(-50%);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-surface) 92%, transparent);
+  color: var(--color-text-muted);
+  padding: 9px 12px 9px 16px;
+  font-size: 0.86rem;
+  font-weight: 800;
+  box-shadow: 0 12px 26px color-mix(in srgb, var(--color-text) 9%, transparent);
+}
+
+.mapEmptyPill button {
+  min-height: 32px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 38%, var(--color-border));
+  border-radius: 999px;
+  background: var(--color-primary);
+  color: #fff;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.mapPanelExpanded {
+  position: fixed;
+  inset: 18px;
+  z-index: 120;
+  min-height: 0;
+  border-radius: 34px;
+  box-shadow: 0 28px 80px color-mix(in srgb, #000 36%, transparent);
+}
+
+.mapPanelExpanded .mapCanvas {
+  height: calc(100vh - 60px);
+  min-height: 0;
+}
+
+.mapState {
+  position: absolute;
+  inset: 24px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  border-radius: 26px;
+  background: color-mix(in srgb, var(--color-surface) 82%, transparent);
+  color: var(--color-text-muted);
+  text-align: center;
+  z-index: 5;
+}
+
+.marker {
+  --marker-accent: var(--color-primary);
+  position: relative;
+  display: inline-grid;
+  justify-items: center;
+  gap: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  padding: 0;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 900;
+  filter: drop-shadow(0 10px 18px color-mix(in srgb, var(--marker-accent) 22%, transparent));
+  cursor: pointer;
+  transform: translateY(-4px);
+  transition: transform 0.18s ease, filter 0.18s ease;
+}
+
+.marker:hover,
+.markerSelected {
+  transform: translateY(-8px) scale(1.04);
+  filter: drop-shadow(0 14px 26px color-mix(in srgb, var(--marker-accent) 34%, transparent));
+}
+
+.marker[data-category="UMBRELLA"] {
+  --marker-accent: var(--color-accent);
+}
+
+.marker[data-category="FOOTWEAR"],
+.marker[data-category="SHOE"] {
+  --marker-accent: var(--color-secondary);
+}
+
+.marker[data-category="BALL"] {
+  --marker-accent: var(--color-success);
+}
+
+.markerBody {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  border: 1px solid color-mix(in srgb, var(--marker-accent) 62%, var(--color-border));
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--color-surface) 94%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 64%, transparent);
+  padding: 0 10px 0 7px;
+  backdrop-filter: blur(8px);
+  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+}
+
+.markerIcon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--marker-accent) 15%, transparent);
+  color: var(--marker-accent);
+  font-size: 0.72rem;
+}
+
+.markerLabel {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markerPointer {
+  width: 10px;
+  height: 10px;
+  margin-top: -5px;
+  border-right: 1px solid color-mix(in srgb, var(--marker-accent) 62%, var(--color-border));
+  border-bottom: 1px solid color-mix(in srgb, var(--marker-accent) 62%, var(--color-border));
+  background: color-mix(in srgb, var(--color-surface) 94%, transparent);
+  transform: rotate(45deg);
+}
+
+.markerSelected .markerBody {
+  height: 40px;
+  border-color: color-mix(in srgb, var(--marker-accent) 72%, #fff);
+  background: var(--marker-accent);
+  color: #fff;
+}
+
+.markerSelected .markerIcon {
+  background: color-mix(in srgb, #fff 22%, transparent);
+  color: #fff;
+}
+
+.markerSelected .markerPointer {
+  background: var(--marker-accent);
+  border-color: color-mix(in srgb, var(--marker-accent) 72%, #fff);
+}
+
+.marker[data-category="FOOTWEAR"].markerSelected .markerBody,
+.marker[data-category="SHOE"].markerSelected .markerBody,
+.marker[data-category="FOOTWEAR"].markerSelected .markerIcon,
+.marker[data-category="SHOE"].markerSelected .markerIcon {
+  color: var(--color-text);
+}
+
+.selectedOverlay {
+  display: flex;
+  gap: 12px;
+  width: min(300px, 72vw);
+  border: 1px solid var(--color-border);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--color-surface) 96%, transparent);
+  box-shadow: 0 18px 40px color-mix(in srgb, var(--color-text) 15%, transparent);
+  padding: 12px;
+  color: var(--color-text);
+}
+
+.overlayThumb {
+  display: grid;
+  place-items: center;
+  width: 70px;
+  height: 70px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 18%, var(--color-border));
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 50% 30%, color-mix(in srgb, var(--color-primary) 14%, transparent), transparent 62%),
+    var(--color-surface-soft);
+  color: var(--color-primary);
+}
+
+.selectedOverlay img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.overlayFallback {
+  font-size: 1.25rem;
+  font-weight: 900;
+}
+
+.selectedOverlay > div:last-child {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.selectedOverlay strong,
+.selectedOverlay p,
+.selectedOverlay small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selectedOverlay p,
+.selectedOverlay small {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.86rem;
+}
+
+.selectedOverlay small {
+  font-size: 0.78rem;
+}
+
+.overlayArea {
+  font-weight: 800;
+}
+
+.selectedOverlay a {
+  color: var(--color-primary);
+  font-size: 0.88rem;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.overlayStatus {
+  width: fit-content;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-primary) 11%, transparent);
+  color: var(--color-primary);
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.mobileSelectedCard {
+  display: none;
+}
+
+html[data-theme="night"] .toolbar,
+html[data-theme="night"] .areaSuggestions,
+html[data-theme="night"] .listPanel,
+html[data-theme="night"] .mapPanel,
+html[data-theme="night"] .resultCard,
+html[data-theme="night"] .mapTitle,
+html[data-theme="night"] .mapTopActions button,
+html[data-theme="night"] .mapZoomControls,
+html[data-theme="night"] .mapEmptyPill,
+html[data-theme="night"] .markerBody,
+html[data-theme="night"] .markerPointer,
+html[data-theme="night"] .selectedOverlay {
+  background: color-mix(in srgb, var(--color-surface) 82%, transparent);
+}
+
+html[data-theme="night"] .mapTint {
+  background: rgba(8, 16, 32, 0.12);
+}
+
+@media (max-width: 920px) {
+  .page {
+    width: min(100% - 28px, 720px);
+    padding: 40px 0 72px;
+  }
+
+  .hero {
+    align-items: start;
+  }
+
+  .toolbar,
+  .content {
+    grid-template-columns: 1fr;
+  }
+
+  .categoryChips {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 4px;
+  }
+
+  .categoryChips button {
+    flex: 0 0 auto;
+  }
+
+  .listPanel,
+  .mapPanel,
+  .mapCanvas {
+    min-height: 480px;
+  }
+
+  .listPanel {
+    order: 2;
+  }
+
+  .mapPanel {
+    order: 1;
+  }
+
+  .mapZoomControls {
+    top: 92px;
+  }
+
+  .mapPanelExpanded {
+    inset: 14px;
+  }
+
+  .mapPanelExpanded .mapCanvas {
+    height: calc(100vh - 52px);
+  }
+
+  .resultList {
+    max-height: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .page {
+    width: min(100% - 20px, 440px);
+    padding-top: 30px;
+  }
+
+  .hero {
+    gap: 12px;
+    margin-bottom: 22px;
+  }
+
+  .hero h1 {
+    font-size: clamp(2.45rem, 12vw, 3.15rem);
+    line-height: 1.12;
+  }
+
+  .hero p {
+    font-size: 0.94rem;
+    line-height: 1.7;
+  }
+
+  .toolbar {
+    padding: 14px;
+  }
+
+  .toolbar,
+  .listPanel,
+  .mapPanel {
+    border-radius: 24px;
+  }
+
+  .mapPanel,
+  .mapCanvas {
+    min-height: 420px;
+  }
+
+  .mapTopBar {
+    top: 22px;
+    left: 22px;
+    right: 22px;
+    align-items: start;
+  }
+
+  .mapTopActions {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .mapTitle {
+    max-width: 170px;
+    padding: 9px 11px;
+  }
+
+  .mapExpandButton {
+    min-height: 38px;
+    padding: 0 12px;
+    font-size: 0.84rem;
+  }
+
+  .mapZoomControls {
+    top: 104px;
+    right: 22px;
+  }
+
+  .mapZoomControls button {
+    width: 38px;
+    height: 38px;
+  }
+
+  .mapEmptyPill {
+    bottom: 82px;
+    max-width: calc(100% - 40px);
+    border-radius: 16px;
+    flex-wrap: wrap;
+    justify-content: center;
+    text-align: center;
+  }
+
+  .marker {
+    font-size: 0.78rem;
+  }
+
+  .markerBody {
+    height: 32px;
+    max-width: 116px;
+  }
+
+  .markerSelected .markerBody {
+    height: 36px;
+  }
+
+  .markerLabel {
+    max-width: 72px;
+  }
+
+  .mapPanelExpanded {
+    inset: 8px;
+    border-radius: 24px;
+  }
+
+  .mapPanelExpanded .mapCanvas {
+    height: calc(100vh - 40px);
+  }
+
+  .selectedOverlay {
+    display: none;
+  }
+
+  .mobileSelectedCard {
+    position: absolute;
+    left: 14px;
+    right: 14px;
+    bottom: 14px;
+    z-index: 4;
+    display: grid;
+    gap: 7px;
+    border: 1px solid var(--color-border);
+    border-radius: 20px;
+    background: color-mix(in srgb, var(--color-surface) 94%, transparent);
+    color: var(--color-text);
+    padding: 14px;
+    box-shadow: var(--shadow-card);
+  }
+
+  .mobileSelectedCard span {
+    color: var(--color-primary);
+    font-size: 0.76rem;
+    font-weight: 900;
+  }
+
+  .mobileSelectedCard p {
+    margin: 0;
+    color: var(--color-text-muted);
+  }
+
+  .mobileSelectedCard a {
+    color: var(--color-primary);
+    font-weight: 900;
+    text-decoration: none;
+  }
+}

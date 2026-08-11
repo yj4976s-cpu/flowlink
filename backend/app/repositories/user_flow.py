@@ -125,6 +125,14 @@ def list_public_found_items(
     return db.scalars(statement.order_by(FoundItem.found_at.desc()).offset(skip).limit(limit)).all()
 
 
+def list_public_found_items_for_map(db: Session, *, limit: int) -> Sequence[FoundItem]:
+    statement = _public_found_items_statement().where(
+        FoundItem.latitude.is_not(None),
+        FoundItem.longitude.is_not(None),
+    )
+    return db.scalars(statement.order_by(FoundItem.found_at.desc()).limit(limit)).all()
+
+
 def get_public_found_item_by_id(db: Session, found_item_id: int) -> FoundItem | None:
     statement = _public_found_items_statement().where(FoundItem.id == found_item_id)
     return db.scalar(statement)

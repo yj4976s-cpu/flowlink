@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { FlowLinkLogo } from "@/components/common/FlowLinkLogo";
 import { Icon } from "@/components/common/Icon";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
@@ -10,7 +10,14 @@ import { AuthUser, getCurrentUser, logout as logoutRequest } from "@/lib/authApi
 
 const userNavigation = [
   { label: "AI 탐지", href: "/detect" },
-  { label: "발견물 센터", href: "/found-items" },
+  {
+    label: "발견물 센터",
+    href: "/found-items",
+    children: [
+      { label: "발견물 목록", href: "/found-items" },
+      { label: "발견물 지도", href: "/map" },
+    ],
+  },
   { label: "분실 신고", href: "/lost-reports/new" },
   { label: "서비스 소개", href: "/about" },
   { label: "이용 안내", href: "/guide" },
@@ -158,13 +165,29 @@ export function Header() {
   };
   const requestLogout = () => { setLogoutError(""); setLogoutConfirm(true); };
   const continueSession = () => { if (!logoutPending) { setLogoutConfirm(false); setLogoutError(""); window.setTimeout(() => logoutTriggerRef.current?.focus()); } };
+  const renderDesktopNavItem = (item: (typeof navigation)[number]) => {
+    if ("children" in item) {
+      return (
+        <div className="nav-group" key={item.label}>
+          <Link className="nav-group-trigger" href={item.href}>
+            {item.label}
+            <Icon name="chevron" size={14} />
+          </Link>
+          <div className="nav-submenu" aria-label={`${item.label} 하위 메뉴`}>
+            {item.children.map((child) => <Link key={child.href} href={child.href}>{child.label}</Link>)}
+          </div>
+        </div>
+      );
+    }
+    return <Link key={item.label} href={item.href}>{item.label}</Link>;
+  };
 
   return (
     <header className="site-header" id="top">
       <div className="header-inner">
         <FlowLinkLogo />
         <nav className="desktop-nav" aria-label={isAdmin ? "관리자 메뉴" : "주요 메뉴"} aria-busy={!authResolved}>
-          {authResolved && navigation.map((item) => <Link key={item.label} href={item.href}>{item.label}</Link>)}
+          {authResolved && navigation.map(renderDesktopNavItem)}
         </nav>
         <div className="header-actions">
           <ThemeToggle />
@@ -209,7 +232,12 @@ export function Header() {
         <div ref={menuRef} id="mobile-menu" className="mobile-menu is-open">
           <nav aria-label="모바일 메뉴">
             {authResolved && navigation.map((item) => (
-              <Link key={item.label} href={item.href} onClick={closeMenu}>{item.label}</Link>
+              <Fragment key={item.label}>
+                <Link href={item.href} onClick={closeMenu}>{item.label}</Link>
+                {"children" in item && item.children.map((child) => (
+                  <Link className="mobile-sub-link" key={child.href} href={child.href} onClick={closeMenu}>{child.label}</Link>
+                ))}
+              </Fragment>
             ))}
             {currentUser ? (
               <>
