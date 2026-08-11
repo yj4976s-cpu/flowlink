@@ -96,8 +96,10 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange }: WebcamDetectio
   const previewRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const loopGenerationRef = useRef(0);
+  const cameraRequestGenerationRef = useRef(0);
   const abortControllerRef = useRef<AbortController | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(false);
 
   const [cameraStatus, setCameraStatus] = useState<WebcamPanelStatus>("idle");
   const [cameraActive, setCameraActive] = useState(false);
@@ -119,6 +121,10 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange }: WebcamDetectio
     }
   }, []);
 
+  const stopStream = useCallback((stream: MediaStream | null) => {
+    stream?.getTracks().forEach((track) => track.stop());
+  }, []);
+
   const stopDetection = useCallback(() => {
     loopGenerationRef.current += 1;
     clearPendingRequest();
@@ -126,18 +132,32 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange }: WebcamDetectio
   }, [clearPendingRequest]);
 
   const stopCamera = useCallback(() => {
+    cameraRequestGenerationRef.current += 1;
     stopDetection();
-    streamRef.current?.getTracks().forEach((track) => track.stop());
+    stopStream(streamRef.current);
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
+    if (!mountedRef.current) return;
     setCameraActive(false);
     setFrame(null);
     onFrame(null);
     setExpanded(false);
     setCameraStatus("idle");
-  }, [onFrame, stopDetection]);
+  }, [onFrame, stopDetection, stopStream]);
 
-  useEffect(() => stopCamera, [stopCamera]);
+  useEffect(() => {
+    mountedRef.current = true;
+    const videoElement = videoRef.current;
+    return () => {
+      mountedRef.current = false;
+      cameraRequestGenerationRef.current += 1;
+      loopGenerationRef.current += 1;
+      clearPendingRequest();
+      stopStream(streamRef.current);
+      streamRef.current = null;
+      if (videoElement) videoElement.srcObject = null;
+    };
+  }, [clearPendingRequest, stopStream]);
 
   useEffect(() => {
     const updatePreviewSize = () => {
@@ -197,12 +217,12 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange }: WebcamDetectio
       abortControllerRef.current = controller;
       try {
         const nextFrame = await detectWebcamFrame(blob, controller.signal);
-        if (generation !== loopGenerationRef.current) return;
+        if (!mountedRef.current || generation !== loopGenerationRef.current) return;
         setFrame(nextFrame);
         onFrame(nextFrame);
         setError("");
       } catch (caught) {
-        if (isAbortError(caught) || generation !== loopGenerationRef.current) return;
+        if (isAbortError(caught) || !mountedRef.current || generation !== loopGenerationRef.current) return;
         const message = caught instanceof DetectionApiError ? caught.message : "실시간 웹캠 탐지를 처리하지 못했습니다.";
         setError(message);
         setCameraStatus("error");
@@ -226,6 +246,8 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange }: WebcamDetectio
 
     setError("");
     setCameraStatus("requesting");
+    const requestGeneration = cameraRequestGenerationRef.current + 1;
+    cameraRequestGenerationRef.current = requestGeneration;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
@@ -235,14 +257,37 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange }: WebcamDetectio
           facingMode: "environment",
         },
       });
+      if (!mountedRef.current || requestGeneration !== cameraRequestGenerationRef.current) {
+        stopStream(stream);
+        return;
+      }
+      const video = videoRef.current;
+      if (!video) {
+        stopStream(stream);
+        return;
+      }
+      stopStream(streamRef.current);
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+      video.srcObject = stream;
+      try {
+        await video.play();
+      } catch (playError) {
+        if (streamRef.current === stream) streamRef.current = null;
+        video.srcObject = null;
+        stopStream(stream);
+        if (!mountedRef.current || requestGeneration !== cameraRequestGenerationRef.current) return;
+        throw playError;
+      }
+      if (!mountedRef.current || requestGeneration !== cameraRequestGenerationRef.current) {
+        if (streamRef.current === stream) streamRef.current = null;
+        video.srcObject = null;
+        stopStream(stream);
+        return;
       }
       setCameraActive(true);
       setCameraStatus("ready");
     } catch (caught) {
+      if (!mountedRef.current || requestGeneration !== cameraRequestGenerationRef.current) return;
       setError(getCameraErrorMessage(caught));
       setCameraActive(false);
       setCameraStatus("error");
@@ -290,9 +335,9 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange }: WebcamDetectio
             ))}
           </div>
         )}
-        {cameraActive && (
+        {cameraActive && !expanded && (
           <button className={styles.webcamExpandButton} type="button" onClick={() => setExpanded((value) => !value)}>
-            {expanded ? "축소" : "크게 보기"}
+            크게 보기
           </button>
         )}
         {expanded && (

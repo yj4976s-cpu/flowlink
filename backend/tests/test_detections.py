@@ -20,7 +20,13 @@ from app.core.security import create_access_token, utc_now
 from app.db.session import Base, get_db
 from app.main import app
 from app.models import DetectedObject, DetectionEvent, ObjectClass, User, VideoJob
-from app.services.detection_inference import DetectionBBox, DetectionInferenceResult, DetectionInferenceService, DetectionPrediction
+from app.services.detection_inference import (
+    DetectionBBox,
+    DetectionInferenceResult,
+    DetectionInferenceService,
+    DetectionPrediction,
+    model_label_to_class_code,
+)
 from app.services.webcam_inference import (
     WebcamDetectionFrame,
     WebcamDetectionObject,
@@ -74,6 +80,20 @@ class FakeYoloRuntime:
         self.calls += 1
         assert image.mode == "RGB"
         return self.predictions
+
+
+@pytest.mark.parametrize(
+    ("model_label", "expected"),
+    [
+        ("BRANCH", "BRANCH"),
+        ("branch", "BRANCH"),
+        ("AQUATIC_PLANT", "AQUATIC_PLANT"),
+        ("aquatic_plant", "AQUATIC_PLANT"),
+        ("aquatic plant", "AQUATIC_PLANT"),
+    ],
+)
+def test_flowlink_custom_model_labels_map_directly(model_label: str, expected: str) -> None:
+    assert model_label_to_class_code(model_label) == expected
 
 
 @pytest.fixture
