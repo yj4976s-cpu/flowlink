@@ -14,7 +14,7 @@ const categoryOptions = [
   { value: "BAG", label: "가방" },
   { value: "BACKPACK", label: "백팩" },
   { value: "UMBRELLA", label: "우산" },
-  { value: "FOOTWEAR", label: "신발" },
+  { value: "FOOTWEAR", label: "신발류" },
   { value: "SHOE", label: "신발" },
   { value: "BALL", label: "공" },
 ] as const;
@@ -68,9 +68,12 @@ function createMarkerElement(item: FoundItemMapItem, selected: boolean, onSelect
   marker.className = `${styles.marker} ${selected ? styles.markerSelected : ""}`;
   marker.setAttribute("aria-label", `${item.item_category_name} 지도 마커 선택`);
 
+  const pin = document.createElement("span");
+  pin.className = styles.markerPin;
   const icon = createTextElement("span", styles.markerIcon, getCategoryInitial(item));
+  pin.appendChild(icon);
   const label = createTextElement("span", styles.markerLabel, item.item_category_name);
-  marker.append(icon, label);
+  marker.append(pin, label);
   marker.addEventListener("click", onSelect);
 
   return marker;
@@ -112,6 +115,7 @@ export function FoundItemMapClient() {
   const [mapError, setMapError] = useState("");
   const [itemsRetryKey, setItemsRetryKey] = useState(0);
   const [mapRetryKey, setMapRetryKey] = useState(0);
+  const [mapExpanded, setMapExpanded] = useState(false);
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<KakaoMap | null>(null);
@@ -198,6 +202,23 @@ export function FoundItemMapClient() {
   }, []);
 
   useEffect(() => {
+    if (!mapExpanded) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMapExpanded(false);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [mapExpanded]);
+
+  useEffect(() => {
     const map = mapRef.current;
     const maps = mapsRef.current;
     if (!map || !maps || !mapReady) return;
@@ -262,6 +283,38 @@ export function FoundItemMapClient() {
       listItemRefs.current.get(selectedItem.id)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
   }, [activeItemId, selectedItem]);
+
+  useEffect(() => {
+    if (!mapReady) return;
+
+    const timeoutId = window.setTimeout(() => {
+      const map = mapRef.current;
+      const maps = mapsRef.current;
+      if (!map || !maps) return;
+
+      map.relayout?.();
+
+      if (selectedItem) {
+        map.panTo(new maps.LatLng(selectedItem.latitude, selectedItem.longitude));
+        return;
+      }
+
+      if (filteredItems.length === 1) {
+        const item = filteredItems[0];
+        map.setCenter(new maps.LatLng(item.latitude, item.longitude));
+        map.setLevel(5);
+        return;
+      }
+
+      if (filteredItems.length > 1) {
+        const bounds = new maps.LatLngBounds();
+        filteredItems.forEach((item) => bounds.extend(new maps.LatLng(item.latitude, item.longitude)));
+        map.setBounds(bounds);
+      }
+    }, 180);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [filteredItems, mapExpanded, mapReady, selectedItem]);
 
   const resetFilters = () => {
     setQuery("");
@@ -345,7 +398,26 @@ export function FoundItemMapClient() {
           )}
         </aside>
 
-        <div className={styles.mapPanel}>
+        <div
+          className={`${styles.mapPanel} ${mapExpanded ? styles.mapPanelExpanded : ""}`}
+          role={mapExpanded ? "dialog" : undefined}
+          aria-modal={mapExpanded ? "true" : undefined}
+          aria-label={mapExpanded ? "확대된 발견물 지도" : undefined}
+        >
+          <div className={styles.mapTopBar}>
+            <div className={styles.mapTitle}>
+              <span>MAP VIEW</span>
+              <strong>좌표 발견물 {filteredItems.length}개</strong>
+            </div>
+            <button
+              className={styles.mapExpandButton}
+              type="button"
+              onClick={() => setMapExpanded((current) => !current)}
+              aria-label={mapExpanded ? "확대 지도 닫기" : "지도 크게 보기"}
+            >
+              {mapExpanded ? "닫기" : "지도 크게 보기"}
+            </button>
+          </div>
           <div ref={mapContainerRef} className={styles.mapCanvas} aria-label="공개 발견물 지도" />
           {!mapReady && !mapError && <div className={styles.mapState}>지도를 준비하는 중입니다.</div>}
           {mapError && (

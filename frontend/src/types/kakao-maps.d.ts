@@ -10,6 +10,7 @@ export type KakaoLatLngBounds = {
 export type KakaoMap = {
   addControl(control: unknown, position: number): void;
   panTo(position: KakaoLatLng): void;
+  relayout?: () => void;
   setBounds(bounds: KakaoLatLngBounds): void;
   setCenter(position: KakaoLatLng): void;
   setLevel(level: number): void;
