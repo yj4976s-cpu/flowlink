@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     ROBOFLOW_MODEL_VERSION: str = ""
     UPLOAD_DIR: str = "uploads"
     FRONTEND_URL: str = "http://localhost:3000"
+    CHAT_MODEL_PROVIDER: str = "gemini"
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-3.6-flash"
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-4o-mini"
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
+    COPILOT_TIMEOUT_SECONDS: float = 30.0
 
     @property
     def auth_cookie_secure(self) -> bool:
