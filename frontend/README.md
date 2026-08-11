@@ -1,34 +1,36 @@
-# FlowLink Frontend
+This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
-Next.js 16 App Router, TypeScript, Tailwind CSS 4로 구성된 FlowLink 웹 프론트엔드입니다.
+## Getting Started
 
-## 실행
+First, run the development server:
 
-PowerShell에서 `frontend` 디렉터리로 이동한 뒤 실행합니다.
-
-```powershell
-npm.cmd ci
-Copy-Item .env.example .env.local
-npm.cmd run dev
+```bash
+npm run dev
+# or
+yarn dev
+# or
+pnpm dev
+# or
+bun dev
 ```
 
-개발 화면은 http://localhost:3000 에서 확인합니다.
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-## 검증
+You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
-```powershell
-npm.cmd run lint
-npm.cmd run build
-```
+This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
-## 메인 화면 구조
+## Learn More
 
-- `src/components/theme`: DAWN/DAY/NIGHT 테마 상태와 토글
-- `src/components/layout`: 헤더, 모바일 메뉴, 푸터
-- `src/components/home`: Hero 수변 탐지 장면, 현황, 프로세스, 최근 발견물
-- `src/data/mock-home.ts`: API 연동 전 사용하는 데모 데이터
-- `src/types/home.ts`: 홈 화면 데이터 타입
+To learn more about Next.js, take a look at the following resources:
 
-테마는 `flowlink-theme` localStorage 키에 `dawn`, `day` 또는 `night`로 저장됩니다. 초기화 스크립트가 hydration 전에 `html[data-theme]`을 적용합니다.
+- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
+- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
 
-현재 메인 화면은 실제 API를 호출하지 않습니다. 백엔드 연동 시 `src/data/mock-home.ts`를 API 응답으로 교체하고, 실제 수변 이미지가 준비되면 `DetectionScene.tsx`의 CSS/inline SVG 장면을 이미지 레이어로 교체합니다.
+You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+
+## Deploy on Vercel
+
+The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+
+Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

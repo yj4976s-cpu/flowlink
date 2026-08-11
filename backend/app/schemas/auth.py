@@ -1,6 +1,4 @@
-from datetime import datetime
-
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field
 
 
 class RegisterRequest(BaseModel):
@@ -10,44 +8,7 @@ class RegisterRequest(BaseModel):
     terms_agreed: bool
     privacy_agreed: bool
 
-    @field_validator("nickname", mode="before")
-    @classmethod
-    def strip_nickname(cls, value: str) -> str:
-        return value.strip() if isinstance(value, str) else value
-
 
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
-
-
-class NicknameUpdateRequest(BaseModel):
-    nickname: str = Field(min_length=2, max_length=50)
-
-    @field_validator("nickname", mode="before")
-    @classmethod
-    def strip_nickname(cls, value: str) -> str:
-        return value.strip() if isinstance(value, str) else value
-
-
-class PasswordChangeRequest(BaseModel):
-    current_password: str
-    new_password: str = Field(min_length=8)
-
-
-class UserResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    email: EmailStr
-    nickname: str
-    role: str
-    active: bool
-    created_at: datetime
-
-
-class LoginResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    expires_in: int
-    user: UserResponse
