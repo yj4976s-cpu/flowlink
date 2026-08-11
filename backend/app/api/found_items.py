@@ -5,9 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.repositories.user_flow import get_public_found_item_by_id, list_public_found_items
-from app.schemas.found_item import FoundItemDetailResponse, FoundItemListItemResponse
-from app.services.mappers import found_item_detail_response, found_item_list_response
+from app.repositories.user_flow import get_public_found_item_by_id, list_public_found_items, list_public_found_items_for_map
+from app.schemas.found_item import FoundItemDetailResponse, FoundItemListItemResponse, FoundItemMapItemResponse
+from app.services.mappers import found_item_detail_response, found_item_list_response, found_item_map_response
 
 router = APIRouter(prefix="/api/found-items", tags=["found-items"])
 
@@ -36,6 +36,15 @@ def list_found_items(
         found_date=datetime.combine(found_date, time.min) if found_date else None,
     )
     return [found_item_list_response(item) for item in items]
+
+
+@router.get("/map", response_model=list[FoundItemMapItemResponse], summary="발견물 지도 조회")
+def list_found_item_map_items(
+    db: Annotated[Session, Depends(get_db)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 200,
+) -> list[FoundItemMapItemResponse]:
+    items = list_public_found_items_for_map(db, limit=limit)
+    return [found_item_map_response(item) for item in items]
 
 
 @router.get("/{id}", response_model=FoundItemDetailResponse, summary="발견물 상세 조회")

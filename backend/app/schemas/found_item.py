@@ -22,6 +22,11 @@ class FoundItemDetailResponse(FoundItemListItemResponse):
     created_at: datetime
 
 
+class FoundItemMapItemResponse(FoundItemListItemResponse):
+    latitude: float
+    longitude: float
+
+
 class FoundItemUpdateRequest(BaseModel):
     status: str | None = None
     storage_location: str | None = None

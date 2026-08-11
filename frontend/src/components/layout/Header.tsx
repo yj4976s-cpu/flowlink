@@ -10,6 +10,7 @@ import { AuthUser, getCurrentUser, logout as logoutRequest } from "@/lib/authApi
 
 const userNavigation = [
   { label: "AI 탐지", href: "/detect" },
+  { label: "발견물 지도", href: "/map" },
   { label: "발견물 센터", href: "/found-items" },
   { label: "분실 신고", href: "/lost-reports/new" },
   { label: "서비스 소개", href: "/about" },

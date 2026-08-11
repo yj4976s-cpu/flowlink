@@ -1,0 +1,370 @@
+"use client";
+
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Icon } from "@/components/common/Icon";
+import { FoundItemMapItem, listMapFoundItems, resolveFoundItemImageUrl } from "@/lib/foundItemsApi";
+import { loadKakaoMaps } from "@/lib/kakaoMapLoader";
+import type { KakaoCustomOverlay, KakaoMap, KakaoMapsNamespace } from "@/types/kakao-maps";
+import styles from "./FoundItemMapClient.module.css";
+
+const DEFAULT_CENTER = { latitude: 37.5665, longitude: 126.978 };
+const categoryOptions = [
+  { value: "", label: "전체" },
+  { value: "BAG", label: "가방" },
+  { value: "BACKPACK", label: "백팩" },
+  { value: "UMBRELLA", label: "우산" },
+  { value: "FOOTWEAR", label: "신발" },
+  { value: "SHOE", label: "신발" },
+  { value: "BALL", label: "공" },
+] as const;
+
+const statusLabels: Record<string, string> = {
+  RECOVERED: "확인된 발견물",
+  AVAILABLE: "보관 중",
+};
+
+const dateFormatter = new Intl.DateTimeFormat("ko-KR", {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+type SelectionSource = "list" | "marker";
+
+function normalize(value: string | null | undefined) {
+  return value?.trim().toLowerCase() ?? "";
+}
+
+function formatFoundAt(value: string) {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "일시 확인 중" : dateFormatter.format(parsed);
+}
+
+function getCategoryInitial(item: FoundItemMapItem) {
+  const name = item.item_category_name || item.item_category;
+  return name.trim().slice(0, 1) || "F";
+}
+
+function getImageUrl(item: FoundItemMapItem) {
+  try {
+    return resolveFoundItemImageUrl(item.image_url);
+  } catch {
+    return null;
+  }
+}
+
+function createTextElement(tagName: keyof HTMLElementTagNameMap, className: string, text: string) {
+  const element = document.createElement(tagName);
+  element.className = className;
+  element.textContent = text;
+  return element;
+}
+
+function createMarkerElement(item: FoundItemMapItem, selected: boolean, onSelect: () => void) {
+  const marker = document.createElement("button");
+  marker.type = "button";
+  marker.className = `${styles.marker} ${selected ? styles.markerSelected : ""}`;
+  marker.setAttribute("aria-label", `${item.item_category_name} 지도 마커 선택`);
+
+  const icon = createTextElement("span", styles.markerIcon, getCategoryInitial(item));
+  const label = createTextElement("span", styles.markerLabel, item.item_category_name);
+  marker.append(icon, label);
+  marker.addEventListener("click", onSelect);
+
+  return marker;
+}
+
+function createSelectedOverlayContent(item: FoundItemMapItem) {
+  const root = document.createElement("article");
+  root.className = styles.selectedOverlay;
+
+  const imageUrl = getImageUrl(item);
+  if (imageUrl) {
+    const image = document.createElement("img");
+    image.src = imageUrl;
+    image.alt = `${item.item_category_name} 발견물 이미지`;
+    root.appendChild(image);
+  }
+
+  const body = document.createElement("div");
+  const status = createTextElement("span", styles.overlayStatus, statusLabels[item.status] ?? item.status);
+  const title = createTextElement("strong", "", item.public_description || item.item_category_name);
+  const meta = createTextElement("p", "", `${item.area_name} · ${formatFoundAt(item.found_at)}`);
+  const link = document.createElement("a");
+  link.href = `/found-items/${item.id}`;
+  link.textContent = "발견물 자세히 보기 →";
+  body.append(status, title, meta, link);
+  root.appendChild(body);
+
+  return root;
+}
+
+export function FoundItemMapClient() {
+  const [items, setItems] = useState<FoundItemMapItem[]>([]);
+  const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [apiError, setApiError] = useState("");
+  const [mapReady, setMapReady] = useState(false);
+  const [mapError, setMapError] = useState("");
+  const [itemsRetryKey, setItemsRetryKey] = useState(0);
+  const [mapRetryKey, setMapRetryKey] = useState(0);
+
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<KakaoMap | null>(null);
+  const mapsRef = useRef<KakaoMapsNamespace | null>(null);
+  const markerOverlaysRef = useRef<Map<number, KakaoCustomOverlay>>(new Map());
+  const markerElementsRef = useRef<Map<number, HTMLElement>>(new Map());
+  const selectedOverlayRef = useRef<KakaoCustomOverlay | null>(null);
+  const listItemRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
+  const selectionSourceRef = useRef<SelectionSource>("list");
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const load = async () => {
+      setLoading(true);
+      setApiError("");
+      try {
+        const result = await listMapFoundItems(controller.signal);
+        if (controller.signal.aborted) return;
+        setItems(result);
+        setSelectedItemId((current) => (current && result.some((item) => item.id === current) ? current : result[0]?.id ?? null));
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setApiError(error instanceof Error ? error.message : "지도 발견물을 불러오지 못했습니다.");
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    };
+
+    void load();
+
+    return () => controller.abort();
+  }, [itemsRetryKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void loadKakaoMaps()
+      .then((maps) => {
+        if (cancelled || !mapContainerRef.current) return;
+        mapsRef.current = maps;
+        if (!mapRef.current) {
+          const center = new maps.LatLng(DEFAULT_CENTER.latitude, DEFAULT_CENTER.longitude);
+          mapRef.current = new maps.Map(mapContainerRef.current, { center, level: 7 });
+          mapRef.current.addControl(new maps.ZoomControl(), maps.ControlPosition.RIGHT);
+        }
+        setMapReady(true);
+      })
+      .catch((error) => {
+        if (!cancelled) setMapError(error instanceof Error ? error.message : "지도를 불러오지 못했습니다.");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mapRetryKey]);
+
+  const filteredItems = useMemo(() => {
+    const keyword = normalize(query);
+    return items.filter((item) => {
+      const matchesCategory = !category || item.item_category === category || item.item_category_name.includes(category);
+      if (!matchesCategory) return false;
+      if (!keyword) return true;
+      return [
+        item.item_category,
+        item.item_category_name,
+        item.color,
+        item.public_description,
+        item.area_name,
+      ].some((value) => normalize(value).includes(keyword));
+    });
+  }, [category, items, query]);
+
+  const activeItemId = useMemo(() => {
+    if (selectedItemId && filteredItems.some((item) => item.id === selectedItemId)) return selectedItemId;
+    return filteredItems[0]?.id ?? null;
+  }, [filteredItems, selectedItemId]);
+
+  const selectedItem = filteredItems.find((item) => item.id === activeItemId) ?? null;
+
+  const selectItem = useCallback((itemId: number, source: SelectionSource) => {
+    selectionSourceRef.current = source;
+    setSelectedItemId(itemId);
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const maps = mapsRef.current;
+    if (!map || !maps || !mapReady) return;
+    const markerOverlays = markerOverlaysRef.current;
+    const markerElements = markerElementsRef.current;
+
+    markerOverlays.forEach((overlay) => overlay.setMap(null));
+    markerOverlays.clear();
+    markerElements.clear();
+
+    if (filteredItems.length === 0) return;
+
+    const bounds = new maps.LatLngBounds();
+    filteredItems.forEach((item) => {
+      const position = new maps.LatLng(item.latitude, item.longitude);
+      bounds.extend(position);
+      const marker = createMarkerElement(item, false, () => selectItem(item.id, "marker"));
+      const overlay = new maps.CustomOverlay({ position, content: marker, yAnchor: 1.25, zIndex: 2 });
+      overlay.setMap(map);
+      markerOverlays.set(item.id, overlay);
+      markerElements.set(item.id, marker);
+    });
+
+    if (filteredItems.length === 1) {
+      const item = filteredItems[0];
+      map.setCenter(new maps.LatLng(item.latitude, item.longitude));
+      map.setLevel(5);
+    } else {
+      map.setBounds(bounds);
+    }
+
+    return () => {
+      markerOverlays.forEach((overlay) => overlay.setMap(null));
+      markerOverlays.clear();
+      markerElements.clear();
+    };
+  }, [filteredItems, mapReady, selectItem]);
+
+  useEffect(() => {
+    markerElementsRef.current.forEach((element, itemId) => {
+      element.classList.toggle(styles.markerSelected, itemId === activeItemId);
+    });
+
+    selectedOverlayRef.current?.setMap(null);
+    selectedOverlayRef.current = null;
+
+    const map = mapRef.current;
+    const maps = mapsRef.current;
+    if (!map || !maps || !selectedItem) return;
+
+    const position = new maps.LatLng(selectedItem.latitude, selectedItem.longitude);
+    selectedOverlayRef.current = new maps.CustomOverlay({
+      position,
+      content: createSelectedOverlayContent(selectedItem),
+      yAnchor: 1.72,
+      zIndex: 4,
+    });
+    selectedOverlayRef.current.setMap(map);
+    map.panTo(position);
+
+    if (selectionSourceRef.current === "marker") {
+      listItemRefs.current.get(selectedItem.id)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [activeItemId, selectedItem]);
+
+  const resetFilters = () => {
+    setQuery("");
+    setCategory("");
+  };
+
+  const hasActiveFilters = Boolean(query || category);
+
+  return (
+    <main className={styles.page}>
+      <section className={styles.hero}>
+        <span className="eyebrow">FOUND ITEM MAP</span>
+        <h1>지도에서 발견물을 확인하세요</h1>
+        <p>공개 가능한 발견 위치만 대략적인 구역과 함께 표시합니다. 정확한 보관 장소나 비공개 확인 정보는 공개하지 않습니다.</p>
+      </section>
+
+      <section className={styles.toolbar} aria-label="지도 발견물 필터">
+        <label className={styles.searchField}>
+          <span>검색어</span>
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="설명, 색상, 발견 구역" />
+        </label>
+        <div className={styles.categoryChips} role="group" aria-label="물품 종류">
+          {categoryOptions.map((option) => (
+            <button
+              key={option.value || "all"}
+              type="button"
+              aria-pressed={category === option.value}
+              onClick={() => setCategory(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        <button className={styles.resetButton} type="button" onClick={resetFilters} disabled={!hasActiveFilters}>
+          전체 보기
+        </button>
+      </section>
+
+      <section className={styles.content} aria-label="발견물 지도와 목록">
+        <aside className={styles.listPanel}>
+          <div className={styles.panelHead}>
+            <span>PUBLIC LIST</span>
+            <strong>현재 표시 {filteredItems.length}개</strong>
+          </div>
+
+          {loading ? (
+            <div className={styles.stateBox}>공개 발견물을 불러오는 중입니다.</div>
+          ) : apiError ? (
+            <div className={`${styles.stateBox} ${styles.errorBox}`}>
+              <p>{apiError}</p>
+              <button type="button" onClick={() => setItemsRetryKey((current) => current + 1)}>다시 시도</button>
+            </div>
+          ) : items.length === 0 ? (
+            <div className={styles.stateBox}>지도에 표시할 공개 발견물이 아직 없습니다.</div>
+          ) : filteredItems.length === 0 ? (
+            <div className={styles.stateBox}>
+              <p>선택한 조건과 일치하는 발견물이 없습니다.</p>
+              <button type="button" onClick={resetFilters}>필터 초기화</button>
+            </div>
+          ) : (
+            <div className={styles.resultList}>
+              {filteredItems.map((item) => (
+                <button
+                  key={item.id}
+                  ref={(node) => {
+                    if (node) listItemRefs.current.set(item.id, node);
+                    else listItemRefs.current.delete(item.id);
+                  }}
+                  type="button"
+                  className={styles.resultCard}
+                  aria-pressed={item.id === activeItemId}
+                  onClick={() => selectItem(item.id, "list")}
+                >
+                  <span>{statusLabels[item.status] ?? item.status}</span>
+                  <strong>{item.public_description || item.item_category_name}</strong>
+                  <em>{item.item_category_name} · {item.color || "색상 미상"}</em>
+                  <small>{item.area_name} · {formatFoundAt(item.found_at)}</small>
+                </button>
+              ))}
+            </div>
+          )}
+        </aside>
+
+        <div className={styles.mapPanel}>
+          <div ref={mapContainerRef} className={styles.mapCanvas} aria-label="공개 발견물 지도" />
+          {!mapReady && !mapError && <div className={styles.mapState}>지도를 준비하는 중입니다.</div>}
+          {mapError && (
+            <div className={`${styles.mapState} ${styles.errorBox}`}>
+              <Icon name="info" size={18} />
+              <p>{mapError}</p>
+              <button type="button" onClick={() => { setMapError(""); setMapRetryKey((current) => current + 1); }}>지도 다시 불러오기</button>
+            </div>
+          )}
+          {selectedItem && (
+            <div className={styles.mobileSelectedCard}>
+              <span>{statusLabels[selectedItem.status] ?? selectedItem.status}</span>
+              <strong>{selectedItem.public_description || selectedItem.item_category_name}</strong>
+              <p>{selectedItem.area_name} · {formatFoundAt(selectedItem.found_at)}</p>
+              <Link href={`/found-items/${selectedItem.id}`}>발견물 자세히 보기</Link>
+            </div>
+          )}
+        </div>
+      </section>
+    </main>
+  );
+}

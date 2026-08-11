@@ -15,6 +15,11 @@ export type FoundItemDetail = FoundItemListItem & {
   created_at: string;
 };
 
+export type FoundItemMapItem = FoundItemListItem & {
+  latitude: number;
+  longitude: number;
+};
+
 export type FoundItemFilters = {
   q?: string;
   item_category?: string;
@@ -66,6 +71,10 @@ export function listFoundItems(filters: FoundItemFilters, signal?: AbortSignal) 
     buildApiUrl("/api/found-items", { skip: 0, limit: 100, ...filters }),
     signal,
   );
+}
+
+export function listMapFoundItems(signal?: AbortSignal) {
+  return requestJson<FoundItemMapItem[]>(buildApiUrl("/api/found-items/map"), signal);
 }
 
 export function getFoundItem(id: string, signal?: AbortSignal) {

@@ -18,6 +18,7 @@ EXPECTED_OPERATIONS = {
     "/api/lost-reports/me": {"get"},
     "/api/lost-reports/{id}": {"get"},
     "/api/found-items": {"get"},
+    "/api/found-items/map": {"get"},
     "/api/found-items/{id}": {"get"},
     "/api/matches/me": {"get"},
     "/api/ownership-claims": {"post"},
