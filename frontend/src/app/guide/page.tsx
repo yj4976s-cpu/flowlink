@@ -66,6 +66,13 @@ export default function GuidePage() {
         <GuideFlow eyebrow="FOR CITIZENS" title="시민 이용 절차" titleId="citizen-guide" steps={citizenSteps} />
         <GuideFlow eyebrow="FOR MANAGERS" title="관리자 처리 절차" titleId="manager-guide" steps={managerSteps} />
 
+        <section className="guide-ai" aria-labelledby="guide-ai-title">
+          <div className="guide-ai-heading"><p className="info-eyebrow">FLOWLINK AI</p><h2 id="guide-ai-title">AI 탐지 안내</h2><span>FlowLink는 수면 위 객체를 AI로 분석한 뒤 관리자의 확인을 거쳐 서비스에 반영합니다.</span></div>
+          <ol className="guide-ai-flow" aria-label="AI 탐지 처리 과정">{[["scanLine", "AI 탐지"], ["cube", "객체 분석"], ["userSearch", "관리자 확인"], ["archive", "발견물 등록"], ["match", "분실 신고 연결"]].map(([icon, label], index) => <li key={label}><Icon name={icon as "scanLine" | "cube" | "userSearch" | "archive" | "match"} size={20} /><small>0{index + 1}</small><strong>{label}</strong></li>)}</ol>
+          <div className="guide-ai-classes"><article><div><Icon name="packageCheck" size={20} /><strong>폐기물</strong></div><p>폐기물 후보</p></article><article><div><Icon name="layers" size={20} /><strong>자연물</strong></div><p>나뭇가지 · 수생식물</p></article><article><div><Icon name="archive" size={20} /><strong>개인 물품 후보</strong></div><p>공 · 가방 · 우산 · 신발·슬리퍼류</p></article></div>
+          <p className="guide-ai-note">AI 분석 결과는 관리자 확인 과정에서 변경될 수 있으며, 신뢰도는 소유권 일치 확률을 의미하지 않습니다.</p>
+        </section>
+
         <aside className="info-notice guide-notice" aria-labelledby="guide-notice">
           <div className="info-notice-icon"><span aria-hidden="true">!</span></div>
           <div>

@@ -71,11 +71,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export function login(payload: LoginRequest) {
-  return request<{ expires_in: number; user: AuthUser }>("/api/auth/login", {
+export async function login(payload: LoginRequest) {
+  const result = await request<{ expires_in: number; user: AuthUser }>("/api/auth/login", {
     method: "POST",
     body: JSON.stringify(payload),
   });
+  window.dispatchEvent(new CustomEvent("flowlink:auth-changed", { detail: result.user }));
+  return result;
 }
 
 export function register(payload: RegisterRequest) {
@@ -89,8 +91,10 @@ export function getCurrentUser() {
   return request<AuthUser>("/api/auth/me");
 }
 
-export function logout() {
-  return request<{ message: string }>("/api/auth/logout", { method: "POST" });
+export async function logout() {
+  const result = await request<{ message: string }>("/api/auth/logout", { method: "POST" });
+  window.dispatchEvent(new CustomEvent("flowlink:auth-changed", { detail: null }));
+  return result;
 }
 
 export function updateNickname(nickname: string) {

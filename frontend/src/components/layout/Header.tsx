@@ -26,6 +26,7 @@ const userNavigation = [
 const adminNavigation = [
   { label: "대시보드", href: "/admin" },
   { label: "AI 탐지 관리", href: "/admin/detections" },
+  { label: "AI 탐지 리포트", href: "/admin/ai-report" },
   { label: "제보 관리", href: "/admin/citizen-reports" },
   { label: "발견물 관리", href: "/admin/found-items" },
   { label: "소유권 요청", href: "/admin/ownership-claims" },
