@@ -178,12 +178,35 @@ function validateForm(formData: FormData) {
   return { errors, lostAt };
 }
 
-function createRequest(formData: FormData, lostAt: Date, colors: string[], location: SelectedLostLocation | null): LostReportCreateRequest {
+type LostReportDescriptionDetails = {
+  subtypeLabel: string;
+  footwearCondition: string;
+  footwearSide: string;
+  ballSize: string;
+  colorBalance: string;
+};
+
+export function buildLostReportDescription(description: string, details: LostReportDescriptionDetails) {
+  const lines: string[] = [];
+  const subtype = details.subtypeLabel.trim();
+  if (subtype && subtype !== "기타" && subtype !== "잘 모르겠어요") lines.push(`세부 종류: ${subtype}`);
+  if (details.footwearCondition && details.footwearCondition !== "잘 모르겠어요") {
+    const side = details.footwearCondition === "한 짝" && details.footwearSide !== "기억나지 않아요" ? details.footwearSide : "";
+    lines.push(`분실 상태: ${details.footwearCondition}${side ? ` · ${side}` : ""}`);
+  }
+  if (details.ballSize && details.ballSize !== "잘 모르겠어요") lines.push(`크기: ${details.ballSize}`);
+  if (details.colorBalance && details.colorBalance !== "잘 모르겠어요") lines.push(`색상 비중: ${details.colorBalance}`);
+  const featureDescription = description.trim();
+  if (featureDescription) lines.push(`구별 특징: ${featureDescription}`);
+  return lines.join("\n");
+}
+
+function createRequest(formData: FormData, lostAt: Date, colors: string[], location: SelectedLostLocation | null, details: LostReportDescriptionDetails): LostReportCreateRequest {
   return {
     item_category: formData.item_category,
     color: colors[0] ?? null,
     colors,
-    description: formData.description.trim(),
+    description: buildLostReportDescription(formData.description, details),
     lost_location: formData.lost_location.trim(),
     ...(location?.latitude !== undefined && location?.longitude !== undefined
       ? { latitude: location.latitude, longitude: location.longitude }
@@ -555,7 +578,7 @@ export function LostReportForm() {
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      const report = await createLostReport(createRequest(formData, lostAt, selectedColors, selectedLocation), selectedImage ?? undefined);
+      const report = await createLostReport(createRequest(formData, lostAt, selectedColors, selectedLocation, { subtypeLabel, footwearCondition, footwearSide, ballSize, colorBalance }), selectedImage ?? undefined);
       setCreatedReport(report);
       clearImage();
     } catch (caught) {

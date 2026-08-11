@@ -56,12 +56,14 @@ def calculate_match_score(lost_report: LostReport, found_item: FoundItem) -> Mat
     else:
         time_score = 0
 
-    color_score = (
-        10
-        if clean_optional_text(lost_report.color) is not None
-        and normalize_text(lost_report.color) == normalize_text(found_item.color)
-        else 0
-    )
+    stored_colors = lost_report.colors or ([lost_report.color] if lost_report.color else [])
+    color_candidates = {
+        normalize_text(color)
+        for color in stored_colors
+        if clean_optional_text(color) is not None and normalize_text(color) != normalize_text("여러 색")
+    }
+    found_color = normalize_text(found_item.color)
+    color_score = 10 if found_color and found_color in color_candidates else 0
     shared_tokens = meaningful_tokens(lost_report.description) & meaningful_tokens(found_item.public_description)
     keyword_score = min(15, color_score + min(5, len(shared_tokens)))
 

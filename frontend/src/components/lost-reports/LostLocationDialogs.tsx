@@ -96,6 +96,9 @@ export function MapPickerDialog({ open, triggerRef, initialLocation, onClose, on
   const mapRef = useRef<KakaoMapInstance | null>(null);
   const markerRef = useRef<KakaoMarkerInstance | null>(null);
   const circleRef = useRef<KakaoCircleInstance | null>(null);
+  const positionRequestSeqRef = useRef(0);
+  const searchRequestSeqRef = useRef(0);
+  const loadMoreInFlightRef = useRef(false);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [message, setMessage] = useState("");
@@ -104,9 +107,19 @@ export function MapPickerDialog({ open, triggerRef, initialLocation, onClose, on
   const [searching, setSearching] = useState(false);
   const [searchPage, setSearchPage] = useState(1);
   const [hasMoreResults, setHasMoreResults] = useState(false);
+  const close = useCallback(() => {
+    positionRequestSeqRef.current += 1;
+    searchRequestSeqRef.current += 1;
+    loadMoreInFlightRef.current = false;
+    onClose();
+  }, [onClose]);
 
   const applyPosition = async (latitude: number, longitude: number, place?: KakaoPlace) => {
+    const requestSeq = ++positionRequestSeqRef.current;
+    setDraft(null);
+    setMessage("주소를 확인하고 있어요.");
     const kakao = await loadKakaoMaps();
+    if (requestSeq !== positionRequestSeqRef.current) return;
     const position = new kakao.maps.LatLng(latitude, longitude);
     mapRef.current?.setCenter(position);
     if (mapRef.current && !markerRef.current) markerRef.current = new kakao.maps.Marker({ map: mapRef.current, position });
@@ -115,14 +128,18 @@ export function MapPickerDialog({ open, triggerRef, initialLocation, onClose, on
       const primary = getComputedStyle(document.documentElement).getPropertyValue("--color-primary").trim() || "#f26f50";
       circleRef.current = new kakao.maps.Circle({ map: mapRef.current, center: position, radius: 90, strokeWeight: 2, strokeColor: primary, strokeOpacity: .72, fillColor: primary, fillOpacity: .12 });
     } else circleRef.current?.setPosition(position);
-    setMessage("주소를 확인하고 있어요.");
     try {
       const resolved = await reverseGeocodeKakao(latitude, longitude);
+      if (requestSeq !== positionRequestSeqRef.current) return;
       const address = place?.road_address_name || resolved?.road_address?.address_name || place?.address_name || resolved?.address?.address_name || `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
       const region = resolved?.address;
       setDraft({ displayName: place?.place_name || address, placeName: place?.place_name, address, roadAddress: place?.road_address_name || resolved?.road_address?.address_name || undefined, region1: region?.region_1depth_name, region2: region?.region_2depth_name, region3: region?.region_3depth_name, latitude, longitude, source: "MAP", precision: place ? "PLACE" : "MAP_AREA" });
       setMessage("");
-    } catch { setMessage("주소를 찾지 못했지만 선택한 좌표는 저장할 수 있어요."); setDraft({ displayName: "지도에서 선택한 위치", address: `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`, latitude, longitude, source: "MAP", precision: "MAP_AREA" }); }
+    } catch {
+      if (requestSeq !== positionRequestSeqRef.current) return;
+      setMessage("주소를 찾지 못했지만 선택한 좌표는 저장할 수 있어요.");
+      setDraft({ displayName: "지도에서 선택한 위치", address: `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`, latitude, longitude, source: "MAP", precision: "MAP_AREA" });
+    }
   };
 
   useEffect(() => {
@@ -143,38 +160,64 @@ export function MapPickerDialog({ open, triggerRef, initialLocation, onClose, on
       setStatus("ready");
       if (initialLocation?.latitude != null && initialLocation.longitude != null) void applyPosition(latitude, longitude);
     }).catch(() => !disposed && setStatus("error"));
-    return () => { disposed = true; removeMapClick?.(); destroyMap?.(); markerRef.current?.setMap(null); circleRef.current?.setMap(null); markerRef.current = null; circleRef.current = null; mapRef.current = null; };
+    return () => { disposed = true; positionRequestSeqRef.current += 1; searchRequestSeqRef.current += 1; loadMoreInFlightRef.current = false; removeMapClick?.(); destroyMap?.(); markerRef.current?.setMap(null); circleRef.current?.setMap(null); markerRef.current = null; circleRef.current = null; mapRef.current = null; };
   // applyPosition intentionally reads current refs.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   useEffect(() => {
-    if (!open || query.trim().length < 2) return;
-    let current = true;
-    const timer = window.setTimeout(() => { setSearching(true); void searchKakaoPlacesPage(query.trim()).then(({ places, hasNextPage }) => { if (current) { setResults(places); setSearchPage(1); setHasMoreResults(hasNextPage); } }).catch(() => current && setResults([])).finally(() => current && setSearching(false)); }, 300);
-    return () => { current = false; window.clearTimeout(timer); };
+    const requestSeq = ++searchRequestSeqRef.current;
+    loadMoreInFlightRef.current = false;
+    const querySnapshot = query.trim();
+    if (!open || querySnapshot.length < 2) return;
+    const timer = window.setTimeout(() => {
+      setSearching(true);
+      void searchKakaoPlacesPage(querySnapshot).then(({ places, hasNextPage }) => {
+        if (requestSeq !== searchRequestSeqRef.current) return;
+        setResults(places); setSearchPage(1); setHasMoreResults(hasNextPage);
+      }).catch(() => {
+        if (requestSeq === searchRequestSeqRef.current) setResults([]);
+      }).finally(() => {
+        if (requestSeq === searchRequestSeqRef.current) setSearching(false);
+      });
+    }, 300);
+    return () => window.clearTimeout(timer);
   }, [open, query]);
 
-  const choose = (place: KakaoPlace) => { setQuery(place.place_name); setResults([]); mapRef.current?.setLevel(4); void applyPosition(Number(place.y), Number(place.x), place); };
+  const choose = (place: KakaoPlace) => { searchRequestSeqRef.current += 1; loadMoreInFlightRef.current = false; setSearching(false); setQuery(place.place_name); setResults([]); mapRef.current?.setLevel(4); void applyPosition(Number(place.y), Number(place.x), place); };
+  const changeSearchQuery = (value: string) => {
+    searchRequestSeqRef.current += 1;
+    loadMoreInFlightRef.current = false;
+    setQuery(value);
+    if (value.trim().length < 2) { setResults([]); setSearching(false); }
+  };
   const loadMoreResults = () => {
-    if (searching || !hasMoreResults) return;
+    if (searching || loadMoreInFlightRef.current || !hasMoreResults) return;
+    const requestSeq = searchRequestSeqRef.current;
+    const querySnapshot = query.trim();
     const nextPage = searchPage + 1;
+    loadMoreInFlightRef.current = true;
     setSearching(true);
-    void searchKakaoPlacesPage(query.trim(), nextPage).then(({ places, hasNextPage }) => {
+    void searchKakaoPlacesPage(querySnapshot, nextPage).then(({ places, hasNextPage }) => {
+      if (requestSeq !== searchRequestSeqRef.current || querySnapshot !== query.trim()) return;
       setResults((current) => [...current, ...places.filter((place) => !current.some((item) => item.id === place.id))]);
       setSearchPage(nextPage);
       setHasMoreResults(hasNextPage);
-    }).finally(() => setSearching(false));
+    }).finally(() => {
+      if (requestSeq !== searchRequestSeqRef.current) return;
+      loadMoreInFlightRef.current = false;
+      setSearching(false);
+    });
   };
   const searchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => { if (event.key === "Escape") setResults([]); if (event.key === "Enter" && results[0]) { event.preventDefault(); choose(results[0]); } };
   const zoom = (amount: number) => mapRef.current?.setLevel(Math.max(1, Math.min(14, mapRef.current.getLevel() + amount)));
 
-  return <DialogFrame open={open} triggerRef={triggerRef} title="지도에서 위치 선택" description="장소를 검색하거나 지도를 움직인 뒤 클릭해 기억나는 위치를 선택해 주세요." onClose={onClose} wide>
+  return <DialogFrame open={open} triggerRef={triggerRef} title="지도에서 위치 선택" description="장소를 검색하거나 지도를 움직인 뒤 클릭해 기억나는 위치를 선택해 주세요." onClose={close} wide>
     <div className={styles.mapPicker}>
-      <div className={styles.mapSearch}><Icon name="search" size={18} /><input value={query} onChange={(event) => { setQuery(event.target.value); if (event.target.value.trim().length < 2) setResults([]); }} onKeyDown={searchKeyDown} placeholder="장소·주소 검색" aria-label="지도 장소 또는 주소 검색" />{searching && <Icon name="refresh" size={16} />}{results.length > 0 && <div role="listbox">{results.map((place) => <button type="button" role="option" aria-selected="false" key={place.id} onClick={() => choose(place)}><strong>{place.place_name}</strong><small>{place.road_address_name || place.address_name}</small></button>)}{hasMoreResults && <button className={styles.mapSearchMore} type="button" onClick={loadMoreResults} disabled={searching}>더 보기 · 다음 15개</button>}</div>}</div>
+      <div className={styles.mapSearch}><Icon name="search" size={18} /><input value={query} onChange={(event) => changeSearchQuery(event.target.value)} onKeyDown={searchKeyDown} placeholder="장소·주소 검색" aria-label="지도 장소 또는 주소 검색" />{searching && <Icon name="refresh" size={16} />}{results.length > 0 && <div role="listbox">{results.map((place) => <button type="button" role="option" aria-selected="false" key={place.id} onClick={() => choose(place)}><strong>{place.place_name}</strong><small>{place.road_address_name || place.address_name}</small></button>)}{hasMoreResults && <button className={styles.mapSearchMore} type="button" onClick={loadMoreResults} disabled={searching}>더 보기 · 다음 15개</button>}</div>}</div>
       <div className={styles.actualMap}><div ref={mapContainer} className={styles.kakaoMap} aria-label="카카오 지도" />{status === "loading" && <div className={styles.mapStatus}><Icon name="refresh" size={22} />실제 Kakao 지도를 불러오고 있어요.</div>}{status === "error" && <div className={`${styles.mapStatus} ${styles.mapError}`} role="alert"><Icon name="info" size={22} />Kakao 지도를 불러오지 못했어요. JavaScript 키와 허용 도메인을 확인해 주세요.</div>}<div className={styles.zoomControls} aria-label="지도 확대 및 축소"><button type="button" aria-label="지도 확대" onClick={() => zoom(-1)}>+</button><button type="button" aria-label="지도 축소" onClick={() => zoom(1)}>−</button></div></div>
       <div className={styles.mapSelection}><Icon name="location" size={20} /><span><strong>{draft?.displayName || "지도를 클릭해 위치를 선택해 주세요."}</strong><small>{draft?.address || "정확한 위치가 아니어도 괜찮아요."}</small>{message && <em>{message}</em>}</span></div>
-      <footer><button type="button" className="button button-secondary" onClick={onClose}>취소</button><button type="button" className="button button-primary" disabled={!draft} onClick={() => draft && onConfirm(draft)}>이 위치 선택</button></footer>
+      <footer><button type="button" className="button button-secondary" onClick={close}>취소</button><button type="button" className="button button-primary" disabled={!draft} onClick={() => draft && onConfirm(draft)}>이 위치 선택</button></footer>
     </div>
   </DialogFrame>;
 }

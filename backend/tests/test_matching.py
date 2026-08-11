@@ -81,5 +81,55 @@ def test_color_and_keyword_score() -> None:
     assert score.keyword_score == 12
 
 
+def test_single_color_candidate_keeps_existing_color_score() -> None:
+    score = calculate_match_score(
+        make_lost_report(color="검정", colors=["검정"], description="특징 없음"),
+        make_found_item(color="검정", public_description="다른 설명"),
+    )
+
+    assert score is not None
+    assert score.keyword_score == 10
+
+
+def test_secondary_lost_report_color_receives_color_score() -> None:
+    score = calculate_match_score(
+        make_lost_report(color="검정", colors=["검정", "빨강"], description="특징 없음"),
+        make_found_item(color=" 빨강 ", public_description="다른 설명"),
+    )
+
+    assert score is not None
+    assert score.keyword_score == 10
+
+
+def test_unmatched_lost_report_colors_receive_no_color_score() -> None:
+    score = calculate_match_score(
+        make_lost_report(color="검정", colors=["검정", "빨강"], description="특징 없음"),
+        make_found_item(color="파랑", public_description="다른 설명"),
+    )
+
+    assert score is not None
+    assert score.keyword_score == 0
+
+
+def test_legacy_empty_colors_falls_back_to_single_color() -> None:
+    score = calculate_match_score(
+        make_lost_report(color="검정", colors=[], description="특징 없음"),
+        make_found_item(color="검정", public_description="다른 설명"),
+    )
+
+    assert score is not None
+    assert score.keyword_score == 10
+
+
+def test_matching_multiple_color_candidates_does_not_duplicate_score() -> None:
+    score = calculate_match_score(
+        make_lost_report(color="검정", colors=["검정", " 검정 ", "빨강"], description="특징 없음"),
+        make_found_item(color="검정", public_description="다른 설명"),
+    )
+
+    assert score is not None
+    assert score.keyword_score == 10
+
+
 def test_threshold_value() -> None:
     assert MATCH_THRESHOLD == 60

@@ -80,11 +80,13 @@ export async function login(payload: LoginRequest) {
   return result;
 }
 
-export function register(payload: RegisterRequest) {
-  return request<AuthUser>("/api/auth/register", {
+export async function register(payload: RegisterRequest) {
+  const result = await request<AuthUser>("/api/auth/register", {
     method: "POST",
     body: JSON.stringify(payload),
   });
+  window.dispatchEvent(new CustomEvent("flowlink:auth-changed", { detail: result }));
+  return result;
 }
 
 export function getCurrentUser() {
