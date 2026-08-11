@@ -16,7 +16,7 @@ from app.core.security import (
     verify_password,
 )
 from app.models import User
-from app.schemas.auth import RegisterRequest
+from app.schemas.auth import LoginRequest, PasswordChangeRequest, RegisterRequest
 from app.services.auth import validate_registration_agreements
 
 
@@ -38,7 +38,7 @@ def make_user(*, role: str = "USER", active: bool = True) -> User:
 def test_register_rejects_false_agreement() -> None:
     request = RegisterRequest(
         email="USER@example.com",
-        password="password123",
+        password="AbcdefGh",
         nickname="tester",
         terms_agreed=False,
         privacy_agreed=True,
@@ -54,11 +54,59 @@ def test_register_nickname_min_length_is_checked_after_strip() -> None:
     with pytest.raises(ValidationError):
         RegisterRequest(
             email="user@example.com",
-            password="password123",
+            password="AbcdefGh",
             nickname=" a ",
             terms_agreed=True,
             privacy_agreed=True,
         )
+
+
+@pytest.mark.parametrize("password", ["AbcdefGh", "FLOWlink", "TestPass"])
+def test_register_accepts_password_policy(password: str) -> None:
+    request = RegisterRequest(
+        email="user@example.com",
+        password=password,
+        nickname="tester",
+        terms_agreed=True,
+        privacy_agreed=True,
+    )
+
+    assert request.password == password
+
+
+@pytest.mark.parametrize(
+    "password",
+    ["abcdefgh", "ABCDEFGH", "Abcdefg1", "Abcdefg!", "Abcdefg", "Abcdefghi", "Abcd efG", "가AbcdefG"],
+)
+def test_register_rejects_password_policy(password: str) -> None:
+    with pytest.raises(ValidationError):
+        RegisterRequest(
+            email="user@example.com",
+            password=password,
+            nickname="tester",
+            terms_agreed=True,
+            privacy_agreed=True,
+        )
+
+
+@pytest.mark.parametrize("new_password", ["AbcdefGh", "TestPass"])
+def test_password_change_accepts_new_password_policy(new_password: str) -> None:
+    request = PasswordChangeRequest(current_password="legacy-password123!", new_password=new_password)
+
+    assert request.current_password == "legacy-password123!"
+    assert request.new_password == new_password
+
+
+@pytest.mark.parametrize("new_password", ["abcdefgh", "Abcdefg1"])
+def test_password_change_rejects_new_password_policy(new_password: str) -> None:
+    with pytest.raises(ValidationError):
+        PasswordChangeRequest(current_password="legacy-password123!", new_password=new_password)
+
+
+def test_login_request_allows_legacy_password_format() -> None:
+    request = LoginRequest(email="user@example.com", password="legacy-password123!")
+
+    assert request.password == "legacy-password123!"
 
 
 def test_email_normalization() -> None:

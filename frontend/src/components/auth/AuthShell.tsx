@@ -13,6 +13,8 @@ type AuthPortal = "default" | "admin";
 type FieldErrors = Record<string, string>;
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const passwordPattern = /^(?=.*[a-z])(?=.*[A-Z])[A-Za-z]{8}$/;
+const passwordPolicyMessage = "비밀번호는 영문 대문자와 소문자를 포함한 정확히 8자로 입력해주세요.";
 
 const loginScene = {
   dawn: {
@@ -108,12 +110,18 @@ function PasswordField({
   placeholder,
   error,
   autoComplete,
+  minLength,
+  maxLength,
+  pattern,
 }: {
   id: string;
   label: string;
   placeholder: string;
   error?: string;
   autoComplete: "current-password" | "new-password";
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
 }) {
   const [visible, setVisible] = useState(false);
   const errorId = `${id}-error`;
@@ -130,6 +138,9 @@ function PasswordField({
           autoComplete={autoComplete}
           aria-invalid={Boolean(error)}
           aria-describedby={error ? errorId : undefined}
+          minLength={minLength}
+          maxLength={maxLength}
+          pattern={pattern}
         />
         <button
           type="button"
@@ -242,13 +253,13 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
     if (!email) nextErrors.email = "이메일을 입력해주세요.";
     else if (!emailPattern.test(email)) nextErrors.email = "올바른 이메일 형식을 입력해주세요.";
     if (!password) nextErrors.password = "비밀번호를 입력해주세요.";
-    else if (password.length < 8) nextErrors.password = "비밀번호는 8자 이상 입력해주세요.";
 
     if (!isLogin) {
       const nickname = String(data.get("nickname") ?? "").trim();
       const confirm = String(data.get("password-confirm") ?? "");
       if (!nickname) nextErrors.nickname = "닉네임을 입력해주세요.";
       else if (nickname.length < 2) nextErrors.nickname = "닉네임은 2자 이상 입력해주세요.";
+      if (password && !passwordPattern.test(password)) nextErrors.password = passwordPolicyMessage;
       if (!confirm) nextErrors["password-confirm"] = "비밀번호를 한 번 더 입력해주세요.";
       else if (password !== confirm) nextErrors["password-confirm"] = "비밀번호가 일치하지 않습니다.";
       if (data.get("terms") !== "on" || data.get("privacy") !== "on") nextErrors.agreements = "필수 항목에 동의해주세요.";
@@ -333,7 +344,16 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
                   {errors.nickname && <p className="auth-error" id="nickname-error">{errors.nickname}</p>}
                 </div>
               )}
-              <PasswordField id="password" label="비밀번호" placeholder="비밀번호를 입력해주세요" error={errors.password} autoComplete={isLogin ? "current-password" : "new-password"} />
+              <PasswordField
+                id="password"
+                label="비밀번호"
+                placeholder={isLogin ? "비밀번호를 입력해주세요" : "영문 대·소문자 조합 8자"}
+                error={errors.password}
+                autoComplete={isLogin ? "current-password" : "new-password"}
+                minLength={isLogin ? undefined : 8}
+                maxLength={isLogin ? undefined : 8}
+                pattern={isLogin ? undefined : "^(?=.*[a-z])(?=.*[A-Z])[A-Za-z]{8}$"}
+              />
               {!isLogin && <PasswordField id="password-confirm" label="비밀번호 확인" placeholder="비밀번호를 한 번 더 입력해주세요" error={errors["password-confirm"]} autoComplete="new-password" />}
             </div>
 

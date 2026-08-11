@@ -85,6 +85,7 @@ def register(
     client: TestClient,
     *,
     email: str = "new-user@example.com",
+    password: str = "AbcdefGh",
     terms_agreed: bool = True,
     privacy_agreed: bool = True,
 ):
@@ -92,7 +93,7 @@ def register(
         "/api/auth/register",
         json={
             "email": email,
-            "password": "password123",
+            "password": password,
             "nickname": "new-user",
             "terms_agreed": terms_agreed,
             "privacy_agreed": privacy_agreed,
@@ -119,7 +120,7 @@ def test_register_ignores_client_supplied_admin_role(client: TestClient) -> None
         "/api/auth/register",
         json={
             "email": "role-injection@example.com",
-            "password": "password123",
+            "password": "AbcdefGh",
             "nickname": "role-test",
             "terms_agreed": True,
             "privacy_agreed": True,
@@ -199,6 +200,13 @@ def test_registration_without_required_agreement_does_not_set_cookie(client: Tes
     assert settings.AUTH_COOKIE_NAME not in response.headers.get("set-cookie", "")
 
 
+@pytest.mark.parametrize("password", ["abcdefgh", "ABCDEFGH", "Abcdefg1", "Abcdefg!", "Abcdefg", "Abcdefghi", "Abcd efG"])
+def test_register_rejects_invalid_password_policy(client: TestClient, password: str) -> None:
+    response = register(client, email=f"{password.encode().hex()}@example.com", password=password)
+
+    assert response.status_code == 422
+
+
 def test_registration_rolls_back_when_token_creation_fails(
     client: TestClient,
     db: Session,
@@ -275,7 +283,7 @@ def test_change_password_requires_current_password(client: TestClient, db: Sessi
 
     response = client.patch(
         "/api/auth/me/password",
-        json={"current_password": "incorrect", "new_password": "new-password123"},
+        json={"current_password": "incorrect", "new_password": "TestPass"},
     )
 
     assert response.status_code == 400
@@ -289,7 +297,7 @@ def test_change_password_replaces_password_hash(client: TestClient, db: Session)
 
     response = client.patch(
         "/api/auth/me/password",
-        json={"current_password": "password123", "new_password": "new-password123"},
+        json={"current_password": "password123", "new_password": "TestPass"},
     )
 
     assert response.status_code == 200
@@ -297,7 +305,26 @@ def test_change_password_replaces_password_hash(client: TestClient, db: Session)
     assert "password_hash" not in response.json()
     client.cookies.clear()
     assert login(client, password="password123").status_code == 401
-    assert login(client, password="new-password123").status_code == 200
+    assert login(client, password="TestPass").status_code == 200
+
+
+@pytest.mark.parametrize("new_password", ["abcdefgh", "Abcdefg1"])
+def test_change_password_rejects_invalid_new_password_policy(
+    client: TestClient,
+    db: Session,
+    new_password: str,
+) -> None:
+    seed_user(db, password="legacy-password123!")
+    assert login(client, password="legacy-password123!").status_code == 200
+
+    response = client.patch(
+        "/api/auth/me/password",
+        json={"current_password": "legacy-password123!", "new_password": new_password},
+    )
+
+    assert response.status_code == 422
+    client.cookies.clear()
+    assert login(client, password="legacy-password123!").status_code == 200
 
 
 def test_me_rejects_missing_or_tampered_cookie(client: TestClient) -> None:
