@@ -35,7 +35,10 @@ def get_detection_event_by_id(db: Session, event_id: int) -> DetectionEvent | No
 def get_user_detection_event(db: Session, *, event_id: int, user_id: int) -> DetectionEvent | None:
     statement = (
         select(DetectionEvent)
-        .options(joinedload(DetectionEvent.detected_objects).joinedload(DetectedObject.object_class))
+        .options(
+            joinedload(DetectionEvent.detected_objects).joinedload(DetectedObject.object_class),
+            joinedload(DetectionEvent.video_job),
+        )
         .where(
             DetectionEvent.id == event_id,
             DetectionEvent.user_id == user_id,
@@ -43,6 +46,21 @@ def get_user_detection_event(db: Session, *, event_id: int, user_id: int) -> Det
         )
     )
     return db.scalars(statement).unique().one_or_none()
+
+
+def list_user_detection_events_for_delete(db: Session, *, user_id: int) -> Sequence[DetectionEvent]:
+    statement = (
+        select(DetectionEvent)
+        .options(
+            joinedload(DetectionEvent.detected_objects),
+            joinedload(DetectionEvent.video_job),
+        )
+        .where(
+            DetectionEvent.user_id == user_id,
+            DetectionEvent.purpose == USER_ANALYSIS_PURPOSE,
+        )
+    )
+    return db.scalars(statement).unique().all()
 
 
 def list_user_detection_events(
@@ -64,6 +82,14 @@ def list_user_detection_events(
         .limit(limit)
     )
     return db.scalars(statement).unique().all()
+
+
+def delete_detection_event(db: Session, event: DetectionEvent) -> None:
+    if event.video_job is not None:
+        db.delete(event.video_job)
+    for detected_object in list(event.detected_objects):
+        db.delete(detected_object)
+    db.delete(event)
 
 
 def get_active_object_class_by_code(db: Session, code: str) -> ObjectClass | None:

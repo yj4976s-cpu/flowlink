@@ -31,6 +31,19 @@ export type DetectionEvent = {
   detected_objects: DetectionObject[];
 };
 
+export type WebcamDetectionObject = {
+  label: string;
+  confidence: number;
+  bbox: DetectionBBox;
+};
+
+export type WebcamDetectionFrame = {
+  media_width: number;
+  media_height: number;
+  inference_ms: number;
+  detected_objects: WebcamDetectionObject[];
+};
+
 export class DetectionApiError extends Error {
   constructor(message: string, readonly status?: number) {
     super(message);
@@ -70,6 +83,7 @@ async function readErrorMessage(response: Response) {
     if (body && typeof body === "object" && "detail" in body) {
       const detail = (body as { detail: unknown }).detail;
       if (detail === "AI detection model is not configured") return getFallbackMessage(503);
+      if (detail === "Webcam detection model is unavailable") return getFallbackMessage(503);
     }
   } catch {
     return getFallbackMessage(response.status);
@@ -107,10 +121,28 @@ export function uploadDetectionVideo(file: File) {
   return uploadDetection("/api/detections/videos", file);
 }
 
+export function detectWebcamFrame(blob: Blob, signal?: AbortSignal) {
+  const formData = new FormData();
+  formData.append("file", blob, "webcam-frame.jpg");
+  return requestJson<WebcamDetectionFrame>(buildApiUrl("/api/detections/webcam/frame"), {
+    method: "POST",
+    body: formData,
+    signal,
+  });
+}
+
 export function listMyDetections(signal?: AbortSignal) {
   return requestJson<DetectionEvent[]>(buildApiUrl("/api/detections/me", { skip: 0, limit: 20 }), { signal });
 }
 
 export function getMyDetection(id: number, signal?: AbortSignal) {
   return requestJson<DetectionEvent>(buildApiUrl(`/api/detections/${id}`), { signal });
+}
+
+export function deleteMyDetection(id: number) {
+  return requestJson<{ message: string }>(buildApiUrl(`/api/detections/${id}`), { method: "DELETE" });
+}
+
+export function deleteAllMyDetections() {
+  return requestJson<{ message: string }>(buildApiUrl("/api/detections/me"), { method: "DELETE" });
 }

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import timedelta
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy import BigInteger, create_engine
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session, sessionmaker
@@ -17,7 +20,22 @@ from app.core.security import create_access_token, utc_now
 from app.db.session import Base, get_db
 from app.main import app
 from app.models import DetectedObject, DetectionEvent, ObjectClass, User, VideoJob
-from app.services.detection_inference import DetectionBBox, DetectionInferenceResult, DetectionInferenceService, DetectionPrediction
+from app.services.detection_inference import (
+    DetectionBBox,
+    DetectionInferenceResult,
+    DetectionInferenceService,
+    DetectionPrediction,
+    model_label_to_class_code,
+)
+from app.services.webcam_inference import (
+    WebcamDetectionFrame,
+    WebcamDetectionObject,
+    WebcamInferenceService,
+    WebcamInferenceUnavailableError,
+    get_webcam_inference_service,
+)
+from app.services.yolo_runtime import get_yolo_runtime
+from app.services.yolo_runtime import YoloPrediction
 
 
 @compiles(BigInteger, "sqlite")
@@ -36,6 +54,46 @@ class MockInferenceService(DetectionInferenceService):
     def analyze_video(self, media_path: Path) -> DetectionInferenceResult:
         assert media_path.exists()
         return self.result
+
+
+class MockWebcamInferenceService(WebcamInferenceService):
+    def __init__(self, result: WebcamDetectionFrame | Exception) -> None:
+        self.result = result
+
+    def analyze_frame(self, image: Image.Image) -> WebcamDetectionFrame:
+        if isinstance(self.result, Exception):
+            raise self.result
+        return WebcamDetectionFrame(
+            media_width=image.width,
+            media_height=image.height,
+            inference_ms=self.result.inference_ms,
+            detected_objects=self.result.detected_objects,
+        )
+
+
+class FakeYoloRuntime:
+    def __init__(self, predictions: list[YoloPrediction]) -> None:
+        self.predictions = predictions
+        self.calls = 0
+
+    def predict(self, image: Image.Image) -> list[YoloPrediction]:
+        self.calls += 1
+        assert image.mode == "RGB"
+        return self.predictions
+
+
+@pytest.mark.parametrize(
+    ("model_label", "expected"),
+    [
+        ("BRANCH", "BRANCH"),
+        ("branch", "BRANCH"),
+        ("AQUATIC_PLANT", "AQUATIC_PLANT"),
+        ("aquatic_plant", "AQUATIC_PLANT"),
+        ("aquatic plant", "AQUATIC_PLANT"),
+    ],
+)
+def test_flowlink_custom_model_labels_map_directly(model_label: str, expected: str) -> None:
+    assert model_label_to_class_code(model_label) == expected
 
 
 @pytest.fixture
@@ -109,14 +167,48 @@ def override_inference(result: DetectionInferenceResult) -> None:
     app.dependency_overrides[get_inference_service] = lambda: MockInferenceService(result)
 
 
+def override_webcam_inference(result: WebcamDetectionFrame | Exception) -> None:
+    app.dependency_overrides[get_webcam_inference_service] = lambda: MockWebcamInferenceService(result)
+
+
+def test_yolo_runtime_is_cached_and_lazy_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = get_settings()
+    monkeypatch.setattr(settings, "DETECTION_MODEL", "fake-model.pt")
+    monkeypatch.setattr(settings, "DETECTION_CONFIDENCE", 0.31)
+    monkeypatch.setattr(settings, "DETECTION_IMGSZ", 512)
+    get_yolo_runtime.cache_clear()
+
+    first = get_yolo_runtime()
+    second = get_yolo_runtime()
+
+    assert first is second
+    assert first.model_path == "fake-model.pt"
+    assert first.confidence == 0.31
+    assert first.imgsz == 512
+    assert first._model is None
+    get_yolo_runtime.cache_clear()
+
+
 def image_file(content: bytes = b"image-bytes") -> dict[str, tuple[str, BytesIO, str]]:
     return {"file": ("sample.jpg", BytesIO(content), "image/jpeg")}
 
 
+def jpeg_payload(*, width: int = 64, height: int = 48) -> bytes:
+    payload = BytesIO()
+    Image.new("RGB", (width, height), color=(28, 92, 160)).save(payload, format="JPEG")
+    return payload.getvalue()
+
+
+def webcam_file(content: bytes | None = None, content_type: str = "image/jpeg") -> dict[str, tuple[str, BytesIO, str]]:
+    return {"file": ("webcam-frame.jpg", BytesIO(jpeg_payload() if content is None else content), content_type)}
+
+
 def test_detection_endpoints_require_authentication(client: TestClient) -> None:
     response = client.post("/api/detections/images", files=image_file())
+    webcam_response = client.post("/api/detections/webcam/frame", files=webcam_file())
 
     assert response.status_code == 401
+    assert webcam_response.status_code == 401
 
 
 @pytest.mark.parametrize("role", ["USER", "ADMIN"])
@@ -151,16 +243,76 @@ def test_image_detection_is_allowed_for_user_and_admin(client: TestClient, db: S
     assert event.purpose == "USER_ANALYSIS"
 
 
-def test_default_inference_unavailable_returns_503_and_failed_event(client: TestClient, db: Session) -> None:
+def test_default_image_inference_uses_shared_yolo_runtime(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    user = seed_user(db, 1)
+    seed_object_class(db, 1, "BAG")
+    authenticate(client, user)
+    fake_runtime = FakeYoloRuntime(
+        [
+            YoloPrediction(
+                model_label="backpack",
+                confidence=0.87,
+                bbox=DetectionBBox(x=4, y=5, width=20, height=22),
+            )
+        ]
+    )
+    monkeypatch.setattr("app.services.yolo_runtime.get_yolo_runtime", lambda: fake_runtime)
+
+    response = client.post("/api/detections/images", files=image_file(jpeg_payload(width=80, height=60)))
+
+    assert response.status_code == 201
+    assert fake_runtime.calls == 1
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+    assert body["media_width"] == 80
+    assert body["media_height"] == 60
+    assert body["detected_objects"][0]["class_code"] == "BAG"
+    assert body["detected_objects"][0]["confidence"] == 0.87
+
+
+def test_image_inference_deduplicates_overlapping_same_class_predictions(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = seed_user(db, 1)
+    seed_object_class(db, 1, "BAG")
+    authenticate(client, user)
+    fake_runtime = FakeYoloRuntime(
+        [
+            YoloPrediction(
+                model_label="backpack",
+                confidence=0.82,
+                bbox=DetectionBBox(x=10, y=10, width=100, height=100),
+            ),
+            YoloPrediction(
+                model_label="handbag",
+                confidence=0.44,
+                bbox=DetectionBBox(x=18, y=18, width=92, height=92),
+            ),
+        ]
+    )
+    monkeypatch.setattr("app.services.yolo_runtime.get_yolo_runtime", lambda: fake_runtime)
+
+    response = client.post("/api/detections/images", files=image_file(jpeg_payload(width=160, height=140)))
+
+    assert response.status_code == 201
+    body = response.json()
+    assert len(body["detected_objects"]) == 1
+    assert body["detected_objects"][0]["class_code"] == "BAG"
+    assert body["detected_objects"][0]["confidence"] == 0.82
+
+
+def test_invalid_image_inference_marks_event_failed(client: TestClient, db: Session) -> None:
     user = seed_user(db, 1)
     authenticate(client, user)
 
     response = client.post("/api/detections/images", files=image_file())
 
-    assert response.status_code == 503
+    assert response.status_code == 500
     event = db.query(DetectionEvent).one()
     assert event.status == "FAILED"
-    assert event.error_message == "AI detection model is not configured"
+    assert event.error_message == "AI detection could not be completed"
 
 
 def test_user_can_only_list_own_user_analysis_events(client: TestClient, db: Session) -> None:
@@ -219,6 +371,173 @@ def test_user_can_only_list_own_user_analysis_events(client: TestClient, db: Ses
     assert operation_detail.status_code == 404
 
 
+def test_user_can_delete_own_detection_history_event(client: TestClient, db: Session, tmp_path: Path) -> None:
+    user = seed_user(db, 1)
+    seed_object_class(db, 1, "BAG")
+    now = utc_now()
+    media_key = "detections/user/1/delete-me.jpg"
+    media_path = tmp_path / "uploads" / media_key
+    media_path.parent.mkdir(parents=True)
+    media_path.write_bytes(jpeg_payload())
+    db.add(
+        DetectionEvent(
+            id=20,
+            user_id=user.id,
+            purpose="USER_ANALYSIS",
+            source_type="VIDEO",
+            original_media_url=media_key,
+            status="COMPLETED",
+            captured_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db.add(
+        DetectedObject(
+            id=30,
+            detection_event_id=20,
+            object_class_id=1,
+            processing_status="PENDING",
+            confidence=Decimal("0.9000"),
+            bbox_x=Decimal("1"),
+            bbox_y=Decimal("2"),
+            bbox_width=Decimal("30"),
+            bbox_height=Decimal("40"),
+            appearance_count=1,
+            detected_at=now,
+            created_at=now,
+        )
+    )
+    db.add(
+        VideoJob(
+            id=40,
+            detection_event_id=20,
+            status="COMPLETED",
+            processing_progress=100,
+            tracking_algorithm="BYTE_TRACK",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db.commit()
+    authenticate(client, user)
+
+    response = client.delete("/api/detections/20")
+
+    assert response.status_code == 200
+    assert db.get(DetectionEvent, 20) is None
+    assert db.get(DetectedObject, 30) is None
+    assert db.get(VideoJob, 40) is None
+    assert not media_path.exists()
+
+
+def test_delete_detection_history_is_limited_to_current_user_analysis_events(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    other = seed_user(db, 2)
+    now = utc_now()
+    db.add_all(
+        [
+            DetectionEvent(
+                id=20,
+                user_id=user.id,
+                purpose="USER_ANALYSIS",
+                source_type="IMAGE",
+                original_media_url="detections/user/1/a.jpg",
+                status="COMPLETED",
+                captured_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+            DetectionEvent(
+                id=21,
+                user_id=other.id,
+                purpose="USER_ANALYSIS",
+                source_type="IMAGE",
+                original_media_url="detections/user/2/a.jpg",
+                status="COMPLETED",
+                captured_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+            DetectionEvent(
+                id=22,
+                user_id=user.id,
+                purpose="OPERATION",
+                source_type="IMAGE",
+                original_media_url="operation/a.jpg",
+                status="COMPLETED",
+                captured_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+        ]
+    )
+    db.commit()
+    authenticate(client, user)
+
+    other_response = client.delete("/api/detections/21")
+    operation_response = client.delete("/api/detections/22")
+    own_response = client.delete("/api/detections/20")
+
+    assert other_response.status_code == 404
+    assert operation_response.status_code == 404
+    assert own_response.status_code == 200
+    assert db.get(DetectionEvent, 20) is None
+    assert db.get(DetectionEvent, 21) is not None
+    assert db.get(DetectionEvent, 22) is not None
+
+
+def test_user_can_delete_all_own_detection_history_without_operation_events(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    now = utc_now()
+    db.add_all(
+        [
+            DetectionEvent(
+                id=20,
+                user_id=user.id,
+                purpose="USER_ANALYSIS",
+                source_type="IMAGE",
+                original_media_url="detections/user/1/a.jpg",
+                status="COMPLETED",
+                captured_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+            DetectionEvent(
+                id=21,
+                user_id=user.id,
+                purpose="USER_ANALYSIS",
+                source_type="IMAGE",
+                original_media_url="detections/user/1/b.jpg",
+                status="COMPLETED",
+                captured_at=now + timedelta(seconds=1),
+                created_at=now + timedelta(seconds=1),
+                updated_at=now + timedelta(seconds=1),
+            ),
+            DetectionEvent(
+                id=22,
+                user_id=user.id,
+                purpose="OPERATION",
+                source_type="IMAGE",
+                original_media_url="operation/a.jpg",
+                status="COMPLETED",
+                captured_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+        ]
+    )
+    db.commit()
+    authenticate(client, user)
+
+    response = client.delete("/api/detections/me")
+
+    assert response.status_code == 200
+    assert db.get(DetectionEvent, 20) is None
+    assert db.get(DetectionEvent, 21) is None
+    assert db.get(DetectionEvent, 22) is not None
+
+
 def test_upload_validation_rejects_empty_unsupported_and_oversized_files(client: TestClient, db: Session) -> None:
     user = seed_user(db, 1)
     authenticate(client, user)
@@ -233,6 +552,73 @@ def test_upload_validation_rejects_empty_unsupported_and_oversized_files(client:
     assert empty_response.status_code == 400
     assert unsupported_response.status_code == 415
     assert oversized_response.status_code == 413
+
+
+@pytest.mark.parametrize("role", ["USER", "ADMIN"])
+def test_webcam_detection_frame_is_allowed_for_user_and_admin(client: TestClient, db: Session, role: str) -> None:
+    user = seed_user(db, 1, role=role)
+    authenticate(client, user)
+    override_webcam_inference(
+        WebcamDetectionFrame(
+            media_width=64,
+            media_height=48,
+            inference_ms=12.5,
+            detected_objects=[
+                WebcamDetectionObject(
+                    label="backpack",
+                    confidence=0.91,
+                    bbox=DetectionBBox(x=5, y=6, width=20, height=22),
+                )
+            ],
+        )
+    )
+
+    response = client.post("/api/detections/webcam/frame", files=webcam_file())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["media_width"] == 64
+    assert body["media_height"] == 48
+    assert body["inference_ms"] == 12.5
+    assert "model_name" not in body
+    assert body["detected_objects"][0]["label"] == "backpack"
+    assert body["detected_objects"][0]["confidence"] == 0.91
+    assert body["detected_objects"][0]["bbox"] == {"x": 5.0, "y": 6.0, "width": 20.0, "height": 22.0}
+    assert db.query(DetectionEvent).count() == 0
+    assert db.query(DetectedObject).count() == 0
+    assert db.query(VideoJob).count() == 0
+
+
+def test_webcam_detection_rejects_invalid_frames(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    override_webcam_inference(WebcamDetectionFrame(media_width=64, media_height=48, inference_ms=0, detected_objects=[]))
+
+    unsupported_response = client.post("/api/detections/webcam/frame", files=webcam_file(content_type="image/png"))
+    empty_response = client.post("/api/detections/webcam/frame", files=webcam_file(content=b""))
+    corrupted_response = client.post("/api/detections/webcam/frame", files=webcam_file(content=b"not-a-jpeg"))
+    oversized_response = client.post("/api/detections/webcam/frame", files=webcam_file(content=b"x" * (2 * 1024 * 1024 + 1)))
+
+    assert unsupported_response.status_code == 415
+    assert empty_response.status_code == 400
+    assert corrupted_response.status_code == 400
+    assert oversized_response.status_code == 413
+    assert db.query(DetectionEvent).count() == 0
+    assert db.query(DetectedObject).count() == 0
+
+
+def test_webcam_detection_model_unavailable_returns_503_without_persistence(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    override_webcam_inference(WebcamInferenceUnavailableError("model unavailable"))
+
+    response = client.post("/api/detections/webcam/frame", files=webcam_file())
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Webcam detection model is unavailable"
+    assert db.query(DetectionEvent).count() == 0
+    assert db.query(DetectedObject).count() == 0
+    assert db.query(VideoJob).count() == 0
 
 
 def test_video_detection_creates_video_job(client: TestClient, db: Session) -> None:

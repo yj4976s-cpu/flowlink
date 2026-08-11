@@ -42,3 +42,16 @@ class DetectionEventResponse(BaseModel):
 
 class DetectionEventListResponse(DetectionEventResponse):
     pass
+
+
+class WebcamDetectionObjectResponse(BaseModel):
+    label: str
+    confidence: float
+    bbox: DetectionBBoxResponse
+
+
+class WebcamDetectionFrameResponse(BaseModel):
+    media_width: int
+    media_height: int
+    inference_ms: float
+    detected_objects: list[WebcamDetectionObjectResponse] = Field(default_factory=list)

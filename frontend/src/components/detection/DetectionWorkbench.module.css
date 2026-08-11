@@ -16,10 +16,10 @@
 
 .hero {
   margin-bottom: 26px;
-  padding: clamp(30px, 5vw, 54px);
+  padding: clamp(28px, 4vw, 44px);
   border-radius: 30px;
   background:
-    radial-gradient(circle at 82% 12%, color-mix(in srgb, var(--color-primary) 14%, transparent), transparent 34%),
+    radial-gradient(circle at 82% 12%, color-mix(in srgb, var(--color-primary) 10%, transparent), transparent 34%),
     linear-gradient(135deg, var(--color-surface), color-mix(in srgb, var(--color-primary-soft) 68%, var(--color-surface)));
 }
 
@@ -40,15 +40,15 @@
 
 .hero h1 {
   font-family: var(--font-editorial), Batang, serif;
-  font-size: clamp(42px, 6vw, 72px);
-  line-height: 1.08;
+  font-size: clamp(36px, 4.8vw, 58px);
+  line-height: 1.12;
 }
 
 .hero p:last-child {
-  max-width: 660px;
-  margin: 20px 0 0;
+  max-width: 620px;
+  margin: 16px 0 0;
   color: var(--color-text-muted);
-  font-size: 17px;
+  font-size: 16px;
   line-height: 1.8;
   word-break: keep-all;
 }
@@ -100,6 +100,7 @@
 }
 
 .uploadPanel,
+.webcamPanel,
 .resultPanel {
   min-width: 0;
   border: 1px solid var(--color-border);
@@ -149,6 +150,15 @@
   transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease;
 }
 
+.dropzoneSelected {
+  min-height: 340px;
+  padding: 10px;
+  border-style: solid;
+  background: var(--color-surface);
+  place-items: stretch;
+  align-content: stretch;
+}
+
 .dropzone input {
   position: absolute;
   width: 1px;
@@ -180,41 +190,6 @@
   transform: translateY(-1px);
 }
 
-.fileMeta {
-  margin: 16px 0;
-  padding: 14px 16px;
-  border: 1px solid var(--color-border);
-  border-radius: 18px;
-  background: var(--color-surface);
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.fileMeta span {
-  min-width: 0;
-  flex: 1 1 220px;
-  color: var(--color-text);
-  font-weight: 900;
-  overflow-wrap: anywhere;
-}
-
-.fileMeta b {
-  color: var(--color-primary);
-  font-size: 13px;
-}
-
-.fileMeta button {
-  border: 0;
-  background: transparent;
-  color: var(--color-text-muted);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 900;
-  cursor: pointer;
-}
-
 .previewFrame {
   position: relative;
   overflow: hidden;
@@ -222,6 +197,21 @@
   border: 1px solid var(--color-border);
   border-radius: 24px;
   background: var(--color-surface-soft);
+}
+
+.dropzonePreview {
+  position: relative;
+  display: block;
+  height: min(48vh, 420px);
+  min-height: 320px;
+}
+
+.dropzonePreview .previewFrame {
+  height: 100%;
+  min-height: 320px;
+  margin: 0;
+  border: 0;
+  border-radius: 18px;
 }
 
 .previewFrame img,
@@ -232,6 +222,158 @@
   object-fit: contain;
 }
 
+.dropzonePreview .previewFrame img,
+.dropzonePreview .previewFrame video {
+  height: 100%;
+  max-height: 420px;
+}
+
+.previewMeta {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  max-width: calc(100% - 28px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-surface) 82%, transparent);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(14px);
+}
+
+.previewMeta strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: 14px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.previewMeta span {
+  flex: 0 0 auto;
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.webcamStage {
+  position: relative;
+  min-height: 360px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 50% 18%, color-mix(in srgb, var(--color-primary) 12%, transparent), transparent 38%),
+    var(--color-surface-soft);
+}
+
+.webcamVideo {
+  display: block;
+  width: 100%;
+  height: min(58vh, 560px);
+  min-height: 360px;
+  object-fit: contain;
+}
+
+.webcamStageExpanded {
+  position: fixed;
+  inset: 22px;
+  z-index: 100;
+  border-radius: 28px;
+  background: color-mix(in srgb, var(--color-background) 92%, black 8%);
+  box-shadow: 0 24px 80px color-mix(in srgb, black 42%, transparent);
+}
+
+.webcamStageExpanded .webcamVideo {
+  height: 100%;
+  max-height: none;
+}
+
+.webcamEmpty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  padding: 26px;
+  color: var(--color-text);
+  text-align: center;
+}
+
+.webcamEmpty strong {
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.webcamEmpty span,
+.webcamNotice {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.65;
+}
+
+.webcamEmpty :global(.icon) {
+  color: var(--color-primary);
+}
+
+.liveBadge,
+.webcamExpandButton,
+.webcamCloseButton {
+  position: absolute;
+  border: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-surface) 88%, transparent);
+  color: var(--color-text);
+  font: inherit;
+  font-weight: 900;
+}
+
+.liveBadge {
+  top: 14px;
+  left: 14px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  color: var(--color-primary);
+  font-size: 12px;
+  letter-spacing: .08em;
+}
+
+.webcamExpandButton {
+  right: 14px;
+  top: 14px;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.webcamCloseButton {
+  right: 18px;
+  top: 18px;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.webcamNotice {
+  margin: 16px 0 0;
+}
+
+.hiddenCanvas {
+  display: none;
+}
+
 .overlay {
   position: absolute;
   inset: 0;
@@ -240,21 +382,33 @@
 
 .overlayBox {
   position: absolute;
-  border: 2px solid var(--color-primary);
-  border-radius: 12px;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-surface) 66%, transparent), 0 10px 22px color-mix(in srgb, var(--color-primary) 18%, transparent);
+  border: 2px solid color-mix(in srgb, var(--color-primary) 86%, var(--color-surface));
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--color-primary) 8%, transparent), transparent 48%),
+    color-mix(in srgb, var(--color-primary) 5%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--color-surface) 52%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--color-primary) 18%, transparent),
+    0 14px 28px color-mix(in srgb, var(--color-primary) 16%, transparent);
 }
 
 .overlayBox b {
   position: absolute;
-  left: 8px;
-  top: 8px;
-  padding: 5px 8px;
+  left: 10px;
+  top: 10px;
+  max-width: calc(100% - 20px);
+  overflow: hidden;
+  padding: 6px 9px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--color-surface) 88%, transparent);
+  background: color-mix(in srgb, var(--color-surface) 92%, transparent);
   color: var(--color-primary);
   font-size: 12px;
+  line-height: 1;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--color-primary) 13%, transparent);
+  backdrop-filter: blur(10px);
 }
 
 .durationBadge {
@@ -308,8 +462,8 @@
 
 .summaryCards span,
 .resultList span,
-.historyGrid em,
-.historyGrid b,
+.historyDetailButton em,
+.historyDetailButton b,
 .notice {
   color: var(--color-text-muted);
 }
@@ -420,27 +574,129 @@
   gap: 12px;
 }
 
-.historyGrid button {
+.historyActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.historyActions span {
+  padding: 8px 11px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface-soft);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.historyActions > button,
+.historyDeleteButton {
+  font: inherit;
+  cursor: pointer;
+}
+
+.historyActions > button {
+  min-height: 36px;
+  padding: 0 13px;
+  border: 1px solid color-mix(in srgb, var(--color-error) 30%, var(--color-border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-error) 8%, var(--color-surface));
+  color: var(--color-error);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.historyPager {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.historyPager button {
+  width: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-color: var(--color-border);
+  background: var(--color-surface-soft);
+  color: var(--color-text);
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.historyPager button:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+
+.historyCard {
+  position: relative;
   min-width: 0;
-  padding: 16px;
   border: 1px solid var(--color-border);
   border-radius: 18px;
   background: var(--color-surface-soft);
-  text-align: left;
-  font: inherit;
-  cursor: pointer;
+  overflow: hidden;
   transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease;
 }
 
-.historyGrid button:hover,
-.historyGrid button:focus-visible {
+.historyCard:hover,
+.historyCard:focus-within {
   border-color: var(--color-primary);
   box-shadow: 0 12px 28px color-mix(in srgb, var(--color-primary) 12%, transparent);
   transform: translateY(-1px);
-  outline: 0;
 }
 
-.historyGrid span {
+.historyDetailButton {
+  width: 100%;
+  min-height: 100%;
+  padding: 16px 58px 16px 16px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.historyDetailButton:focus-visible,
+.historyDeleteButton:focus-visible,
+.historyActions > button:focus-visible,
+.historyPager button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 18%, transparent);
+}
+
+.historyDeleteButton {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--color-error) 28%, var(--color-border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-error) 8%, var(--color-surface));
+  color: var(--color-error);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.historyDeleteButton:hover:not(:disabled),
+.historyActions > button:hover:not(:disabled) {
+  border-color: var(--color-error);
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--color-error) 12%, transparent);
+}
+
+.historyDetailButton:disabled,
+.historyDeleteButton:disabled,
+.historyActions > button:disabled,
+.historyPager button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+.historyDetailButton span {
   display: inline-flex;
   margin-bottom: 10px;
   color: var(--color-primary);
@@ -448,18 +704,18 @@
   font-weight: 900;
 }
 
-.historyGrid strong,
-.historyGrid em,
-.historyGrid b {
+.historyDetailButton strong,
+.historyDetailButton em,
+.historyDetailButton b {
   display: block;
 }
 
-.historyGrid strong {
+.historyDetailButton strong {
   color: var(--color-text);
 }
 
-.historyGrid em,
-.historyGrid b {
+.historyDetailButton em,
+.historyDetailButton b {
   margin-top: 6px;
   font-size: 12px;
   font-style: normal;
@@ -483,6 +739,7 @@
   .workbench,
   .history,
   .uploadPanel,
+  .webcamPanel,
   .resultPanel {
     border-radius: 22px;
   }
@@ -503,6 +760,38 @@
 
   .dropzone {
     min-height: 190px;
+  }
+
+  .dropzoneSelected {
+    min-height: 280px;
+  }
+
+  .dropzonePreview {
+    height: 280px;
+    min-height: 280px;
+  }
+
+  .dropzonePreview .previewFrame {
+    min-height: 280px;
+  }
+
+  .previewMeta {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .webcamStage {
+    min-height: 260px;
+  }
+
+  .webcamVideo {
+    height: 320px;
+    min-height: 260px;
+  }
+
+  .webcamStageExpanded {
+    inset: 10px;
+    border-radius: 22px;
   }
 
   .summaryCards {
