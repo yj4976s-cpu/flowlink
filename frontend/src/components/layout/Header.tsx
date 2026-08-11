@@ -25,6 +25,7 @@ const userNavigation = [
 
 const adminNavigation = [
   { label: "대시보드", href: "/admin" },
+  { label: "운영 지도", href: "/admin/map" },
   { label: "AI 탐지 관리", href: "/admin/detections" },
   { label: "AI 탐지 리포트", href: "/admin/ai-report" },
   { label: "제보 관리", href: "/admin/citizen-reports" },
