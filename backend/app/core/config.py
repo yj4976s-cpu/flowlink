@@ -27,6 +27,17 @@ class Settings(BaseSettings):
     DETECTION_MODEL: str = "yolo11n.pt"
     DETECTION_CONFIDENCE: float = 0.25
     DETECTION_IMGSZ: int = 640
+    CHAT_MODEL_PROVIDER: str = "gemini"
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-3.6-flash"
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-4o-mini"
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
+    COPILOT_TIMEOUT_SECONDS: float = 30.0
+    COPILOT_RATE_LIMIT_WINDOW_SECONDS: int = 60
+    COPILOT_GUEST_RATE_LIMIT: int = 10
+    COPILOT_USER_RATE_LIMIT: int = 30
+    COPILOT_ADMIN_RATE_LIMIT: int = 60
 
     @property
     def auth_cookie_secure(self) -> bool:

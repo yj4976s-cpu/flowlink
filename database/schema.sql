@@ -484,6 +484,9 @@ CREATE TABLE lost_reports (
 
     image_url TEXT,
 
+    colors JSONB NOT NULL DEFAULT '[]'::JSONB
+        CHECK (jsonb_typeof(colors) = 'array' AND jsonb_array_length(colors) <= 3),
+
     status VARCHAR(20) NOT NULL DEFAULT 'OPEN'
         CHECK (
             status IN (
@@ -662,6 +665,31 @@ CREATE TABLE notifications (
 -- 12. 관리자 처리 이력
 -- 분류 수정, 회수, 승인, 반환 등의 기록
 -- =========================================================
+
+CREATE TABLE community_posts (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    category VARCHAR(20) NOT NULL CHECK (category IN ('FIELD_STORY', 'QUESTION', 'EXPERIENCE')),
+    title VARCHAR(120) NOT NULL CHECK (BTRIM(title) <> ''),
+    content TEXT NOT NULL CHECK (BTRIM(content) <> ''),
+    place_name VARCHAR(120), address VARCHAR(255),
+    latitude NUMERIC(9, 6) CHECK (latitude IS NULL OR latitude BETWEEN -90 AND 90),
+    longitude NUMERIC(9, 6) CHECK (longitude IS NULL OR longitude BETWEEN -180 AND 180),
+    image_url TEXT, is_notice BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), deleted_at TIMESTAMPTZ,
+    CHECK ((latitude IS NULL) = (longitude IS NULL))
+);
+
+CREATE TABLE community_comments (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    post_id BIGINT NOT NULL REFERENCES community_posts(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    content TEXT NOT NULL CHECK (BTRIM(content) <> ''),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), deleted_at TIMESTAMPTZ
+);
+
+CREATE INDEX idx_community_posts_feed ON community_posts (is_notice DESC, created_at DESC) WHERE deleted_at IS NULL;
+CREATE INDEX idx_community_comments_post ON community_comments (post_id, created_at) WHERE deleted_at IS NULL;
 
 CREATE TABLE processing_histories (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -877,6 +905,12 @@ CREATE INDEX idx_processing_histories_entity
 
 CREATE INDEX idx_video_jobs_status
     ON video_jobs (status);
+
+CREATE TABLE copilot_conversations (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, public_id VARCHAR(36) NOT NULL UNIQUE, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE, title VARCHAR(120) NOT NULL, context_type VARCHAR(30) NOT NULL DEFAULT 'GENERAL', context_entity_id BIGINT, summary TEXT, summary_updated_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_message_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), deleted_at TIMESTAMPTZ);
+CREATE TABLE copilot_messages (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, conversation_id BIGINT NOT NULL REFERENCES copilot_conversations(id) ON DELETE CASCADE, role VARCHAR(12) NOT NULL CHECK (role IN ('USER','ASSISTANT')), content TEXT NOT NULL, presentation_type VARCHAR(30) NOT NULL DEFAULT 'TEXT', presentation JSONB, client_message_id VARCHAR(64), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(conversation_id,client_message_id));
+CREATE TABLE copilot_message_refs (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, message_id BIGINT NOT NULL REFERENCES copilot_messages(id) ON DELETE CASCADE, ref_type VARCHAR(30) NOT NULL, ref_id BIGINT NOT NULL, UNIQUE(message_id,ref_type,ref_id));
+CREATE INDEX idx_copilot_conversations_user_recent ON copilot_conversations(user_id,last_message_at DESC) WHERE deleted_at IS NULL;
+CREATE INDEX idx_copilot_messages_order ON copilot_messages(conversation_id,id);
 
 
 -- =========================================================

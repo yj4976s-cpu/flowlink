@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, Boolean, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import JSON, BigInteger, Boolean, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -37,6 +37,9 @@ class User(Base):
     detection_events: Mapped[list[DetectionEvent]] = relationship(back_populates="user")
     citizen_reports: Mapped[list[CitizenReport]] = relationship(back_populates="user", foreign_keys="CitizenReport.user_id")
     citizen_sightings: Mapped[list[CitizenSighting]] = relationship(back_populates="user")
+    community_posts: Mapped[list[CommunityPost]] = relationship(back_populates="user")
+    community_comments: Mapped[list[CommunityComment]] = relationship(back_populates="user")
+    copilot_conversations: Mapped[list[CopilotConversation]] = relationship(back_populates="user")
 
 
 class ObjectClass(Base):
@@ -248,6 +251,7 @@ class LostReport(Base):
     lost_from: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     lost_to: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     image_url: Mapped[str | None] = mapped_column(Text)
+    colors: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="OPEN")
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
@@ -322,6 +326,43 @@ class Notification(Base):
     user: Mapped[User] = relationship(back_populates="notifications")
 
 
+class CommunityPost(Base):
+    __tablename__ = "community_posts"
+
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    category: Mapped[str] = mapped_column(String(20), nullable=False)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    place_name: Mapped[str | None] = mapped_column(String(120))
+    address: Mapped[str | None] = mapped_column(String(255))
+    latitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
+    longitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
+    image_url: Mapped[str | None] = mapped_column(Text)
+    is_notice: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+    user: Mapped[User] = relationship(back_populates="community_posts")
+    comments: Mapped[list[CommunityComment]] = relationship(back_populates="post")
+
+
+class CommunityComment(Base):
+    __tablename__ = "community_comments"
+
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    post_id: Mapped[int] = mapped_column(ForeignKey("community_posts.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+    post: Mapped[CommunityPost] = relationship(back_populates="comments")
+    user: Mapped[User] = relationship(back_populates="community_comments")
+
+
 class ProcessingHistory(Base):
     __tablename__ = "processing_histories"
 
@@ -336,3 +377,46 @@ class ProcessingHistory(Base):
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
 
     actor: Mapped[User | None] = relationship()
+
+
+class CopilotConversation(Base):
+    __tablename__ = "copilot_conversations"
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    public_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    context_type: Mapped[str] = mapped_column(String(30), nullable=False, default="GENERAL")
+    context_entity_id: Mapped[int | None] = mapped_column(BigInteger)
+    summary: Mapped[str | None] = mapped_column(Text)
+    summary_updated_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    last_message_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    user: Mapped[User] = relationship(back_populates="copilot_conversations")
+    messages: Mapped[list[CopilotMessage]] = relationship(back_populates="conversation", cascade="all, delete-orphan")
+
+
+class CopilotMessage(Base):
+    __tablename__ = "copilot_messages"
+    __table_args__ = (UniqueConstraint("conversation_id", "client_message_id", name="uq_copilot_message_client"),)
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("copilot_conversations.id", ondelete="CASCADE"), nullable=False)
+    role: Mapped[str] = mapped_column(String(12), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    presentation_type: Mapped[str] = mapped_column(String(30), nullable=False, default="TEXT")
+    presentation: Mapped[dict | None] = mapped_column(JSON)
+    client_message_id: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    conversation: Mapped[CopilotConversation] = relationship(back_populates="messages")
+    refs: Mapped[list[CopilotMessageRef]] = relationship(back_populates="message", cascade="all, delete-orphan")
+
+
+class CopilotMessageRef(Base):
+    __tablename__ = "copilot_message_refs"
+    __table_args__ = (UniqueConstraint("message_id", "ref_type", "ref_id", name="uq_copilot_message_ref"),)
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey("copilot_messages.id", ondelete="CASCADE"), nullable=False)
+    ref_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    ref_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    message: Mapped[CopilotMessage] = relationship(back_populates="refs")

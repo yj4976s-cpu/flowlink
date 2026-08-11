@@ -1,0 +1,1933 @@
+.copilotRoot {
+  position: fixed;
+  z-index: 170;
+  right: 24px;
+  bottom: max(24px, env(safe-area-inset-bottom));
+  color: var(--color-text);
+}
+.launcher {
+  position: relative;
+  width: 58px;
+  height: 58px;
+  overflow: visible;
+  padding: 0;
+  border: 1px solid
+    color-mix(in srgb, var(--color-primary) 52%, var(--color-border));
+  border-radius: 20px;
+  background: var(--color-primary);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 12px 28px
+    color-mix(in srgb, var(--color-primary) 28%, transparent);
+  cursor: pointer;
+  transition:
+    transform 0.16s ease,
+    box-shadow 0.2s ease,
+    border-radius 0.2s ease;
+}
+.launcher:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 17px 34px
+    color-mix(in srgb, var(--color-primary) 34%, transparent);
+}
+.launcher:active {
+  transform: scale(0.94);
+  box-shadow: 0 7px 16px
+    color-mix(in srgb, var(--color-primary) 24%, transparent);
+}
+.copilotRoot[data-open] .launcher {
+  border-radius: 50%;
+}
+.beaconIcon {
+  width: 34px;
+  height: 34px;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.beaconWaves,
+.beaconSpark,
+.beaconClose {
+  transform-origin: center;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+.beaconSpark {
+  fill: currentColor;
+  stroke: none;
+}
+.beaconClose {
+  opacity: 0;
+  transform: rotate(-35deg) scale(0.7);
+}
+.copilotRoot[data-open] .launcher .beaconWaves,
+.copilotRoot[data-open] .launcher .beaconSpark {
+  opacity: 0;
+  transform: scale(0.7);
+}
+.copilotRoot[data-open] .launcher .beaconClose {
+  opacity: 1;
+  transform: none;
+}
+.beaconRippleOne,
+.beaconRippleTwo {
+  pointer-events: none;
+  opacity: 0;
+}
+.launcher:active .beaconRippleOne,
+.launcher:active .beaconRippleTwo {
+  animation: waterRipple 0.28s ease-out;
+}
+.launcher:hover .beaconWaves {
+  stroke-dasharray: 32 12;
+  animation: flowTrace 0.55s ease-out 1;
+}
+.badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border: 2px solid var(--color-surface);
+  border-radius: 999px;
+  background: var(--color-accent);
+  color: var(--color-surface);
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  box-shadow: 0 4px 10px
+    color-mix(in srgb, var(--color-accent) 28%, transparent);
+  animation: perimeterOnce 0.7s ease-out 1;
+}
+.tooltip {
+  position: absolute;
+  right: 0;
+  bottom: 70px;
+  width: max-content;
+  max-width: 260px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface-elevated);
+  box-shadow: var(--shadow-card);
+  display: grid;
+  gap: 2px;
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+.tooltip strong {
+  font-size: 11px;
+}
+.tooltip span {
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+.launcher:hover + .tooltip {
+  opacity: 0;
+}
+.copilotRoot:not([data-open]) .tooltip:has(+ .launcher:hover),
+.copilotRoot:not([data-open]) .tooltip:has(+ .launcher:focus-visible) {
+  opacity: 1;
+  transform: none;
+}
+.panel {
+  position: absolute;
+  right: 0;
+  bottom: 72px;
+  width: min(430px, calc(100vw - 48px));
+  height: min(680px, calc(100dvh - 112px));
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 24px;
+  background: var(--color-surface-elevated);
+  box-shadow: var(--shadow-floating);
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  transform-origin: right bottom;
+  animation: panelOpen 0.26s ease-out both;
+}
+.panel > header {
+  min-height: 76px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+.headerMark {
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  display: grid;
+  place-items: center;
+}
+.headerMark .beaconIcon {
+  width: 28px;
+  height: 28px;
+}
+.panel > header > div:nth-child(2) {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 3px;
+}
+.panel > header strong {
+  font-size: 14px;
+}
+.panel > header span {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.panel > header > button {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--color-text-muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.panel > header > button:hover {
+  background: var(--color-surface-soft);
+  color: var(--color-text);
+}
+.messages {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 18px 16px 12px;
+  scroll-behavior: smooth;
+}
+.welcome {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+}
+.welcome > span {
+  color: var(--color-primary);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+.welcome h3 {
+  margin: 9px 0 7px;
+  font-size: 20px;
+  line-height: 1.35;
+}
+.welcome p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.7;
+  word-break: keep-all;
+}
+.welcome > a {
+  margin-top: 14px;
+  color: var(--color-primary);
+  font-size: 11px;
+  font-weight: 850;
+}
+.welcome > div {
+  width: 100%;
+  margin-top: 22px;
+  display: grid;
+  gap: 7px;
+}
+.welcome button {
+  min-height: 44px;
+  padding: 0 13px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-align: left;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+.welcome button:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+.message {
+  margin-bottom: 18px;
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+.message > span {
+  color: var(--color-text-muted);
+  font-size: 9px;
+  font-weight: 800;
+}
+.message > p {
+  max-width: 92%;
+  margin: 0;
+  padding: 11px 13px;
+  border-radius: 5px 15px 15px;
+  background: var(--color-surface-soft);
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.message[data-role="user"] {
+  justify-items: end;
+}
+.message[data-role="user"] > p {
+  border-radius: 15px 5px 15px 15px;
+  background: var(--color-primary);
+  color: #fff;
+}
+.message[data-role="system"] > p {
+  border: 1px solid
+    color-mix(in srgb, var(--color-error) 35%, var(--color-border));
+  background: color-mix(in srgb, var(--color-error) 7%, var(--color-surface));
+  color: var(--color-error);
+}
+.dataCard {
+  width: 100%;
+  margin-top: 3px;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  background: var(--color-surface);
+}
+.dataCard > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.dataCard > div span {
+  color: var(--color-primary);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+}
+.dataCard[data-type="MATCH"] > div span,
+.dataCard[data-type="MATCH"] > div strong {
+  color: var(--color-accent);
+}
+.dataCard > div strong {
+  color: var(--color-primary);
+  font-size: 20px;
+}
+.dataCard h4 {
+  margin: 9px 0 4px;
+  font-size: 13px;
+}
+.dataCard p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  line-height: 1.55;
+}
+.dataCard b {
+  display: inline-block;
+  margin-top: 8px;
+  color: var(--color-primary);
+  font-size: 10px;
+}
+.dataCard ul {
+  margin: 10px 0 0;
+  padding: 9px 0 0 17px;
+  border-top: 1px solid var(--color-border);
+}
+.dataCard li {
+  margin-block: 4px;
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+.dataCard > small {
+  display: block;
+  margin-top: 9px;
+  color: var(--color-text-muted);
+  font-size: 9px;
+}
+.dataCard[data-type="EVIDENCE"] {
+  border-left: 2px solid var(--color-secondary);
+}
+.dataCard[data-type="EVIDENCE"] > div span {
+  color: var(--color-secondary);
+}
+.dataCard[data-type="TIMELINE"] ul {
+  padding-left: 0;
+  list-style: none;
+  counter-reset: flow-step;
+}
+.dataCard[data-type="TIMELINE"] li {
+  position: relative;
+  padding-left: 23px;
+  counter-increment: flow-step;
+}
+.dataCard[data-type="TIMELINE"] li::before {
+  content: counter(flow-step, decimal-leading-zero);
+  position: absolute;
+  left: 0;
+  color: var(--color-primary);
+  font-size: 9px;
+  font-weight: 850;
+}
+.actions {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.actions button {
+  max-width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid
+    color-mix(in srgb, var(--color-primary) 38%, var(--color-border));
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-primary);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.actions button:hover {
+  background: var(--color-primary-soft);
+}
+.actions button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.actionLabel {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.actionChevron {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: currentColor;
+  transition: transform 0.16s ease;
+}
+.actions button:hover:not(:disabled) .actionChevron {
+  transform: translateX(2px);
+}
+.typing {
+  width: 100%;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--color-text-muted);
+}
+.typing svg {
+  width: 50px;
+  fill: none;
+  stroke: var(--color-secondary);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 18 70;
+  animation: typingFlow 1.2s linear infinite;
+}
+.typing small {
+  font-size: 9px;
+}
+.input {
+  padding: 12px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface-elevated);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  align-items: end;
+  gap: 8px;
+}
+.input textarea {
+  width: 100%;
+  min-height: 44px;
+  max-height: 112px;
+  resize: vertical;
+  padding: 12px 13px;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface-soft);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.55;
+  outline: 0;
+}
+.input textarea:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+.input button {
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 0;
+  border-radius: 13px;
+  background: var(--color-primary);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.input button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+@keyframes panelOpen {
+  from {
+    opacity: 0;
+    transform: translateY(11px) scale(0.975);
+  }
+}
+@keyframes waterRipple {
+  from {
+    opacity: 0.6;
+    transform: scale(0.5);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.45);
+  }
+}
+@keyframes flowTrace {
+  to {
+    stroke-dashoffset: -44;
+  }
+}
+@keyframes typingFlow {
+  to {
+    stroke-dashoffset: -88;
+  }
+}
+@keyframes perimeterOnce {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  55% {
+    transform: scale(1.18);
+  }
+  100% {
+    transform: none;
+    opacity: 1;
+  }
+}
+@media (max-width: 600px) {
+  .copilotRoot {
+    right: 16px;
+    bottom: max(16px, env(safe-area-inset-bottom));
+  }
+  .launcher {
+    width: 54px;
+    height: 54px;
+    border-radius: 18px;
+  }
+  .panel {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100dvh;
+    border: 0;
+    border-radius: 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .panel > header {
+    padding-top: max(14px, env(safe-area-inset-top));
+  }
+  .messages {
+    padding-inline: 14px;
+  }
+  .tooltip {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .panel {
+    animation: panelOpen 0.08s linear both;
+  }
+  .beaconWaves,
+  .beaconSpark,
+  .beaconClose,
+  .launcher {
+    transition-duration: 0.01ms;
+  }
+  .beaconRippleOne,
+  .beaconRippleTwo {
+    display: none;
+  }
+  .typing svg {
+    animation: none;
+    stroke-dasharray: none;
+  }
+  .badge {
+    animation: none;
+  }
+}
+
+/* Contextual conversation starters and follow-ups */
+.welcome {
+  justify-content: flex-start;
+}
+.promptSection {
+  width: 100%;
+  margin-top: 22px;
+}
+.promptSection + .promptSection {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--color-border);
+}
+.promptSection h4,
+.followUps h4 {
+  margin: 0 0 9px;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+}
+.welcome .primaryPrompt {
+  width: 100%;
+  min-height: 62px;
+  padding: 11px 13px;
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 42%,
+    var(--color-border)
+  );
+  background: var(--color-primary-soft);
+  display: grid;
+  gap: 4px;
+}
+.primaryPrompt strong {
+  color: var(--color-primary);
+  font-size: 12px;
+}
+.primaryPrompt span {
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+.promptRows,
+.exampleRows {
+  margin-top: 5px;
+  display: grid;
+}
+.welcome .promptRows button,
+.welcome .exampleRows button,
+.exampleTray button,
+.followUps button {
+  min-height: 38px;
+  padding: 7px 4px;
+  border: 0;
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--color-border) 72%, transparent);
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-text);
+  text-align: left;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.45;
+  cursor: pointer;
+  transition:
+    color 0.14s ease,
+    background 0.14s ease,
+    padding 0.14s ease;
+}
+.welcome .promptRows button:hover,
+.welcome .exampleRows button:hover,
+.exampleTray button:hover,
+.followUps button:hover {
+  padding-inline: 7px;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+.welcome button:active,
+.exampleTray button:active,
+.followUps button:active {
+  transform: scale(0.98);
+}
+.welcome button:focus-visible,
+.exampleToggle button:focus-visible,
+.exampleTray button:focus-visible,
+.followUps button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.welcome button:disabled,
+.exampleToggle button:disabled,
+.exampleTray button:disabled,
+.followUps button:disabled,
+.actions button:disabled {
+  opacity: 0.68;
+  cursor: wait;
+}
+.exampleToggle {
+  margin: 0 0 16px;
+  display: grid;
+  justify-items: start;
+}
+.exampleToggle > button {
+  min-height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 750;
+  cursor: pointer;
+}
+.exampleToggle > button[aria-expanded="true"] {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+.exampleTray {
+  width: 100%;
+  margin-top: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 13px;
+  background: var(--color-surface);
+  display: grid;
+}
+.followUps {
+  width: 100%;
+  margin-top: 7px;
+  padding: 12px 13px;
+  border-left: 2px solid
+    color-mix(in srgb, var(--color-primary) 46%, var(--color-border));
+  background: color-mix(in srgb, var(--color-primary-soft) 32%, transparent);
+}
+.followUps button {
+  width: 100%;
+  min-height: 36px;
+}
+@media (max-width: 600px) {
+  .promptSection {
+    margin-top: 18px;
+  }
+  .welcome .promptRows button,
+  .welcome .exampleRows button,
+  .exampleTray button,
+  .followUps button {
+    min-height: 42px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .promptRows button,
+  .exampleRows button,
+  .exampleTray button,
+  .followUps button,
+  .actionChevron {
+    transition-duration: 0.01ms;
+  }
+  .actions button:hover .actionChevron {
+    transform: none;
+  }
+}
+
+/* Intent-first guest home and context-first personal home */
+.intentSection {
+  width: 100%;
+  margin-top: 24px;
+}
+.intentSection h4 {
+  margin: 0 0 10px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+.intentSection > div {
+  display: grid;
+  gap: 8px;
+}
+.intentSection > div > button {
+  width: 100%;
+  min-height: 64px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.18s ease,
+    background 0.18s ease;
+}
+.intentSection > div > button:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+.intentSection > div > button:focus-visible,
+.intentQuestions button:focus-visible,
+.singleQuestion:focus-visible,
+.contextBrief button:focus-visible,
+.disclosure:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.intentSection strong {
+  font-size: 14px;
+  line-height: 1.45;
+}
+.intentSection span {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.intentQuestions {
+  width: 100%;
+}
+.intentQuestions h3 {
+  margin-top: 14px;
+}
+.backButton {
+  min-height: 34px !important;
+  padding: 0 10px !important;
+  border-radius: 9px !important;
+  color: var(--color-primary) !important;
+}
+.intentQuestions > div {
+  margin-top: 15px;
+  display: grid;
+}
+.intentQuestions > div button,
+.disclosurePanel button {
+  min-height: 46px;
+  padding: 10px 5px;
+  border: 0;
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 680;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+}
+.intentQuestions > div button:hover,
+.disclosurePanel button:hover {
+  padding-inline: 9px;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+.singleQuestion {
+  margin-top: 17px;
+  min-height: 40px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: var(--color-primary) !important;
+  font-size: 13px !important;
+}
+.contextBrief {
+  width: 100%;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid
+    color-mix(in srgb, var(--color-primary) 24%, var(--color-border));
+  border-radius: 17px;
+  background: color-mix(
+    in srgb,
+    var(--color-primary-soft) 38%,
+    var(--color-surface)
+  );
+}
+.contextBrief small {
+  color: var(--color-primary);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+}
+.contextBrief h4 {
+  margin: 7px 0 12px;
+  font-size: 17px;
+}
+.contextBrief > p {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.55;
+}
+.contextBrief dl {
+  margin: 13px 0 0;
+  display: grid;
+  gap: 8px;
+}
+.contextBrief dl div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.contextBrief dt {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+.contextBrief dd {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 800;
+  text-align: right;
+}
+.contextBrief > button {
+  margin-top: 15px;
+  min-height: 42px;
+  padding: 0 13px;
+  border: 1px solid
+    color-mix(in srgb, var(--color-primary) 42%, var(--color-border));
+  border-radius: 11px;
+  background: var(--color-surface);
+  color: var(--color-primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.briefLoading {
+  color: var(--color-text-muted) !important;
+  font-weight: 600 !important;
+}
+.contextActions {
+  margin-top: 11px !important;
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.contextActions button {
+  min-width: 0;
+  justify-content: center;
+  padding-inline: 8px;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.contextActions .actionLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.compactExamples {
+  width: 100%;
+  margin-top: 9px;
+}
+.disclosure {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 5px;
+  border: 0;
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 750;
+  cursor: pointer;
+}
+.disclosure[aria-expanded="true"] {
+  color: var(--color-primary);
+}
+.disclosure svg {
+  transition: transform 0.2s ease;
+}
+.disclosure[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+.disclosurePanel {
+  display: grid;
+  animation: disclosureIn 0.2s ease both;
+}
+.disclosurePanel button {
+  font-size: 14px;
+}
+.welcome .primaryPrompt {
+  font-size: 14px;
+}
+.primaryPrompt strong {
+  font-size: 14px;
+  line-height: 1.45;
+}
+.primaryPrompt span {
+  font-size: 12px;
+}
+@keyframes disclosureIn {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+@media (max-width: 430px) {
+  .contextActions {
+    grid-template-columns: 1fr;
+  }
+  .contextActions button {
+    justify-content: flex-start;
+    min-height: 40px;
+  }
+  .intentSection > div > button {
+    min-height: 68px;
+  }
+  .intentQuestions > div button,
+  .disclosurePanel button {
+    min-height: 48px;
+    font-size: 14px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .intentSection > div > button,
+  .disclosure svg {
+    transition: none;
+  }
+  .disclosurePanel {
+    animation: none;
+  }
+}
+
+/* Operations Copilot */
+.operationsHome > span {
+  font-size: 10px;
+}
+.operationsHome > h3 {
+  margin-top: 10px;
+  font-size: 21px;
+  font-weight: 700;
+}
+.operationsSummary {
+  color: var(--color-text) !important;
+  font-size: 14px !important;
+  line-height: 1.6 !important;
+}
+.metricStrip {
+  width: 100%;
+  margin: 17px 0 0;
+  padding: 12px 0;
+  border-block: 1px solid var(--color-border);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.metricStrip > div {
+  min-width: 0;
+  padding: 0 10px;
+  border-right: 1px solid var(--color-border);
+  display: grid;
+  gap: 4px;
+}
+.metricStrip > div:first-child {
+  padding-left: 0;
+}
+.metricStrip > div:last-child {
+  padding-right: 0;
+  border-right: 0;
+}
+.metricStrip dt {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.metricStrip dd {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 20px;
+  font-weight: 750;
+}
+.metricStrip > div:first-child dd {
+  color: var(--color-accent);
+}
+.prioritySection {
+  width: 100%;
+  margin-top: 20px;
+}
+.prioritySection > h4 {
+  margin: 0 0 9px;
+  font-size: 14px;
+}
+.prioritySection ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+.prioritySection li {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-left: 2px solid
+    color-mix(in srgb, var(--color-accent) 64%, var(--color-border));
+  border-radius: 13px;
+  background: var(--color-surface);
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+}
+.prioritySection li > span {
+  align-self: start;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+.prioritySection li strong {
+  font-size: 14px;
+  line-height: 1.45;
+}
+.prioritySection li p {
+  margin: 3px 0 0;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.prioritySection li button,
+.priorityEmpty button {
+  min-height: 34px;
+  padding: 0 9px;
+  border: 1px solid
+    color-mix(in srgb, var(--color-primary) 38%, var(--color-border));
+  border-radius: 9px;
+  background: var(--color-surface-soft);
+  color: var(--color-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+}
+.prioritySection button:hover,
+.operationsAnalyze:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+.prioritySection button:focus-visible,
+.operationsAnalyze:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.priorityEmpty {
+  padding: 14px;
+  border: 1px dashed var(--color-border);
+  border-radius: 13px;
+  background: var(--color-surface-soft);
+}
+.priorityEmpty p {
+  margin: 0 0 11px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.operationsAnalyze {
+  margin-top: 12px;
+  min-height: 42px;
+  padding: 0 13px;
+  border: 1px solid
+    color-mix(in srgb, var(--color-primary) 42%, var(--color-border));
+  border-radius: 11px;
+  background: var(--color-surface);
+  color: var(--color-primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.operationsLoading {
+  width: 100%;
+  margin-top: 17px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.operationsLoading i {
+  height: 58px;
+  border-radius: 11px;
+  background: var(--color-surface-soft);
+  animation: operationsLoading 1.1s ease-in-out infinite alternate;
+}
+.operationsError {
+  width: 100%;
+  margin-top: 15px;
+  padding: 13px;
+  border: 1px solid
+    color-mix(in srgb, var(--color-error) 32%, var(--color-border));
+  border-radius: 12px;
+  background: var(--color-surface-soft);
+}
+.operationsError strong {
+  font-size: 13px;
+}
+.operationsError p {
+  margin-top: 4px;
+  font-size: 12px;
+}
+.operationsHome .contextActions {
+  margin-top: 14px !important;
+}
+.operationsHome .compactExamples {
+  margin-top: 12px;
+}
+.operationsHome .disclosure,
+.operationsHome .disclosurePanel button {
+  font-size: 14px;
+}
+.panel > header > div:nth-child(2) > strong {
+  font-size: 16px;
+}
+.panel > header > div:nth-child(2) > span {
+  font-size: 11px;
+}
+@keyframes operationsLoading {
+  to {
+    opacity: 0.48;
+  }
+}
+@media (max-width: 430px) {
+  .metricStrip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 12px;
+  }
+  .metricStrip > div:nth-child(2) {
+    border-right: 0;
+  }
+  .metricStrip > div:nth-child(3) {
+    padding-left: 0;
+  }
+  .prioritySection li {
+    grid-template-columns: 24px minmax(0, 1fr);
+  }
+  .prioritySection li button {
+    grid-column: 2;
+    justify-self: start;
+  }
+  .operationsHome > h3 {
+    font-size: 20px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .operationsLoading i {
+    animation: none;
+  }
+}
+
+/* Floating AI Observation Bot */
+.launcher {
+  overflow: hidden;
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 42%,
+    var(--color-border)
+  );
+  background: var(--color-surface-elevated);
+  color: var(--color-primary);
+}
+.launcher:hover .botVisor {
+  filter: brightness(1.18);
+}
+.launcher:active .observerBot {
+  transform: translateY(2px) scale(0.96);
+}
+.observerBot {
+  width: 48px;
+  height: 48px;
+  overflow: visible;
+  transition: transform 0.18s ease;
+}
+.botBody {
+  fill: var(--color-surface-soft);
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+.botAntenna,
+.botWaterline {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+}
+.botWaterline {
+  opacity: 0.42;
+}
+.botReflection {
+  fill: color-mix(in srgb, var(--color-primary) 18%, transparent);
+}
+.botVisorFrame {
+  fill: color-mix(in srgb, var(--color-text) 84%, var(--color-surface));
+  stroke: color-mix(in srgb, var(--color-primary) 48%, var(--color-border));
+  stroke-width: 1;
+}
+.botVisor,
+.botScan {
+  fill: none;
+  stroke: var(--color-secondary);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+.botScan {
+  stroke: var(--color-accent);
+  stroke-dasharray: 3 9;
+  opacity: 0;
+}
+.launcher:active .botScan {
+  opacity: 1;
+  animation: observerScan 0.26s ease-out 1;
+}
+.observerBot[data-checking] .botScan {
+  opacity: 1;
+  animation: observerScan 0.72s ease-in-out infinite;
+}
+.headerMark .observerBot {
+  width: 34px;
+  height: 34px;
+}
+.typing .observerBot {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+}
+.typing .botScan {
+  opacity: 1;
+  animation: observerScan 0.72s ease-in-out infinite;
+}
+.typing svg {
+  fill: initial;
+  stroke: initial;
+  stroke-width: initial;
+  stroke-dasharray: initial;
+  animation: none;
+}
+.copilotRoot[data-open] .launcher {
+  border-radius: 20px;
+}
+.badge {
+  border-color: var(--color-surface-elevated);
+  color: var(--color-text);
+}
+@keyframes observerScan {
+  from {
+    stroke-dashoffset: 12;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .observerBot {
+    transition: none;
+  }
+  .launcher:active .observerBot {
+    transform: none;
+  }
+  .launcher:active .botScan,
+  .observerBot[data-checking] .botScan,
+  .typing .botScan {
+    animation: none;
+    opacity: 0.75;
+  }
+}
+
+/* Flow Memory */
+.memoryActions {
+  display: flex !important;
+  flex: 0 0 auto !important;
+  gap: 4px !important;
+}
+.memoryActions button {
+  width: auto !important;
+  height: 30px !important;
+  padding: 0 7px !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: 9px !important;
+  font-size: 9px !important;
+  font-weight: 800 !important;
+  white-space: nowrap;
+}
+.memoryActions button[aria-pressed="true"] {
+  border-color: var(--color-primary) !important;
+  background: var(--color-primary-soft) !important;
+  color: var(--color-primary) !important;
+}
+.memoryPanel {
+  display: grid;
+  gap: 16px;
+}
+.memoryPanel ~ .welcome {
+  display: none;
+}
+.memoryPanel > div > span {
+  color: var(--color-primary);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+.memoryPanel h3 {
+  margin: 7px 0 4px;
+  font-size: 20px;
+}
+.memoryPanel p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.memoryPanel ul {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  list-style: none;
+}
+.memoryPanel li {
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+.resumeButton {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  cursor: pointer;
+}
+.resumeButton strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.resumeButton span {
+  color: var(--color-text-muted);
+  font-size: 9px;
+}
+.memoryPanel li > div {
+  display: flex;
+  gap: 3px;
+}
+.memoryPanel li > div button,
+.memoryPanel form button {
+  padding: 0 5px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 9px;
+  cursor: pointer;
+}
+.memoryPanel li > div button:last-child {
+  color: var(--color-error);
+}
+.memoryPanel form {
+  display: flex;
+  gap: 5px;
+}
+.memoryPanel input {
+  min-width: 0;
+  width: 100%;
+  padding: 7px;
+  border: 1px solid var(--color-primary);
+  border-radius: 8px;
+  background: var(--color-surface-soft);
+  color: var(--color-text);
+}
+.memoryEmpty {
+  padding: 18px;
+  border: 1px dashed var(--color-border);
+  border-radius: 14px;
+  text-align: center;
+}
+.confirmBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 190;
+  background: color-mix(in srgb, #111 38%, transparent);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+.confirmDialog {
+  width: min(360px, 100%);
+  padding: 22px;
+  border: 1px solid var(--color-border);
+  border-radius: 18px;
+  background: var(--color-surface-elevated);
+  box-shadow: var(--shadow-floating);
+}
+.confirmDialog h3 {
+  margin: 0 0 8px;
+  font-size: 17px;
+}
+.confirmDialog p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.confirmDialog > div {
+  margin-top: 18px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+.confirmDialog button {
+  min-height: 38px;
+  padding: 0 13px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: 800;
+  cursor: pointer;
+}
+.confirmDialog button:last-child {
+  border-color: var(--color-error);
+  background: var(--color-error);
+  color: #fff;
+}
+@media (max-width: 600px) {
+  .memoryActions button {
+    min-height: 34px !important;
+  }
+  .memoryPanel li {
+    padding: 12px;
+  }
+  .confirmDialog {
+    width: 100%;
+  }
+}
+
+/* Conversation utility and in-panel history */
+.contextLine {
+  min-width: 0;
+  min-height: 28px;
+  padding: 5px 16px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-soft);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.contextLine span {
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+.contextLine strong {
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conversationUtility {
+  min-height: 52px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-elevated);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.conversationUtility > button {
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 750;
+  cursor: pointer;
+}
+.newConversationButton {
+  border: 1px solid
+    color-mix(in srgb, var(--color-primary) 36%, var(--color-border));
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+.historyButton {
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.historyButton[aria-pressed="true"] {
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 44%,
+    var(--color-border)
+  );
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+.historyButton small {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+.conversationUtility > button:hover {
+  border-color: var(--color-primary);
+}
+.conversationUtility > button:focus-visible,
+.historyHeading > button:focus-visible,
+.historyGroups button:focus-visible,
+.historyState button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.historyViewActive {
+  padding-top: 14px;
+  animation: historyViewIn 0.18s ease both;
+}
+.memoryPanel {
+  min-height: 100%;
+  display: block;
+}
+.historyHeading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.historyHeading > button {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 11px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.historyHeading h3 {
+  margin: 0;
+  font-size: 20px;
+}
+.historyHeading p {
+  margin-top: 3px;
+  font-size: 12px;
+}
+.historySearch {
+  min-height: 44px;
+  margin-top: 16px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface-soft);
+  color: var(--color-text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.historySearch:focus-within {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-soft);
+}
+.historySearch input {
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+}
+.historyGroups {
+  margin-top: 17px;
+  display: grid;
+  gap: 17px;
+}
+.historyGroups section > h4 {
+  margin: 0 0 7px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+.historyGroups ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 7px;
+}
+.historyGroups li {
+  position: relative;
+  min-width: 0;
+  min-height: 64px;
+  padding: 10px 88px 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 13px;
+  background: var(--color-surface);
+}
+.historyGroups li[data-current="true"] {
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 42%,
+    var(--color-border)
+  );
+  background: color-mix(
+    in srgb,
+    var(--color-primary-soft) 44%,
+    var(--color-surface)
+  );
+}
+.resumeButton {
+  width: 100%;
+  min-height: 42px;
+}
+.resumeButton strong {
+  font-size: 14px;
+}
+.resumeButton span {
+  font-size: 11px;
+}
+.conversationMenu {
+  position: absolute;
+  top: 10px;
+  right: 8px;
+}
+.conversationMenu > button {
+  min-width: 68px;
+  height: 34px;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  background: var(--color-surface-soft);
+  color: var(--color-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.conversationMenu > button:hover,
+.conversationMenu > button[aria-expanded="true"] {
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 38%,
+    var(--color-border)
+  );
+  background: color-mix(
+    in srgb,
+    var(--color-primary-soft) 55%,
+    var(--color-surface)
+  );
+  color: var(--color-text);
+}
+.conversationMenu > button:active {
+  transform: translateY(1px);
+}
+.conversationMenu > button:focus-visible,
+.conversationMenu > div button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--color-primary) 34%, transparent);
+  outline-offset: 2px;
+}
+.conversationMenu > button[aria-expanded="true"] :global(.icon) {
+  transform: rotate(180deg);
+}
+.conversationMenu > div {
+  position: absolute;
+  z-index: 4;
+  top: 39px;
+  right: 0;
+  width: 164px;
+  padding: 7px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface-elevated);
+  box-shadow: var(--shadow-floating);
+  display: grid;
+  gap: 3px;
+}
+.conversationMenu > div button {
+  min-height: 44px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  text-align: left;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.conversationMenu > div button:hover {
+  background: var(--color-surface-soft);
+}
+.conversationMenu > div button:last-child {
+  color: var(--color-error);
+}
+.conversationMenu > div button:last-child:hover,
+.conversationMenu > div button:last-child:focus-visible {
+  background: color-mix(in srgb, var(--color-error) 10%, var(--color-surface));
+}
+.historyGroups form {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: -76px;
+}
+.historyGroups form input {
+  min-width: 0;
+  flex: 1;
+  height: 36px;
+  padding: 0 8px;
+  border: 1px solid var(--color-primary);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 13px;
+}
+.historyGroups form button {
+  min-height: 34px;
+  padding: 0 6px;
+  border: 0;
+  background: transparent;
+  color: var(--color-primary);
+  font-size: 11px;
+}
+.historyState {
+  margin-top: 18px;
+  padding: 22px 16px;
+  border: 1px dashed var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface-soft);
+  text-align: center;
+}
+.historyState strong {
+  font-size: 14px;
+}
+.historyState p {
+  margin: 7px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.historyState button {
+  min-height: 38px;
+  margin-top: 13px;
+  padding: 0 12px;
+  border: 1px solid
+    color-mix(in srgb, var(--color-primary) 38%, var(--color-border));
+  border-radius: 9px;
+  background: var(--color-surface);
+  color: var(--color-primary);
+  font-weight: 750;
+  cursor: pointer;
+}
+.historySkeleton {
+  margin-top: 18px;
+  display: grid;
+  gap: 8px;
+}
+.historySkeleton i {
+  height: 64px;
+  border-radius: 13px;
+  background: var(--color-surface-soft);
+  animation: operationsLoading 1.1s ease-in-out infinite alternate;
+}
+@keyframes historyViewIn {
+  from {
+    opacity: 0;
+    transform: translateX(6px);
+  }
+}
+@media (max-width: 430px) {
+  .conversationUtility {
+    min-height: 56px;
+    padding-inline: 10px;
+  }
+  .conversationUtility > button {
+    min-height: 44px;
+    padding-inline: 8px;
+    font-size: 14px;
+  }
+  .contextLine {
+    padding-inline: 14px;
+  }
+  .historyGroups li {
+    min-height: 68px;
+    padding-right: 84px;
+  }
+  .resumeButton strong {
+    white-space: normal;
+    line-height: 1.4;
+  }
+  .conversationMenu > button {
+    min-width: 64px;
+    min-height: 38px;
+    font-size: 13px;
+  }
+  .conversationMenu > div {
+    width: min(164px, calc(100vw - 52px));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .historyViewActive {
+    animation: none;
+  }
+  .historySkeleton i {
+    animation: none;
+  }
+}
+.memoryPanel .historyGroups li {
+  display: block;
+}
+.memoryPanel .historyGroups li > .conversationMenu {
+  display: block;
+}
+.conversationUtility {
+  min-height: 56px;
+}
+.conversationUtility > button {
+  min-height: 44px;
+}

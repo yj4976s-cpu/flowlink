@@ -126,6 +126,7 @@ export function FoundItemDetailClient() {
               <dd><time dateTime={item.created_at}>{formatDateTime(item.created_at)}</time></dd>
             </div>
           </dl>
+          {item.source_type === "AI" && <section className="found-ai-summary" aria-labelledby="found-ai-title"><Icon name="scanLine" size={22} /><div><span>AI 분석</span><h2 id="found-ai-title">{item.item_category_name}</h2><p>관리자 확인 완료</p><small>AI 분석 결과는 관리자 확인 과정에서 변경될 수 있습니다. 공개 API에 신뢰도 값이 없어 점수는 표시하지 않습니다.</small></div></section>}
           {relatedMatch && (
             <section className="found-detail-compare" aria-labelledby="found-compare-title">
               <div className="found-detail-compare-heading">

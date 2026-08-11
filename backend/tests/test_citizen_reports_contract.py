@@ -178,11 +178,13 @@ def test_image_upload_decodes_reencodes_and_rejects_non_images(tmp_path) -> None
 def test_lost_report_image_upload_is_optional_validated_and_persisted(client: TestClient, db: Session, tmp_path, monkeypatch) -> None:
     seed(db); login(client, "user@example.com")
     monkeypatch.setattr("app.api.lost_reports.upload_root", lambda: tmp_path)
-    fields = {"item_category": "BAG", "color": "검정", "description": "검정 가방", "lost_location": "잠실", "lost_at": "2026-08-09T01:00:00Z"}
+    fields = {"item_category": "BAG", "color": "검정", "colors": ["검정", "파랑"], "description": "검정 가방", "lost_location": "잠실", "lost_at": "2026-08-09T01:00:00Z"}
 
     without_image = client.post("/api/lost-reports", data=fields)
     assert without_image.status_code == 201
     assert without_image.json()["image_url"] is None
+    assert without_image.json()["colors"] == ["검정", "파랑"]
+    assert db.get(LostReport, without_image.json()["id"]).colors == ["검정", "파랑"]
 
     image_bytes = BytesIO(); Image.new("RGB", (8, 8), "blue").save(image_bytes, format="PNG")
     with_image = client.post("/api/lost-reports", data=fields, files={"image": ("bag.png", image_bytes.getvalue(), "image/png")})
@@ -203,6 +205,31 @@ def test_lost_report_image_upload_is_optional_validated_and_persisted(client: Te
     assert next(item for item in mine.json() if item["id"] == with_image.json()["id"])["image_url"] == image_url
     assert detail.status_code == 200
     assert detail.json()["image_url"] == image_url
+    assert detail.json()["colors"] == ["검정", "파랑"]
+
+
+def test_lost_report_preserves_optional_coordinates_and_validates_the_pair(client: TestClient, db: Session) -> None:
+    seed(db); login(client, "user@example.com")
+    fields = {"item_category": "BAG", "color": "검정", "colors": ["검정", "파랑"], "description": "검정 가방", "lost_location": "잠실역", "lost_at": "2026-08-09T01:00:00Z"}
+
+    mapped = client.post("/api/lost-reports", data={**fields, "latitude": "37.5133", "longitude": "127.1001"})
+    assert mapped.status_code == 201
+    assert mapped.json()["latitude"] == pytest.approx(37.5133)
+    assert mapped.json()["longitude"] == pytest.approx(127.1001)
+    stored = db.get(LostReport, mapped.json()["id"])
+    assert float(stored.latitude) == pytest.approx(37.5133)
+    assert float(stored.longitude) == pytest.approx(127.1001)
+
+    direct = client.post("/api/lost-reports", data={**fields, "lost_location": "잠실 근처 골목"})
+    assert direct.status_code == 201
+    assert direct.json()["latitude"] is None
+    assert direct.json()["longitude"] is None
+    assert direct.json()["colors"] == ["검정", "파랑"]
+
+    assert client.post("/api/lost-reports", data={**fields, "latitude": "37.5"}).status_code == 422
+    assert client.post("/api/lost-reports", data={**fields, "longitude": "127.1"}).status_code == 422
+    assert client.post("/api/lost-reports", data={**fields, "latitude": "91", "longitude": "127.1"}).status_code == 422
+    assert client.post("/api/lost-reports", data={**fields, "latitude": "37.5", "longitude": "181"}).status_code == 422
 
 
 @pytest.mark.parametrize(("image_format", "filename", "content_type", "suffix"), [

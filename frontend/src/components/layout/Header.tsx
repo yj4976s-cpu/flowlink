@@ -18,14 +18,16 @@ const userNavigation = [
       { label: "발견물 지도", href: "/map" },
     ],
   },
-  { label: "분실 신고", href: "/lost-reports/new" },
+  { label: "커뮤니티", href: "/community" },
   { label: "서비스 소개", href: "/about" },
   { label: "이용 안내", href: "/guide" },
 ] as const;
 
 const adminNavigation = [
   { label: "대시보드", href: "/admin" },
+  { label: "운영 지도", href: "/admin/map" },
   { label: "AI 탐지 관리", href: "/admin/detections" },
+  { label: "AI 탐지 리포트", href: "/admin/ai-report" },
   { label: "제보 관리", href: "/admin/citizen-reports" },
   { label: "발견물 관리", href: "/admin/found-items" },
   { label: "소유권 요청", href: "/admin/ownership-claims" },
