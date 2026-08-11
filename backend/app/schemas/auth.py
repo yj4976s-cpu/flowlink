@@ -1,14 +1,29 @@
 from datetime import datetime
+import re
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+
+PASSWORD_POLICY_MESSAGE = "비밀번호는 영문 대문자와 소문자를 포함한 정확히 8자로 입력해주세요."
+PASSWORD_PATTERN = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])[A-Za-z]{8}$")
+
+
+def validate_new_password(value: str) -> str:
+    if not PASSWORD_PATTERN.fullmatch(value):
+        raise ValueError(PASSWORD_POLICY_MESSAGE)
+    return value
 
 
 class RegisterRequest(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=8)
+    password: str
     nickname: str = Field(min_length=2, max_length=50)
     terms_agreed: bool
     privacy_agreed: bool
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        return validate_new_password(value)
 
     @field_validator("nickname", mode="before")
     @classmethod
@@ -32,7 +47,12 @@ class NicknameUpdateRequest(BaseModel):
 
 class PasswordChangeRequest(BaseModel):
     current_password: str
-    new_password: str = Field(min_length=8)
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password_field(cls, value: str) -> str:
+        return validate_new_password(value)
 
 
 class UserResponse(BaseModel):
