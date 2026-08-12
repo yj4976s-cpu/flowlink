@@ -46,6 +46,9 @@ class DetectionEventListResponse(DetectionEventResponse):
 
 class WebcamDetectionObjectResponse(BaseModel):
     label: str
+    class_code: str | None = None
+    class_name_ko: str | None = None
+    group_code: str | None = None
     confidence: float
     bbox: DetectionBBoxResponse
 

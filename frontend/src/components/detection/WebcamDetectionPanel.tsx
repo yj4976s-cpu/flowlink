@@ -10,6 +10,7 @@ export type WebcamPanelStatus = "idle" | "requesting" | "ready" | "running" | "e
 type WebcamDetectionPanelProps = {
   onFrame: (frame: WebcamDetectionFrame | null) => void;
   onStatusChange: (status: WebcamPanelStatus) => void;
+  onReportCandidate: (candidate: WebcamReportCandidate) => void;
 };
 
 type Size = {
@@ -17,9 +18,17 @@ type Size = {
   height: number;
 };
 
+export type WebcamReportCandidate = {
+  object: WebcamDetectionObject;
+  frame: WebcamDetectionFrame;
+  image: File;
+  capturedAt: string;
+};
+
 const WEBCAM_FRAME_MAX_WIDTH = 640;
 const WEBCAM_FRAME_INTERVAL_MS = 300;
 const WEBCAM_JPEG_QUALITY = 0.8;
+const reportableClassCodes = new Set(["BAG", "UMBRELLA", "FOOTWEAR", "BALL"]);
 
 const objectLabels: Record<string, string> = {
   backpack: "백팩",
@@ -40,6 +49,14 @@ function formatConfidence(value: number) {
 
 function getObjectLabel(label: string) {
   return objectLabels[label] ?? label;
+}
+
+function getDisplayLabel(object: WebcamDetectionObject) {
+  return object.class_name_ko ?? getObjectLabel(object.label);
+}
+
+function isReportableObject(object: WebcamDetectionObject) {
+  return object.group_code === "PERSONAL_ITEM" && Boolean(object.class_code && reportableClassCodes.has(object.class_code));
 }
 
 function getCameraErrorMessage(error: unknown) {
@@ -84,13 +101,13 @@ function WebcamOverlayBox({
   return (
     <span className={styles.overlayBox} style={style}>
       <b>
-        {getObjectLabel(object.label)} {formatConfidence(object.confidence)}
+        {getDisplayLabel(object)} {formatConfidence(object.confidence)}
       </b>
     </span>
   );
 }
 
-export function WebcamDetectionPanel({ onFrame, onStatusChange }: WebcamDetectionPanelProps) {
+export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidate }: WebcamDetectionPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
@@ -107,6 +124,7 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange }: WebcamDetectio
   const [previewSize, setPreviewSize] = useState<Size>({ width: 0, height: 0 });
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
+  const [capturingReportKey, setCapturingReportKey] = useState<string | null>(null);
 
   useEffect(() => {
     onStatusChange(cameraStatus);
@@ -185,9 +203,9 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange }: WebcamDetectio
     };
   }, [expanded]);
 
-  const captureFrame = useCallback(async () => {
+  const captureFrame = useCallback(async (useDedicatedCanvas = false) => {
     const video = videoRef.current;
-    const canvas = canvasRef.current;
+    const canvas = useDedicatedCanvas ? document.createElement("canvas") : canvasRef.current;
     if (!video || !canvas || !video.videoWidth || !video.videoHeight) return null;
 
     const targetWidth = Math.min(WEBCAM_FRAME_MAX_WIDTH, video.videoWidth);
@@ -202,6 +220,29 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange }: WebcamDetectio
       canvas.toBlob(resolve, "image/jpeg", WEBCAM_JPEG_QUALITY);
     });
   }, []);
+
+  const captureReportFrame = async (object: WebcamDetectionObject, index: number) => {
+    if (!frame || !isReportableObject(object) || capturingReportKey) return;
+    const reportKey = `${object.class_code}-${index}-${object.bbox.x}-${object.bbox.y}`;
+    setCapturingReportKey(reportKey);
+    setError("");
+    try {
+      const blob = await captureFrame(true);
+      if (!mountedRef.current || !blob) {
+        if (mountedRef.current) setError("제보용 화면을 캡처하지 못했습니다. 카메라 화면을 확인한 뒤 다시 시도해주세요.");
+        return;
+      }
+      const image = new File([blob], `webcam-report-${Date.now()}.jpg`, { type: "image/jpeg" });
+      onReportCandidate({
+        object,
+        frame,
+        image,
+        capturedAt: new Date().toISOString(),
+      });
+    } finally {
+      if (mountedRef.current) setCapturingReportKey(null);
+    }
+  };
 
   function runDetectionLoop(generation: number) {
     void (async () => {
@@ -370,6 +411,31 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange }: WebcamDetectio
           </>
         )}
       </div>
+
+      {frame?.detected_objects.some(isReportableObject) && (
+        <div className={styles.webcamReportPanel}>
+          <div>
+            <strong>발견 제보로 연결할 수 있는 후보가 있어요.</strong>
+            <span>제보 버튼을 누르는 순간의 프레임 한 장만 첨부합니다.</span>
+          </div>
+          <div className={styles.webcamReportActions}>
+            {frame.detected_objects.map((object, index) => {
+              if (!isReportableObject(object)) return null;
+              const reportKey = `${object.class_code}-${index}-${object.bbox.x}-${object.bbox.y}`;
+              return (
+                <button
+                  key={reportKey}
+                  type="button"
+                  onClick={() => void captureReportFrame(object, index)}
+                  disabled={capturingReportKey !== null}
+                >
+                  {capturingReportKey === reportKey ? "캡처 중..." : `${getDisplayLabel(object)} 발견 제보하기`}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <p className={styles.webcamNotice}>
         웹캠 프레임은 저장하지 않고 실시간 탐지 요청에만 사용합니다. 정확한 판단이 필요한 경우 관리자 확인이 필요합니다.

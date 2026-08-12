@@ -158,6 +158,9 @@ def webcam_frame_response(frame: WebcamDetectionFrame) -> WebcamDetectionFrameRe
         detected_objects=[
             WebcamDetectionObjectResponse(
                 label=detected.label,
+                class_code=detected.class_code,
+                class_name_ko=detected.class_name_ko,
+                group_code=detected.group_code,
                 confidence=detected.confidence,
                 bbox=DetectionBBoxResponse(
                     x=detected.bbox.x,

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ChangeEvent, DragEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/common/Icon";
+import { createCitizenReport } from "@/lib/citizenReportsApi";
 import {
   DetectionApiError,
   DetectionEvent,
@@ -15,7 +16,9 @@ import {
   uploadDetectionImage,
   uploadDetectionVideo,
 } from "@/lib/detectionApi";
-import { WebcamDetectionPanel, WebcamPanelStatus } from "./WebcamDetectionPanel";
+import type { CitizenReport } from "@/types/discoveryNetwork";
+import { WebcamDetectionPanel } from "./WebcamDetectionPanel";
+import type { WebcamPanelStatus, WebcamReportCandidate } from "./WebcamDetectionPanel";
 import styles from "./DetectionWorkbench.module.css";
 
 type DetectionTab = "image" | "video" | "webcam";
@@ -55,6 +58,13 @@ const groupLabels: Record<string, string> = {
   UNKNOWN: "미확인",
 };
 
+const reportableClassNames: Record<string, string> = {
+  BAG: "가방",
+  UMBRELLA: "우산",
+  FOOTWEAR: "신발",
+  BALL: "공",
+};
+
 function formatBytes(bytes: number) {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
   if (bytes >= 1024) return `${Math.round(bytes / 1024)}KB`;
@@ -73,6 +83,22 @@ function formatConfidence(value: number) {
 function formatMilliseconds(value: number | null) {
   if (value === null) return "";
   return `${(value / 1000).toFixed(1)}초`;
+}
+
+function toDatetimeLocalInput(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function localDatetimeToIso(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+}
+
+function getWebcamReportLabel(candidate: WebcamReportCandidate) {
+  return candidate.object.class_name_ko ?? reportableClassNames[candidate.object.class_code ?? ""] ?? candidate.object.label;
 }
 
 function validateFile(file: File, tab: DetectionTab) {
@@ -228,6 +254,115 @@ function ImageOverlay({
   );
 }
 
+function WebcamReportModal({
+  candidate,
+  submitting,
+  error,
+  success,
+  onClose,
+  onSubmit,
+}: {
+  candidate: WebcamReportCandidate;
+  submitting: boolean;
+  error: string;
+  success: CitizenReport | null;
+  onClose: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  const previewUrl = useMemo(() => URL.createObjectURL(candidate.image), [candidate.image]);
+  const defaultClassCode = candidate.object.class_code ?? "BAG";
+  const label = getWebcamReportLabel(candidate);
+
+  useEffect(() => {
+    return () => URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
+
+  return (
+    <div className={styles.reportModalBackdrop} role="presentation" onMouseDown={onClose}>
+      <section
+        className={styles.reportModal}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="webcam-report-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className={styles.reportModalHeading}>
+          <div>
+            <p className={styles.eyebrow}>CITIZEN REPORT</p>
+            <h2 id="webcam-report-title">발견 제보하기</h2>
+          </div>
+          <button type="button" onClick={onClose} aria-label="발견 제보 창 닫기">
+            <Icon name="close" size={20} />
+          </button>
+        </div>
+
+        {success ? (
+          <div className={styles.reportSuccess}>
+            <Icon name="check" size={28} />
+            <strong>발견 제보가 접수되었습니다.</strong>
+            <p>관리자가 사진과 설명을 확인한 뒤 공개 발견물 연결 여부를 검토합니다.</p>
+            <div>
+              <Link className="button button-secondary" href="/mypage#my-activity">내 제보 보기</Link>
+              <button className="button button-primary" type="button" onClick={onClose}>탐지 계속하기</button>
+            </div>
+          </div>
+        ) : (
+          <form className={styles.reportForm} onSubmit={onSubmit}>
+            <div className={styles.reportPreviewGrid}>
+              {previewUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={previewUrl} alt="웹캠에서 캡처한 발견 제보 이미지" />
+              )}
+              <div className={styles.reportCandidateMeta}>
+                <span>AI 예상 후보</span>
+                <strong>{label}</strong>
+                <em>탐지 신뢰도 {formatConfidence(candidate.object.confidence)}</em>
+                <p>물품 종류는 참고값입니다. 실제 제보 내용에 맞게 수정할 수 있어요.</p>
+              </div>
+            </div>
+
+            <div className={styles.reportFields}>
+              <label>
+                물품 종류
+                <select name="objectClass" defaultValue={defaultClassCode} required>
+                  {Object.entries(reportableClassNames).map(([code, name]) => (
+                    <option key={code} value={code}>{name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                색상
+                <input name="color" placeholder="예: 검정, 파랑" />
+              </label>
+              <label>
+                발견 구역
+                <input name="areaName" placeholder="예: 한강공원 A구역" required />
+              </label>
+              <label>
+                발견 시각
+                <input name="foundAt" type="datetime-local" defaultValue={toDatetimeLocalInput(candidate.capturedAt)} required />
+              </label>
+              <label className={styles.reportDescriptionField}>
+                설명
+                <textarea name="description" minLength={5} maxLength={1000} placeholder="발견 위치, 주변 상황, 물품 특징을 적어주세요." required />
+              </label>
+            </div>
+
+            {error && <p className={styles.error} role="alert">{error}</p>}
+
+            <div className={styles.reportModalActions}>
+              <button className="button button-secondary" type="button" onClick={onClose} disabled={submitting}>취소</button>
+              <button className="button button-primary" type="submit" disabled={submitting}>
+                {submitting ? "제보 접수 중..." : "제보 접수하기"}
+              </button>
+            </div>
+          </form>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function OverlayBox({
   object,
   mediaWidth,
@@ -268,6 +403,10 @@ export function DetectionWorkbench() {
   const [currentEvent, setCurrentEvent] = useState<DetectionEvent | null>(null);
   const [webcamFrame, setWebcamFrame] = useState<WebcamDetectionFrame | null>(null);
   const [webcamStatus, setWebcamStatus] = useState<WebcamPanelStatus>("idle");
+  const [webcamReportCandidate, setWebcamReportCandidate] = useState<WebcamReportCandidate | null>(null);
+  const [webcamReportSubmitting, setWebcamReportSubmitting] = useState(false);
+  const [webcamReportError, setWebcamReportError] = useState("");
+  const [webcamReportSuccess, setWebcamReportSuccess] = useState<CitizenReport | null>(null);
   const [history, setHistory] = useState<DetectionEvent[]>([]);
   const [historyError, setHistoryError] = useState("");
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -420,6 +559,9 @@ export function DetectionWorkbench() {
     setCurrentEvent(null);
     setWebcamFrame(null);
     setWebcamStatus("idle");
+    setWebcamReportCandidate(null);
+    setWebcamReportError("");
+    setWebcamReportSuccess(null);
     setError("");
     setSubmitState("idle");
     replacePreviewUrl(null);
@@ -557,6 +699,55 @@ export function DetectionWorkbench() {
     }
   };
 
+  const openWebcamReport = (candidate: WebcamReportCandidate) => {
+    setWebcamReportCandidate(candidate);
+    setWebcamReportError("");
+    setWebcamReportSuccess(null);
+  };
+
+  const closeWebcamReport = () => {
+    if (webcamReportSubmitting) return;
+    setWebcamReportCandidate(null);
+    setWebcamReportError("");
+    setWebcamReportSuccess(null);
+  };
+
+  const handleWebcamReportSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!webcamReportCandidate || webcamReportSubmitting) return;
+
+    const formData = new FormData(event.currentTarget);
+    const objectClass = String(formData.get("objectClass") ?? "");
+    const color = String(formData.get("color") ?? "").trim();
+    const areaName = String(formData.get("areaName") ?? "").trim();
+    const foundAt = localDatetimeToIso(String(formData.get("foundAt") ?? ""));
+    const description = String(formData.get("description") ?? "").trim();
+
+    if (!objectClass || !areaName || !foundAt || description.length < 5) {
+      setWebcamReportError("물품 종류, 발견 구역, 발견 시각, 설명을 확인해주세요.");
+      return;
+    }
+
+    setWebcamReportSubmitting(true);
+    setWebcamReportError("");
+    try {
+      const report = await createCitizenReport({
+        category: objectClass,
+        color,
+        areaName,
+        foundAt,
+        description,
+        image: webcamReportCandidate.image,
+      });
+      setWebcamReportSuccess(report);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "발견 제보를 접수하지 못했습니다. 잠시 후 다시 시도해주세요.";
+      setWebcamReportError(message);
+    } finally {
+      setWebcamReportSubmitting(false);
+    }
+  };
+
   const displayedStatus = tab === "webcam"
     ? webcamStatusLabels[webcamStatus]
     : currentEvent
@@ -590,7 +781,7 @@ export function DetectionWorkbench() {
 
         <div className={styles.grid}>
           {tab === "webcam" ? (
-            <WebcamDetectionPanel onFrame={setWebcamFrame} onStatusChange={setWebcamStatus} />
+            <WebcamDetectionPanel onFrame={setWebcamFrame} onStatusChange={setWebcamStatus} onReportCandidate={openWebcamReport} />
           ) : (
             <section className={styles.uploadPanel} aria-labelledby="workbench-title">
               <div className={styles.panelHeading}>
@@ -700,6 +891,17 @@ export function DetectionWorkbench() {
           </aside>
         </div>
       </section>
+
+      {webcamReportCandidate && (
+        <WebcamReportModal
+          candidate={webcamReportCandidate}
+          submitting={webcamReportSubmitting}
+          error={webcamReportError}
+          success={webcamReportSuccess}
+          onClose={closeWebcamReport}
+          onSubmit={handleWebcamReportSubmit}
+        />
+      )}
 
       <section className={styles.history} aria-labelledby="history-title" aria-busy={historyLoading}>
         <div className={styles.panelHeading}>

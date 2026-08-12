@@ -5,7 +5,18 @@ from functools import lru_cache
 
 from PIL import Image
 
-from app.services.detection_inference import DetectionBBox
+from app.services.detection_inference import DetectionBBox, model_label_to_class_code
+
+
+WEBCAM_CLASS_METADATA: dict[str, tuple[str, str]] = {
+    "TRASH": ("폐기물", "WASTE"),
+    "BRANCH": ("나뭇가지", "NATURAL"),
+    "AQUATIC_PLANT": ("수초", "NATURAL"),
+    "BAG": ("가방", "PERSONAL_ITEM"),
+    "UMBRELLA": ("우산", "PERSONAL_ITEM"),
+    "FOOTWEAR": ("신발", "PERSONAL_ITEM"),
+    "BALL": ("공", "PERSONAL_ITEM"),
+}
 
 
 @dataclass(frozen=True)
@@ -13,6 +24,9 @@ class WebcamDetectionObject:
     label: str
     confidence: float
     bbox: DetectionBBox
+    class_code: str | None = None
+    class_name_ko: str | None = None
+    group_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -44,10 +58,15 @@ class WebcamInferenceService:
             detected_objects=[
                 WebcamDetectionObject(
                     label=prediction.model_label,
+                    class_code=class_code,
+                    class_name_ko=metadata[0] if metadata else None,
+                    group_code=metadata[1] if metadata else None,
                     confidence=prediction.confidence,
                     bbox=prediction.bbox,
                 )
                 for prediction in result.predictions
+                for class_code in [model_label_to_class_code(prediction.model_label)]
+                for metadata in [WEBCAM_CLASS_METADATA.get(class_code) if class_code else None]
             ],
         )
 
