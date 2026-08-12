@@ -147,8 +147,12 @@ export function AdminDashboardClient() {
       </section>
     </div>
 
-    <section className={styles.flowSection} aria-labelledby="flow-title"><SectionHeading title="발견부터 반환까지" />
-      {!current ? currentError ? <State error>운영 흐름을 불러오지 못했습니다.</State> : <Skeleton rows={1} /> : <OperationalFlow metrics={current.metrics} />}
+    <section className={styles.flowSection} aria-labelledby="flow-title"><SectionHeading title="서비스 흐름 검증" />
+      {!current ? currentError ? <State error>운영 흐름을 불러오지 못했습니다.</State> : <Skeleton rows={1} /> : <><OperationalFlow metrics={current.metrics} /><LatestFlow flow={current.latest_flow} /></>}
+    </section>
+
+    <section className={styles.activitySection} aria-labelledby="activity-title"><SectionHeading title="서비스 활동" />
+      {!current ? currentError ? <State error>서비스 활동을 불러오지 못했습니다.</State> : <Skeleton /> : current.recent_activity.length ? <div className={styles.activityList}>{current.recent_activity.map((item) => <div key={`${item.kind}-${item.entity_id}-${item.occurred_at}`}><time>{dateTime.format(new Date(item.occurred_at))}</time><strong>{item.kind === "LOGIN" ? `최근 로그인 · ${item.label}` : item.label}</strong><span>#{item.entity_id}</span></div>)}</div> : <State>최근 확인 가능한 서비스 활동이 없습니다.</State>}
     </section>
 
     <section className={styles.insights} aria-labelledby="insights-title">
@@ -177,11 +181,23 @@ function OperationalFlow({ metrics }: { metrics: AdminDashboardData["metrics"] }
   const steps = [
     { label: "AI 탐지", value: metrics.ai_detections, tone: "primary" },
     { label: "발견물 등록", value: metrics.official_found_items, tone: "secondary" },
+    { label: "분실 신고", value: metrics.lost_reports, tone: "primary" },
     { label: "자동 매칭", value: metrics.matched, tone: "match" },
+    { label: "MATCH_FOUND 알림", value: metrics.match_notifications, tone: "match" },
     { label: "소유권 확인", value: metrics.claims, tone: "attention" },
     { label: "반환 완료", value: metrics.returned, tone: "success" },
   ];
   return <ol className={styles.flow}>{steps.map((step) => <li key={step.label} data-tone={step.tone}><i /><span>{step.label}</span><strong>{step.value}</strong></li>)}</ol>;
+}
+
+function LatestFlow({ flow }: { flow: AdminDashboardData["latest_flow"] }) {
+  if (!flow) return <div className={styles.flowEmpty}>아직 자동 매칭까지 연결된 흐름이 없습니다. 탐지 검토와 공식 발견물 등록 상태를 확인해 주세요.</div>;
+  const steps = [
+    ["Detection", flow.detection_id], ["Detected Object", flow.detected_object_id], ["Found Item", flow.found_item_id],
+    ["Lost Report", flow.lost_report_id], ["Match", flow.match_candidate_id], ["Notification", flow.notification_id],
+    ["Claim", flow.ownership_claim_id], ["Return", flow.returned ? "완료" : null],
+  ] as const;
+  return <div className={styles.latestFlow}><small>최근 End-to-End 연결</small><div>{steps.map(([label, value]) => <span key={label} data-complete={value != null}><b>{label}</b><em>{value == null ? "대기" : typeof value === "number" ? `#${value}` : value}</em></span>)}</div></div>;
 }
 
 function LineChart({ data }: { data: AdminDashboardData["trend"] }) {
