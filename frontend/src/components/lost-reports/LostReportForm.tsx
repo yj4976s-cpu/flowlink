@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/common/Icon";
 import {
@@ -43,6 +44,12 @@ const itemCategories = [
   label: string;
   icon: typeof ITEM_TYPE_META.BALL.icon;
 }>;
+const detectionPrefillCategories = new Set(["BALL", "BAG", "UMBRELLA", "FOOTWEAR"]);
+
+function getDetectionPrefillCategory(value: string | null) {
+  const normalized = value?.trim().toUpperCase();
+  return normalized && detectionPrefillCategories.has(normalized) ? normalized as LostReportCategory : "";
+}
 
 type ExampleCategory = "형태·구조" | "표시·장식" | "사용 흔적";
 type DescriptionExample = { text: string; category: ExampleCategory; keywords: string[] };
@@ -331,6 +338,7 @@ function SuccessPanel({ report, onReset }: { report: LostReportResponse; onReset
 }
 
 export function LostReportForm() {
+  const searchParams = useSearchParams();
   const [formData, setFormData] = useState<FormData>(emptyFormData);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -374,6 +382,9 @@ export function LostReportForm() {
   const paletteTriggerRef = useRef<HTMLButtonElement>(null);
   const regionPickerTriggerRef = useRef<HTMLButtonElement>(null);
   const mapPickerTriggerRef = useRef<HTMLButtonElement>(null);
+  const detectionPrefillAppliedRef = useRef(false);
+  const sourceFromDetection = searchParams.get("source") === "detection";
+  const detectionPrefillCategory = useMemo(() => getDetectionPrefillCategory(searchParams.get("class_code")), [searchParams]);
 
   const selectLocation = useCallback((location: SelectedLostLocation) => {
     setSelectedLocation(location);
@@ -387,6 +398,14 @@ export function LostReportForm() {
     if (feedbackTimerRef.current) window.clearTimeout(feedbackTimerRef.current);
     if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
   }, []);
+
+  useEffect(() => {
+    if (detectionPrefillAppliedRef.current || !detectionPrefillCategory) return;
+    detectionPrefillAppliedRef.current = true;
+    setFormData((current) => current.item_category ? current : { ...current, item_category: detectionPrefillCategory });
+    setFieldErrors((current) => ({ ...current, item_category: undefined }));
+    setActiveGuide("features");
+  }, [detectionPrefillCategory]);
 
   useEffect(() => {
     if (!paletteOpen) return;
@@ -650,6 +669,11 @@ export function LostReportForm() {
                   <legend className="sr-only">분실 물품 종류</legend>
                   {itemCategories.map((item) => <label key={item.code} className={`${styles.categoryOption} ${styles[`category_${item.code.toLowerCase()}`]}`}><input type="radio" name="item_category" value={item.code} checked={formData.item_category === item.code} onChange={() => selectCategory(item.code)} /><span><i><Icon name={item.icon} size={23} /></i><b>{item.label}</b></span></label>)}
                 </fieldset>
+                {sourceFromDetection && detectionPrefillCategory && formData.item_category === detectionPrefillCategory && (
+                  <p className={styles.detectionPrefillNotice}>
+                    AI 탐지 결과를 바탕으로 물품 종류만 먼저 선택했어요. 위치·시간·특징은 직접 기억나는 내용으로 작성해주세요.
+                  </p>
+                )}
                 {formData.item_category && <p className={styles.categoryHint} key={formData.item_category}>선택한 물건: <strong>{categoryLabel}</strong> · {categoryHints[formData.item_category]} 중심으로 추천이 달라져요.</p>}
                 {formData.item_category && (subtype && !subtypeOpen ? <div className={styles.subtypeSummary}><span><small>선택한 종류</small><strong>{categoryLabel} · {subtypeLabel}</strong></span><button type="button" onClick={() => setSubtypeOpen(true)}>변경</button></div> : <div className={styles.subtypePicker}><div><span><strong>어떤 종류에 가까웠나요?</strong><i>선택</i></span><p>정확하지 않아도 괜찮아요. 가장 비슷한 종류를 선택해주세요.</p></div><div className={styles.subtypeOptions}>{subtypeOptions.map((item) => <button type="button" aria-pressed={subtype === item.code} key={item.code} onClick={() => selectSubtype(item.code)}>{item.label}</button>)}</div>{subtype === "OTHER" && <label className={styles.customSubtype}><span>종류를 직접 입력해주세요.</span><input autoFocus value={customSubtype} maxLength={30} placeholder="예: 실내화, 장화, 미니백" onChange={(event) => setCustomSubtype(event.target.value)} /><button type="button" disabled={!customSubtype.trim()} onClick={() => { setSubtype(`CUSTOM:${customSubtype.trim()}`); setSubtypeOpen(false); }}>적용</button></label>}</div>)}
                 {formData.item_category === "FOOTWEAR" && <div className={styles.auxQuestion}><strong>어떤 상태로 잃어버렸나요? <i>선택</i></strong><div>{["한 켤레", "한 짝", "잘 모르겠어요"].map((answer) => <button type="button" aria-pressed={footwearCondition === answer} key={answer} onClick={() => { setFootwearCondition(answer); if (answer !== "한 짝") setFootwearSide(""); }}>{answer}</button>)}</div>{footwearCondition === "한 짝" && <div className={styles.auxFollowup}><span>어느 쪽인가요?</span>{["왼쪽", "오른쪽", "기억나지 않아요"].map((answer) => <button type="button" aria-pressed={footwearSide === answer} key={answer} onClick={() => setFootwearSide(answer)}>{answer}</button>)}</div>}</div>}

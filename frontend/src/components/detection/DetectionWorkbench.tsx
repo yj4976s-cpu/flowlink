@@ -23,10 +23,23 @@ import styles from "./DetectionWorkbench.module.css";
 
 type DetectionTab = "image" | "video" | "webcam";
 type SubmitState = "idle" | "selected" | "analyzing" | "success" | "error";
+type FoundReportCandidate = {
+  sourceType: DetectionTab;
+  objectClassCode: string;
+  objectClassName: string;
+  confidence: number;
+  image: File | null;
+  capturedAt: string;
+};
 
 const IMAGE_MAX_BYTES = 20 * 1024 * 1024;
+const CITIZEN_REPORT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const REPORT_IMAGE_INITIAL_MAX_EDGE = 1600;
+const REPORT_IMAGE_MIN_MAX_EDGE = 960;
 const VIDEO_MAX_BYTES = 100 * 1024 * 1024;
 const VIDEO_MAX_SECONDS = 30;
+const VIDEO_REPORT_FRAME_MAX_WIDTH = 960;
+const VIDEO_REPORT_FRAME_TIMEOUT_MS = 8000;
 const HISTORY_PAGE_SIZE = 8;
 const imageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 const videoTypes = new Set(["video/mp4"]);
@@ -65,6 +78,14 @@ const reportableClassNames: Record<string, string> = {
   BALL: "공",
 };
 
+function getReportableClassCode(value: string | null | undefined) {
+  return value && reportableClassNames[value] ? value : "";
+}
+
+function isReportablePersonalItem(object: Pick<DetectionObject, "class_code" | "group_code">) {
+  return object.group_code === "PERSONAL_ITEM" && Boolean(getReportableClassCode(object.class_code));
+}
+
 function formatBytes(bytes: number) {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
   if (bytes >= 1024) return `${Math.round(bytes / 1024)}KB`;
@@ -85,6 +106,163 @@ function formatMilliseconds(value: number | null) {
   return `${(value / 1000).toFixed(1)}초`;
 }
 
+function getVideoReportTimestampMs(object: DetectionObject) {
+  const firstSeen = object.first_seen_ms;
+  const lastSeen = object.last_seen_ms;
+  if (firstSeen !== null && lastSeen !== null) return (firstSeen + lastSeen) / 2;
+  return firstSeen ?? lastSeen ?? 0;
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, type = "image/jpeg", quality = 0.86) {
+  return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, quality));
+}
+
+async function decodeImageFile(file: File) {
+  if (typeof createImageBitmap === "function") {
+    return createImageBitmap(file);
+  }
+
+  if (typeof document === "undefined") throw new Error("이미지 처리는 브라우저에서만 가능합니다.");
+
+  const objectUrl = URL.createObjectURL(file);
+  const image = new Image();
+  image.decoding = "async";
+  try {
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error("이미지를 읽지 못했습니다."));
+      image.src = objectUrl;
+    });
+    return image;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+function closeImageSource(source: ImageBitmap | HTMLImageElement) {
+  if ("close" in source) source.close();
+}
+
+async function prepareCitizenReportImage(file: File) {
+  if (!imageTypes.has(file.type)) {
+    throw new Error("발견 제보에는 JPG, PNG, WebP 이미지만 첨부할 수 있습니다.");
+  }
+
+  const image = await decodeImageFile(file);
+  try {
+    const sourceWidth = image.width;
+    const sourceHeight = image.height;
+    if (!sourceWidth || !sourceHeight) throw new Error("이미지 크기를 확인하지 못했습니다.");
+
+    if (file.size <= CITIZEN_REPORT_IMAGE_MAX_BYTES) return file;
+
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("이미지를 변환하지 못했습니다.");
+
+    const qualities = [0.86, 0.78, 0.7, 0.62];
+    const maxEdges = [REPORT_IMAGE_INITIAL_MAX_EDGE, 1440, 1280, 1120, REPORT_IMAGE_MIN_MAX_EDGE];
+
+    for (const maxEdge of maxEdges) {
+      const scale = Math.min(1, maxEdge / Math.max(sourceWidth, sourceHeight));
+      canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+      canvas.height = Math.max(1, Math.round(sourceHeight * scale));
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+      for (const quality of qualities) {
+        const blob = await canvasToBlob(canvas, "image/jpeg", quality);
+        if (blob && blob.size <= CITIZEN_REPORT_IMAGE_MAX_BYTES) {
+          const baseName = file.name.replace(/\.[^.]+$/, "") || "detection-report";
+          return new File([blob], `${baseName}-report.jpg`, { type: "image/jpeg" });
+        }
+      }
+    }
+
+    throw new Error("이미지를 5MB 이하로 준비하지 못했습니다. 더 작은 이미지를 선택해주세요.");
+  } finally {
+    closeImageSource(image);
+  }
+}
+
+function waitForVideoEvent(video: HTMLVideoElement, eventName: "loadedmetadata" | "seeked", timeoutMs: number) {
+  return new Promise<void>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      cleanup();
+      reject(new Error("영상 프레임을 준비하지 못했습니다."));
+    }, timeoutMs);
+
+    function cleanup() {
+      window.clearTimeout(timer);
+      video.removeEventListener(eventName, handleEvent);
+      video.removeEventListener("error", handleError);
+    }
+
+    function handleEvent() {
+      cleanup();
+      resolve();
+    }
+
+    function handleError() {
+      cleanup();
+      reject(new Error("영상 프레임을 읽지 못했습니다."));
+    }
+
+    video.addEventListener(eventName, handleEvent, { once: true });
+    video.addEventListener("error", handleError, { once: true });
+  });
+}
+
+async function captureVideoReportFrame(videoFile: File, object: DetectionObject) {
+  if (typeof document === "undefined") return null;
+
+  const objectUrl = URL.createObjectURL(videoFile);
+  const video = document.createElement("video");
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = "metadata";
+
+  try {
+    video.src = objectUrl;
+    video.load();
+    await waitForVideoEvent(video, "loadedmetadata", VIDEO_REPORT_FRAME_TIMEOUT_MS);
+
+    if (!video.videoWidth || !video.videoHeight) return null;
+
+    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
+    const targetSeconds = duration
+      ? Math.min(Math.max(getVideoReportTimestampMs(object) / 1000, 0), Math.max(duration - 0.05, 0))
+      : 0;
+
+    video.currentTime = targetSeconds;
+    await waitForVideoEvent(video, "seeked", VIDEO_REPORT_FRAME_TIMEOUT_MS);
+
+    const scale = Math.min(1, VIDEO_REPORT_FRAME_MAX_WIDTH / video.videoWidth);
+    const width = Math.max(1, Math.round(video.videoWidth * scale));
+    const height = Math.max(1, Math.round(video.videoHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    context.drawImage(video, 0, 0, width, height);
+
+    const blob = await canvasToBlob(canvas, "image/jpeg", 0.86);
+    if (!blob) return null;
+
+    const timestampMs = Math.round(targetSeconds * 1000);
+    return new File([blob], `flowlink-video-frame-${timestampMs}.jpg`, { type: "image/jpeg" });
+  } catch {
+    return null;
+  } finally {
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 function toDatetimeLocalInput(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
@@ -95,10 +273,6 @@ function toDatetimeLocalInput(value: string) {
 function localDatetimeToIso(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "" : date.toISOString();
-}
-
-function getWebcamReportLabel(candidate: WebcamReportCandidate) {
-  return candidate.object.class_name_ko ?? reportableClassNames[candidate.object.class_code ?? ""] ?? candidate.object.label;
 }
 
 function validateFile(file: File, tab: DetectionTab) {
@@ -262,19 +436,27 @@ function WebcamReportModal({
   onClose,
   onSubmit,
 }: {
-  candidate: WebcamReportCandidate;
+  candidate: FoundReportCandidate;
   submitting: boolean;
   error: string;
   success: CitizenReport | null;
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
-  const previewUrl = useMemo(() => URL.createObjectURL(candidate.image), [candidate.image]);
-  const defaultClassCode = candidate.object.class_code ?? "BAG";
-  const label = getWebcamReportLabel(candidate);
+  const previewUrl = useMemo(() => candidate.image ? URL.createObjectURL(candidate.image) : "", [candidate.image]);
+  const defaultClassCode = candidate.objectClassCode || "BAG";
+  const label = candidate.objectClassName;
+  const emptyPreviewTitle = candidate.sourceType === "image" ? "이미지를 첨부하지 못했습니다." : "대표 이미지는 첨부하지 않습니다.";
+  const emptyPreviewText = candidate.sourceType === "image"
+    ? "이미지 변환에 실패했습니다. 아래 정보를 확인해 이미지 없이 제보하거나 더 작은 이미지를 선택해주세요."
+    : candidate.sourceType === "video"
+      ? "영상 프레임을 캡처하지 못한 경우 물품 종류와 설명만으로 제보를 시작합니다."
+      : "현재 프레임을 캡처하지 못한 경우 물품 종류와 설명만으로 제보를 시작합니다.";
 
   useEffect(() => {
-    return () => URL.revokeObjectURL(previewUrl);
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
   }, [previewUrl]);
 
   return (
@@ -309,14 +491,20 @@ function WebcamReportModal({
         ) : (
           <form className={styles.reportForm} onSubmit={onSubmit}>
             <div className={styles.reportPreviewGrid}>
-              {previewUrl && (
+              {previewUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={previewUrl} alt="웹캠에서 캡처한 발견 제보 이미지" />
+                <img src={previewUrl} alt="발견 제보에 첨부할 탐지 이미지" />
+              ) : (
+                <div className={styles.reportPreviewEmpty}>
+                  <Icon name="document" size={26} />
+                  <strong>{emptyPreviewTitle}</strong>
+                  <p>{emptyPreviewText}</p>
+                </div>
               )}
               <div className={styles.reportCandidateMeta}>
                 <span>AI 예상 후보</span>
                 <strong>{label}</strong>
-                <em>탐지 신뢰도 {formatConfidence(candidate.object.confidence)}</em>
+                <em>탐지 신뢰도 {formatConfidence(candidate.confidence)}</em>
                 <p>물품 종류는 참고값입니다. 실제 제보 내용에 맞게 수정할 수 있어요.</p>
               </div>
             </div>
@@ -403,7 +591,7 @@ export function DetectionWorkbench() {
   const [currentEvent, setCurrentEvent] = useState<DetectionEvent | null>(null);
   const [webcamFrame, setWebcamFrame] = useState<WebcamDetectionFrame | null>(null);
   const [webcamStatus, setWebcamStatus] = useState<WebcamPanelStatus>("idle");
-  const [webcamReportCandidate, setWebcamReportCandidate] = useState<WebcamReportCandidate | null>(null);
+  const [webcamReportCandidate, setWebcamReportCandidate] = useState<FoundReportCandidate | null>(null);
   const [webcamReportSubmitting, setWebcamReportSubmitting] = useState(false);
   const [webcamReportError, setWebcamReportError] = useState("");
   const [webcamReportSuccess, setWebcamReportSuccess] = useState<CitizenReport | null>(null);
@@ -417,8 +605,8 @@ export function DetectionWorkbench() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewUrlRef = useRef("");
 
-  const personalItemDetected = useMemo(
-    () => currentEvent?.detected_objects.some((object) => object.group_code === "PERSONAL_ITEM") ?? false,
+  const personalItemObjects = useMemo(
+    () => currentEvent?.detected_objects.filter(isReportablePersonalItem) ?? [],
     [currentEvent],
   );
   const historyPageCount = Math.max(1, Math.ceil(history.length / HISTORY_PAGE_SIZE));
@@ -700,8 +888,48 @@ export function DetectionWorkbench() {
   };
 
   const openWebcamReport = (candidate: WebcamReportCandidate) => {
-    setWebcamReportCandidate(candidate);
+    const classCode = getReportableClassCode(candidate.object.class_code);
+    if (!classCode) return;
+    setWebcamReportCandidate({
+      sourceType: "webcam",
+      objectClassCode: classCode,
+      objectClassName: candidate.object.class_name_ko ?? reportableClassNames[classCode] ?? candidate.object.label,
+      confidence: candidate.object.confidence,
+      image: candidate.image,
+      capturedAt: candidate.capturedAt,
+    });
     setWebcamReportError("");
+    setWebcamReportSuccess(null);
+  };
+
+  const openDetectionReport = async (object: DetectionObject) => {
+    const classCode = getReportableClassCode(object.class_code);
+    if (!classCode || !currentEvent) return;
+    const sourceType = tab;
+    const sourceFile = file;
+    const sourceEvent = currentEvent;
+    let image: File | null = null;
+    let imageError = "";
+
+    if (sourceType === "image" && sourceFile) {
+      try {
+        image = await prepareCitizenReportImage(sourceFile);
+      } catch {
+        imageError = "이미지를 발견 제보용으로 준비하지 못했습니다. 이미지 없이 제보하거나 더 작은 이미지를 선택해주세요.";
+      }
+    } else if (sourceType === "video" && sourceFile) {
+      image = await captureVideoReportFrame(sourceFile, object);
+    }
+
+    setWebcamReportCandidate({
+      sourceType,
+      objectClassCode: classCode,
+      objectClassName: object.class_name_ko || reportableClassNames[classCode],
+      confidence: object.confidence,
+      image,
+      capturedAt: sourceEvent.processing_completed_at ?? sourceEvent.created_at,
+    });
+    setWebcamReportError(imageError);
     setWebcamReportSuccess(null);
   };
 
@@ -737,7 +965,7 @@ export function DetectionWorkbench() {
         areaName,
         foundAt,
         description,
-        image: webcamReportCandidate.image,
+        image: webcamReportCandidate.image ?? undefined,
       });
       setWebcamReportSuccess(report);
     } catch (caught) {
@@ -879,12 +1107,28 @@ export function DetectionWorkbench() {
 
             <p className={styles.notice}>AI 분석 결과는 참고용이며 동일 물품 또는 소유권을 확정하지 않습니다.</p>
 
-            {personalItemDetected && tab !== "webcam" && (
+            {personalItemObjects.length > 0 && tab !== "webcam" && (
               <div className={styles.ctaBox}>
-                <strong>개인 물품 후보가 탐지되었습니다.</strong>
-                <div>
-                  <Link className="button button-secondary" href="/found-items">비슷한 발견물 찾아보기</Link>
-                  <Link className="button button-primary" href="/lost-reports/new">분실 신고하기</Link>
+                <strong>개인 물품 후보를 어떻게 처리할까요?</strong>
+                <p>AI가 실제 소유자를 확정하지는 않습니다. 상황에 맞는 다음 행동을 선택해주세요.</p>
+                <div className={styles.ctaObjectList}>
+                  {personalItemObjects.map((object) => (
+                    <article key={object.id} className={styles.ctaObjectCard}>
+                      <span>{object.class_name_ko || reportableClassNames[object.class_code]}</span>
+                      <small>탐지 신뢰도 {formatConfidence(object.confidence)}</small>
+                      <div>
+                        <button className="button button-secondary" type="button" onClick={() => void openDetectionReport(object)}>
+                          발견한 물건을 제보할게요
+                        </button>
+                        <Link className="button button-primary" href={`/lost-reports/new?class_code=${encodeURIComponent(object.class_code)}&source=detection`}>
+                          내가 잃어버린 물건이에요
+                        </Link>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+                <div className={styles.ctaFooter}>
+                  <Link className="button button-secondary" href="/found-items">비슷한 발견물 보기</Link>
                 </div>
               </div>
             )}
