@@ -333,6 +333,59 @@ def test_rejected_claim_does_not_make_found_item_available_when_another_active_c
     assert db.get(FoundItem, 10).status == "CLAIM_PENDING"
 
 
+def test_rejected_claim_reconciles_stale_candidate_below_threshold(db: Session) -> None:
+    _, admin = seed_basic_claim_data(db)
+    now = utc_now()
+    found_item = seed_found_item(db, 10, status="CLAIM_PENDING", found_at=now)
+    found_item.color = "red"
+    found_item.area_name = "found-area"
+    lost_report = seed_lost_report(db, 20, status="CLAIM_PENDING", lost_from=now - timedelta(days=10))
+    lost_report.color = "blue"
+    lost_report.colors = ["blue"]
+    lost_report.description = "plain"
+    lost_report.area_name = "lost-area"
+    candidate = MatchCandidate(id=50, lost_report_id=20, found_item_id=10, total_score=95, type_score=40, area_score=25, time_score=20, keyword_score=10, status="CLAIMED", created_at=now, updated_at=now)
+    claim = seed_claim(db, 30, status="PENDING")
+    db.add_all([candidate, Notification(id=60, user_id=1, notification_type="MATCH_FOUND", title="match", message="match", related_type="MATCH_CANDIDATE", related_id=50, created_at=now)])
+    db.commit()
+
+    review_ownership_claim(db, current_admin=admin, claim_id=30, request=OwnershipClaimUpdateRequest(status="REJECTED"))
+
+    assert claim.status == "REJECTED"
+    assert found_item.status == "AVAILABLE"
+    assert candidate.status == "DISMISSED"
+    assert candidate.total_score == 50
+    assert lost_report.status == "OPEN"
+    assert db.query(Notification).filter_by(notification_type="MATCH_FOUND", related_id=50).count() == 1
+
+
+def test_rejected_claim_reconciles_and_restores_still_valid_candidate(db: Session) -> None:
+    _, admin = seed_basic_claim_data(db)
+    now = utc_now()
+    found_item = seed_found_item(db, 10, status="CLAIM_PENDING", found_at=now)
+    found_item.color = "red"
+    found_item.area_name = "found-area"
+    lost_report = seed_lost_report(db, 20, status="CLAIM_PENDING", lost_from=now - timedelta(days=1))
+    lost_report.color = "red"
+    lost_report.colors = ["red"]
+    lost_report.description = "plain"
+    lost_report.area_name = "lost-area"
+    candidate = MatchCandidate(id=50, lost_report_id=20, found_item_id=10, total_score=95, type_score=40, area_score=25, time_score=20, keyword_score=10, status="CLAIMED", created_at=now, updated_at=now)
+    claim = seed_claim(db, 30, status="PENDING")
+    db.add_all([candidate, Notification(id=60, user_id=1, notification_type="MATCH_FOUND", title="match", message="match", related_type="MATCH_CANDIDATE", related_id=50, created_at=now)])
+    db.commit()
+
+    review_ownership_claim(db, current_admin=admin, claim_id=30, request=OwnershipClaimUpdateRequest(status="REJECTED"))
+
+    assert claim.status == "REJECTED"
+    assert found_item.status == "AVAILABLE"
+    assert candidate.status == "NOTIFIED"
+    assert candidate.total_score == 70
+    assert (candidate.type_score, candidate.area_score, candidate.time_score, candidate.keyword_score) == (40, 0, 20, 10)
+    assert lost_report.status == "MATCHED"
+    assert db.query(Notification).filter_by(notification_type="MATCH_FOUND", related_id=50).count() == 1
+
+
 def test_match_creation_marks_lost_report_matched(db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
     seed_user(db, 1)
     seed_object_class(db, 1, "BAG")

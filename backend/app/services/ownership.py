@@ -20,6 +20,7 @@ from app.repositories.user_flow import (
 )
 from app.schemas.ownership_claim import OwnershipClaimCreateRequest, OwnershipClaimResponse, OwnershipClaimUpdateRequest
 from app.services.mappers import ownership_claim_response
+from app.services.matching import reconcile_match_candidates_for_found_item
 
 ADMIN_CLAIM_STATUSES = {"APPROVED", "REJECTED", "RETURNED"}
 CLAIMABLE_LOST_REPORT_STATUSES = {"OPEN", "MATCHED"}
@@ -181,6 +182,8 @@ def review_ownership_claim(
             if match_candidate is not None and match_candidate.status == "CLAIMED":
                 match_candidate.status = "NOTIFIED"
                 match_candidate.updated_at = now
+        if claim.found_item.status == "AVAILABLE":
+            reconcile_match_candidates_for_found_item(db, claim.found_item)
     elif next_status == "RETURNED":
         claim.found_item.status = "RETURNED"
         claim.found_item.updated_at = now
