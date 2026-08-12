@@ -4,8 +4,6 @@ from unittest.mock import Mock
 from datetime import datetime, timezone
 
 import pytest
-from fastapi import HTTPException
-
 from app.core.config import Settings
 from app.schemas.copilot import CopilotRequest
 from app.services.copilot_providers import (
@@ -16,9 +14,15 @@ from app.services.copilot_providers import (
     ProviderNotConfiguredError,
     ProviderResponseError,
     create_chat_provider,
+    provider_cooldown,
 )
 from google.genai import types
 from app.services.copilot import _model_context, _safe_response, create_copilot_response
+
+
+@pytest.fixture(autouse=True)
+def clear_provider_cooldown() -> None:
+    provider_cooldown.clear()
 
 
 def settings(**values: str) -> Settings:
@@ -128,6 +132,7 @@ def test_gemini_function_response_uses_user_role_and_json_safe_payload(monkeypat
     assert follow_up_contents[-1].role == "user"
     payload = follow_up_contents[-1].parts[0].function_response.response
     assert payload["result"]["checked_at"] == "2026-08-11T00:00:00+00:00"
+    assert generate.call_args_list[0].kwargs["config"].max_output_tokens == provider.max_output_tokens
     assert result.provider == "gemini"
 
 
@@ -146,28 +151,34 @@ def test_gemini_429_is_normalized_as_rate_limited(monkeypatch: pytest.MonkeyPatc
         asyncio.run(provider.generate(messages=[{"role": "user", "content": "안녕"}], instructions="답해", tools=[], execute=Mock()))
     assert captured.value.status == ChatStatus.RATE_LIMITED
     assert captured.value.upstream_status == 429
+    assert captured.value.retry_after_seconds is not None
     assert "provider details" not in str(captured.value)
 
 
-def test_rate_limited_maps_to_safe_http_429(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_rate_limited_provider_uses_safe_local_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     class RateLimitedProvider:
         async def generate(self, **_):
-            raise ProviderResponseError("raw quota 20 secret", status=ChatStatus.RATE_LIMITED, upstream_status=429)
+            raise ProviderResponseError(
+                "raw quota 20 secret",
+                status=ChatStatus.RATE_LIMITED,
+                upstream_status=429,
+                retry_after_seconds=17,
+            )
 
     monkeypatch.setattr("app.services.copilot.create_chat_provider", lambda _: RateLimitedProvider())
     monkeypatch.setattr("app.services.copilot.validated_context", lambda *_: ("GENERAL", None))
     monkeypatch.setattr("app.services.copilot.get_or_create", lambda *_: Mock(public_id="conversation-id"))
     monkeypatch.setattr("app.services.copilot.save_message", Mock())
-    monkeypatch.setattr("app.services.copilot.model_history", lambda *_: [{"role": "user", "content": "안녕"}])
-    request = CopilotRequest.model_validate({"messages": [{"role": "user", "content": "안녕"}], "context": {"page": "HOME", "path": "/"}})
-    with pytest.raises(HTTPException) as captured:
-        asyncio.run(create_copilot_response(Mock(), request, Mock(id=1, role="USER")))
-    assert captured.value.status_code == 429
-    assert captured.value.detail == {"status": "RATE_LIMITED", "message": "AI 사용량이 잠시 한도에 도달했어요. 잠시 후 다시 시도해 주세요."}
-    assert "quota 20" not in str(captured.value.detail)
+    monkeypatch.setattr("app.services.copilot.model_history", lambda *_: [{"role": "user", "content": "show my matches"}])
+    request = CopilotRequest.model_validate({"messages": [{"role": "user", "content": "show my matches"}], "context": {"page": "HOME", "path": "/"}})
+    response = asyncio.run(create_copilot_response(Mock(), request, Mock(id=1, role="USER")))
+    assert response.provider == "flowlink"
+    assert response.model == "local-rate-limit"
+    assert response.conversation_public_id == "conversation-id"
+    assert "quota 20" not in response.message
 
 
-def test_general_provider_failure_remains_502(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_general_provider_failure_uses_safe_local_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     class FailedProvider:
         async def generate(self, **_):
             raise ProviderResponseError("upstream failed")
@@ -176,20 +187,18 @@ def test_general_provider_failure_remains_502(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr("app.services.copilot.validated_context", lambda *_: ("GENERAL", None))
     monkeypatch.setattr("app.services.copilot.get_or_create", lambda *_: Mock(public_id="conversation-id"))
     monkeypatch.setattr("app.services.copilot.save_message", Mock())
-    monkeypatch.setattr("app.services.copilot.model_history", lambda *_: [{"role": "user", "content": "안녕"}])
-    request = CopilotRequest.model_validate({"messages": [{"role": "user", "content": "안녕"}], "context": {"page": "HOME", "path": "/"}})
-    with pytest.raises(HTTPException) as captured:
-        asyncio.run(create_copilot_response(Mock(), request, Mock(id=1, role="USER")))
-    assert captured.value.status_code == 502
+    monkeypatch.setattr("app.services.copilot.model_history", lambda *_: [{"role": "user", "content": "show my matches"}])
+    request = CopilotRequest.model_validate({"messages": [{"role": "user", "content": "show my matches"}], "context": {"page": "HOME", "path": "/"}})
+    response = asyncio.run(create_copilot_response(Mock(), request, Mock(id=1, role="USER")))
+    assert response.provider == "flowlink"
+    assert response.model == "local-rate-limit"
+    assert response.conversation_public_id == "conversation-id"
+    assert "upstream failed" not in response.message
 
 
 def test_plain_greeting_does_not_expose_personal_tools(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict = {}
-    class GreetingProvider:
-        async def generate(self, **kwargs):
-            captured.update(kwargs)
-            return Mock(text='{"message":"안녕하세요","cards":[],"actions":[],"suggestions":[]}', model="test", provider="gemini")
-    monkeypatch.setattr("app.services.copilot.create_chat_provider", lambda _: GreetingProvider())
+    provider_factory = Mock(side_effect=AssertionError("plain greetings should not call the provider"))
+    monkeypatch.setattr("app.services.copilot.create_chat_provider", provider_factory)
     conversation = Mock(public_id="conversation-id")
     monkeypatch.setattr("app.services.copilot.validated_context", lambda *_: ("GENERAL", None))
     monkeypatch.setattr("app.services.copilot.get_or_create", lambda *_: conversation)
@@ -197,8 +206,9 @@ def test_plain_greeting_does_not_expose_personal_tools(monkeypatch: pytest.Monke
     monkeypatch.setattr("app.services.copilot.model_history", lambda *_: [{"role": "user", "content": "안녕!"}])
     request = CopilotRequest.model_validate({"messages": [{"role": "user", "content": "안녕!"}], "context": {"page": "HOME", "path": "/"}})
     response = asyncio.run(create_copilot_response(Mock(), request, Mock(id=1, role="USER")))
-    assert captured["tools"] == []
-    assert response.message == "안녕하세요"
+    provider_factory.assert_not_called()
+    assert response.provider == "flowlink"
+    assert response.model == "local-greeting"
 
 
 def function_call_response(name: str, args: dict) -> Mock:
@@ -232,14 +242,14 @@ def test_duplicate_tool_call_is_executed_once_then_finalized_without_tools(monke
 
 def test_sequential_different_tools_and_different_arguments_are_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
     final = Mock(function_calls=[], text='{"message":"완료","cards":[],"actions":[],"suggestions":[]}')
-    provider, _ = gemini_with_responses(monkeypatch, [function_call_response("get_match_detail", {"match_id": 1}), function_call_response("get_match_detail", {"match_id": 2}), function_call_response("get_my_notifications", {}), final])
+    provider, _ = gemini_with_responses(monkeypatch, [function_call_response("get_match_detail", {"match_id": 1}), function_call_response("get_match_detail", {"match_id": 2}), final])
     execute = Mock(return_value={})
     asyncio.run(provider.generate(messages=[{"role": "user", "content": "상세 확인"}], instructions="답해", tools=[{"name": "get_match_detail", "description": "조회", "parameters": {"type": "object", "properties": {}}}], execute=execute))
-    assert [call.args[1] for call in execute.call_args_list] == [{"match_id": 1}, {"match_id": 2}, {}]
+    assert [call.args[1] for call in execute.call_args_list] == [{"match_id": 1}, {"match_id": 2}]
 
 
 def test_max_tool_rounds_forces_safe_final_synthesis(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = [function_call_response("get_match_detail", {"match_id": index}) for index in range(1, COPILOT_MAX_TOOL_ROUNDS + 2)]
+    calls = [function_call_response("get_match_detail", {"match_id": index}) for index in range(1, COPILOT_MAX_TOOL_ROUNDS + 1)]
     final = Mock(function_calls=[], text='{"message":"정리 완료","cards":[],"actions":[],"suggestions":[]}')
     provider, generate = gemini_with_responses(monkeypatch, [*calls, final])
     execute = Mock(return_value={})

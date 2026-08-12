@@ -7,7 +7,7 @@ from app.core.auth import get_current_user, get_optional_current_user
 from app.db.session import get_db
 from app.models import User
 from app.schemas.copilot import CopilotConversationDetail, CopilotConversationSummary, CopilotConversationUpdate, CopilotRequest, CopilotResponse
-from app.services.copilot import create_copilot_briefing, create_copilot_response
+from app.services.copilot import create_copilot_briefing, create_copilot_response, rate_limited_fallback_response
 from app.services.copilot_memory import detail, rename, soft_delete, summaries
 from app.services.copilot_rate_limit import copilot_rate_limiter, rate_limit_identity, role_limit
 from app.core.config import get_settings
@@ -55,6 +55,8 @@ async def chat(
         limit=role_limit(settings, role),
         window_seconds=settings.COPILOT_RATE_LIMIT_WINDOW_SECONDS,
     ):
+        if current_user is not None:
+            return rate_limited_fallback_response(current_user)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail={"status": "RATE_LIMITED", "message": "요청이 잠시 많아요. 잠시 후 다시 시도해 주세요."},
