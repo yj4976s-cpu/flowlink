@@ -59,7 +59,11 @@ flowlink/
 ```env
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 NEXT_PUBLIC_KAKAO_MAP_JS_KEY=
+# 기존 로컬 환경 호환용 fallback입니다. 새 설정은 JS_KEY를 우선 사용하세요.
+NEXT_PUBLIC_KAKAO_MAP_KEY=
 ```
+
+Kakao 지도는 REST API 키가 아니라 JavaScript 키를 사용합니다. 로컬 개발 시 Kakao Developers의 JavaScript 키를 `NEXT_PUBLIC_KAKAO_MAP_JS_KEY`에 넣고, 허용 도메인에 `http://localhost:3000`을 등록해주세요.
 
 ### Backend
 

@@ -23,6 +23,14 @@ import styles from "./DetectionWorkbench.module.css";
 
 type DetectionTab = "image" | "video" | "webcam";
 type SubmitState = "idle" | "selected" | "analyzing" | "success" | "error";
+type FoundReportCandidate = {
+  sourceType: DetectionTab;
+  objectClassCode: string;
+  objectClassName: string;
+  confidence: number;
+  image: File | null;
+  capturedAt: string;
+};
 
 const IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 const VIDEO_MAX_BYTES = 100 * 1024 * 1024;
@@ -65,6 +73,14 @@ const reportableClassNames: Record<string, string> = {
   BALL: "공",
 };
 
+function getReportableClassCode(value: string | null | undefined) {
+  return value && reportableClassNames[value] ? value : "";
+}
+
+function isReportablePersonalItem(object: Pick<DetectionObject, "class_code" | "group_code">) {
+  return object.group_code === "PERSONAL_ITEM" && Boolean(getReportableClassCode(object.class_code));
+}
+
 function formatBytes(bytes: number) {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
   if (bytes >= 1024) return `${Math.round(bytes / 1024)}KB`;
@@ -95,10 +111,6 @@ function toDatetimeLocalInput(value: string) {
 function localDatetimeToIso(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "" : date.toISOString();
-}
-
-function getWebcamReportLabel(candidate: WebcamReportCandidate) {
-  return candidate.object.class_name_ko ?? reportableClassNames[candidate.object.class_code ?? ""] ?? candidate.object.label;
 }
 
 function validateFile(file: File, tab: DetectionTab) {
@@ -262,19 +274,21 @@ function WebcamReportModal({
   onClose,
   onSubmit,
 }: {
-  candidate: WebcamReportCandidate;
+  candidate: FoundReportCandidate;
   submitting: boolean;
   error: string;
   success: CitizenReport | null;
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
-  const previewUrl = useMemo(() => URL.createObjectURL(candidate.image), [candidate.image]);
-  const defaultClassCode = candidate.object.class_code ?? "BAG";
-  const label = getWebcamReportLabel(candidate);
+  const previewUrl = useMemo(() => candidate.image ? URL.createObjectURL(candidate.image) : "", [candidate.image]);
+  const defaultClassCode = candidate.objectClassCode || "BAG";
+  const label = candidate.objectClassName;
 
   useEffect(() => {
-    return () => URL.revokeObjectURL(previewUrl);
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
   }, [previewUrl]);
 
   return (
@@ -309,14 +323,20 @@ function WebcamReportModal({
         ) : (
           <form className={styles.reportForm} onSubmit={onSubmit}>
             <div className={styles.reportPreviewGrid}>
-              {previewUrl && (
+              {previewUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={previewUrl} alt="웹캠에서 캡처한 발견 제보 이미지" />
+                <img src={previewUrl} alt="발견 제보에 첨부할 탐지 이미지" />
+              ) : (
+                <div className={styles.reportPreviewEmpty}>
+                  <Icon name="document" size={26} />
+                  <strong>대표 이미지는 첨부하지 않습니다.</strong>
+                  <p>영상 탐지 결과는 물품 종류만 참고해 제보를 시작합니다.</p>
+                </div>
               )}
               <div className={styles.reportCandidateMeta}>
                 <span>AI 예상 후보</span>
                 <strong>{label}</strong>
-                <em>탐지 신뢰도 {formatConfidence(candidate.object.confidence)}</em>
+                <em>탐지 신뢰도 {formatConfidence(candidate.confidence)}</em>
                 <p>물품 종류는 참고값입니다. 실제 제보 내용에 맞게 수정할 수 있어요.</p>
               </div>
             </div>
@@ -403,7 +423,7 @@ export function DetectionWorkbench() {
   const [currentEvent, setCurrentEvent] = useState<DetectionEvent | null>(null);
   const [webcamFrame, setWebcamFrame] = useState<WebcamDetectionFrame | null>(null);
   const [webcamStatus, setWebcamStatus] = useState<WebcamPanelStatus>("idle");
-  const [webcamReportCandidate, setWebcamReportCandidate] = useState<WebcamReportCandidate | null>(null);
+  const [webcamReportCandidate, setWebcamReportCandidate] = useState<FoundReportCandidate | null>(null);
   const [webcamReportSubmitting, setWebcamReportSubmitting] = useState(false);
   const [webcamReportError, setWebcamReportError] = useState("");
   const [webcamReportSuccess, setWebcamReportSuccess] = useState<CitizenReport | null>(null);
@@ -417,8 +437,8 @@ export function DetectionWorkbench() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewUrlRef = useRef("");
 
-  const personalItemDetected = useMemo(
-    () => currentEvent?.detected_objects.some((object) => object.group_code === "PERSONAL_ITEM") ?? false,
+  const personalItemObjects = useMemo(
+    () => currentEvent?.detected_objects.filter(isReportablePersonalItem) ?? [],
     [currentEvent],
   );
   const historyPageCount = Math.max(1, Math.ceil(history.length / HISTORY_PAGE_SIZE));
@@ -700,7 +720,31 @@ export function DetectionWorkbench() {
   };
 
   const openWebcamReport = (candidate: WebcamReportCandidate) => {
-    setWebcamReportCandidate(candidate);
+    const classCode = getReportableClassCode(candidate.object.class_code);
+    if (!classCode) return;
+    setWebcamReportCandidate({
+      sourceType: "webcam",
+      objectClassCode: classCode,
+      objectClassName: candidate.object.class_name_ko ?? reportableClassNames[classCode] ?? candidate.object.label,
+      confidence: candidate.object.confidence,
+      image: candidate.image,
+      capturedAt: candidate.capturedAt,
+    });
+    setWebcamReportError("");
+    setWebcamReportSuccess(null);
+  };
+
+  const openDetectionReport = (object: DetectionObject) => {
+    const classCode = getReportableClassCode(object.class_code);
+    if (!classCode || !currentEvent) return;
+    setWebcamReportCandidate({
+      sourceType: tab,
+      objectClassCode: classCode,
+      objectClassName: object.class_name_ko || reportableClassNames[classCode],
+      confidence: object.confidence,
+      image: tab === "image" ? file : null,
+      capturedAt: currentEvent.processing_completed_at ?? currentEvent.created_at,
+    });
     setWebcamReportError("");
     setWebcamReportSuccess(null);
   };
@@ -737,7 +781,7 @@ export function DetectionWorkbench() {
         areaName,
         foundAt,
         description,
-        image: webcamReportCandidate.image,
+        image: webcamReportCandidate.image ?? undefined,
       });
       setWebcamReportSuccess(report);
     } catch (caught) {
@@ -879,12 +923,28 @@ export function DetectionWorkbench() {
 
             <p className={styles.notice}>AI 분석 결과는 참고용이며 동일 물품 또는 소유권을 확정하지 않습니다.</p>
 
-            {personalItemDetected && tab !== "webcam" && (
+            {personalItemObjects.length > 0 && tab !== "webcam" && (
               <div className={styles.ctaBox}>
-                <strong>개인 물품 후보가 탐지되었습니다.</strong>
-                <div>
-                  <Link className="button button-secondary" href="/found-items">비슷한 발견물 찾아보기</Link>
-                  <Link className="button button-primary" href="/lost-reports/new">분실 신고하기</Link>
+                <strong>개인 물품 후보를 어떻게 처리할까요?</strong>
+                <p>AI가 실제 소유자를 확정하지는 않습니다. 상황에 맞는 다음 행동을 선택해주세요.</p>
+                <div className={styles.ctaObjectList}>
+                  {personalItemObjects.map((object) => (
+                    <article key={object.id} className={styles.ctaObjectCard}>
+                      <span>{object.class_name_ko || reportableClassNames[object.class_code]}</span>
+                      <small>탐지 신뢰도 {formatConfidence(object.confidence)}</small>
+                      <div>
+                        <button className="button button-secondary" type="button" onClick={() => openDetectionReport(object)}>
+                          발견한 물건을 제보할게요
+                        </button>
+                        <Link className="button button-primary" href={`/lost-reports/new?class_code=${encodeURIComponent(object.class_code)}&source=detection`}>
+                          내가 잃어버린 물건이에요
+                        </Link>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+                <div className={styles.ctaFooter}>
+                  <Link className="button button-secondary" href="/found-items">비슷한 발견물 보기</Link>
                 </div>
               </div>
             )}
