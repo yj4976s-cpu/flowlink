@@ -12,10 +12,11 @@ import {
 import { Icon } from "@/components/common/Icon";
 import { getCurrentUser, type AuthUser } from "@/lib/authApi";
 import {
+  deleteAllCopilotConversations,
   deleteCopilotConversation,
   getCopilotBriefing,
   getCopilotConversation,
-  listCopilotConversations,
+  loadCopilotConversationHistory,
   renameCopilotConversation,
   sendCopilotMessage,
   CopilotApiError,
@@ -239,6 +240,13 @@ export function FlowCopilot() {
   const [memoryLoading, setMemoryLoading] = useState(false);
   const [memoryError, setMemoryError] = useState(false);
   const [historyQuery, setHistoryQuery] = useState("");
+  const [historyPage, setHistoryPage] = useState(1);
+  const [conversationCount, setConversationCount] = useState(0);
+  const [manageHistory, setManageHistory] = useState(false);
+  const [selectedConversationIds, setSelectedConversationIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteMode, setBulkDeleteMode] = useState<"selected" | "all" | null>(null);
+  const [deleteError, setDeleteError] = useState("");
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [conversationMenu, setConversationMenu] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
@@ -247,6 +255,7 @@ export function FlowCopilot() {
   const launcherRef = useRef<HTMLButtonElement>(null);
   const historyButtonRef = useRef<HTMLButtonElement>(null);
   const historyBackRef = useRef<HTMLButtonElement>(null);
+  const manageHistoryButtonRef = useRef<HTMLButtonElement>(null);
   const conversationMenuTriggers = useRef(new Map<string, HTMLButtonElement>());
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messageEndRef = useRef<HTMLDivElement>(null);
@@ -274,6 +283,31 @@ export function FlowCopilot() {
     return Math.max(0, Math.ceil((until - Date.now()) / 1000));
   }, []);
 
+  const resetSessionUi = useCallback(() => {
+    setMessages([]);
+    setValue("");
+    setUnread(0);
+    setBriefing(null);
+    setConversationId(null);
+    setConversations([]);
+    setConversationCount(0);
+    setMemoryOpen(false);
+    setMemoryLoading(false);
+    setMemoryError(false);
+    setHistoryQuery("");
+    setHistoryPage(1);
+    setManageHistory(false);
+    setSelectedConversationIds(new Set());
+    setEditingId(null);
+    setEditingTitle("");
+    setConversationMenu(null);
+    setDeleteTarget(null);
+    setBulkDeleteMode(null);
+    setDeleteError("");
+    setDeleteBusy(false);
+    clearCooldown();
+  }, [clearCooldown]);
+
   const closeConversationMenu = useCallback(
     (conversationPublicId: string | null) => {
       setConversationMenu(null);
@@ -298,13 +332,7 @@ export function FlowCopilot() {
           abortRef.current = null;
           sendingRef.current = false;
           setLoading(false);
-          setMessages([]);
-          setValue("");
-          setBriefing(null);
-          setConversationId(null);
-          setConversations([]);
-          setMemoryOpen(false);
-          clearCooldown();
+          resetSessionUi();
         }
         sessionRef.current = key;
         setUser(current);
@@ -344,32 +372,40 @@ export function FlowCopilot() {
           }
           sessionRef.current = null;
           setUser(null);
-          setUnread(0);
-          setBriefing(null);
-          setConversationId(null);
-          setConversations([]);
-          setMemoryOpen(false);
-          clearCooldown();
+          resetSessionUi();
         }
       })
       .finally(() => active && setAuthReady(true));
     return () => {
       active = false;
     };
-  }, [clearCooldown]);
+  }, [resetSessionUi]);
   useEffect(resolveSession, [resolveSession, pathname, authVersion]);
   useEffect(() => {
     if (!user) {
       setConversations([]);
+      setConversationCount(0);
       return;
     }
     let active = true;
+    const requestGeneration = sessionGenerationRef.current;
+    const requestSession = sessionRef.current;
+    const isCurrentSession = () =>
+      active &&
+      requestGeneration === sessionGenerationRef.current &&
+      requestSession === sessionRef.current;
     setMemoryError(false);
-    void listCopilotConversations()
-      .then((items) => active && setConversations(items))
+    void loadCopilotConversationHistory()
+      .then(({ items, count }) => {
+        if (isCurrentSession()) {
+          setConversations(items);
+          setConversationCount(count);
+        }
+      })
       .catch(() => {
-        if (active) {
+        if (isCurrentSession()) {
           setConversations([]);
+          setConversationCount(0);
           setMemoryError(true);
         }
       });
@@ -384,13 +420,14 @@ export function FlowCopilot() {
       abortRef.current = null;
       sendingRef.current = false;
       setLoading(false);
-      clearCooldown();
+      resetSessionUi();
+      setUser(null);
       setAuthReady(false);
       setAuthVersion((value) => value + 1);
     };
     window.addEventListener("flowlink:auth-changed", changed);
     return () => window.removeEventListener("flowlink:auth-changed", changed);
-  }, [clearCooldown]);
+  }, [resetSessionUi]);
   useEffect(() => {
     if (cooldownRemaining <= 0) return;
     const timer = window.setInterval(() => {
@@ -404,8 +441,15 @@ export function FlowCopilot() {
     if (!open) return;
     const close = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        if (deleteTarget) {
+        if (deleteTarget && !deleteBusy) {
           setDeleteTarget(null);
+          setDeleteError("");
+          return;
+        }
+        if (bulkDeleteMode && !deleteBusy) {
+          setBulkDeleteMode(null);
+          setDeleteError("");
+          window.setTimeout(() => manageHistoryButtonRef.current?.focus());
           return;
         }
         if (conversationMenu) {
@@ -414,6 +458,8 @@ export function FlowCopilot() {
         }
         if (memoryOpen) {
           setMemoryOpen(false);
+          setManageHistory(false);
+          setSelectedConversationIds(new Set());
           window.setTimeout(() => historyButtonRef.current?.focus());
           return;
         }
@@ -430,7 +476,7 @@ export function FlowCopilot() {
       180,
     );
     return () => window.removeEventListener("keydown", close);
-  }, [closeConversationMenu, conversationMenu, deleteTarget, memoryOpen, open]);
+  }, [bulkDeleteMode, closeConversationMenu, conversationMenu, deleteBusy, deleteTarget, memoryOpen, open]);
   useEffect(() => {
     messageEndRef.current?.scrollIntoView({ block: "end" });
   }, [messages, loading]);
@@ -503,9 +549,15 @@ export function FlowCopilot() {
     ].slice(-12);
   const refreshMemory = async () => {
     setMemoryError(false);
+    const requestGeneration = sessionGenerationRef.current;
+    const requestSession = sessionRef.current;
     try {
-      setConversations(await listCopilotConversations());
+      const { items, count } = await loadCopilotConversationHistory();
+      if (requestGeneration !== sessionGenerationRef.current || requestSession !== sessionRef.current) return;
+      setConversations(items);
+      setConversationCount(count);
     } catch (error) {
+      if (requestGeneration !== sessionGenerationRef.current || requestSession !== sessionRef.current) return;
       setMemoryError(true);
       throw error;
     }
@@ -516,6 +568,8 @@ export function FlowCopilot() {
     setMessages([]);
     setConversationId(null);
     setMemoryOpen(false);
+    setManageHistory(false);
+    setSelectedConversationIds(new Set());
     setShowExamples(false);
     setShowRecommendations(false);
     clearCooldown();
@@ -1161,13 +1215,18 @@ export function FlowCopilot() {
         .toLowerCase()
         .includes(historyQuery.trim().toLowerCase()),
   );
-  const groupedConversations = filteredConversations.reduce<
+  const totalHistoryPages = Math.max(1, Math.ceil(filteredConversations.length / 5));
+  const safeHistoryPage = Math.min(historyPage, totalHistoryPages);
+  const visibleConversations = filteredConversations.slice((safeHistoryPage - 1) * 5, safeHistoryPage * 5);
+  const groupedConversations = visibleConversations.reduce<
     Record<string, CopilotConversationSummary[]>
   >((groups, item) => {
     const group = historyGroup(item.last_message_at);
     (groups[group] ??= []).push(item);
     return groups;
   }, {});
+  useEffect(() => setHistoryPage(1), [historyQuery]);
+  useEffect(() => { if (historyPage > totalHistoryPages) setHistoryPage(totalHistoryPages); }, [historyPage, totalHistoryPages]);
   const contextLabel = `${context.replaceAll("_", " ")}${entityId ? ` · #${entityId}` : ""}`;
 
   return (
@@ -1218,13 +1277,16 @@ export function FlowCopilot() {
               aria-pressed={memoryOpen}
               onClick={() => {
                 setMemoryOpen(true);
+                setManageHistory(false);
+                setSelectedConversationIds(new Set());
+                setHistoryPage(1);
                 setConversationMenu(null);
               }}
             >
               <Icon name="clock" size={18} />
               대화 기록
-              {conversations.length > 0 && (
-                <small>{conversations.length}</small>
+              {conversationCount > 0 && (
+                <small>{conversationCount}</small>
               )}
             </button>
           </nav>
@@ -1242,6 +1304,8 @@ export function FlowCopilot() {
                     type="button"
                     onClick={() => {
                       setMemoryOpen(false);
+                      setManageHistory(false);
+                      setSelectedConversationIds(new Set());
                       window.setTimeout(() =>
                         historyButtonRef.current?.focus(),
                       );
@@ -1257,7 +1321,9 @@ export function FlowCopilot() {
                         ? "이전 대화를 다시 확인해요."
                         : "비로그인 대화는 영구 저장되지 않아요."}
                     </p>
+                    {user && <small className={styles.historyCount}>총 {conversationCount}개의 대화</small>}
                   </div>
+                  {user && conversations.length > 0 && <button ref={manageHistoryButtonRef} type="button" className={styles.manageHistoryButton} onClick={() => { setManageHistory((current) => { if (current) setSelectedConversationIds(new Set()); return !current; }); setConversationMenu(null); }}>{manageHistory ? "완료" : "기록 관리"}</button>}
                 </div>
                 {user && conversations.length >= 5 && (
                   <label className={styles.historySearch}>
@@ -1290,11 +1356,8 @@ export function FlowCopilot() {
                   </div>
                 ) : !user || conversations.length === 0 ? (
                   <div className={styles.historyState}>
-                    <strong>아직 저장된 대화가 없어요.</strong>
-                    <p>
-                      FlowLink AI와 대화를 시작하면 여기에서 다시 확인할 수
-                      있어요.
-                    </p>
+                    <strong>대화 기록이 비어 있어요.</strong>
+                    <p>새로운 대화를 시작하면 여기에 기록됩니다.</p>
                     <button type="button" onClick={newConversation}>
                       새 대화 시작
                     </button>
@@ -1318,6 +1381,7 @@ export function FlowCopilot() {
                                   conversationId === item.public_id || undefined
                                 }
                               >
+                                {manageHistory && <button type="button" className={styles.historySelect} aria-label={`${item.title || "새 대화"} 선택`} aria-pressed={selectedConversationIds.has(item.public_id)} onClick={() => setSelectedConversationIds((current) => { const next = new Set(current); if (next.has(item.public_id)) next.delete(item.public_id); else next.add(item.public_id); return next; })}><Icon name="check" size={15} /></button>}
                                 {editingId === item.public_id ? (
                                   <form
                                     onSubmit={(event) => {
@@ -1354,6 +1418,7 @@ export function FlowCopilot() {
                                   <button
                                     className={styles.resumeButton}
                                     type="button"
+                                    disabled={manageHistory}
                                     onClick={() =>
                                       void resumeConversation(item.public_id)
                                     }
@@ -1374,7 +1439,7 @@ export function FlowCopilot() {
                                     </span>
                                   </button>
                                 )}
-                                {editingId !== item.public_id && (
+                                {!manageHistory && editingId !== item.public_id && (
                                   <div className={styles.conversationMenu}>
                                     <button
                                       ref={(node) => {
@@ -1402,8 +1467,7 @@ export function FlowCopilot() {
                                           setConversationMenu(item.public_id);
                                       }}
                                     >
-                                      <span>관리</span>
-                                      <Icon name="chevron" size={15} />
+                                      <Icon name="more" size={18} />
                                     </button>
                                     {conversationMenu === item.public_id && (
                                       <div
@@ -1428,6 +1492,7 @@ export function FlowCopilot() {
                                           role="menuitem"
                                           onClick={(event) => {
                                             event.stopPropagation();
+                                            setDeleteError("");
                                             setDeleteTarget(item);
                                             setConversationMenu(null);
                                           }}
@@ -1447,6 +1512,10 @@ export function FlowCopilot() {
                     )}
                   </div>
                 )}
+                {!memoryLoading && !memoryError && filteredConversations.length > 0 && <footer className={styles.historyFooter}>
+                  {manageHistory && <div className={styles.historyBulkActions}><span>선택 {selectedConversationIds.size}개</span><button type="button" disabled={selectedConversationIds.size === 0} onClick={() => { setDeleteError(""); setBulkDeleteMode("selected"); }}>선택 삭제</button><button type="button" onClick={() => { setDeleteError(""); setBulkDeleteMode("all"); }}>전체 삭제</button></div>}
+                  {filteredConversations.length > 5 && <nav className={styles.historyPagination} aria-label="대화 기록 페이지"><button type="button" disabled={safeHistoryPage === 1} onClick={() => setHistoryPage((page) => Math.max(1, page - 1))}>‹ 이전</button><span aria-live="polite">{safeHistoryPage} / {totalHistoryPages}</span><button type="button" disabled={safeHistoryPage === totalHistoryPages} onClick={() => setHistoryPage((page) => Math.min(totalHistoryPages, page + 1))}>다음 ›</button></nav>}
+                </footer>}
               </section>
             ) : (
               <>
@@ -1573,7 +1642,7 @@ export function FlowCopilot() {
                 disabled={loading || cooldownRemaining > 0 || !value.trim()}
                 aria-label="질문 보내기"
               >
-                <Icon name="arrow" size={18} />
+                <Icon name="send" size={18} />
               </button>
             </form>
           )}
@@ -1589,25 +1658,46 @@ export function FlowCopilot() {
           >
             <h3 id="memory-delete-title">이 대화를 삭제할까요?</h3>
             <p>“{deleteTarget.title}” 대화가 Flow Memory에서 사라집니다.</p>
+            {deleteError && <p className={styles.deleteError} role="alert">{deleteError}</p>}
             <div>
-              <button type="button" onClick={() => setDeleteTarget(null)}>
+              <button type="button" disabled={deleteBusy} onClick={() => { setDeleteTarget(null); setDeleteError(""); }}>
                 취소
               </button>
               <button
                 type="button"
-                onClick={() =>
-                  void deleteCopilotConversation(deleteTarget.public_id).then(
-                    () => {
-                      if (conversationId === deleteTarget.public_id)
-                        newConversation();
-                      setDeleteTarget(null);
-                      return refreshMemory();
-                    },
-                  )
-                }
+                disabled={deleteBusy}
+                onClick={() => { if (deleteBusy) return; const target = deleteTarget; const requestGeneration = sessionGenerationRef.current; const requestSession = sessionRef.current; const isCurrentSession = () => requestGeneration === sessionGenerationRef.current && requestSession === sessionRef.current; setDeleteBusy(true); setDeleteError(""); void deleteCopilotConversation(target.public_id).then(async () => { if (!isCurrentSession()) return; if (conversationId === target.public_id) newConversation(); setDeleteTarget(null); await refreshMemory(); }).catch(() => { if (isCurrentSession()) setDeleteError("대화를 삭제하지 못했어요. 잠시 후 다시 시도해 주세요."); }).finally(() => { if (isCurrentSession()) setDeleteBusy(false); }); }}
               >
-                삭제
+                {deleteBusy ? "삭제 중" : "삭제"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {bulkDeleteMode && (
+        <div className={styles.confirmBackdrop} role="presentation">
+          <div className={styles.confirmDialog} role="dialog" aria-modal="true" aria-labelledby="memory-bulk-delete-title" aria-describedby="memory-bulk-delete-description">
+            <h3 id="memory-bulk-delete-title">{bulkDeleteMode === "all" ? "대화 기록을 모두 삭제할까요?" : "선택한 대화를 삭제할까요?"}</h3>
+            <p id="memory-bulk-delete-description">{bulkDeleteMode === "all" ? `저장된 대화 ${conversationCount}개가 모두 삭제됩니다.` : `선택한 ${selectedConversationIds.size}개의 대화가 삭제됩니다.`}<br />삭제한 기록은 다시 복구할 수 없습니다.</p>
+            {deleteError && <p className={styles.deleteError} role="alert">{deleteError}</p>}
+            <div>
+              <button type="button" autoFocus disabled={deleteBusy} onClick={() => { setBulkDeleteMode(null); setDeleteError(""); window.setTimeout(() => manageHistoryButtonRef.current?.focus()); }}>취소</button>
+              <button type="button" disabled={deleteBusy || (bulkDeleteMode === "selected" && selectedConversationIds.size === 0)} onClick={() => {
+                if (deleteBusy) return;
+                const mode = bulkDeleteMode;
+                const selectedIds = [...selectedConversationIds];
+                const requestGeneration = sessionGenerationRef.current;
+                const requestSession = sessionRef.current;
+                const isCurrentSession = () => requestGeneration === sessionGenerationRef.current && requestSession === sessionRef.current;
+                setDeleteBusy(true); setDeleteError("");
+                void (mode === "all" ? deleteAllCopilotConversations().then(() => ({ failed: [] as string[], deleted: selectedIds })) : Promise.allSettled(selectedIds.map(deleteCopilotConversation)).then((results) => ({ failed: selectedIds.filter((_, index) => results[index].status === "rejected"), deleted: selectedIds.filter((_, index) => results[index].status === "fulfilled") }))).then(async ({ failed, deleted }) => {
+                  if (!isCurrentSession()) return;
+                  if (failed.length) { if (conversationId && deleted.includes(conversationId)) newConversation(); setSelectedConversationIds(new Set(failed)); setDeleteError("일부 대화를 삭제하지 못했어요. 실패한 항목만 다시 선택했어요."); await refreshMemory(); return; }
+                  if (mode === "all" || (conversationId && selectedIds.includes(conversationId))) newConversation();
+                  setBulkDeleteMode(null); setManageHistory(false); setSelectedConversationIds(new Set()); setHistoryPage(1);
+                  await refreshMemory();
+                }).catch(async () => { if (!isCurrentSession()) return; setDeleteError("대화를 삭제하지 못했어요. 목록을 새로 확인해 주세요."); await refreshMemory().catch(() => undefined); }).finally(() => { if (isCurrentSession()) setDeleteBusy(false); });
+              }}>{deleteBusy ? "삭제 중" : bulkDeleteMode === "all" ? "전체 삭제" : `${selectedConversationIds.size}개 삭제`}</button>
             </div>
           </div>
         </div>

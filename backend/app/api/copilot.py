@@ -8,7 +8,7 @@ from app.db.session import get_db
 from app.models import User
 from app.schemas.copilot import CopilotConversationDetail, CopilotConversationSummary, CopilotConversationUpdate, CopilotRequest, CopilotResponse
 from app.services.copilot import create_copilot_briefing, create_copilot_response, rate_limited_fallback_response
-from app.services.copilot_memory import detail, rename, soft_delete, summaries
+from app.services.copilot_memory import conversation_count, detail, rename, soft_delete, soft_delete_all, summaries
 from app.services.copilot_rate_limit import copilot_rate_limiter, rate_limit_identity, role_limit
 from app.core.config import get_settings
 
@@ -21,7 +21,16 @@ def briefing(current_user: Annotated[User, Depends(get_current_user)], db: Annot
 
 @router.get("/conversations", response_model=list[CopilotConversationSummary])
 def conversations(current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)], skip: int = 0, limit: int = 15):
-    return summaries(db,current_user,max(0,skip),max(1,min(limit,20)))
+    return summaries(db,current_user,max(0,skip),max(1,min(limit,100)))
+
+@router.get("/conversations/count")
+def conversations_count(current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
+    return {"count": conversation_count(db, current_user)}
+
+@router.delete("/conversations", status_code=204)
+def delete_all_conversations(current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)]):
+    soft_delete_all(db, current_user)
+    return Response(status_code=204)
 
 @router.get("/conversations/{public_id}", response_model=CopilotConversationDetail)
 def conversation(public_id:str,current_user:Annotated[User,Depends(get_current_user)],db:Annotated[Session,Depends(get_db)]):

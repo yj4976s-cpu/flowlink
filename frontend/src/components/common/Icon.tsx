@@ -5,6 +5,7 @@ export type IconName =
   | "menu"
   | "close"
   | "arrow"
+  | "send"
   | "scan"
   | "scanLine"
   | "document"
@@ -64,6 +65,7 @@ export function Icon({ name, size = 24 }: { name: IconName; size?: number }) {
     menu: <path d="M4 7h16M4 12h16M4 17h16" />,
     close: <path d="m6 6 12 12M18 6 6 18" />,
     arrow: <path d="M5 12h14m-5-5 5 5-5 5" />,
+    send: <path d="m3.5 11.2 16-7-5.8 15.6-3.1-6.4-7.1-2.2Zm7.1 2.2 8.9-9.2" />,
     scan: (
       <>
         <circle cx="12" cy="12" r="3" />

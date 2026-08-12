@@ -7,7 +7,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.session import Base
 from app.models import LostReport, ObjectClass, User
-from app.services.copilot_memory import detail, get_or_create, model_history, rename, save_message, soft_delete, summaries, validated_context
+from app.services.copilot_memory import conversation_count, detail, get_or_create, model_history, rename, save_message, soft_delete, soft_delete_all, summaries, validated_context
 
 
 @pytest.fixture
@@ -68,3 +68,38 @@ def test_entity_context_requires_the_authenticated_owner(db: Session) -> None:
 
     assert validated_context(db, owner, "LOST_REPORT_DETAIL", report.id) == ("LOST_REPORT", report.id)
     assert validated_context(db, stranger, "LOST_REPORT_DETAIL", report.id) == ("GENERAL", None)
+
+
+def test_soft_delete_all_only_affects_current_user(db: Session) -> None:
+    owner = user(db, 1, "owner@example.com")
+    stranger = user(db, 2, "stranger@example.com")
+    first = get_or_create(db, owner, None, "첫 대화", "GENERAL", None)
+    second = get_or_create(db, owner, None, "둘째 대화", "GENERAL", None)
+    foreign = get_or_create(db, stranger, None, "다른 사용자 대화", "GENERAL", None)
+    db.commit()
+
+    assert conversation_count(db, owner) == 2
+    assert soft_delete_all(db, owner) == 2
+    assert conversation_count(db, owner) == 0
+    db.refresh(first)
+    assert first.deleted_at is not None
+    assert first.updated_at == first.deleted_at
+    assert detail(db, owner, first.public_id) is None
+    assert detail(db, owner, second.public_id) is None
+    assert detail(db, stranger, foreign.public_id) is not None
+    assert conversation_count(db, stranger) == 1
+
+
+def test_conversation_count_and_pages_cover_more_than_one_hundred_rows(db: Session) -> None:
+    owner = user(db, 1, "owner@example.com")
+    for index in range(101):
+        get_or_create(db, owner, None, f"대화 {index}", "GENERAL", None)
+    db.commit()
+
+    first_page = summaries(db, owner, 0, 100)
+    second_page = summaries(db, owner, 100, 100)
+
+    assert conversation_count(db, owner) == 101
+    assert len(first_page) == 100
+    assert len(second_page) == 1
+    assert {item.public_id for item in first_page}.isdisjoint({item.public_id for item in second_page})

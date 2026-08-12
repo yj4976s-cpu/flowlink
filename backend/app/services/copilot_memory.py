@@ -1,6 +1,6 @@
 from __future__ import annotations
 from uuid import uuid4
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, selectinload
 from app.core.security import utc_now
 from app.models import CopilotConversation, CopilotMessage, CopilotMessageRef, DetectionEvent, FoundItem, LostReport, MatchCandidate, OwnershipClaim, User
@@ -68,6 +68,9 @@ def summaries(db: Session, user: User, skip: int, limit: int) -> list[CopilotCon
     rows=db.scalars(select(CopilotConversation).where(CopilotConversation.user_id==user.id,CopilotConversation.deleted_at.is_(None)).order_by(CopilotConversation.last_message_at.desc(),CopilotConversation.id.desc()).offset(skip).limit(limit)).all()
     return [CopilotConversationSummary.model_validate(row,from_attributes=True) for row in rows]
 
+def conversation_count(db: Session, user: User) -> int:
+    return db.scalar(select(func.count()).select_from(CopilotConversation).where(CopilotConversation.user_id == user.id, CopilotConversation.deleted_at.is_(None))) or 0
+
 def detail(db: Session,user:User,public_id:str)->CopilotConversationDetail|None:
     row=db.scalar(select(CopilotConversation).options(selectinload(CopilotConversation.messages)).where(CopilotConversation.public_id==public_id,CopilotConversation.user_id==user.id,CopilotConversation.deleted_at.is_(None)))
     if not row:return None
@@ -86,3 +89,9 @@ def soft_delete(db:Session,user:User,public_id:str)->bool:
     row=_owned(db,user,public_id)
     if not row:return False
     row.deleted_at=utc_now();db.commit();return True
+
+def soft_delete_all(db: Session, user: User) -> int:
+    now = utc_now()
+    result = db.execute(update(CopilotConversation).where(CopilotConversation.user_id == user.id, CopilotConversation.deleted_at.is_(None)).values(deleted_at=now, updated_at=now))
+    db.commit()
+    return result.rowcount or 0
