@@ -12,7 +12,7 @@ import app.api.admin as admin_api
 from app.core.security import hash_password
 from app.db.session import Base, get_db
 from app.main import app
-from app.models import Camera, DetectedObject, DetectionEvent, FoundItem, LostReport, MatchCandidate, Notification, ObjectClass, ProcessingHistory, User, VideoJob
+from app.models import Camera, DetectedObject, DetectionEvent, FoundItem, LostReport, MatchCandidate, Notification, ObjectClass, OwnershipClaim, ProcessingHistory, User, VideoJob
 from app.services.matching import create_match_candidates_for_found_item, reconcile_match_candidates_for_found_item
 
 
@@ -219,13 +219,15 @@ def test_reconcile_non_matchable_found_item_preserves_claimed_candidate(db: Sess
     found = FoundItem(id=110, object_class_id=1, source_type="ADMIN", color="red", area_name="found-area", found_at=now, status="CLAIM_PENDING", is_public=True, created_at=now, updated_at=now)
     report = LostReport(id=111, user_id=1, object_class_id=1, color="blue", colors=["blue"], description="plain", area_name="lost-area", lost_from=now - timedelta(days=10), status="CLAIM_PENDING", created_at=now, updated_at=now)
     candidate = MatchCandidate(lost_report_id=111, found_item_id=110, total_score=60, type_score=40, area_score=0, time_score=10, keyword_score=10, status="CLAIMED", created_at=now, updated_at=now)
-    db.add_all([found, report, candidate]); db.commit()
+    claim = OwnershipClaim(id=112, user_id=1, lost_report_id=111, found_item_id=110, verification_details="ownership details", status="PENDING", created_at=now, updated_at=now)
+    db.add_all([found, report, candidate, claim]); db.commit()
 
     reconcile_match_candidates_for_found_item(db, found)
     db.commit()
 
     assert candidate.status == "CLAIMED"
     assert candidate.total_score == 60
+    assert db.get(OwnershipClaim, 112).status == "PENDING"
     assert db.query(Notification).filter_by(notification_type="MATCH_FOUND").count() == 0
 
 
