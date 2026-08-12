@@ -42,6 +42,7 @@ def create_ai_found_item(db: Session, *, admin: User, detected_object_id: int) -
         object_class_id=final_class.id,
         registered_by=admin.id,
         source_type="AI",
+        color=item.confirmed_color or item.ai_color,
         area_name=camera.area_name,
         latitude=camera.latitude,
         longitude=camera.longitude,

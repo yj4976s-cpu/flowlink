@@ -221,10 +221,14 @@ def test_admin_dashboard_returns_today_operational_summary(client: TestClient, d
     assert body["metrics"]["discovered"] == 1
     assert body["metrics"]["ai_detections"] == 0
     assert body["metrics"]["official_found_items"] == 1
+    assert body["metrics"]["lost_reports"] == 1
+    assert body["metrics"]["match_notifications"] == 0
     assert body["metrics"]["claims"] == 1
     assert body["recent_items"][0]["item_category"] == "BAG"
     assert body["category_counts"] == []
     assert body["claim_status_counts"] == [{"status": "PENDING", "count": 1}]
+    assert body["latest_flow"] is None
+    assert {item["kind"] for item in body["recent_activity"]} >= {"LOGIN", "LOST_REPORT", "CLAIM"}
 
 
 def test_admin_dashboard_supports_operational_periods(client: TestClient, db: Session) -> None:

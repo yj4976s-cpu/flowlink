@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, timedelta
 
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -75,6 +75,25 @@ def calculate_match_score(lost_report: LostReport, found_item: FoundItem) -> Mat
         time_score=time_score,
         keyword_score=keyword_score,
     )
+
+
+def refresh_match_candidate_scores_for_found_item(db: Session, found_item: FoundItem) -> None:
+    """Keep stored score breakdowns aligned after an admin corrects item metadata."""
+    candidates = db.scalars(select(MatchCandidate).where(MatchCandidate.found_item_id == found_item.id)).all()
+    for candidate in candidates:
+        if candidate.lost_report.lost_from.tzinfo is None:
+            candidate.lost_report.lost_from = candidate.lost_report.lost_from.replace(tzinfo=UTC)
+        if found_item.found_at.tzinfo is None:
+            found_item.found_at = found_item.found_at.replace(tzinfo=UTC)
+        score = calculate_match_score(candidate.lost_report, found_item)
+        if score is None:
+            continue
+        candidate.total_score = score.total_score
+        candidate.type_score = score.type_score
+        candidate.area_score = score.area_score
+        candidate.time_score = score.time_score
+        candidate.keyword_score = score.keyword_score
+        candidate.updated_at = utc_now()
 
 
 def create_match_candidates_for_lost_report(db: Session, lost_report: LostReport) -> list[MatchCandidate]:

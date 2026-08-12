@@ -2,13 +2,14 @@ from datetime import UTC, timedelta
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, Query, UploadFile, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.auth import require_admin
 from app.core.security import utc_now
 from app.db.session import get_db
-from app.models import ProcessingHistory, User
+from app.models import Camera, FoundItem, ProcessingHistory, User
 from app.repositories.user_flow import (
     clean_optional_text,
     get_admin_dashboard_data,
@@ -20,7 +21,7 @@ from app.repositories.user_flow import (
     list_ownership_claims,
     waste_collection_completed_ids,
 )
-from app.schemas.admin import AdminDashboardResponse, AdminDetectedObjectCollectionResponse, AdminDetectedObjectFoundItemResponse, AdminDetectionEventResponse, AdminOwnershipClaimResponse, DetectedObjectUpdateRequest
+from app.schemas.admin import AdminCameraResponse, AdminDashboardResponse, AdminDetectedObjectCollectionResponse, AdminDetectedObjectFoundItemResponse, AdminDetectionEventResponse, AdminOwnershipClaimResponse, DetectedObjectUpdateRequest
 from app.schemas.citizen_report import AdminCitizenReportResponse, AdminCitizenReportUpdateRequest, ResolveCitizenReportRequest
 from app.schemas.common import MessageResponse
 from app.schemas.found_item import FoundItemUpdateRequest
@@ -29,6 +30,11 @@ from app.services.mappers import admin_ownership_claim_response
 from app.services.ownership import review_ownership_claim
 from app.services.citizen_reports import admin_response, list_admin as list_admin_citizen_reports, resolve_report, review_report
 from app.services.admin_detection_actions import complete_waste_collection, create_ai_found_item, effective_group
+from app.services.detection_inference import DetectionInferenceService, get_inference_service
+from app.services.detections import DetectionModelUnavailableError, create_operation_detection_event, process_detection_event
+from app.services.color_estimation import normalize_item_color
+from app.services.matching import refresh_match_candidate_scores_for_found_item
+from app.api.detections import IMAGE_CONTENT_TYPES, IMAGE_MAX_BYTES, save_upload_file
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 KST = ZoneInfo("Asia/Seoul")
@@ -48,6 +54,8 @@ def detected_object_payload(item, *, collected_ids: set[int] | None = None, oper
         "bbox_width": item.bbox_width,
         "bbox_height": item.bbox_height,
         "cropped_image_url": item.cropped_image_url,
+        "ai_color": item.ai_color,
+        "confirmed_color": item.confirmed_color,
         "detected_at": item.detected_at,
         "processing_status": item.processing_status,
         "admin_memo": item.admin_memo,
@@ -96,11 +104,34 @@ def not_implemented() -> None:
 
 
 @router.post("/detections/images", response_model=MessageResponse, summary="이미지 탐지 요청")
-def detect_image(
+async def detect_image(
     current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    inference_service: Annotated[DetectionInferenceService, Depends(get_inference_service)],
+    camera_id: Annotated[int, Form(ge=1)],
     file: Annotated[UploadFile, File(description="탐지할 이미지")],
-) -> None:
-    not_implemented()
+) -> MessageResponse:
+    camera = db.scalar(select(Camera).where(Camera.id == camera_id, Camera.is_active.is_(True)))
+    if camera is None:
+        raise HTTPException(status_code=422, detail="활성 카메라를 선택해 주세요.")
+    media_path, media_key = await save_upload_file(file, current_user=current_admin, allowed_types=IMAGE_CONTENT_TYPES, max_bytes=IMAGE_MAX_BYTES)
+    try:
+        event = create_operation_detection_event(db, current_admin=current_admin, camera=camera, source_type="IMAGE", media_key=media_key)
+        process_detection_event(db, event_id=event.id, media_path=media_path, inference_service=inference_service)
+    except DetectionModelUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="AI detection could not be completed") from exc
+    return MessageResponse(message=f"Operation detection created: {event.id}")
+
+
+@router.get("/cameras", response_model=list[AdminCameraResponse], summary="활성 운영 카메라 목록")
+def list_cameras(
+    current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+) -> list[Camera]:
+    del current_admin
+    return list(db.scalars(select(Camera).where(Camera.is_active.is_(True), Camera.latitude.is_not(None), Camera.longitude.is_not(None)).order_by(Camera.name, Camera.id)).all())
 
 
 @router.post("/detections/videos", response_model=MessageResponse, summary="영상 탐지 요청")
@@ -160,6 +191,16 @@ def update_detected_object(
         item.processing_status = request.processing_status
     if request.admin_memo is not None:
         item.admin_memo = clean_optional_text(request.admin_memo)
+    if request.confirmed_color is not None:
+        normalized_color = normalize_item_color(request.confirmed_color)
+        if request.confirmed_color.strip() and normalized_color is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid item color")
+        item.confirmed_color = normalized_color
+        linked_found_item = db.scalar(select(FoundItem).where(FoundItem.detected_object_id == item.id))
+        if linked_found_item is not None:
+            linked_found_item.color = item.confirmed_color or item.ai_color
+            linked_found_item.updated_at = utc_now()
+            refresh_match_candidate_scores_for_found_item(db, linked_found_item)
     db.add(ProcessingHistory(actor_user_id=current_admin.id, entity_type="DETECTED_OBJECT", entity_id=item.id, action_type="DETECTED_OBJECT_REVIEWED", previous_status=previous_status, new_status=item.processing_status, note=item.admin_memo, created_at=utc_now()))
     db.commit()
     return MessageResponse(message="Detected object updated")

@@ -19,7 +19,7 @@ from app.core.config import get_settings
 from app.core.security import create_access_token, utc_now
 from app.db.session import Base, get_db
 from app.main import app
-from app.models import DetectedObject, DetectionEvent, ObjectClass, User, VideoJob
+from app.models import Camera, DetectedObject, DetectionEvent, ObjectClass, User, VideoJob
 from app.services.ai_inference_client import (
     AIInferenceBBox,
     AIInferencePrediction,
@@ -262,6 +262,23 @@ def test_image_detection_is_allowed_for_user_and_admin(client: TestClient, db: S
     event = db.query(DetectionEvent).one()
     assert event.user_id == user.id
     assert event.purpose == "USER_ANALYSIS"
+
+
+def test_admin_operation_detection_requires_camera_and_stays_separate_from_user_analysis(client: TestClient, db: Session) -> None:
+    admin = seed_user(db, 1, role="ADMIN")
+    seed_object_class(db, 1, "BAG")
+    now = utc_now()
+    db.add(Camera(id=1, code="DEMO", name="발표 카메라", area_name="서울시청", latitude=Decimal("37.566295"), longitude=Decimal("126.977945"), is_active=True, created_at=now, updated_at=now))
+    db.commit(); authenticate(client, admin)
+    override_inference(DetectionInferenceResult(media_width=640, media_height=480, detections=[DetectionPrediction(class_code="bag", confidence=.92, bbox=DetectionBBox(x=10, y=20, width=100, height=120))]))
+    response = client.post("/api/admin/detections/images", files=image_file(jpeg_payload(width=640, height=480)), data={"camera_id": "1"})
+    assert response.status_code == 200
+    event = db.query(DetectionEvent).one()
+    assert event.purpose == "OPERATION"
+    assert event.camera_id == 1
+    assert event.user_id == admin.id
+    assert event.detected_objects[0].processing_status == "PENDING"
+    assert event.detected_objects[0].ai_color in {"파랑", "진파랑"}
 
 
 def test_default_image_inference_uses_backend_ai_client(client: TestClient, db: Session) -> None:

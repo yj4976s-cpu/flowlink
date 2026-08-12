@@ -109,6 +109,8 @@ def test_detection_list_returns_object_contract_and_recent_order(client: TestCli
     assert item["confidence"] == "0.9000"
     assert item["bbox_width"] == "30.0000"
     assert item["cropped_image_url"] == "/uploads/crop-11.jpg"
+    assert item["ai_color"] is None
+    assert item["confirmed_color"] is None
     assert item["admin_memo"] is None
 
 
@@ -123,6 +125,40 @@ def test_detected_object_admin_memo_persists_and_is_returned(client: TestClient,
     assert item["processing_status"] == "CONFIRMED"
     assert item["admin_memo"] == "사진과 객체 경계를 확인함"
     assert db.query(ProcessingHistory).filter_by(entity_type="DETECTED_OBJECT", entity_id=10, action_type="DETECTED_OBJECT_REVIEWED", note="사진과 객체 경계를 확인함").count() == 1
+
+
+def test_admin_confirmed_color_persists_and_updates_existing_found_item(client: TestClient, db: Session) -> None:
+    seed_admin(db)
+    seed_detection(db, object_id=10, event_id=20, detected_at=datetime(2026, 1, 2, 1, tzinfo=UTC))
+    detected = db.get(DetectedObject, 10)
+    detected.ai_color = "검정"
+    now = datetime(2026, 1, 2, tzinfo=UTC)
+    db.add(LostReport(id=50, user_id=1, object_class_id=1, color="남색", colors=["남색"], description="특징 없음", area_name="잠실", lost_from=now - timedelta(hours=1), status="OPEN", created_at=now, updated_at=now))
+    db.commit(); login(client)
+
+    saved = client.patch("/api/admin/detected-objects/10", json={"confirmed_color": "남색"})
+    assert saved.status_code == 200
+    refreshed = client.get("/api/admin/detections").json()[0]["detected_objects"][0]
+    assert refreshed["ai_color"] == "검정"
+    assert refreshed["confirmed_color"] == "남색"
+
+    created = client.post("/api/admin/detected-objects/10/found-item")
+    assert created.status_code == 201
+    found = db.get(FoundItem, created.json()["found_item_id"])
+    assert found.color == "남색"
+    candidate = db.query(MatchCandidate).filter_by(found_item_id=found.id, lost_report_id=50).one()
+    assert candidate.keyword_score == 10
+
+    assert client.patch("/api/admin/detected-objects/10", json={"confirmed_color": "파랑"}).status_code == 200
+    db.refresh(found)
+    assert found.color == "파랑"
+    db.refresh(candidate)
+    assert candidate.keyword_score == 0
+
+
+def test_admin_rejects_nonstandard_confirmed_color(client: TestClient, db: Session) -> None:
+    seed_admin(db); seed_detection(db, object_id=10, event_id=20, detected_at=datetime(2026, 1, 2, 1, tzinfo=UTC)); login(client)
+    assert client.patch("/api/admin/detected-objects/10", json={"confirmed_color": "임의색"}).status_code == 422
 
 
 def test_admin_creates_ai_found_item_reverse_match_and_prevents_duplicate(client: TestClient, db: Session) -> None:
@@ -191,6 +227,20 @@ def test_user_cannot_run_detection_follow_up(client: TestClient, db: Session) ->
     seed_user(db); seed_detection(db, object_id=10, event_id=20, detected_at=datetime(2026, 1, 2, tzinfo=UTC)); seed_waste_detection(db); login_user(client)
     assert client.post("/api/admin/detected-objects/10/found-item").status_code == 403
     assert client.post("/api/admin/detected-objects/30/collect").status_code == 403
+
+
+def test_admin_camera_list_only_exposes_active_located_cameras(client: TestClient, db: Session) -> None:
+    seed_admin(db)
+    now = datetime(2026, 1, 2, tzinfo=UTC)
+    db.add_all([
+        Camera(id=1, code="READY", name="발표 카메라", area_name="서울시청", latitude=Decimal("37.566295"), longitude=Decimal("126.977945"), is_active=True, created_at=now, updated_at=now),
+        Camera(id=2, code="NO-LOCATION", name="위치 없음", area_name="미지정", is_active=True, created_at=now, updated_at=now),
+        Camera(id=3, code="INACTIVE", name="비활성", area_name="서울", latitude=Decimal("37.5"), longitude=Decimal("127.0"), is_active=False, created_at=now, updated_at=now),
+    ])
+    db.commit(); login(client)
+    response = client.get("/api/admin/cameras")
+    assert response.status_code == 200
+    assert response.json() == [{"id": 1, "code": "READY", "name": "발표 카메라", "area_name": "서울시청", "latitude": "37.566295", "longitude": "126.977945"}]
 
 
 def test_user_analysis_has_no_follow_up_and_is_blocked_by_services(client: TestClient, db: Session) -> None:

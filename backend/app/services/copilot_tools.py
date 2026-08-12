@@ -7,7 +7,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.security import utc_now
-from app.models import CommunityComment, CommunityPost, FoundItem, LostReport, MatchCandidate, OwnershipClaim, User
+from app.models import CommunityComment, CommunityPost, DetectedObject, FoundItem, LostReport, MatchCandidate, OwnershipClaim, User
 from app.repositories.detections import list_user_detection_events
 from app.repositories.user_flow import get_admin_dashboard_data, list_lost_reports_for_user, list_matches_for_user, list_notifications_for_user
 USER_TOOL_NAMES = {
@@ -307,7 +307,7 @@ def execute_tool(db: Session, current_user: User | None, name: str, arguments: d
         return [_match_payload(item) for item in list_matches_for_user(db, current_user.id, skip=0, limit=_limit(arguments))]
     if name == "get_match_detail":
         match_id = int(arguments["match_id"])
-        item = db.scalar(select(MatchCandidate).join(MatchCandidate.lost_report).options(joinedload(MatchCandidate.lost_report).joinedload(LostReport.object_class), joinedload(MatchCandidate.found_item).joinedload(FoundItem.object_class), joinedload(MatchCandidate.found_item).joinedload(FoundItem.detected_object), joinedload(MatchCandidate.found_item).selectinload(FoundItem.citizen_reports)).where(MatchCandidate.id == match_id, LostReport.user_id == current_user.id))
+        item = db.scalar(select(MatchCandidate).join(MatchCandidate.lost_report).options(joinedload(MatchCandidate.lost_report).joinedload(LostReport.object_class), joinedload(MatchCandidate.found_item).joinedload(FoundItem.object_class), joinedload(MatchCandidate.found_item).joinedload(FoundItem.detected_object).joinedload(DetectedObject.detection_event), joinedload(MatchCandidate.found_item).selectinload(FoundItem.citizen_reports)).where(MatchCandidate.id == match_id, LostReport.user_id == current_user.id))
         if item is None:
             return {"error": "본인에게 허용된 매칭 후보를 찾을 수 없습니다."}
         return _match_payload(item, include_breakdown=True)
