@@ -2,6 +2,7 @@ import type { KakaoMapsNamespace } from "@/types/kakao-maps";
 
 const KAKAO_MAP_SCRIPT_ID = "flowlink-kakao-map-sdk";
 const KAKAO_MAP_SCRIPT_SELECTOR = 'script[src*="dapi.kakao.com/v2/maps/sdk.js"]';
+const KAKAO_MAP_SCRIPT_STATUS_KEY = "flowlinkKakaoSdkStatus";
 
 let kakaoMapsPromise: Promise<KakaoMapsNamespace> | null = null;
 
@@ -42,17 +43,33 @@ export function loadKakaoMaps() {
 
   kakaoMapsPromise = new Promise<KakaoMapsNamespace>((resolve, reject) => {
     const key = getKakaoMapKey();
-    const existingScript = (document.getElementById(KAKAO_MAP_SCRIPT_ID) ?? document.querySelector(KAKAO_MAP_SCRIPT_SELECTOR)) as HTMLScriptElement | null;
+    let existingScript = (document.getElementById(KAKAO_MAP_SCRIPT_ID) ?? document.querySelector(KAKAO_MAP_SCRIPT_SELECTOR)) as HTMLScriptElement | null;
+
+    if (
+      existingScript &&
+      !window.kakao?.maps &&
+      existingScript.dataset[KAKAO_MAP_SCRIPT_STATUS_KEY] !== "loading"
+    ) {
+      existingScript.remove();
+      existingScript = null;
+    }
+
+    const fail = (error: Error, script?: HTMLScriptElement) => {
+      kakaoMapsPromise = null;
+      if (script) {
+        script.dataset[KAKAO_MAP_SCRIPT_STATUS_KEY] = "error";
+        script.remove();
+      }
+      reject(error);
+    };
 
     const onLoad = () => {
       void resolveKakaoMaps().then(resolve, (error) => {
-        kakaoMapsPromise = null;
-        reject(error);
+        fail(error instanceof Error ? error : new Error("카카오 지도 SDK를 초기화하지 못했습니다."), existingScript ?? undefined);
       });
     };
     const onError = () => {
-      kakaoMapsPromise = null;
-      reject(new Error("카카오 지도 SDK를 불러오지 못했습니다. JavaScript 키와 허용 도메인을 확인해주세요."));
+      fail(new Error("카카오 지도 SDK를 불러오지 못했습니다. JavaScript 키와 허용 도메인을 확인해주세요."), existingScript ?? undefined);
     };
 
     if (existingScript) {
@@ -65,9 +82,17 @@ export function loadKakaoMaps() {
     const script = document.createElement("script");
     script.id = KAKAO_MAP_SCRIPT_ID;
     script.async = true;
+    script.dataset[KAKAO_MAP_SCRIPT_STATUS_KEY] = "loading";
     script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(key)}&autoload=false&libraries=services`;
-    script.addEventListener("load", onLoad, { once: true });
-    script.addEventListener("error", onError, { once: true });
+    script.addEventListener("load", () => {
+      script.dataset[KAKAO_MAP_SCRIPT_STATUS_KEY] = "ready";
+      void resolveKakaoMaps().then(resolve, (error) => {
+        fail(error instanceof Error ? error : new Error("카카오 지도 SDK를 초기화하지 못했습니다."), script);
+      });
+    }, { once: true });
+    script.addEventListener("error", () => {
+      fail(new Error("카카오 지도 SDK를 불러오지 못했습니다. JavaScript 키와 허용 도메인을 확인해주세요."), script);
+    }, { once: true });
     document.head.appendChild(script);
   });
 

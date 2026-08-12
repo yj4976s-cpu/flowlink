@@ -33,6 +33,9 @@ type FoundReportCandidate = {
 };
 
 const IMAGE_MAX_BYTES = 20 * 1024 * 1024;
+const CITIZEN_REPORT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const REPORT_IMAGE_INITIAL_MAX_EDGE = 1600;
+const REPORT_IMAGE_MIN_MAX_EDGE = 960;
 const VIDEO_MAX_BYTES = 100 * 1024 * 1024;
 const VIDEO_MAX_SECONDS = 30;
 const VIDEO_REPORT_FRAME_MAX_WIDTH = 960;
@@ -110,6 +113,78 @@ function getVideoReportTimestampMs(object: DetectionObject) {
   return firstSeen ?? lastSeen ?? 0;
 }
 
+function canvasToBlob(canvas: HTMLCanvasElement, type = "image/jpeg", quality = 0.86) {
+  return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, quality));
+}
+
+async function decodeImageFile(file: File) {
+  if (typeof createImageBitmap === "function") {
+    return createImageBitmap(file);
+  }
+
+  if (typeof document === "undefined") throw new Error("이미지 처리는 브라우저에서만 가능합니다.");
+
+  const objectUrl = URL.createObjectURL(file);
+  const image = new Image();
+  image.decoding = "async";
+  try {
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error("이미지를 읽지 못했습니다."));
+      image.src = objectUrl;
+    });
+    return image;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+function closeImageSource(source: ImageBitmap | HTMLImageElement) {
+  if ("close" in source) source.close();
+}
+
+async function prepareCitizenReportImage(file: File) {
+  if (!imageTypes.has(file.type)) {
+    throw new Error("발견 제보에는 JPG, PNG, WebP 이미지만 첨부할 수 있습니다.");
+  }
+
+  const image = await decodeImageFile(file);
+  try {
+    const sourceWidth = image.width;
+    const sourceHeight = image.height;
+    if (!sourceWidth || !sourceHeight) throw new Error("이미지 크기를 확인하지 못했습니다.");
+
+    if (file.size <= CITIZEN_REPORT_IMAGE_MAX_BYTES) return file;
+
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("이미지를 변환하지 못했습니다.");
+
+    const qualities = [0.86, 0.78, 0.7, 0.62];
+    const maxEdges = [REPORT_IMAGE_INITIAL_MAX_EDGE, 1440, 1280, 1120, REPORT_IMAGE_MIN_MAX_EDGE];
+
+    for (const maxEdge of maxEdges) {
+      const scale = Math.min(1, maxEdge / Math.max(sourceWidth, sourceHeight));
+      canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+      canvas.height = Math.max(1, Math.round(sourceHeight * scale));
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+      for (const quality of qualities) {
+        const blob = await canvasToBlob(canvas, "image/jpeg", quality);
+        if (blob && blob.size <= CITIZEN_REPORT_IMAGE_MAX_BYTES) {
+          const baseName = file.name.replace(/\.[^.]+$/, "") || "detection-report";
+          return new File([blob], `${baseName}-report.jpg`, { type: "image/jpeg" });
+        }
+      }
+    }
+
+    throw new Error("이미지를 5MB 이하로 준비하지 못했습니다. 더 작은 이미지를 선택해주세요.");
+  } finally {
+    closeImageSource(image);
+  }
+}
+
 function waitForVideoEvent(video: HTMLVideoElement, eventName: "loadedmetadata" | "seeked", timeoutMs: number) {
   return new Promise<void>((resolve, reject) => {
     const timer = window.setTimeout(() => {
@@ -173,7 +248,7 @@ async function captureVideoReportFrame(videoFile: File, object: DetectionObject)
     if (!context) return null;
     context.drawImage(video, 0, 0, width, height);
 
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.86));
+    const blob = await canvasToBlob(canvas, "image/jpeg", 0.86);
     if (!blob) return null;
 
     const timestampMs = Math.round(targetSeconds * 1000);
@@ -371,6 +446,12 @@ function WebcamReportModal({
   const previewUrl = useMemo(() => candidate.image ? URL.createObjectURL(candidate.image) : "", [candidate.image]);
   const defaultClassCode = candidate.objectClassCode || "BAG";
   const label = candidate.objectClassName;
+  const emptyPreviewTitle = candidate.sourceType === "image" ? "이미지를 첨부하지 못했습니다." : "대표 이미지는 첨부하지 않습니다.";
+  const emptyPreviewText = candidate.sourceType === "image"
+    ? "이미지 변환에 실패했습니다. 아래 정보를 확인해 이미지 없이 제보하거나 더 작은 이미지를 선택해주세요."
+    : candidate.sourceType === "video"
+      ? "영상 프레임을 캡처하지 못한 경우 물품 종류와 설명만으로 제보를 시작합니다."
+      : "현재 프레임을 캡처하지 못한 경우 물품 종류와 설명만으로 제보를 시작합니다.";
 
   useEffect(() => {
     return () => {
@@ -416,8 +497,8 @@ function WebcamReportModal({
               ) : (
                 <div className={styles.reportPreviewEmpty}>
                   <Icon name="document" size={26} />
-                  <strong>대표 이미지는 첨부하지 않습니다.</strong>
-                  <p>영상 탐지 결과는 물품 종류만 참고해 제보를 시작합니다.</p>
+                  <strong>{emptyPreviewTitle}</strong>
+                  <p>{emptyPreviewText}</p>
                 </div>
               )}
               <div className={styles.reportCandidateMeta}>
@@ -827,11 +908,18 @@ export function DetectionWorkbench() {
     const sourceType = tab;
     const sourceFile = file;
     const sourceEvent = currentEvent;
-    const image = sourceType === "image"
-      ? sourceFile
-      : sourceType === "video" && sourceFile
-        ? await captureVideoReportFrame(sourceFile, object)
-        : null;
+    let image: File | null = null;
+    let imageError = "";
+
+    if (sourceType === "image" && sourceFile) {
+      try {
+        image = await prepareCitizenReportImage(sourceFile);
+      } catch {
+        imageError = "이미지를 발견 제보용으로 준비하지 못했습니다. 이미지 없이 제보하거나 더 작은 이미지를 선택해주세요.";
+      }
+    } else if (sourceType === "video" && sourceFile) {
+      image = await captureVideoReportFrame(sourceFile, object);
+    }
 
     setWebcamReportCandidate({
       sourceType,
@@ -841,7 +929,7 @@ export function DetectionWorkbench() {
       image,
       capturedAt: sourceEvent.processing_completed_at ?? sourceEvent.created_at,
     });
-    setWebcamReportError("");
+    setWebcamReportError(imageError);
     setWebcamReportSuccess(null);
   };
 
