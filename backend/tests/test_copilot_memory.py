@@ -88,3 +88,18 @@ def test_soft_delete_all_only_affects_current_user(db: Session) -> None:
     assert detail(db, owner, second.public_id) is None
     assert detail(db, stranger, foreign.public_id) is not None
     assert conversation_count(db, stranger) == 1
+
+
+def test_conversation_count_and_pages_cover_more_than_one_hundred_rows(db: Session) -> None:
+    owner = user(db, 1, "owner@example.com")
+    for index in range(101):
+        get_or_create(db, owner, None, f"대화 {index}", "GENERAL", None)
+    db.commit()
+
+    first_page = summaries(db, owner, 0, 100)
+    second_page = summaries(db, owner, 100, 100)
+
+    assert conversation_count(db, owner) == 101
+    assert len(first_page) == 100
+    assert len(second_page) == 1
+    assert {item.public_id for item in first_page}.isdisjoint({item.public_id for item in second_page})

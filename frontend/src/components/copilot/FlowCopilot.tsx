@@ -12,12 +12,11 @@ import {
 import { Icon } from "@/components/common/Icon";
 import { getCurrentUser, type AuthUser } from "@/lib/authApi";
 import {
-  countCopilotConversations,
   deleteAllCopilotConversations,
   deleteCopilotConversation,
   getCopilotBriefing,
   getCopilotConversation,
-  listCopilotConversations,
+  loadCopilotConversationHistory,
   renameCopilotConversation,
   sendCopilotMessage,
   CopilotApiError,
@@ -247,6 +246,7 @@ export function FlowCopilot() {
   const [selectedConversationIds, setSelectedConversationIds] = useState<Set<string>>(new Set());
   const [bulkDeleteMode, setBulkDeleteMode] = useState<"selected" | "all" | null>(null);
   const [deleteError, setDeleteError] = useState("");
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [conversationMenu, setConversationMenu] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
@@ -315,6 +315,10 @@ export function FlowCopilot() {
           setMemoryOpen(false);
           setManageHistory(false);
           setSelectedConversationIds(new Set());
+          setDeleteTarget(null);
+          setBulkDeleteMode(null);
+          setDeleteError("");
+          setDeleteBusy(false);
           clearCooldown();
         }
         sessionRef.current = key;
@@ -362,6 +366,10 @@ export function FlowCopilot() {
           setMemoryOpen(false);
           setManageHistory(false);
           setSelectedConversationIds(new Set());
+          setDeleteTarget(null);
+          setBulkDeleteMode(null);
+          setDeleteError("");
+          setDeleteBusy(false);
           clearCooldown();
         }
       })
@@ -379,8 +387,8 @@ export function FlowCopilot() {
     }
     let active = true;
     setMemoryError(false);
-    void Promise.all([listCopilotConversations(), countCopilotConversations()])
-      .then(([items, total]) => { if (active) { setConversations(items); setConversationCount(total.count); } })
+    void loadCopilotConversationHistory()
+      .then(({ items, count }) => { if (active) { setConversations(items); setConversationCount(count); } })
       .catch(() => {
         if (active) {
           setConversations([]);
@@ -399,6 +407,10 @@ export function FlowCopilot() {
       abortRef.current = null;
       sendingRef.current = false;
       setLoading(false);
+      setDeleteTarget(null);
+      setBulkDeleteMode(null);
+      setDeleteError("");
+      setDeleteBusy(false);
       clearCooldown();
       setAuthReady(false);
       setAuthVersion((value) => value + 1);
@@ -419,11 +431,12 @@ export function FlowCopilot() {
     if (!open) return;
     const close = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        if (deleteTarget) {
+        if (deleteTarget && !deleteBusy) {
           setDeleteTarget(null);
+          setDeleteError("");
           return;
         }
-        if (bulkDeleteMode) {
+        if (bulkDeleteMode && !deleteBusy) {
           setBulkDeleteMode(null);
           setDeleteError("");
           window.setTimeout(() => manageHistoryButtonRef.current?.focus());
@@ -453,7 +466,7 @@ export function FlowCopilot() {
       180,
     );
     return () => window.removeEventListener("keydown", close);
-  }, [bulkDeleteMode, closeConversationMenu, conversationMenu, deleteTarget, memoryOpen, open]);
+  }, [bulkDeleteMode, closeConversationMenu, conversationMenu, deleteBusy, deleteTarget, memoryOpen, open]);
   useEffect(() => {
     messageEndRef.current?.scrollIntoView({ block: "end" });
   }, [messages, loading]);
@@ -529,10 +542,10 @@ export function FlowCopilot() {
     const requestGeneration = sessionGenerationRef.current;
     const requestSession = sessionRef.current;
     try {
-      const [items, total] = await Promise.all([listCopilotConversations(), countCopilotConversations()]);
+      const { items, count } = await loadCopilotConversationHistory();
       if (requestGeneration !== sessionGenerationRef.current || requestSession !== sessionRef.current) return;
       setConversations(items);
-      setConversationCount(total.count);
+      setConversationCount(count);
     } catch (error) {
       if (requestGeneration !== sessionGenerationRef.current || requestSession !== sessionRef.current) return;
       setMemoryError(true);
@@ -1469,6 +1482,7 @@ export function FlowCopilot() {
                                           role="menuitem"
                                           onClick={(event) => {
                                             event.stopPropagation();
+                                            setDeleteError("");
                                             setDeleteTarget(item);
                                             setConversationMenu(null);
                                           }}
@@ -1634,24 +1648,17 @@ export function FlowCopilot() {
           >
             <h3 id="memory-delete-title">이 대화를 삭제할까요?</h3>
             <p>“{deleteTarget.title}” 대화가 Flow Memory에서 사라집니다.</p>
+            {deleteError && <p className={styles.deleteError} role="alert">{deleteError}</p>}
             <div>
-              <button type="button" onClick={() => setDeleteTarget(null)}>
+              <button type="button" disabled={deleteBusy} onClick={() => { setDeleteTarget(null); setDeleteError(""); }}>
                 취소
               </button>
               <button
                 type="button"
-                onClick={() =>
-                  void deleteCopilotConversation(deleteTarget.public_id).then(
-                    () => {
-                      if (conversationId === deleteTarget.public_id)
-                        newConversation();
-                      setDeleteTarget(null);
-                      return refreshMemory();
-                    },
-                  )
-                }
+                disabled={deleteBusy}
+                onClick={() => { if (deleteBusy) return; const target = deleteTarget; const requestGeneration = sessionGenerationRef.current; const requestSession = sessionRef.current; const isCurrentSession = () => requestGeneration === sessionGenerationRef.current && requestSession === sessionRef.current; setDeleteBusy(true); setDeleteError(""); void deleteCopilotConversation(target.public_id).then(async () => { if (!isCurrentSession()) return; if (conversationId === target.public_id) newConversation(); setDeleteTarget(null); await refreshMemory(); }).catch(() => { if (isCurrentSession()) setDeleteError("대화를 삭제하지 못했어요. 잠시 후 다시 시도해 주세요."); }).finally(() => { if (isCurrentSession()) setDeleteBusy(false); }); }}
               >
-                삭제
+                {deleteBusy ? "삭제 중" : "삭제"}
               </button>
             </div>
           </div>
@@ -1664,19 +1671,23 @@ export function FlowCopilot() {
             <p id="memory-bulk-delete-description">{bulkDeleteMode === "all" ? `저장된 대화 ${conversationCount}개가 모두 삭제됩니다.` : `선택한 ${selectedConversationIds.size}개의 대화가 삭제됩니다.`}<br />삭제한 기록은 다시 복구할 수 없습니다.</p>
             {deleteError && <p className={styles.deleteError} role="alert">{deleteError}</p>}
             <div>
-              <button type="button" autoFocus onClick={() => { setBulkDeleteMode(null); setDeleteError(""); window.setTimeout(() => manageHistoryButtonRef.current?.focus()); }}>취소</button>
-              <button type="button" onClick={() => {
+              <button type="button" autoFocus disabled={deleteBusy} onClick={() => { setBulkDeleteMode(null); setDeleteError(""); window.setTimeout(() => manageHistoryButtonRef.current?.focus()); }}>취소</button>
+              <button type="button" disabled={deleteBusy || (bulkDeleteMode === "selected" && selectedConversationIds.size === 0)} onClick={() => {
+                if (deleteBusy) return;
                 const mode = bulkDeleteMode;
                 const selectedIds = [...selectedConversationIds];
-                setDeleteError("");
-                void (mode === "all" ? deleteAllCopilotConversations() : Promise.allSettled(selectedIds.map(deleteCopilotConversation)).then((results) => {
-                  if (results.some((result) => result.status === "rejected")) throw new Error("partial_delete");
-                })).then(async () => {
+                const requestGeneration = sessionGenerationRef.current;
+                const requestSession = sessionRef.current;
+                const isCurrentSession = () => requestGeneration === sessionGenerationRef.current && requestSession === sessionRef.current;
+                setDeleteBusy(true); setDeleteError("");
+                void (mode === "all" ? deleteAllCopilotConversations().then(() => ({ failed: [] as string[], deleted: selectedIds })) : Promise.allSettled(selectedIds.map(deleteCopilotConversation)).then((results) => ({ failed: selectedIds.filter((_, index) => results[index].status === "rejected"), deleted: selectedIds.filter((_, index) => results[index].status === "fulfilled") }))).then(async ({ failed, deleted }) => {
+                  if (!isCurrentSession()) return;
+                  if (failed.length) { if (conversationId && deleted.includes(conversationId)) newConversation(); setSelectedConversationIds(new Set(failed)); setDeleteError("일부 대화를 삭제하지 못했어요. 실패한 항목만 다시 선택했어요."); await refreshMemory(); return; }
                   if (mode === "all" || (conversationId && selectedIds.includes(conversationId))) newConversation();
                   setBulkDeleteMode(null); setManageHistory(false); setSelectedConversationIds(new Set()); setHistoryPage(1);
                   await refreshMemory();
-                }).catch(async () => { setDeleteError("일부 대화를 삭제하지 못했어요. 목록을 새로 확인해 주세요."); await refreshMemory().catch(() => undefined); });
-              }}>{bulkDeleteMode === "all" ? "전체 삭제" : `${selectedConversationIds.size}개 삭제`}</button>
+                }).catch(async () => { if (!isCurrentSession()) return; setDeleteError("대화를 삭제하지 못했어요. 목록을 새로 확인해 주세요."); await refreshMemory().catch(() => undefined); }).finally(() => { if (isCurrentSession()) setDeleteBusy(false); });
+              }}>{deleteBusy ? "삭제 중" : bulkDeleteMode === "all" ? "전체 삭제" : `${selectedConversationIds.size}개 삭제`}</button>
             </div>
           </div>
         </div>
