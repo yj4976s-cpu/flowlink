@@ -283,6 +283,31 @@ export function FlowCopilot() {
     return Math.max(0, Math.ceil((until - Date.now()) / 1000));
   }, []);
 
+  const resetSessionUi = useCallback(() => {
+    setMessages([]);
+    setValue("");
+    setUnread(0);
+    setBriefing(null);
+    setConversationId(null);
+    setConversations([]);
+    setConversationCount(0);
+    setMemoryOpen(false);
+    setMemoryLoading(false);
+    setMemoryError(false);
+    setHistoryQuery("");
+    setHistoryPage(1);
+    setManageHistory(false);
+    setSelectedConversationIds(new Set());
+    setEditingId(null);
+    setEditingTitle("");
+    setConversationMenu(null);
+    setDeleteTarget(null);
+    setBulkDeleteMode(null);
+    setDeleteError("");
+    setDeleteBusy(false);
+    clearCooldown();
+  }, [clearCooldown]);
+
   const closeConversationMenu = useCallback(
     (conversationPublicId: string | null) => {
       setConversationMenu(null);
@@ -307,19 +332,7 @@ export function FlowCopilot() {
           abortRef.current = null;
           sendingRef.current = false;
           setLoading(false);
-          setMessages([]);
-          setValue("");
-          setBriefing(null);
-          setConversationId(null);
-          setConversations([]);
-          setMemoryOpen(false);
-          setManageHistory(false);
-          setSelectedConversationIds(new Set());
-          setDeleteTarget(null);
-          setBulkDeleteMode(null);
-          setDeleteError("");
-          setDeleteBusy(false);
-          clearCooldown();
+          resetSessionUi();
         }
         sessionRef.current = key;
         setUser(current);
@@ -359,25 +372,14 @@ export function FlowCopilot() {
           }
           sessionRef.current = null;
           setUser(null);
-          setUnread(0);
-          setBriefing(null);
-          setConversationId(null);
-          setConversations([]);
-          setMemoryOpen(false);
-          setManageHistory(false);
-          setSelectedConversationIds(new Set());
-          setDeleteTarget(null);
-          setBulkDeleteMode(null);
-          setDeleteError("");
-          setDeleteBusy(false);
-          clearCooldown();
+          resetSessionUi();
         }
       })
       .finally(() => active && setAuthReady(true));
     return () => {
       active = false;
     };
-  }, [clearCooldown]);
+  }, [resetSessionUi]);
   useEffect(resolveSession, [resolveSession, pathname, authVersion]);
   useEffect(() => {
     if (!user) {
@@ -386,11 +388,22 @@ export function FlowCopilot() {
       return;
     }
     let active = true;
+    const requestGeneration = sessionGenerationRef.current;
+    const requestSession = sessionRef.current;
+    const isCurrentSession = () =>
+      active &&
+      requestGeneration === sessionGenerationRef.current &&
+      requestSession === sessionRef.current;
     setMemoryError(false);
     void loadCopilotConversationHistory()
-      .then(({ items, count }) => { if (active) { setConversations(items); setConversationCount(count); } })
+      .then(({ items, count }) => {
+        if (isCurrentSession()) {
+          setConversations(items);
+          setConversationCount(count);
+        }
+      })
       .catch(() => {
-        if (active) {
+        if (isCurrentSession()) {
           setConversations([]);
           setConversationCount(0);
           setMemoryError(true);
@@ -407,17 +420,14 @@ export function FlowCopilot() {
       abortRef.current = null;
       sendingRef.current = false;
       setLoading(false);
-      setDeleteTarget(null);
-      setBulkDeleteMode(null);
-      setDeleteError("");
-      setDeleteBusy(false);
-      clearCooldown();
+      resetSessionUi();
+      setUser(null);
       setAuthReady(false);
       setAuthVersion((value) => value + 1);
     };
     window.addEventListener("flowlink:auth-changed", changed);
     return () => window.removeEventListener("flowlink:auth-changed", changed);
-  }, [clearCooldown]);
+  }, [resetSessionUi]);
   useEffect(() => {
     if (cooldownRemaining <= 0) return;
     const timer = window.setInterval(() => {
