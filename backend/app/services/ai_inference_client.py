@@ -106,10 +106,18 @@ class AIInferenceVideoResult:
 
 
 class AIInferenceClient:
-    def __init__(self, *, base_url: str, internal_api_key: str, timeout_seconds: float) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        internal_api_key: str,
+        timeout_seconds: float,
+        video_timeout_seconds: float | None = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.internal_api_key = internal_api_key
         self.timeout_seconds = timeout_seconds
+        self.video_timeout_seconds = video_timeout_seconds if video_timeout_seconds is not None else timeout_seconds
 
     def infer_image_file(self, media_path: Path) -> AIInferenceResult:
         content_type = _content_type_for_path(media_path)
@@ -129,7 +137,7 @@ class AIInferenceClient:
                     f"{self.base_url}/api/inference/videos",
                     headers={"X-Internal-API-Key": self.internal_api_key},
                     files={"file": (media_path.name, payload, "video/mp4")},
-                    timeout=self.timeout_seconds,
+                    timeout=self.video_timeout_seconds,
                 )
         except OSError as exc:
             raise AIInferenceRejectedError("AI inference video file could not be opened") from exc
@@ -243,4 +251,5 @@ def get_ai_inference_client() -> AIInferenceClient:
         base_url=settings.AI_SERVICE_URL,
         internal_api_key=settings.AI_INTERNAL_API_KEY,
         timeout_seconds=settings.AI_SERVICE_TIMEOUT_SECONDS,
+        video_timeout_seconds=settings.AI_VIDEO_SERVICE_TIMEOUT_SECONDS,
     )

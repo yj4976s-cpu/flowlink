@@ -364,6 +364,29 @@ def test_default_video_inference_uses_backend_ai_client_and_preserves_tracks(cli
     assert job.processing_progress == 100
 
 
+def test_video_detection_processes_event_through_threadpool(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    override_inference(DetectionInferenceResult(media_width=320, media_height=180, detections=[]))
+    called = {"value": False}
+
+    async def fake_run_in_threadpool(func, *args, **kwargs):
+        called["value"] = True
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr("app.api.detections.run_in_threadpool", fake_run_in_threadpool)
+
+    response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
+
+    assert response.status_code == 201
+    assert called["value"] is True
+    assert response.json()["status"] == "COMPLETED"
+
+
 def test_webcam_inference_uses_backend_ai_client() -> None:
     fake_client = FakeAIInferenceClient(
         AIInferenceResult(

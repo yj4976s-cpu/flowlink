@@ -285,7 +285,29 @@ class FakeTrackModel:
         ]
 
 
-def test_yolo_runtime_tracks_video_with_bytetrack_and_aggregates_by_track(tmp_path) -> None:
+class FakeMultipleTrackModel:
+    names = {0: "bag", 1: "trash"}
+
+    def track(self, **kwargs):
+        return [
+            FakeTrackResult(
+                [
+                    FakeTrackBox(xyxy=[1, 2, 11, 22], confidence=0.44, class_id=0, track_id=7),
+                    FakeTrackBox(xyxy=[21, 22, 31, 42], confidence=0.84, class_id=1, track_id=8),
+                    FakeTrackBox(xyxy=[41, 42, 51, 62], confidence=0.74, class_id=1, track_id=None),
+                ]
+            ),
+            FakeTrackResult(
+                [
+                    FakeTrackBox(xyxy=[3, 4, 13, 24], confidence=0.91, class_id=0, track_id=7),
+                    FakeTrackBox(xyxy=[23, 24, 33, 44], confidence=0.64, class_id=1, track_id=8),
+                    FakeTrackBox(xyxy=[43, 44, 53, 64], confidence=0.72, class_id=1, track_id=None),
+                ]
+            ),
+        ]
+
+
+def test_yolo_runtime_tracks_video_with_bytetrack_and_aggregates_valid_tracks(tmp_path) -> None:
     video_path = tmp_path / "sample.mp4"
     video_path.write_bytes(b"fake")
     runtime = YoloRuntime(model_path="fake.pt", confidence=0.5, imgsz=640)
@@ -293,7 +315,7 @@ def test_yolo_runtime_tracks_video_with_bytetrack_and_aggregates_by_track(tmp_pa
 
     tracks = runtime.track_video(video_path, fps=10, media_width=100, media_height=80)
 
-    assert len(tracks) == 2
+    assert len(tracks) == 1
     assert tracks[0].model_label == "bag"
     assert tracks[0].track_id == 7
     assert tracks[0].confidence == 0.91
@@ -301,6 +323,18 @@ def test_yolo_runtime_tracks_video_with_bytetrack_and_aggregates_by_track(tmp_pa
     assert tracks[0].first_seen_ms == 0
     assert tracks[0].last_seen_ms == 100
     assert tracks[0].appearance_count == 2
-    assert tracks[1].model_label == "trash"
-    assert tracks[1].track_id is None
+
+
+def test_yolo_runtime_drops_untracked_detections_and_keeps_distinct_track_ids(tmp_path) -> None:
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"fake")
+    runtime = YoloRuntime(model_path="fake.pt", confidence=0.5, imgsz=640)
+    runtime._model = FakeMultipleTrackModel()
+
+    tracks = runtime.track_video(video_path, fps=10, media_width=100, media_height=80)
+
+    assert [track.track_id for track in tracks] == [7, 8]
+    assert [track.model_label for track in tracks] == ["bag", "trash"]
+    assert all(track.track_id is not None for track in tracks)
+    assert tracks[0].appearance_count == 2
     assert tracks[1].appearance_count == 2

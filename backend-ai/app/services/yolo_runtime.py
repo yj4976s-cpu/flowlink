@@ -81,6 +81,8 @@ class YoloRuntime:
                         media_height,
                         seen_ms=frame_seen_ms,
                     ):
+                        if prediction.track_id is None:
+                            continue
                         key = (prediction.model_label, prediction.track_id)
                         previous = tracked.get(key)
                         if previous is None:
