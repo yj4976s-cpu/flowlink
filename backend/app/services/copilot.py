@@ -9,7 +9,7 @@ from app.core.config import get_settings
 from app.models import User
 from app.schemas.copilot import CopilotAction, CopilotCard, CopilotRequest, CopilotResponse, CopilotSuggestion
 from app.services.copilot_providers import ChatStatus, ProviderNotConfiguredError, ProviderResponseError, create_chat_provider
-from app.services.copilot_tools import execute_tool, search_public_community, tool_definitions
+from app.services.copilot_tools import execute_tool, search_public_community, tool_definitions_for_message
 from app.repositories.detections import list_user_detection_events
 from app.repositories.user_flow import list_lost_reports_for_user, list_matches_for_user, list_notifications_for_user
 from app.services.copilot_memory import get_or_create, model_history, save_message, validated_context
@@ -65,6 +65,47 @@ def _mode(user: User | None) -> str:
 def _tool_free_greeting(message: str) -> bool:
     normalized = message.strip().lower().rstrip("!?.~ ")
     return normalized in {"안녕", "안녕하세요", "반가워", "반가워요", "hello", "hi"}
+
+
+def _local_greeting_response(user: User) -> CopilotResponse:
+    if user.role == "ADMIN":
+        message = "안녕하세요. 운영 현황, 탐지 결과, 소유권 요청 검토가 필요하면 바로 도와드릴게요."
+        suggestions = [
+            CopilotSuggestion(id="admin-summary", message="오늘 운영 현황 요약해줘"),
+            CopilotSuggestion(id="admin-claims", message="소유권 요청 검토 흐름 알려줘"),
+        ]
+    else:
+        message = "안녕하세요. 내 신고, 매칭 후보, 알림이 궁금하면 필요한 정보만 확인해서 도와드릴게요."
+        suggestions = [
+            CopilotSuggestion(id="my-matches", message="내 매칭 결과 알려줘"),
+            CopilotSuggestion(id="my-reports", message="내 분실 신고 상태 알려줘"),
+        ]
+    return CopilotResponse(message=message, cards=[], actions=[], suggestions=suggestions, mode=_mode(user), provider="flowlink", model="local-greeting")
+
+
+def rate_limited_fallback_response(user: User) -> CopilotResponse:
+    if user.role == "ADMIN":
+        suggestions = [
+            CopilotSuggestion(id="admin-summary-local", message="운영 현황은 어디서 확인해?"),
+            CopilotSuggestion(id="admin-claims-local", message="소유권 요청 검토 화면으로 안내해줘"),
+        ]
+    else:
+        suggestions = [
+            CopilotSuggestion(id="my-reports-local", message="내 신고는 어디서 확인해?"),
+            CopilotSuggestion(id="my-matches-local", message="매칭 후보는 어디서 봐?"),
+        ]
+    return CopilotResponse(
+        message="AI 연결이나 사용량이 잠시 불안정해요. 잠시 후 다시 질문해 주세요. 지금은 FlowLink 화면 이동과 기본 안내를 도와드릴게요.",
+        cards=[],
+        actions=[
+            CopilotAction(type="NAVIGATE", label="마이페이지", target="/mypage"),
+            CopilotAction(type="NAVIGATE", label="이용 안내", target="/guide"),
+        ],
+        suggestions=suggestions,
+        mode=_mode(user),
+        provider="flowlink",
+        model="local-rate-limit",
+    )
 
 
 def _model_context(db: Session, request: CopilotRequest, user: User | None) -> tuple[str, str, int | None]:
@@ -310,6 +351,18 @@ async def create_copilot_response(db: Session, request: CopilotRequest, current_
             db, conversation, "USER", current_text, client_id=request.client_message_id
         )
         db.commit()
+        if _tool_free_greeting(current_text):
+            response = _local_greeting_response(current_user)
+            presentation = {
+                "cards": [item.model_dump(mode="json") for item in response.cards],
+                "actions": [item.model_dump(mode="json") for item in response.actions],
+                "suggestions": [item.model_dump(mode="json") for item in response.suggestions],
+            }
+            save_message(db, conversation, "ASSISTANT", response.message, presentation=presentation)
+            db.commit()
+            response.conversation_public_id = conversation.public_id
+            logger.info("copilot_local_response type=greeting mode=%s provider_calls=0", response.mode)
+            return response
         input_items = model_history(db, conversation)
     else:
         input_items = [{"role": item.role, "content": item.content} for item in request.messages[-12:]]
@@ -324,21 +377,40 @@ async def create_copilot_response(db: Session, request: CopilotRequest, current_
         result = await provider.generate(
             messages=input_items,
             instructions=f"{SYSTEM_PROMPT}\n현재 context: {context}",
-            tools=[] if _tool_free_greeting(current_text) else tool_definitions(current_user.role if current_user else None),
+            tools=tool_definitions_for_message(current_user.role if current_user else None, current_text),
             execute=lambda name, arguments: execute_tool(db, current_user, name, arguments),
         )
-    except ProviderNotConfiguredError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="FlowLink AI 연결 설정을 확인하고 있어요. 잠시 후 다시 시도해 주세요.") from exc
+    except ProviderNotConfiguredError:
+        response = rate_limited_fallback_response(current_user)
+        if conversation is not None:
+            presentation = {
+                "cards": [item.model_dump(mode="json") for item in response.cards],
+                "actions": [item.model_dump(mode="json") for item in response.actions],
+                "suggestions": [item.model_dump(mode="json") for item in response.suggestions],
+            }
+            save_message(db, conversation, "ASSISTANT", response.message, presentation=presentation)
+            db.commit()
+            response.conversation_public_id = conversation.public_id
+        logger.info("copilot_local_response type=provider_not_configured mode=%s", response.mode)
+        return response
     except ProviderResponseError as exc:
-        if exc.status == ChatStatus.RATE_LIMITED:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail={
-                    "status": ChatStatus.RATE_LIMITED.value,
-                    "message": "AI 사용량이 잠시 한도에 도달했어요. 잠시 후 다시 시도해 주세요.",
-                },
-            ) from exc
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="AI 응답을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.") from exc
+        response = rate_limited_fallback_response(current_user)
+        if conversation is not None:
+            presentation = {
+                "cards": [item.model_dump(mode="json") for item in response.cards],
+                "actions": [item.model_dump(mode="json") for item in response.actions],
+                "suggestions": [item.model_dump(mode="json") for item in response.suggestions],
+            }
+            save_message(db, conversation, "ASSISTANT", response.message, presentation=presentation)
+            db.commit()
+            response.conversation_public_id = conversation.public_id
+        logger.info(
+            "copilot_local_response type=%s mode=%s retry_after=%s",
+            "provider_rate_limited" if exc.status == ChatStatus.RATE_LIMITED else "provider_unavailable",
+            response.mode,
+            exc.retry_after_seconds or settings.COPILOT_PROVIDER_COOLDOWN_SECONDS,
+        )
+        return response
     response = _safe_response(result.text, user=current_user, model=result.model, provider=result.provider)
     if conversation:
         presentation = {

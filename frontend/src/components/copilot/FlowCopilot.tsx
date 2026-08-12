@@ -18,6 +18,7 @@ import {
   listCopilotConversations,
   renameCopilotConversation,
   sendCopilotMessage,
+  CopilotApiError,
   type CopilotAction,
   type CopilotCard,
   type CopilotConversationSummary,
@@ -209,6 +210,7 @@ export function FlowCopilot() {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [value, setValue] = useState("");
   const [loading, setLoading] = useState(false);
+  const [cooldownRemaining, setCooldownRemaining] = useState(0);
   const [unread, setUnread] = useState(0);
   const [briefing, setBriefing] = useState<CopilotResponse | null>(null);
   const [authVersion, setAuthVersion] = useState(0);
@@ -250,9 +252,27 @@ export function FlowCopilot() {
   const messageEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const sendingRef = useRef(false);
+  const cooldownUntilRef = useRef<number | null>(null);
   const sessionRef = useRef<string | null | undefined>(undefined);
   const sessionGenerationRef = useRef(0);
   const context = pageContext(pathname);
+
+  const clearCooldown = useCallback(() => {
+    cooldownUntilRef.current = null;
+    setCooldownRemaining(0);
+  }, []);
+
+  const startCooldown = useCallback((seconds: number) => {
+    const safeSeconds = Math.max(1, Math.ceil(seconds));
+    cooldownUntilRef.current = Date.now() + safeSeconds * 1000;
+    setCooldownRemaining(safeSeconds);
+  }, []);
+
+  const currentCooldownRemaining = useCallback(() => {
+    const until = cooldownUntilRef.current;
+    if (!until) return 0;
+    return Math.max(0, Math.ceil((until - Date.now()) / 1000));
+  }, []);
 
   const closeConversationMenu = useCallback(
     (conversationPublicId: string | null) => {
@@ -284,6 +304,7 @@ export function FlowCopilot() {
           setConversationId(null);
           setConversations([]);
           setMemoryOpen(false);
+          clearCooldown();
         }
         sessionRef.current = key;
         setUser(current);
@@ -328,13 +349,14 @@ export function FlowCopilot() {
           setConversationId(null);
           setConversations([]);
           setMemoryOpen(false);
+          clearCooldown();
         }
       })
       .finally(() => active && setAuthReady(true));
     return () => {
       active = false;
     };
-  }, []);
+  }, [clearCooldown]);
   useEffect(resolveSession, [resolveSession, pathname, authVersion]);
   useEffect(() => {
     if (!user) {
@@ -362,12 +384,22 @@ export function FlowCopilot() {
       abortRef.current = null;
       sendingRef.current = false;
       setLoading(false);
+      clearCooldown();
       setAuthReady(false);
       setAuthVersion((value) => value + 1);
     };
     window.addEventListener("flowlink:auth-changed", changed);
     return () => window.removeEventListener("flowlink:auth-changed", changed);
-  }, []);
+  }, [clearCooldown]);
+  useEffect(() => {
+    if (cooldownRemaining <= 0) return;
+    const timer = window.setInterval(() => {
+      const remaining = currentCooldownRemaining();
+      setCooldownRemaining(remaining);
+      if (remaining <= 0) cooldownUntilRef.current = null;
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [cooldownRemaining, currentCooldownRemaining]);
   useEffect(() => {
     if (!open) return;
     const close = (event: KeyboardEvent) => {
@@ -486,6 +518,7 @@ export function FlowCopilot() {
     setMemoryOpen(false);
     setShowExamples(false);
     setShowRecommendations(false);
+    clearCooldown();
   };
   const resumeConversation = async (id: string) => {
     abortRef.current?.abort();
@@ -527,7 +560,11 @@ export function FlowCopilot() {
 
   const ask = async (text: string) => {
     const trimmed = text.trim();
-    if (!trimmed || loading || sendingRef.current) return;
+    const remaining = currentCooldownRemaining();
+    if (!trimmed || loading || sendingRef.current || remaining > 0) {
+      if (remaining > 0) setCooldownRemaining(remaining);
+      return;
+    }
     sendingRef.current = true;
     const userMessage: UiMessage = {
       id: crypto.randomUUID(),
@@ -582,17 +619,30 @@ export function FlowCopilot() {
         requestSession !== sessionRef.current
       )
         return;
-      setMessages((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          role: "system",
-          text:
-            error instanceof Error
-              ? error.message
-              : "FlowLink AI 응답을 받지 못했어요.",
-        },
-      ]);
+      if (error instanceof CopilotApiError && error.status === 429) {
+        const seconds = error.retryAfterSeconds ?? 30;
+        startCooldown(seconds);
+        setMessages((current) => [
+          ...current,
+          {
+            id: crypto.randomUUID(),
+            role: "system",
+            text: `${error.message} 약 ${Math.ceil(seconds)}초 후 다시 시도해주세요.`,
+          },
+        ]);
+      } else {
+        setMessages((current) => [
+          ...current,
+          {
+            id: crypto.randomUUID(),
+            role: "system",
+            text:
+              error instanceof Error
+                ? error.message
+                : "FlowLink AI 응답을 받지 못했어요.",
+          },
+        ]);
+      }
     } finally {
       if (requestGeneration === sessionGenerationRef.current) {
         sendingRef.current = false;
@@ -616,7 +666,7 @@ export function FlowCopilot() {
       className={className}
       type="button"
       key={prompt.id}
-      disabled={loading}
+      disabled={loading || cooldownRemaining > 0}
       onClick={() => void ask(prompt.message)}
     >
       {className === styles.primaryPrompt ? (
@@ -1501,7 +1551,7 @@ export function FlowCopilot() {
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
-                    if (value.trim()) void ask(value);
+                    if (value.trim() && cooldownRemaining <= 0) void ask(value);
                   }
                 }}
                 rows={1}
@@ -1513,9 +1563,14 @@ export function FlowCopilot() {
                 aria-label="FlowLink AI에게 질문"
                 disabled={loading}
               />
+              {cooldownRemaining > 0 && (
+                <p className={styles.cooldownNotice} role="status">
+                  약 {cooldownRemaining}초 후 다시 보낼 수 있어요.
+                </p>
+              )}
               <button
                 type="submit"
-                disabled={loading || !value.trim()}
+                disabled={loading || cooldownRemaining > 0 || !value.trim()}
                 aria-label="질문 보내기"
               >
                 <Icon name="arrow" size={18} />

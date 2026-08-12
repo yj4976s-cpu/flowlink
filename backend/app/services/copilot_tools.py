@@ -10,9 +10,6 @@ from app.core.security import utc_now
 from app.models import CommunityComment, CommunityPost, FoundItem, LostReport, MatchCandidate, OwnershipClaim, User
 from app.repositories.detections import list_user_detection_events
 from app.repositories.user_flow import get_admin_dashboard_data, list_lost_reports_for_user, list_matches_for_user, list_notifications_for_user
-from app.services.mappers import detection_event_response, lost_report_response, match_candidate_response, notification_response
-
-
 USER_TOOL_NAMES = {
     "get_my_lost_reports",
     "get_my_matches",
@@ -122,6 +119,31 @@ def tool_definitions(role: str | None) -> list[dict]:
     return []
 
 
+def tool_definitions_for_message(role: str | None, message: str) -> list[dict]:
+    definitions = tool_definitions(role)
+    if role != "USER" or not definitions:
+        return definitions
+
+    text = message.strip().lower()
+    selected: set[str] = set()
+    if any(keyword in text for keyword in ("신고", "분실", "lost report", "lost_report", "내 물건")):
+        selected.add("get_my_lost_reports")
+    if any(keyword in text for keyword in ("매칭", "후보", "match", "matched")):
+        selected.update({"get_my_matches", "get_match_detail"})
+    if any(keyword in text for keyword in ("탐지", "분석", "ai", "객체", "detect", "detection")):
+        selected.add("get_my_analysis_results")
+    if any(keyword in text for keyword in ("소유권", "claim", "반환 요청", "확인 요청")):
+        selected.add("get_my_ownership_claims")
+    if any(keyword in text for keyword in ("알림", "notification", "읽지 않은", "읽지않은")):
+        selected.add("get_my_notifications")
+    if any(keyword in text for keyword in ("커뮤니티", "목격", "제보", "자유 이야기", "이야기", "community")):
+        selected.add("search_public_community")
+
+    if not selected:
+        return definitions
+    return [item for item in definitions if item["name"] in selected]
+
+
 def _limit(arguments: dict) -> int:
     return max(1, min(int(arguments.get("limit", 5)), 10))
 
@@ -145,6 +167,85 @@ def _user_ownership_claim_payload(claim: OwnershipClaim) -> dict:
         "verification_details": claim.verification_details,
         "reviewed_at": claim.reviewed_at.isoformat() if claim.reviewed_at else None,
         "created_at": claim.created_at.isoformat(),
+    }
+
+
+def _object_payload(object_class: object | None) -> dict:
+    return {
+        "code": getattr(object_class, "code", None),
+        "name_ko": getattr(object_class, "name_ko", None),
+    }
+
+
+def _lost_report_payload(report: LostReport) -> dict:
+    description = report.description.strip()
+    return {
+        "id": report.id,
+        "status": report.status,
+        "item_type": _object_payload(report.object_class),
+        "colors": report.colors or ([report.color] if report.color else []),
+        "lost_location": report.area_name,
+        "lost_time": {
+            "from": report.lost_from.isoformat(),
+            "to": report.lost_to.isoformat() if report.lost_to else None,
+        },
+        "feature_summary": description[:180] + ("..." if len(description) > 180 else ""),
+    }
+
+
+def _match_payload(candidate: MatchCandidate, *, include_breakdown: bool = False) -> dict:
+    found_item = candidate.found_item
+    payload = {
+        "id": candidate.id,
+        "status": candidate.status,
+        "total_score": candidate.total_score,
+        "found_item": {
+            "id": found_item.id,
+            "item_type": _object_payload(found_item.object_class),
+            "area": found_item.area_name,
+            "status": found_item.status,
+            "found_at": found_item.found_at.isoformat(),
+        },
+    }
+    if include_breakdown:
+        payload["score_explanation"] = {
+            "item_type": candidate.type_score,
+            "area": candidate.area_score,
+            "time": candidate.time_score,
+            "features": candidate.keyword_score,
+            "notice": "각 점수는 신고 조건 유사도이며 소유 확률이 아닙니다.",
+        }
+    return payload
+
+
+def _notification_payload(notification) -> dict:
+    return {
+        "id": notification.id,
+        "type": notification.notification_type,
+        "title": notification.title,
+        "message": notification.message,
+        "related_type": notification.related_type,
+        "related_id": notification.related_id,
+        "read_at": notification.read_at.isoformat() if notification.read_at else None,
+        "created_at": notification.created_at.isoformat(),
+    }
+
+
+def _detection_payload(event) -> dict:
+    objects = sorted(event.detected_objects, key=lambda item: float(item.confidence), reverse=True)[:3]
+    return {
+        "id": event.id,
+        "status": event.status,
+        "source_type": event.source_type,
+        "created_at": event.created_at.isoformat(),
+        "detected_objects": [
+            {
+                "class_code": item.object_class.code,
+                "class_name_ko": item.object_class.name_ko,
+                "confidence": float(item.confidence),
+            }
+            for item in objects
+        ],
     }
 
 
@@ -201,23 +302,21 @@ def execute_tool(db: Session, current_user: User | None, name: str, arguments: d
     if name in ADMIN_TOOL_NAMES and role != "ADMIN":
         return {"error": "관리자 권한이 필요합니다."}
     if name == "get_my_lost_reports":
-        return [lost_report_response(item).model_dump(mode="json") for item in list_lost_reports_for_user(db, current_user.id, skip=0, limit=_limit(arguments))]
+        return [_lost_report_payload(item) for item in list_lost_reports_for_user(db, current_user.id, skip=0, limit=_limit(arguments))]
     if name == "get_my_matches":
-        return [match_candidate_response(item).model_dump(mode="json") for item in list_matches_for_user(db, current_user.id, skip=0, limit=_limit(arguments))]
+        return [_match_payload(item) for item in list_matches_for_user(db, current_user.id, skip=0, limit=_limit(arguments))]
     if name == "get_match_detail":
         match_id = int(arguments["match_id"])
         item = db.scalar(select(MatchCandidate).join(MatchCandidate.lost_report).options(joinedload(MatchCandidate.lost_report).joinedload(LostReport.object_class), joinedload(MatchCandidate.found_item).joinedload(FoundItem.object_class), joinedload(MatchCandidate.found_item).joinedload(FoundItem.detected_object), joinedload(MatchCandidate.found_item).selectinload(FoundItem.citizen_reports)).where(MatchCandidate.id == match_id, LostReport.user_id == current_user.id))
         if item is None:
             return {"error": "본인에게 허용된 매칭 후보를 찾을 수 없습니다."}
-        payload = match_candidate_response(item).model_dump(mode="json")
-        payload["score_explanation"] = {"item_type": item.type_score, "area": item.area_score, "time": item.time_score, "features": item.keyword_score, "notice": "각 점수는 신고 조건 유사도이며 소유 확률이 아닙니다."}
-        return payload
+        return _match_payload(item, include_breakdown=True)
     if name == "get_my_notifications":
         items = list_notifications_for_user(db, current_user.id, skip=0, limit=_limit(arguments), unread_only=bool(arguments.get("unread_only", False)))
-        return [notification_response(item).model_dump(mode="json") for item in items]
+        return [_notification_payload(item) for item in items]
     if name == "get_my_analysis_results":
         items = list_user_detection_events(db, user_id=current_user.id, skip=0, limit=_limit(arguments))
-        return [detection_event_response(item).model_dump(mode="json") for item in items]
+        return [_detection_payload(item) for item in items]
     if name == "get_my_ownership_claims":
         items = db.scalars(select(OwnershipClaim).options(joinedload(OwnershipClaim.lost_report).joinedload(LostReport.object_class), joinedload(OwnershipClaim.found_item).joinedload(FoundItem.object_class)).where(OwnershipClaim.user_id == current_user.id).order_by(OwnershipClaim.created_at.desc()).limit(_limit(arguments))).all()
         return [_user_ownership_claim_payload(item) for item in items]

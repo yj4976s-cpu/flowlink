@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 import hashlib
 import logging
+import math
+from threading import Lock
+from time import monotonic
 from uuid import uuid4
 from dataclasses import dataclass
 from enum import StrEnum
@@ -16,7 +19,36 @@ from google.genai import types
 from app.core.config import Settings
 
 logger = logging.getLogger(__name__)
-COPILOT_MAX_TOOL_ROUNDS = 6
+COPILOT_MAX_TOOL_ROUNDS = 2
+COPILOT_MAX_MODEL_CALLS = 3
+
+
+class ProviderCooldown:
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._until: dict[str, float] = {}
+
+    def remaining(self, key: str) -> int:
+        with self._lock:
+            remaining = self._until.get(key, 0) - monotonic()
+            if remaining <= 0:
+                self._until.pop(key, None)
+                return 0
+            return max(1, math.ceil(remaining))
+
+    def activate(self, key: str, seconds: int) -> int:
+        if seconds <= 0:
+            return 0
+        with self._lock:
+            self._until[key] = monotonic() + seconds
+            return seconds
+
+    def clear(self) -> None:
+        with self._lock:
+            self._until.clear()
+
+
+provider_cooldown = ProviderCooldown()
 
 
 @dataclass
@@ -38,10 +70,11 @@ class ChatStatus(StrEnum):
 
 
 class ProviderResponseError(RuntimeError):
-    def __init__(self, message: str, *, status: ChatStatus = ChatStatus.REQUEST_FAILED, upstream_status: int | None = None) -> None:
+    def __init__(self, message: str, *, status: ChatStatus = ChatStatus.REQUEST_FAILED, upstream_status: int | None = None, retry_after_seconds: int | None = None) -> None:
         super().__init__(message)
         self.status = status
         self.upstream_status = upstream_status
+        self.retry_after_seconds = retry_after_seconds
 
 
 class ChatModelProvider(Protocol):
@@ -67,6 +100,9 @@ class GeminiProvider:
         self.model = settings.GEMINI_MODEL
         self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
         self.diagnostic_logging = settings.APP_ENV.lower() not in {"production", "prod"}
+        self.max_output_tokens = settings.COPILOT_MAX_OUTPUT_TOKENS
+        self.cooldown_seconds = settings.COPILOT_PROVIDER_COOLDOWN_SECONDS
+        self.cooldown_key = f"gemini:{self.model}"
 
     async def generate(self, *, messages: list[dict[str, str]], instructions: str, tools: list[dict[str, Any]], execute: Any) -> ProviderResult:
         request_id = uuid4().hex[:12]
@@ -78,6 +114,23 @@ class GeminiProvider:
 
         async def call_gemini(*, stage: str, contents: list[types.Content], config: types.GenerateContentConfig, tool_round: int) -> Any:
             nonlocal gemini_calls, result_category
+            remaining = provider_cooldown.remaining(self.cooldown_key)
+            if remaining > 0:
+                result_category = "rate_limited"
+                if self.diagnostic_logging:
+                    logger.info(
+                        "copilot_provider_cooldown_hit request_id=%s provider=gemini model=%s retry_after=%s",
+                        request_id, self.model, remaining,
+                    )
+                raise ProviderResponseError(
+                    "Gemini provider cooldown active",
+                    status=ChatStatus.RATE_LIMITED,
+                    upstream_status=429,
+                    retry_after_seconds=remaining,
+                )
+            if gemini_calls >= COPILOT_MAX_MODEL_CALLS:
+                result_category = "tool_failed"
+                raise ProviderResponseError("Gemini model call budget exceeded", status=ChatStatus.TOOL_FAILED)
             gemini_calls += 1
             call_number = gemini_calls
             if self.diagnostic_logging:
@@ -91,6 +144,19 @@ class GeminiProvider:
                 status_code = getattr(exc, "status_code", None) or getattr(exc, "code", None)
                 category = "rate_limited" if status_code == 429 or "RESOURCE_EXHAUSTED" in str(exc) else "provider_error"
                 result_category = category
+                if category == "rate_limited":
+                    retry_after = provider_cooldown.activate(self.cooldown_key, self.cooldown_seconds)
+                    if self.diagnostic_logging:
+                        logger.info(
+                            "copilot_provider_rate_limited request_id=%s provider=gemini model=%s cooldown_seconds=%s",
+                            request_id, self.model, retry_after,
+                        )
+                    raise ProviderResponseError(
+                        "Gemini rate limit exceeded",
+                        status=ChatStatus.RATE_LIMITED,
+                        upstream_status=429,
+                        retry_after_seconds=retry_after,
+                    ) from exc
                 if self.diagnostic_logging:
                     logger.info(
                         "copilot_gemini_result request_id=%s stage=%s call_number=%s model=%s tool_round=%s result=%s",
@@ -112,10 +178,12 @@ class GeminiProvider:
             tool_config=types.ToolConfig(function_calling_config=types.FunctionCallingConfig(mode="AUTO")) if declarations else None,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
             response_mime_type="application/json",
+            max_output_tokens=self.max_output_tokens,
         )
         final_config = types.GenerateContentConfig(
             system_instruction=instructions,
             response_mime_type="application/json",
+            max_output_tokens=self.max_output_tokens,
         )
         executed: dict[str, Any] = {}
         stage = "initial_generate"
@@ -167,9 +235,11 @@ class GeminiProvider:
                 stage = "tool_follow_up"
                 response = await call_gemini(
                     stage=stage, contents=contents,
-                    config=final_config if duplicate_detected else config, tool_round=round_number,
+                    config=final_config if duplicate_detected or round_number >= COPILOT_MAX_TOOL_ROUNDS else config, tool_round=round_number,
                 )
-                if duplicate_detected:
+                if duplicate_detected or round_number >= COPILOT_MAX_TOOL_ROUNDS:
+                    if response.function_calls:
+                        raise ProviderResponseError("Gemini tool-call limit exceeded", status=ChatStatus.TOOL_FAILED)
                     result_category = "success"
                     return ProviderResult(text=response.text or "", model=self.model, provider="gemini")
             if not (response.function_calls or []):
@@ -199,6 +269,7 @@ class GeminiProvider:
                     "Gemini rate limit exceeded",
                     status=ChatStatus.RATE_LIMITED,
                     upstream_status=429,
+                    retry_after_seconds=provider_cooldown.activate(self.cooldown_key, self.cooldown_seconds),
                 ) from exc
             if status_code in {401, 403}:
                 result_category = "not_configured"

@@ -9,7 +9,7 @@ export type CopilotStoredMessage = { id: number; role: "USER" | "ASSISTANT"; con
 export type CopilotConversationDetail = CopilotConversationSummary & { messages: CopilotStoredMessage[] };
 
 export class CopilotApiError extends Error {
-  constructor(message: string, readonly status?: number) { super(message); this.name = "CopilotApiError"; }
+  constructor(message: string, readonly status?: number, readonly retryAfterSeconds?: number) { super(message); this.name = "CopilotApiError"; }
 }
 
 function baseUrl() {
@@ -21,9 +21,11 @@ function baseUrl() {
 export async function sendCopilotMessage(messages: CopilotHistoryMessage[], context: { page: string; path: string; entity_id?: number }, options?: { signal?: AbortSignal; conversationId?: string | null; clientMessageId?: string }) {
   const response = await fetch(`${baseUrl()}/api/copilot/chat`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages, context, conversation_public_id: options?.conversationId, client_message_id: options?.clientMessageId }), signal: options?.signal });
   if (!response.ok) {
+    const retryAfterHeader = response.headers.get("Retry-After");
+    const retryAfterSeconds = retryAfterHeader ? Number.parseInt(retryAfterHeader, 10) : undefined;
     let message = response.status === 429 ? "AI 사용량이 잠시 한도에 도달했어요. 잠시 후 다시 시도해 주세요." : response.status === 503 ? "FlowLink AI 모델 연결이 아직 설정되지 않았어요." : "FlowLink AI 응답을 받지 못했어요. 잠시 후 다시 시도해 주세요.";
     try { const body = await response.json() as { detail?: string | { status?: string; message?: string } }; if (typeof body.detail === "string") message = body.detail; else if (body.detail?.message) message = body.detail.message; } catch { /* safe fallback */ }
-    throw new CopilotApiError(message, response.status);
+    throw new CopilotApiError(message, response.status, Number.isFinite(retryAfterSeconds) ? retryAfterSeconds : undefined);
   }
   return response.json() as Promise<CopilotResponse>;
 }

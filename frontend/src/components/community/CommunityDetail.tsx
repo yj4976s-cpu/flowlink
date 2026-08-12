@@ -84,6 +84,7 @@ export function CommunityDetail({ postId }: { postId: string }) {
   const router = useRouter();
   const menuRef = useRef<HTMLDivElement>(null);
   const deleteTrigger = useRef<HTMLButtonElement>(null);
+  const loadRequestRef = useRef(0);
   const [post, setPost] = useState<CommunityPost | null>(null);
   const [comments, setComments] = useState<CommunityComment[]>([]);
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -100,16 +101,28 @@ export function CommunityDetail({ postId }: { postId: string }) {
 
   useEffect(() => {
     const controller = new AbortController();
+    const requestId = loadRequestRef.current + 1;
+    loadRequestRef.current = requestId;
 
     void Promise.allSettled([getCommunityPost(postId, controller.signal), listCommunityComments(postId, controller.signal)])
       .then(([postResult, commentResult]) => {
-        if (postResult.status === "fulfilled") setPost(postResult.value);
+        if (controller.signal.aborted || requestId !== loadRequestRef.current) return;
+
+        if (postResult.status === "fulfilled") {
+          setPost(postResult.value);
+          setPageError("");
+        }
         else setPageError("게시글을 불러오지 못했어요.");
 
-        if (commentResult.status === "fulfilled") setComments(commentResult.value);
+        if (commentResult.status === "fulfilled") {
+          setComments(commentResult.value);
+          setCommentError("");
+        }
         else setCommentError("댓글을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.");
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!controller.signal.aborted && requestId === loadRequestRef.current) setLoading(false);
+      });
 
     return () => controller.abort();
   }, [postId]);

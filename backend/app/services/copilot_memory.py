@@ -6,7 +6,7 @@ from app.core.security import utc_now
 from app.models import CopilotConversation, CopilotMessage, CopilotMessageRef, DetectionEvent, FoundItem, LostReport, MatchCandidate, OwnershipClaim, User
 from app.schemas.copilot import CopilotConversationDetail, CopilotConversationSummary, CopilotStoredMessage
 
-MODEL_HISTORY_LIMIT = 12
+MODEL_HISTORY_LIMIT = 8
 
 CONTEXT_TYPES = {
     "LOST_REPORT_DETAIL": "LOST_REPORT",

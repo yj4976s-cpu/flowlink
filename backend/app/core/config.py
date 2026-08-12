@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     COPILOT_GUEST_RATE_LIMIT: int = 10
     COPILOT_USER_RATE_LIMIT: int = 30
     COPILOT_ADMIN_RATE_LIMIT: int = 60
+    COPILOT_MAX_OUTPUT_TOKENS: int = 1200
+    COPILOT_PROVIDER_COOLDOWN_SECONDS: int = 30
 
     @property
     def auth_cookie_secure(self) -> bool:
