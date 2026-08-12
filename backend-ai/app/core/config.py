@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     APP_HOST: str = "127.0.0.1"
     APP_PORT: int = 8001
-    AI_INTERNAL_API_KEY: str = "change-this-local-ai-key"
+    AI_INTERNAL_API_KEY: str = ""
     DETECTION_MODEL: str = "yolo11n.pt"
     DETECTION_CONFIDENCE: float = 0.25
     DETECTION_IMGSZ: int = 640
@@ -25,4 +25,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-

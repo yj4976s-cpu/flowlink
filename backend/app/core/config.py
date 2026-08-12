@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "uploads"
     FRONTEND_URL: str = "http://localhost:3000"
     AI_SERVICE_URL: str = "http://127.0.0.1:8001"
-    AI_INTERNAL_API_KEY: str = "change-this-local-ai-key"
+    AI_INTERNAL_API_KEY: str = ""
     AI_SERVICE_TIMEOUT_SECONDS: float = 30.0
     CHAT_MODEL_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str = ""

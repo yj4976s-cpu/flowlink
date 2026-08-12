@@ -79,13 +79,18 @@ AI_SERVICE_TIMEOUT_SECONDS=30
 ### Backend AI
 
 ```env
-AI_INTERNAL_API_KEY=change-this-local-ai-key
+AI_INTERNAL_API_KEY=
 DETECTION_MODEL=yolo11n.pt
 DETECTION_CONFIDENCE=0.25
 DETECTION_IMGSZ=640
 ```
 
 `AI_INTERNAL_API_KEY`는 Backend와 Backend AI에 같은 값을 설정합니다. `NEXT_PUBLIC_*`로 만들지 않습니다.
+로컬 `.env`에는 현재 리포지토리에 올리지 않는 임의의 secret을 Backend와 Backend AI 두 곳에 동일하게 넣어줍니다. 생성한 값 자체는 README나 Git에 기록하지 않습니다.
+
+```powershell
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
 
 ## 로컬 실행
 

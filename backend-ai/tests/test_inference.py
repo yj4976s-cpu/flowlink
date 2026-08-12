@@ -11,6 +11,8 @@ from app.main import app
 from app.services.inference import ImageInferenceService, InferenceModelUnavailableError, get_inference_service
 from app.services.yolo_runtime import YoloBBox, YoloPrediction, get_yolo_runtime
 
+TEST_INTERNAL_API_KEY = "test-internal-api-key"
+
 
 class FakeRuntime:
     def __init__(self, predictions: list[YoloPrediction] | None = None, *, fail: bool = False) -> None:
@@ -33,6 +35,11 @@ class FailingService:
         raise InferenceModelUnavailableError("model unavailable")
 
 
+@pytest.fixture(autouse=True)
+def configure_internal_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(get_settings(), "AI_INTERNAL_API_KEY", TEST_INTERNAL_API_KEY)
+
+
 @pytest.fixture
 def client() -> TestClient:
     with TestClient(app) as test_client:
@@ -41,7 +48,7 @@ def client() -> TestClient:
 
 
 def auth_headers() -> dict[str, str]:
-    return {"X-Internal-API-Key": get_settings().AI_INTERNAL_API_KEY}
+    return {"X-Internal-API-Key": TEST_INTERNAL_API_KEY}
 
 
 def image_payload(*, width: int = 32, height: int = 24, image_format: str = "JPEG") -> bytes:
@@ -67,6 +74,16 @@ def test_inference_rejects_missing_or_wrong_internal_key(client: TestClient) -> 
 
     assert missing.status_code == 403
     assert wrong.status_code == 403
+
+
+def test_inference_rejects_when_internal_key_is_not_configured(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(get_settings(), "AI_INTERNAL_API_KEY", "")
+
+    response = client.post("/api/inference/images", files=image_file(), headers=auth_headers())
+
+    assert response.status_code == 403
 
 
 def test_inference_returns_raw_yolo_predictions(client: TestClient) -> None:
