@@ -25,12 +25,24 @@ const userNavigation = [
 
 const adminNavigation = [
   { label: "대시보드", href: "/admin" },
-  { label: "운영 지도", href: "/admin/map" },
-  { label: "AI 탐지 관리", href: "/admin/detections" },
-  { label: "AI 탐지 리포트", href: "/admin/ai-report" },
-  { label: "제보 관리", href: "/admin/citizen-reports" },
+  {
+    label: "검토 업무",
+    href: "/admin/detections",
+    children: [
+      { label: "AI 탐지 관리", href: "/admin/detections" },
+      { label: "제보 관리", href: "/admin/citizen-reports" },
+      { label: "소유권 요청", href: "/admin/ownership-claims" },
+    ],
+  },
   { label: "발견물 관리", href: "/admin/found-items" },
-  { label: "소유권 요청", href: "/admin/ownership-claims" },
+  {
+    label: "운영 도구",
+    href: "/admin/map",
+    children: [
+      { label: "운영 지도", href: "/admin/map" },
+      { label: "AI 탐지 리포트", href: "/admin/ai-report" },
+    ],
+  },
 ] as const;
 
 function LogoutConfirmDialog({ user, pending, error, onCancel, onConfirm }: { user: AuthUser; pending: boolean; error: string; onCancel: () => void; onConfirm: () => void }) {
@@ -77,6 +89,7 @@ export function Header() {
   const [logoutConfirm, setLogoutConfirm] = useState(false);
   const [logoutPending, setLogoutPending] = useState(false);
   const [logoutError, setLogoutError] = useState("");
+  const [openNavGroup, setOpenNavGroup] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [authResolved, setAuthResolved] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -141,7 +154,7 @@ export function Header() {
     };
   }, [profileOpen, logoutConfirm]);
 
-  const closeMenu = () => { setOpen(false); setLogoutConfirm(false); setLogoutError(""); };
+  const closeMenu = () => { setOpen(false); setLogoutConfirm(false); setLogoutError(""); setOpenNavGroup(null); };
   const isAdmin = currentUser?.role === "ADMIN";
   const navigation = isAdmin ? adminNavigation : userNavigation;
   const handleLogout = async () => {
@@ -168,20 +181,36 @@ export function Header() {
   const requestLogout = () => { setLogoutError(""); setLogoutConfirm(true); };
   const continueSession = () => { if (!logoutPending) { setLogoutConfirm(false); setLogoutError(""); window.setTimeout(() => logoutTriggerRef.current?.focus()); } };
   const renderDesktopNavItem = (item: (typeof navigation)[number]) => {
+    const isCurrent = pathname === item.href;
+    const isGroupCurrent = "children" in item && item.children.some((child) => pathname === child.href || pathname.startsWith(`${child.href}/`));
     if ("children" in item) {
+      const expanded = openNavGroup === item.label;
       return (
-        <div className="nav-group" key={item.label}>
-          <Link className="nav-group-trigger" href={item.href}>
+        <div
+          className="nav-group"
+          data-active={isGroupCurrent || isCurrent}
+          key={item.label}
+          onMouseEnter={() => setOpenNavGroup(item.label)}
+          onMouseLeave={() => setOpenNavGroup(null)}
+          onFocus={() => setOpenNavGroup(item.label)}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) setOpenNavGroup(null);
+          }}
+        >
+          <Link className="nav-group-trigger" href={item.href} aria-current={isCurrent ? "page" : undefined} aria-haspopup="true" aria-expanded={expanded}>
             {item.label}
             <Icon name="chevron" size={14} />
           </Link>
           <div className="nav-submenu" aria-label={`${item.label} 하위 메뉴`}>
-            {item.children.map((child) => <Link key={child.href} href={child.href}>{child.label}</Link>)}
+            {item.children.map((child) => {
+              const childCurrent = pathname === child.href || pathname.startsWith(`${child.href}/`);
+              return <Link key={child.href} href={child.href} aria-current={childCurrent ? "page" : undefined}>{child.label}</Link>;
+            })}
           </div>
         </div>
       );
     }
-    return <Link key={item.label} href={item.href}>{item.label}</Link>;
+    return <Link key={item.label} href={item.href} aria-current={isCurrent ? "page" : undefined}>{item.label}</Link>;
   };
 
   return (
@@ -233,14 +262,21 @@ export function Header() {
       {open && (
         <div ref={menuRef} id="mobile-menu" className="mobile-menu is-open">
           <nav aria-label="모바일 메뉴">
-            {authResolved && navigation.map((item) => (
-              <Fragment key={item.label}>
-                <Link href={item.href} onClick={closeMenu}>{item.label}</Link>
-                {"children" in item && item.children.map((child) => (
-                  <Link className="mobile-sub-link" key={child.href} href={child.href} onClick={closeMenu}>{child.label}</Link>
-                ))}
-              </Fragment>
-            ))}
+            {authResolved && navigation.map((item) => {
+              const isCurrent = pathname === item.href;
+              const groupCurrent = "children" in item && item.children.some((child) => pathname === child.href || pathname.startsWith(`${child.href}/`));
+              return (
+                <Fragment key={item.label}>
+                  <Link href={item.href} onClick={closeMenu} aria-current={isCurrent ? "page" : undefined} data-active={groupCurrent || isCurrent}>
+                    {item.label}
+                  </Link>
+                  {"children" in item && item.children.map((child) => {
+                    const childCurrent = pathname === child.href || pathname.startsWith(`${child.href}/`);
+                    return <Link className="mobile-sub-link" key={child.href} href={child.href} onClick={closeMenu} aria-current={childCurrent ? "page" : undefined}>{child.label}</Link>;
+                  })}
+                </Fragment>
+              );
+            })}
             {currentUser ? (
               <>
                 <Link href={isAdmin ? "/admin" : "/mypage"} onClick={closeMenu}>{isAdmin ? "관리자 정보" : "마이페이지"}</Link>

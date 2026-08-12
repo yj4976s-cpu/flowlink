@@ -56,7 +56,7 @@ def login_user(client: TestClient) -> None:
     assert client.post("/api/auth/login", json={"email": "user@example.com", "password": "password123"}).status_code == 200
 
 
-def seed_detection(db: Session, *, object_id: int, event_id: int, detected_at: datetime, confidence: str = "0.8750", source_type: str = "IMAGE", include_crop: bool = True, admin_memo: str | None = None, purpose: str = "OPERATION") -> None:
+def seed_detection(db: Session, *, object_id: int, event_id: int, detected_at: datetime, confidence: str = "0.8750", source_type: str = "IMAGE", include_crop: bool = True, admin_memo: str | None = None, purpose: str = "OPERATION", processing_status: str = "CONFIRMED") -> None:
     now = detected_at
     if db.get(ObjectClass, 1) is None:
         db.add(ObjectClass(id=1, code="BAG", name_ko="가방", group_code="PERSONAL_ITEM", display_order=1, is_active=True, created_at=now, updated_at=now))
@@ -64,7 +64,7 @@ def seed_detection(db: Session, *, object_id: int, event_id: int, detected_at: d
         db.add(Camera(id=1, code="CAM-1", name="테스트 카메라", area_name="잠실", is_active=True, created_at=now, updated_at=now))
     extension = "jpg" if source_type == "IMAGE" else "mp4"
     db.add(DetectionEvent(id=event_id, camera_id=1, purpose=purpose, source_type=source_type, original_media_url=f"/uploads/{event_id}.{extension}", result_media_url=None, status="COMPLETED", captured_at=detected_at, processing_started_at=detected_at, processing_completed_at=detected_at, created_at=now, updated_at=now))
-    db.add(DetectedObject(id=object_id, detection_event_id=event_id, object_class_id=1, processing_status="CONFIRMED", confidence=Decimal(confidence), bbox_x=Decimal("1"), bbox_y=Decimal("2"), bbox_width=Decimal("30"), bbox_height=Decimal("40"), cropped_image_url=f"/uploads/crop-{object_id}.jpg" if include_crop else None, appearance_count=1, admin_memo=admin_memo, detected_at=detected_at, created_at=now))
+    db.add(DetectedObject(id=object_id, detection_event_id=event_id, object_class_id=1, processing_status=processing_status, confidence=Decimal(confidence), bbox_x=Decimal("1"), bbox_y=Decimal("2"), bbox_width=Decimal("30"), bbox_height=Decimal("40"), cropped_image_url=f"/uploads/crop-{object_id}.jpg" if include_crop else None, appearance_count=1, admin_memo=admin_memo, detected_at=detected_at, created_at=now))
     db.commit()
 
 
@@ -361,6 +361,22 @@ def test_dashboard_uses_kst_today_boundary_and_ai_categories(client: TestClient,
     assert body["category_counts"] == [{"code": "BAG", "name": "가방", "count": 1}]
     assert len(body["recent_detections"]) == 1
     assert body["average_confidence"] == "0.925"
+    assert body["metrics"]["operation_detection_pending"] == 0
+
+
+def test_dashboard_operation_pending_counts_only_operation_pending_objects(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_admin(db)
+    fixed_now = datetime(2026, 1, 2, 3, tzinfo=UTC)
+    seed_detection(db, object_id=10, event_id=20, detected_at=fixed_now, purpose="OPERATION", processing_status="PENDING")
+    seed_detection(db, object_id=11, event_id=21, detected_at=fixed_now, purpose="USER_ANALYSIS", processing_status="PENDING")
+    seed_detection(db, object_id=12, event_id=22, detected_at=fixed_now, purpose="OPERATION", processing_status="CONFIRMED")
+    monkeypatch.setattr(admin_api, "utc_now", lambda: fixed_now)
+    login(client)
+
+    response = client.get("/api/admin/dashboard", params={"period": "today"})
+
+    assert response.status_code == 200
+    assert response.json()["metrics"]["operation_detection_pending"] == 1
 
 
 def test_dashboard_supports_seven_days_and_all(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:

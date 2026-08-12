@@ -2,10 +2,9 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Icon } from "@/components/common/Icon";
 import { getAdminDashboard, resolveAdminDashboardImageUrl, type AdminDashboardData } from "@/lib/adminDashboardApi";
-import { listAdminOwnershipClaims, type AdminOwnershipClaim } from "@/lib/adminOwnershipClaimsApi";
 import styles from "./AdminDashboardClient.module.css";
 
 type Period = "today" | "7d" | "all";
@@ -31,16 +30,8 @@ const entityLabel: Record<string, string> = {
 };
 const periodLabel: Record<Period, string> = { today: "오늘", "7d": "최근 7일", all: "전체" };
 
-function elapsed(value?: string | null) {
-  if (!value) return "처리 대기";
-  const minutes = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60000));
-  if (minutes >= 1440) return `${Math.floor(minutes / 1440)}일 대기`;
-  if (minutes >= 60) return `${Math.floor(minutes / 60)}시간 대기`;
-  return `${minutes}분 대기`;
-}
-
-function SectionHeading({ title, href, action }: { title: string; href?: string; action?: string }) {
-  return <div className={styles.sectionHeading}><h2>{title}</h2>{href && <Link href={href}>{action}<Icon name="arrow" size={14} /></Link>}</div>;
+function SectionHeading({ id, title, href, action }: { id?: string; title: string; href?: string; action?: string }) {
+  return <div className={styles.sectionHeading}><h2 id={id}>{title}</h2>{href && <Link href={href}>{action}<Icon name="arrow" size={14} /></Link>}</div>;
 }
 
 function State({ children, error = false }: { children: ReactNode; error?: boolean }) {
@@ -72,30 +63,23 @@ function PeriodControl({ period, pending, onChange }: { period: Period; pending:
 export function AdminDashboardClient() {
   const [current, setCurrent] = useState<AdminDashboardData | null>(null);
   const [insights, setInsights] = useState<AdminDashboardData | null>(null);
-  const [claims, setClaims] = useState<AdminOwnershipClaim[]>([]);
   const [period, setPeriod] = useState<Period>("today");
   const [currentError, setCurrentError] = useState(false);
-  const [claimsError, setClaimsError] = useState(false);
   const [insightsError, setInsightsError] = useState(false);
   const [insightsLoading, setInsightsLoading] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
-    Promise.allSettled([
-      getAdminDashboard("today", controller.signal),
-      listAdminOwnershipClaims(controller.signal),
-    ]).then(([dashboardResult, claimResult]) => {
-      if (controller.signal.aborted) return;
-      if (dashboardResult.status === "fulfilled") {
-        setCurrent(dashboardResult.value);
-        setInsights(dashboardResult.value);
-      } else {
+    getAdminDashboard("today", controller.signal)
+      .then((data) => {
+        setCurrent(data);
+        setInsights(data);
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return;
         setCurrentError(true);
         setInsightsError(true);
-      }
-      if (claimResult.status === "fulfilled") setClaims(claimResult.value);
-      else setClaimsError(true);
-    });
+      });
     return () => controller.abort();
   }, []);
 
@@ -109,21 +93,17 @@ export function AdminDashboardClient() {
     finally { setInsightsLoading(false); }
   };
 
-  const pendingClaims = useMemo(() => claims.filter((claim) => claim.status === "PENDING"), [claims]);
-  const returnClaims = useMemo(() => claims.filter((claim) => claim.status === "APPROVED"), [claims]);
-  const citizenPending = current?.metrics.citizen_pending ?? 0;
-  const waiting = pendingClaims.length + returnClaims.length + citizenPending;
+  const operationDetectionPending = current?.metrics.operation_detection_pending ?? 0;
+  const citizenReviewPending = current?.metrics.citizen_review_pending ?? 0;
+  const ownershipClaimPending = current?.metrics.ownership_claim_pending ?? 0;
+  const ownershipReturnPending = current?.metrics.ownership_return_pending ?? 0;
+  const waiting = operationDetectionPending + citizenReviewPending + ownershipClaimPending + ownershipReturnPending;
   const priorities = [
-    ...pendingClaims.slice(0, 3).map((claim) => ({
-      key: `claim-${claim.id}`, tone: "attention", label: "소유권 검토 대기", title: `${claim.found_item.color ?? ""} ${claim.found_item.item_category_name}`.trim(),
-      detail: claim.found_item.area_name, meta: elapsed(claim.created_at), href: "/admin/ownership-claims", action: "검토하기",
-    })),
-    ...returnClaims.slice(0, 2).map((claim) => ({
-      key: `return-${claim.id}`, tone: "return", label: "반환 처리 대기", title: claim.found_item.public_description || claim.found_item.item_category_name,
-      detail: "소유권 승인 완료", meta: elapsed(claim.updated_at), href: "/admin/ownership-claims", action: "처리하기",
-    })),
-    ...(citizenPending ? [{ key: "citizen", tone: "citizen", label: "발견 제보 검토", title: `${citizenPending}건의 제보가 검토를 기다리고 있습니다.`, detail: "발견 제보 관리", meta: "현재 대기", href: "/admin/citizen-reports", action: "검토하기" }] : []),
-  ].slice(0, 6);
+    { key: "operation-detection", tone: "attention", label: "AI 탐지 검토 대기", title: "운영 탐지에서 확인할 객체", count: operationDetectionPending, detail: "OPERATION · PENDING", href: "/admin/detections", action: "탐지 검토" },
+    { key: "citizen-report", tone: "citizen", label: "시민 발견 제보 검토", title: "새로 접수된 발견 제보", count: citizenReviewPending, detail: "CitizenReport · PENDING", href: "/admin/citizen-reports", action: "제보 검토" },
+    { key: "ownership-claim", tone: "claim", label: "소유권 요청 검토", title: "소유권 확인 요청", count: ownershipClaimPending, detail: "OwnershipClaim · PENDING", href: "/admin/ownership-claims", action: "요청 검토" },
+    { key: "ownership-return", tone: "return", label: "반환 처리", title: "승인 후 반환 대기", count: ownershipReturnPending, detail: "OwnershipClaim · APPROVED", href: "/admin/ownership-claims", action: "반환 처리" },
+  ].filter((item) => item.count > 0);
 
   return <main className={styles.page}>
     <header className={styles.intro}><p>ADMIN CONTROL</p><h1>관리자 대시보드</h1><span>발견부터 검토·매칭·반환까지 현재 운영 흐름을 확인합니다.</span>{waiting > 0 && <b><i />확인 필요 업무 {waiting}건</b>}</header>
@@ -132,26 +112,26 @@ export function AdminDashboardClient() {
       <div data-tone="primary"><span>발견</span><strong>{currentError ? "–" : current?.metrics.discovered ?? 0}</strong><small>오늘 기준</small></div>
       <div data-tone="secondary"><span>발견물 등록</span><strong>{currentError ? "–" : current?.metrics.official_found_items ?? 0}</strong><small>오늘 기준</small></div>
       <div data-tone="match"><span>자동 매칭</span><strong>{currentError ? "–" : current?.metrics.matched ?? 0}</strong><small>오늘 기준</small></div>
-      <div data-tone="attention"><span>검토 대기</span><strong>{claimsError ? "–" : pendingClaims.length}</strong><small>조회된 소유권 요청</small></div>
+      <div data-tone="attention"><span>검토 대기</span><strong>{currentError ? "–" : waiting}</strong><small>지금 확인할 업무</small></div>
       <div data-tone="claim"><span>소유권 요청</span><strong>{currentError ? "–" : current?.metrics.claims ?? 0}</strong><small>오늘 기준</small></div>
       <div data-tone="success"><span>반환 완료</span><strong>{currentError ? "–" : current?.metrics.returned ?? 0}</strong><small>오늘 기준</small></div>
     </section>
 
     <div className={styles.primaryGrid}>
-      <section className={styles.priorityPanel} aria-labelledby="priority-title"><SectionHeading title="지금 확인할 업무" />
-        {claimsError && currentError ? <State error>현재 업무 목록을 불러오지 못했습니다.</State> : priorities.length ? <div className={styles.priorityList}>{priorities.map((item) => <div className={styles.priority} data-tone={item.tone} key={item.key}><i /><div><span>{item.label}</span><strong>{item.title}</strong><small>{item.detail} · {item.meta}</small></div><Link href={item.href}>{item.action}<Icon name="arrow" size={14} /></Link></div>)}</div> : <State>현재 확인이 필요한 업무가 없습니다.<br />새로운 요청이나 처리 항목이 발생하면 이곳에 표시됩니다.</State>}
+      <section className={styles.priorityPanel} aria-labelledby="priority-title"><SectionHeading id="priority-title" title="지금 확인할 업무" />
+        {currentError ? <State error>현재 업무 목록을 불러오지 못했습니다.</State> : priorities.length ? <div className={styles.priorityList}>{priorities.map((item) => <div className={styles.priority} data-tone={item.tone} key={item.key}><i /><div><span>{item.label}</span><strong>{item.count}건 · {item.title}</strong><small>{item.detail}</small></div><Link href={item.href}>{item.action}<Icon name="arrow" size={14} /></Link></div>)}</div> : <State>현재 확인이 필요한 업무가 없습니다.<br />새로운 요청이나 처리 항목이 발생하면 이곳에 표시됩니다.</State>}
       </section>
 
-      <section className={styles.recentPanel} aria-labelledby="recent-title"><SectionHeading title="최근 발견" href="/admin/found-items" action="발견물 관리" />
+      <section className={styles.recentPanel} aria-labelledby="recent-title"><SectionHeading id="recent-title" title="최근 발견" href="/admin/found-items" action="발견물 관리" />
         {!current ? currentError ? <State error>최근 발견물을 불러오지 못했습니다.</State> : <Skeleton /> : current.recent_items.length ? <div className={styles.recentList}>{current.recent_items.slice(0, 4).map((item) => <Link href="/admin/found-items" key={item.id}><DetectionThumbnail imageUrl={item.image_url} label={`${item.item_category_name} 발견물 이미지`} icon="archive" /><div><strong>{item.public_description || `${item.color ?? ""} ${item.item_category_name}`}</strong><span>{dateTime.format(new Date(item.found_at))} · {item.area_name}</span></div><b>{statusLabel[item.status] ?? item.status}</b></Link>)}</div> : <State>최근 등록된 발견물이 없습니다.</State>}
       </section>
     </div>
 
-    <section className={styles.flowSection} aria-labelledby="flow-title"><SectionHeading title="서비스 흐름 검증" />
+    <section className={styles.flowSection} aria-labelledby="flow-title"><SectionHeading id="flow-title" title="FlowLink 운영 흐름" />
       {!current ? currentError ? <State error>운영 흐름을 불러오지 못했습니다.</State> : <Skeleton rows={1} /> : <><OperationalFlow metrics={current.metrics} /><LatestFlow flow={current.latest_flow} /></>}
     </section>
 
-    <section className={styles.activitySection} aria-labelledby="activity-title"><SectionHeading title="서비스 활동" />
+    <section className={styles.activitySection} aria-labelledby="activity-title"><SectionHeading id="activity-title" title="서비스 활동" />
       {!current ? currentError ? <State error>서비스 활동을 불러오지 못했습니다.</State> : <Skeleton /> : current.recent_activity.length ? <div className={styles.activityList}>{current.recent_activity.map((item) => <div key={`${item.kind}-${item.entity_id}-${item.occurred_at}`}><time>{dateTime.format(new Date(item.occurred_at))}</time><strong>{item.kind === "LOGIN" ? `최근 로그인 · ${item.label}` : item.label}</strong><span>#{item.entity_id}</span></div>)}</div> : <State>최근 확인 가능한 서비스 활동이 없습니다.</State>}
     </section>
 
@@ -167,11 +147,11 @@ export function AdminDashboardClient() {
       </div>}
     </section>
 
-    <section className={styles.citizenSection} aria-labelledby="citizen-summary-title"><SectionHeading title="발견 제보 현황" href="/admin/citizen-reports" action="제보 관리" />
+    <section className={styles.citizenSection} aria-labelledby="citizen-summary-title"><SectionHeading id="citizen-summary-title" title="발견 제보 현황" href="/admin/citizen-reports" action="제보 관리" />
       {!current ? currentError ? <State error>발견 제보 현황을 불러오지 못했습니다.</State> : <Skeleton rows={1} /> : <CitizenSummary metrics={current.metrics} />}
     </section>
 
-    <section className={styles.history} aria-labelledby="history-title"><SectionHeading title="최근 운영 기록" />
+    <section className={styles.history} aria-labelledby="history-title"><SectionHeading id="history-title" title="최근 운영 기록" />
       {!current ? <Skeleton /> : current.recent_history.length ? <div>{current.recent_history.map((record) => <div key={record.id}><time>{timeOnly.format(new Date(record.created_at))}</time><span><strong>{actionLabel[record.action_type] ?? record.action_type}</strong><small>{entityLabel[record.entity_type] ?? record.entity_type} #{record.entity_id}</small></span><b>{record.new_status ? statusLabel[record.new_status] ?? record.new_status : "처리 기록"}</b></div>)}</div> : <State>아직 기록된 운영 활동이 없습니다.</State>}
     </section>
   </main>;
