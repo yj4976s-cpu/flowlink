@@ -36,10 +36,12 @@ async function memoryFetch(path: string, init?: RequestInit) {
   return response;
 }
 
-export async function listCopilotConversations(signal?: AbortSignal) { return (await memoryFetch("/api/copilot/conversations", { signal })).json() as Promise<CopilotConversationSummary[]>; }
+export async function listCopilotConversations(signal?: AbortSignal) { return (await memoryFetch("/api/copilot/conversations?skip=0&limit=100", { signal })).json() as Promise<CopilotConversationSummary[]>; }
+export async function countCopilotConversations(signal?: AbortSignal) { return (await memoryFetch("/api/copilot/conversations/count", { signal })).json() as Promise<{ count: number }>; }
 export async function getCopilotConversation(id: string, signal?: AbortSignal) { return (await memoryFetch(`/api/copilot/conversations/${id}`, { signal })).json() as Promise<CopilotConversationDetail>; }
 export async function renameCopilotConversation(id: string, title: string) { return (await memoryFetch(`/api/copilot/conversations/${id}`, { method: "PATCH", body: JSON.stringify({ title }) })).json() as Promise<CopilotConversationSummary>; }
 export async function deleteCopilotConversation(id: string) { await memoryFetch(`/api/copilot/conversations/${id}`, { method: "DELETE" }); }
+export async function deleteAllCopilotConversations() { await memoryFetch("/api/copilot/conversations", { method: "DELETE" }); }
 
 export async function getCopilotBriefing(signal?: AbortSignal) {
   const response = await fetch(`${baseUrl()}/api/copilot/briefing`, { credentials: "include", signal });
