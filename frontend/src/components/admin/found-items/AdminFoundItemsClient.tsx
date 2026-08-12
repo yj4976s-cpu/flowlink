@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element */
+
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Icon } from "@/components/common/Icon";
@@ -11,6 +13,7 @@ import {
   type FoundItemDetail,
   type FoundItemListItem,
 } from "@/lib/foundItemsApi";
+import { getItemTypeMeta } from "@/lib/itemTypeMeta";
 import styles from "./AdminFoundItemsClient.module.css";
 
 const statuses = [
@@ -48,17 +51,24 @@ function formatDate(value: string) {
   return Number.isNaN(parsed.getTime()) ? "일시 확인 중" : formatter.format(parsed);
 }
 
+function fallbackFoundItemImage(item: Pick<FoundItemListItem, "item_category" | "item_category_name">) {
+  const family = getItemTypeMeta(item.item_category, item.item_category_name).family;
+  if (family === "bag") return "/found-backpack-day.png";
+  if (family === "umbrella") return "/found-umbrella-day.png";
+  if (family === "neutral") return "/found-branch-day.png";
+  return "/found-container-day.png";
+}
+
 function ItemImage({ item, compact = false }: { item: FoundItemListItem; compact?: boolean }) {
-  const resolved = resolveFoundItemImageUrl(item.image_url);
-  const [failedUrl, setFailedUrl] = useState<string | null>(null);
-  const visible = resolved && failedUrl !== resolved;
+  const originalUrl = resolveFoundItemImageUrl(item.image_url);
+  const [failedUrl, setFailedImageUrl] = useState<string | null>(null);
+  const resolved = originalUrl && failedUrl !== originalUrl ? originalUrl : fallbackFoundItemImage(item);
+  const setFailedUrl = (url: string) => {
+    if (url === originalUrl) setFailedImageUrl(url);
+  };
   return (
     <span className={compact ? styles.thumb : styles.image}>
-      {visible ? (
-        // Existing upload URLs can be external and are not constrained to Next Image host patterns.
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={resolved} alt={`${item.item_category_name} 발견물 이미지`} onError={() => setFailedUrl(resolved)} />
-      ) : <Icon name="archive" size={compact ? 23 : 42} />}
+      <img src={resolved} alt={`${item.item_category_name} 발견물 이미지`} onError={() => setFailedUrl(resolved)} />
     </span>
   );
 }

@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element */
+
 import Image from "next/image";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -41,8 +43,201 @@ function SelectBox({ label, value, options, onChange, disabled, compact = false 
   return compact ? content : <label className={styles.field}><span>{label}</span>{content}</label>;
 }
 
-function Media({ src, fallbackSrc, alt, compact = false }: { src: string | null; fallbackSrc?: string | null; alt: string; compact?: boolean }) { const resolved = adminDetectionMediaUrl(src) ?? adminDetectionMediaUrl(fallbackSrc); const [failedUrl, setFailedUrl] = useState<string | null>(null); return <span className={compact ? styles.thumb : styles.media}>{resolved && failedUrl !== resolved ? <Image src={resolved} alt={alt} fill sizes={compact ? "72px" : "(max-width: 1024px) 100vw, 680px"} unoptimized onError={() => setFailedUrl(resolved)} /> : <Icon name="scanLine" size={compact ? 24 : 44} />}</span>; }
-function eventImage(event: DetectionEvent) { return event.source_type === "IMAGE" ? event.result_media_url || event.original_media_url : null; }
+type DetectionMediaType = "IMAGE" | "VIDEO";
+const VIDEO_POSTER_MAX_WIDTH = 960;
+
+function isMostlyDarkFrame(context: CanvasRenderingContext2D, width: number, height: number) {
+  const sampleWidth = Math.min(80, width);
+  const sampleHeight = Math.min(45, height);
+  const sample = context.getImageData(
+    Math.max(0, Math.floor((width - sampleWidth) / 2)),
+    Math.max(0, Math.floor((height - sampleHeight) / 2)),
+    sampleWidth,
+    sampleHeight,
+  ).data;
+
+  let totalBrightness = 0;
+  for (let index = 0; index < sample.length; index += 4) totalBrightness += (sample[index] + sample[index + 1] + sample[index + 2]) / 3;
+  return totalBrightness / (sample.length / 4) < 18;
+}
+
+function useVideoPoster(src: string | null, enabled: boolean) {
+  const [poster, setPoster] = useState<{ src: string; url: string } | null>(null);
+
+  useEffect(() => () => {
+    if (poster?.url) URL.revokeObjectURL(poster.url);
+  }, [poster?.url]);
+
+  useEffect(() => {
+    if (!enabled || !src) return;
+
+    let cancelled = false;
+    let captured = false;
+    let capturedUrl: string | null = null;
+    let sourceObjectUrl: string | null = null;
+    let candidateTimes: number[] = [];
+    let candidateIndex = 0;
+    const controller = new AbortController();
+    const video = document.createElement("video");
+
+    const stopVideo = () => {
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    };
+
+    const seekToNextCandidate = () => {
+      if (cancelled || candidateIndex >= candidateTimes.length) return;
+      try {
+        video.currentTime = candidateTimes[candidateIndex];
+      } catch {
+        candidateIndex += 1;
+        seekToNextCandidate();
+      }
+    };
+
+    const capturePoster = () => {
+      if (cancelled || captured || !video.videoWidth || !video.videoHeight) return;
+
+      try {
+        const scale = Math.min(1, VIDEO_POSTER_MAX_WIDTH / video.videoWidth);
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+        canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+        const context = canvas.getContext("2d");
+        if (!context) return;
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        if (isMostlyDarkFrame(context, canvas.width, canvas.height) && candidateIndex < candidateTimes.length - 1) {
+          candidateIndex += 1;
+          seekToNextCandidate();
+          return;
+        }
+
+        captured = true;
+        canvas.toBlob((blob) => {
+          if (cancelled || !blob) return;
+          capturedUrl = URL.createObjectURL(blob);
+          setPoster((current) => {
+            if (current?.url) URL.revokeObjectURL(current.url);
+            return capturedUrl ? { src, url: capturedUrl } : current;
+          });
+        }, "image/jpeg", 0.86);
+      } catch {
+        captured = true;
+      }
+    };
+
+    const handleLoadedMetadata = () => {
+      const duration = video.duration;
+      const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
+      const safeEnd = Math.max(0, safeDuration - 0.2);
+      candidateTimes = safeDuration
+        ? [0.2, 0.45, 0.65, 0.08].map((ratio) => Math.min(safeEnd, Math.max(0, safeDuration * ratio)))
+        : [0];
+      seekToNextCandidate();
+    };
+
+    const handleLoadedData = () => {
+      if (!captured && candidateTimes[0] === 0) capturePoster();
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      if (!captured) {
+        cancelled = true;
+        stopVideo();
+      }
+    }, 6000);
+
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "metadata";
+    video.addEventListener("loadedmetadata", handleLoadedMetadata);
+    video.addEventListener("loadeddata", handleLoadedData);
+    video.addEventListener("seeked", capturePoster);
+
+    const loadVideo = async () => {
+      let captureSrc = src;
+
+      try {
+        const response = await fetch(src, { credentials: "include", signal: controller.signal });
+        if (response.ok) {
+          const blob = await response.blob();
+          if (cancelled) return;
+          sourceObjectUrl = URL.createObjectURL(blob);
+          captureSrc = sourceObjectUrl;
+        }
+      } catch (reason) {
+        if (reason instanceof DOMException && reason.name === "AbortError") return;
+      }
+
+      if (cancelled) return;
+      video.src = captureSrc;
+      video.load();
+    };
+
+    void loadVideo();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      window.clearTimeout(timeoutId);
+      video.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      video.removeEventListener("loadeddata", handleLoadedData);
+      video.removeEventListener("seeked", capturePoster);
+      stopVideo();
+      if (sourceObjectUrl) URL.revokeObjectURL(sourceObjectUrl);
+      if (capturedUrl) URL.revokeObjectURL(capturedUrl);
+    };
+  }, [enabled, src]);
+
+  return enabled && poster?.src === src ? poster.url : null;
+}
+
+function Media({ src, fallbackSrc, alt, compact = false, mediaType = "IMAGE" }: { src: string | null; fallbackSrc?: string | null; alt: string; compact?: boolean; mediaType?: DetectionMediaType }) {
+  const resolved = adminDetectionMediaUrl(src) ?? adminDetectionMediaUrl(fallbackSrc);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const [activeVideoUrl, setActiveVideoUrl] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const visibleUrl = resolved && failedUrl !== resolved ? resolved : null;
+  const posterUrl = useVideoPoster(visibleUrl, mediaType === "VIDEO");
+  const showPoster = mediaType === "VIDEO" && posterUrl && activeVideoUrl !== visibleUrl;
+
+  const playVideo = () => {
+    if (!visibleUrl) return;
+    setActiveVideoUrl(visibleUrl);
+    window.setTimeout(() => void videoRef.current?.play().catch(() => undefined), 0);
+  };
+
+  return (
+    <span className={compact ? styles.thumb : styles.media}>
+      {visibleUrl ? (
+        mediaType === "VIDEO" ? (
+          <>
+            <video ref={videoRef} src={visibleUrl} poster={posterUrl ?? undefined} aria-label={alt} controls={!compact} muted playsInline preload="metadata" onError={() => setFailedUrl(visibleUrl)} />
+            {showPoster && (
+              compact ? (
+                <img className={styles.videoPosterImage} src={posterUrl} alt="" aria-hidden="true" />
+              ) : (
+                <button type="button" className={styles.videoPosterButton} onClick={playVideo} aria-label={`${alt} 재생`}>
+                  <img className={styles.videoPosterImage} src={posterUrl} alt="" aria-hidden="true" />
+                  <span><Icon name="arrow" size={22} /></span>
+                </button>
+              )
+            )}
+          </>
+        ) : (
+          <Image src={visibleUrl} alt={alt} fill sizes={compact ? "72px" : "(max-width: 1024px) 100vw, 680px"} unoptimized onError={() => setFailedUrl(visibleUrl)} />
+        )
+      ) : (
+        <Icon name="scanLine" size={compact ? 24 : 44} />
+      )}
+    </span>
+  );
+}
+function eventMedia(event: DetectionEvent) { return event.result_media_url || event.original_media_url; }
+function eventImage(event: DetectionEvent) { return event.source_type === "IMAGE" ? eventMedia(event) : null; }
+function eventMediaType(event: DetectionEvent): DetectionMediaType { return event.source_type === "VIDEO" ? "VIDEO" : "IMAGE"; }
 function eventReview(event: DetectionEvent): ReviewFilter | "EMPTY" { const statuses = event.detected_objects.map((item) => item.processing_status); if (!statuses.length) return "EMPTY"; if (statuses.includes("PENDING")) return "PENDING"; if (statuses.every((status) => status === "REJECTED")) return "REJECTED"; return "CONFIRMED"; }
 export function canRunDetectionFollowUp(object: DetectionObject) { return object.processing_status === "CONFIRMED" && (object.follow_up_kind === "FOUND_ITEM" || object.follow_up_kind === "WASTE"); }
 function classLabel(object: DetectionObject) { const code = object.final_class_code || object.object_class; return classOptions.find((item) => item.value === code)?.label ?? object.object_class_name; }
@@ -74,7 +269,8 @@ function FocusedImageReview({ event, object, onSelectObject, onSaved, onClose }:
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
   const [failed, setFailed] = useState(false);
-  const mediaUrl = adminDetectionMediaUrl(eventImage(event));
+  const mediaUrl = adminDetectionMediaUrl(eventMedia(event));
+  const isVideo = event.source_type === "VIDEO";
 
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -96,7 +292,7 @@ function FocusedImageReview({ event, object, onSelectObject, onSaved, onClose }:
   }, [onClose]);
 
   const fit = () => { setZoom(100); setPan({ x: 0, y: 0 }); };
-  const changeZoom = (next: number) => { setZoom(Math.min(MAX_REVIEW_ZOOM, Math.max(MIN_REVIEW_ZOOM, next))); if (next <= 100) setPan({ x: 0, y: 0 }); };
+  const changeZoom = (next: number) => { if (isVideo) return; setZoom(Math.min(MAX_REVIEW_ZOOM, Math.max(MIN_REVIEW_ZOOM, next))); if (next <= 100) setPan({ x: 0, y: 0 }); };
   const focusObject = (next: DetectionObject) => {
     onSelectObject(next.id);
     if (!imageSize.width || !imageSize.height) return;
@@ -159,8 +355,8 @@ export function AdminDetectionsClient() {
     <div className={styles.summary} role="tablist" aria-label="탐지 검토 상태">{([{ value: "ALL", label: "전체" }, { value: "PENDING", label: "검토 필요" }, { value: "CONFIRMED", label: "검토 완료" }, { value: "REJECTED", label: "제외" }] as const).map((item) => <button type="button" role="tab" aria-selected={filter === item.value} data-status={item.value} onClick={() => setFilter(item.value)} key={item.value}><span>{item.label}</span><b>{counts[item.value]}</b></button>)}</div>
     <div className={styles.toolbar}><SelectBox compact label="탐지 출처" value={purpose} options={purposeOptions} onChange={setPurpose} /><SelectBox compact label="정렬" value={sort} options={sortOptions} onChange={setSort} /><label className={styles.search}><Icon name="search" size={17} /><span className="sr-only">탐지 검색</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="탐지 번호 또는 객체 검색" /></label></div>
     {loading ? <div className={styles.loadingConsole} role="status" aria-label="탐지 결과를 불러오는 중입니다."><div><i /><i /><i /></div><div><i /></div><div><i /><i /><i /></div></div> : error ? <div className={styles.errorPanel} role="alert"><Icon name="info" size={21} /><div><strong>탐지 결과를 불러오지 못했습니다.</strong><span>서버 연결 상태를 확인한 후 다시 시도해 주세요.</span></div><button type="button" onClick={load}><Icon name="scanLine" size={16} />다시 불러오기</button></div> : !visible.length ? <div className={styles.emptyState}><Icon name="scanLine" size={30} /><strong>{events.length ? "확인할 탐지 결과가 없습니다." : "아직 확인할 탐지 결과가 없습니다."}</strong><span>{events.length ? "현재 조건에 해당하는 AI 탐지 결과가 없습니다." : "새로운 탐지 결과가 들어오면 이곳에서 검토할 수 있습니다."}</span>{filtersActive && <button type="button" onClick={resetFilters}>필터 초기화</button>}</div> : <div className={styles.workspace}>
-      <section className={styles.queue} aria-label="탐지 대기열"><div className={styles.panelTitle}><h2>탐지 대기열</h2><span>{visible.length}건</span></div><div>{visible.map((event) => { const state = eventReview(event); const confidence = Math.max(0, ...event.detected_objects.map((object) => Number(object.confidence))); return <button type="button" aria-pressed={event.id === selected?.id} onClick={() => { setSelectedId(event.id); setSelectedObjectId(event.detected_objects[0]?.id ?? null); }} key={event.id}><Media compact src={eventImage(event)} alt={`탐지 #${event.id} 대표 이미지`} /><span><small data-status={state}><i />{reviewLabels[state]}</small><strong>탐지 #{event.id}</strong><em>{event.detected_objects[0] ? `${event.detected_objects[0].object_class_name}${event.detected_objects.length > 1 ? ` 외 ${event.detected_objects.length - 1}개` : ""}` : "객체 없음"}</em>{confidence > 0 && <b>AI {Math.round(confidence * 100)}%</b>}<time>{purposeLabels[event.purpose]} · {event.camera_id ? `카메라 #${event.camera_id}` : "카메라 정보 없음"}<br />{time.format(new Date(event.captured_at))}</time></span></button>; })}</div></section>
-      <section className={styles.viewer} aria-labelledby="viewer-title"><div className={styles.viewerHead}><div><span>{purposeLabels[selected!.purpose]}</span><h2 id="viewer-title">탐지 #{selected!.id}</h2><p>{time.format(new Date(selected!.captured_at))} · {selected!.camera_id ? `카메라 #${selected!.camera_id}` : "카메라 정보 없음"} · {selected!.source_type}</p></div><b data-status={eventReview(selected!)}>{reviewLabels[eventReview(selected!)]}</b></div><div className={styles.mediaReview}><Media src={eventImage(selected!)} alt={`탐지 #${selected!.id} 탐지 미디어`} /><button type="button" ref={focusTriggerRef} onClick={() => setFocusedReview(true)}><Icon name="maximize" size={16} />확대해서 보기</button></div><div className={styles.objectSelector}><div><h3>탐지 객체</h3><span>{selected!.detected_objects.length}개</span></div>{selected!.detected_objects.length ? <div>{selected!.detected_objects.map((object) => <button type="button" aria-pressed={object.id === selectedObject?.id} onClick={() => setSelectedObjectId(object.id)} key={object.id}><span>{classLabel(object)}</span><b>{Math.round(Number(object.confidence) * 100)}%</b></button>)}</div> : <p>이 탐지에는 확인할 객체가 없습니다.</p>}</div></section>
+      <section className={styles.queue} aria-label="탐지 대기열"><div className={styles.panelTitle}><h2>탐지 대기열</h2><span>{visible.length}건</span></div><div>{visible.map((event) => { const state = eventReview(event); const confidence = Math.max(0, ...event.detected_objects.map((object) => Number(object.confidence))); return <button type="button" aria-pressed={event.id === selected?.id} onClick={() => { setSelectedId(event.id); setSelectedObjectId(event.detected_objects[0]?.id ?? null); }} key={event.id}><Media compact src={eventMedia(event)} mediaType={eventMediaType(event)} alt={`탐지 #${event.id} 대표 미디어`} /><span><small data-status={state}><i />{reviewLabels[state]}</small><strong>탐지 #{event.id}</strong><em>{event.detected_objects[0] ? `${event.detected_objects[0].object_class_name}${event.detected_objects.length > 1 ? ` 외 ${event.detected_objects.length - 1}개` : ""}` : "객체 없음"}</em>{confidence > 0 && <b>AI {Math.round(confidence * 100)}%</b>}<time>{purposeLabels[event.purpose]} · {event.camera_id ? `카메라 #${event.camera_id}` : "카메라 정보 없음"}<br />{time.format(new Date(event.captured_at))}</time></span></button>; })}</div></section>
+      <section className={styles.viewer} aria-labelledby="viewer-title"><div className={styles.viewerHead}><div><span>{purposeLabels[selected!.purpose]}</span><h2 id="viewer-title">탐지 #{selected!.id}</h2><p>{time.format(new Date(selected!.captured_at))} · {selected!.camera_id ? `카메라 #${selected!.camera_id}` : "카메라 정보 없음"} · {selected!.source_type}</p></div><b data-status={eventReview(selected!)}>{reviewLabels[eventReview(selected!)]}</b></div><div className={styles.mediaReview}><Media src={eventMedia(selected!)} mediaType={eventMediaType(selected!)} alt={`탐지 #${selected!.id} 탐지 미디어`} />{selected!.source_type === "IMAGE" && <button type="button" ref={focusTriggerRef} onClick={() => setFocusedReview(true)}><Icon name="maximize" size={16} />확대해서 보기</button>}</div><div className={styles.objectSelector}><div><h3>탐지 객체</h3><span>{selected!.detected_objects.length}개</span></div>{selected!.detected_objects.length ? <div>{selected!.detected_objects.map((object) => <button type="button" aria-pressed={object.id === selectedObject?.id} onClick={() => setSelectedObjectId(object.id)} key={object.id}><span>{classLabel(object)}</span><b>{Math.round(Number(object.confidence) * 100)}%</b></button>)}</div> : <p>이 탐지에는 확인할 객체가 없습니다.</p>}</div></section>
       <aside className={styles.inspector} aria-labelledby="inspector-title"><div className={styles.panelTitle}><h2 id="inspector-title">객체 검토</h2>{selectedObject && <span>#{selectedObject.id}</span>}</div>{selectedObject && selected ? <ObjectReview key={selectedObject.id} object={selectedObject} event={selected} onSaved={updateObject} /> : <div className={styles.inspectorEmpty}>검토할 객체가 없습니다.</div>}</aside>
     </div>}
     {focusedReview && selected && <FocusedImageReview event={selected} object={selectedObject} onSelectObject={setSelectedObjectId} onSaved={updateObject} onClose={closeFocusedReview} />}
