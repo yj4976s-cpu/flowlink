@@ -20,10 +20,12 @@ from app.core.security import create_access_token, utc_now
 from app.db.session import Base, get_db
 from app.main import app
 from app.models import DetectedObject, DetectionEvent, ObjectClass, User, VideoJob
+from app.services.ai_inference_client import AIInferenceBBox, AIInferencePrediction, AIInferenceResult
 from app.services.detection_inference import (
     DetectionBBox,
     DetectionInferenceResult,
     DetectionInferenceService,
+    DetectionInferenceUnavailableError,
     DetectionPrediction,
     model_label_to_class_code,
 )
@@ -34,8 +36,6 @@ from app.services.webcam_inference import (
     WebcamInferenceUnavailableError,
     get_webcam_inference_service,
 )
-from app.services.yolo_runtime import get_yolo_runtime
-from app.services.yolo_runtime import YoloPrediction
 
 
 @compiles(BigInteger, "sqlite")
@@ -71,15 +71,37 @@ class MockWebcamInferenceService(WebcamInferenceService):
         )
 
 
-class FakeYoloRuntime:
-    def __init__(self, predictions: list[YoloPrediction]) -> None:
-        self.predictions = predictions
-        self.calls = 0
+class FakeAIInferenceClient:
+    def __init__(self, result: AIInferenceResult) -> None:
+        self.result = result
+        self.file_calls = 0
+        self.image_calls = 0
 
-    def predict(self, image: Image.Image) -> list[YoloPrediction]:
-        self.calls += 1
+    def infer_image_file(self, media_path: Path) -> AIInferenceResult:
+        self.file_calls += 1
+        assert media_path.exists()
+        return self.result
+
+    def infer_image(self, image: Image.Image) -> AIInferenceResult:
+        self.image_calls += 1
         assert image.mode == "RGB"
-        return self.predictions
+        return AIInferenceResult(
+            media_width=image.width,
+            media_height=image.height,
+            inference_ms=self.result.inference_ms,
+            predictions=self.result.predictions,
+        )
+
+
+class FailingAIInferenceClient:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def infer_image_file(self, media_path: Path) -> AIInferenceResult:
+        raise self.error
+
+    def infer_image(self, image: Image.Image) -> AIInferenceResult:
+        raise self.error
 
 
 @pytest.mark.parametrize(
@@ -171,24 +193,6 @@ def override_webcam_inference(result: WebcamDetectionFrame | Exception) -> None:
     app.dependency_overrides[get_webcam_inference_service] = lambda: MockWebcamInferenceService(result)
 
 
-def test_yolo_runtime_is_cached_and_lazy_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
-    settings = get_settings()
-    monkeypatch.setattr(settings, "DETECTION_MODEL", "fake-model.pt")
-    monkeypatch.setattr(settings, "DETECTION_CONFIDENCE", 0.31)
-    monkeypatch.setattr(settings, "DETECTION_IMGSZ", 512)
-    get_yolo_runtime.cache_clear()
-
-    first = get_yolo_runtime()
-    second = get_yolo_runtime()
-
-    assert first is second
-    assert first.model_path == "fake-model.pt"
-    assert first.confidence == 0.31
-    assert first.imgsz == 512
-    assert first._model is None
-    get_yolo_runtime.cache_clear()
-
-
 def image_file(content: bytes = b"image-bytes") -> dict[str, tuple[str, BytesIO, str]]:
     return {"file": ("sample.jpg", BytesIO(content), "image/jpeg")}
 
@@ -243,25 +247,30 @@ def test_image_detection_is_allowed_for_user_and_admin(client: TestClient, db: S
     assert event.purpose == "USER_ANALYSIS"
 
 
-def test_default_image_inference_uses_shared_yolo_runtime(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_default_image_inference_uses_backend_ai_client(client: TestClient, db: Session) -> None:
     user = seed_user(db, 1)
     seed_object_class(db, 1, "BAG")
     authenticate(client, user)
-    fake_runtime = FakeYoloRuntime(
-        [
-            YoloPrediction(
-                model_label="backpack",
-                confidence=0.87,
-                bbox=DetectionBBox(x=4, y=5, width=20, height=22),
-            )
-        ]
+    fake_client = FakeAIInferenceClient(
+        AIInferenceResult(
+            media_width=80,
+            media_height=60,
+            inference_ms=18.2,
+            predictions=[
+                AIInferencePrediction(
+                    model_label="backpack",
+                    confidence=0.87,
+                    bbox=AIInferenceBBox(x=4, y=5, width=20, height=22),
+                )
+            ],
+        )
     )
-    monkeypatch.setattr("app.services.yolo_runtime.get_yolo_runtime", lambda: fake_runtime)
+    app.dependency_overrides[get_inference_service] = lambda: DetectionInferenceService(ai_client=fake_client)
 
     response = client.post("/api/detections/images", files=image_file(jpeg_payload(width=80, height=60)))
 
     assert response.status_code == 201
-    assert fake_runtime.calls == 1
+    assert fake_client.file_calls == 1
     body = response.json()
     assert body["status"] == "COMPLETED"
     assert body["media_width"] == 80
@@ -270,29 +279,70 @@ def test_default_image_inference_uses_shared_yolo_runtime(client: TestClient, db
     assert body["detected_objects"][0]["confidence"] == 0.87
 
 
+def test_webcam_inference_uses_backend_ai_client() -> None:
+    fake_client = FakeAIInferenceClient(
+        AIInferenceResult(
+            media_width=32,
+            media_height=24,
+            inference_ms=7.5,
+            predictions=[
+                AIInferencePrediction(
+                    model_label="umbrella",
+                    confidence=0.81,
+                    bbox=AIInferenceBBox(x=1, y=2, width=3, height=4),
+                )
+            ],
+        )
+    )
+    service = WebcamInferenceService(ai_client=fake_client)
+
+    result = service.analyze_frame(Image.new("RGB", (32, 24), color=(1, 2, 3)))
+
+    assert fake_client.image_calls == 1
+    assert result.media_width == 32
+    assert result.media_height == 24
+    assert result.inference_ms == 7.5
+    assert result.detected_objects[0].label == "umbrella"
+
+
+def test_detection_inference_maps_ai_unavailable_to_service_error(tmp_path: Path) -> None:
+    from app.services.ai_inference_client import AIInferenceUnavailableError
+
+    image_path = tmp_path / "sample.jpg"
+    image_path.write_bytes(jpeg_payload())
+    service = DetectionInferenceService(ai_client=FailingAIInferenceClient(AIInferenceUnavailableError("down")))
+
+    with pytest.raises(DetectionInferenceUnavailableError):
+        service.analyze_image(image_path)
+
+
 def test_image_inference_deduplicates_overlapping_same_class_predictions(
     client: TestClient,
     db: Session,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     user = seed_user(db, 1)
     seed_object_class(db, 1, "BAG")
     authenticate(client, user)
-    fake_runtime = FakeYoloRuntime(
-        [
-            YoloPrediction(
-                model_label="backpack",
-                confidence=0.82,
-                bbox=DetectionBBox(x=10, y=10, width=100, height=100),
-            ),
-            YoloPrediction(
-                model_label="handbag",
-                confidence=0.44,
-                bbox=DetectionBBox(x=18, y=18, width=92, height=92),
-            ),
-        ]
+    fake_client = FakeAIInferenceClient(
+        AIInferenceResult(
+            media_width=160,
+            media_height=140,
+            inference_ms=21.0,
+            predictions=[
+                AIInferencePrediction(
+                    model_label="backpack",
+                    confidence=0.82,
+                    bbox=AIInferenceBBox(x=10, y=10, width=100, height=100),
+                ),
+                AIInferencePrediction(
+                    model_label="handbag",
+                    confidence=0.44,
+                    bbox=AIInferenceBBox(x=18, y=18, width=92, height=92),
+                ),
+            ],
+        )
     )
-    monkeypatch.setattr("app.services.yolo_runtime.get_yolo_runtime", lambda: fake_runtime)
+    app.dependency_overrides[get_inference_service] = lambda: DetectionInferenceService(ai_client=fake_client)
 
     response = client.post("/api/detections/images", files=image_file(jpeg_payload(width=160, height=140)))
 

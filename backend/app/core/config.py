@@ -24,9 +24,9 @@ class Settings(BaseSettings):
     ROBOFLOW_MODEL_VERSION: str = ""
     UPLOAD_DIR: str = "uploads"
     FRONTEND_URL: str = "http://localhost:3000"
-    DETECTION_MODEL: str = "yolo11n.pt"
-    DETECTION_CONFIDENCE: float = 0.25
-    DETECTION_IMGSZ: int = 640
+    AI_SERVICE_URL: str = "http://127.0.0.1:8001"
+    AI_INTERNAL_API_KEY: str = ""
+    AI_SERVICE_TIMEOUT_SECONDS: float = 30.0
     CHAT_MODEL_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-3.6-flash"

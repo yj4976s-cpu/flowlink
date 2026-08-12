@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from PIL import Image, UnidentifiedImageError
 
@@ -97,30 +96,31 @@ def deduplicate_same_class_detections(detections: list[DetectionPrediction]) -> 
 
 
 class DetectionInferenceService:
-    def __init__(self, *, runtime: Any | None = None) -> None:
-        if runtime is None:
-            from app.services.yolo_runtime import get_yolo_runtime
+    def __init__(self, *, ai_client=None) -> None:
+        if ai_client is None:
+            from app.services.ai_inference_client import get_ai_inference_client
 
-            runtime = get_yolo_runtime()
-        self.runtime = runtime
+            ai_client = get_ai_inference_client()
+        self.ai_client = ai_client
 
     def analyze_image(self, media_path: Path) -> DetectionInferenceResult:
+        from app.services.ai_inference_client import AIInferenceUnavailableError
+
         try:
             with Image.open(media_path) as image:
                 image.load()
-                rgb_image = image.convert("RGB")
         except (UnidentifiedImageError, OSError) as exc:
             raise RuntimeError("AI detection image could not be decoded") from exc
 
-        from app.services.yolo_runtime import YoloRuntimeUnavailableError
-
         try:
-            predictions = self.runtime.predict(rgb_image)
-        except YoloRuntimeUnavailableError as exc:
+            result = self.ai_client.infer_image_file(media_path)
+        except AIInferenceUnavailableError as exc:
             raise DetectionInferenceUnavailableError("AI detection model is not configured") from exc
+        except RuntimeError as exc:
+            raise RuntimeError("AI detection image could not be decoded") from exc
 
         detections: list[DetectionPrediction] = []
-        for prediction in predictions:
+        for prediction in result.predictions:
             class_code = model_label_to_class_code(prediction.model_label)
             if class_code is None:
                 continue
@@ -132,8 +132,8 @@ class DetectionInferenceService:
                 )
             )
         return DetectionInferenceResult(
-            media_width=rgb_image.width,
-            media_height=rgb_image.height,
+            media_width=result.media_width,
+            media_height=result.media_height,
             detections=deduplicate_same_class_detections(detections),
         )
 

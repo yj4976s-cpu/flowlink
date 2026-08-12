@@ -7,15 +7,22 @@ from threading import Lock
 
 from PIL import Image
 
-from app.core.config import BACKEND_DIR, get_settings
-from app.services.detection_inference import DetectionBBox
+from app.core.config import BACKEND_AI_DIR, get_settings
+
+
+@dataclass(frozen=True)
+class YoloBBox:
+    x: float
+    y: float
+    width: float
+    height: float
 
 
 @dataclass(frozen=True)
 class YoloPrediction:
     model_label: str
     confidence: float
-    bbox: DetectionBBox
+    bbox: YoloBBox
 
 
 class YoloRuntimeUnavailableError(RuntimeError):
@@ -59,8 +66,8 @@ class YoloRuntime:
         if configured.is_absolute():
             return str(configured)
         if len(configured.parts) > 1:
-            return str((BACKEND_DIR / configured).resolve())
-        local_candidate = (BACKEND_DIR / configured).resolve()
+            return str((BACKEND_AI_DIR / configured).resolve())
+        local_candidate = (BACKEND_AI_DIR / configured).resolve()
         return str(local_candidate) if local_candidate.exists() else self.model_path
 
     def _parse_result(self, model, result, media_width: int, media_height: int) -> list[YoloPrediction]:
@@ -84,7 +91,7 @@ class YoloRuntime:
                 YoloPrediction(
                     model_label=model_label,
                     confidence=confidence,
-                    bbox=DetectionBBox(
+                    bbox=YoloBBox(
                         x=left,
                         y=top,
                         width=right - left,
@@ -103,3 +110,4 @@ def get_yolo_runtime() -> YoloRuntime:
         confidence=settings.DETECTION_CONFIDENCE,
         imgsz=settings.DETECTION_IMGSZ,
     )
+
