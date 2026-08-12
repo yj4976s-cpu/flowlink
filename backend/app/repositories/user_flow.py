@@ -473,6 +473,7 @@ def get_admin_dashboard_data(db: Session, *, since, period: str = "today", now=N
     latest_match = db.scalar(
         select(MatchCandidate)
         .options(joinedload(MatchCandidate.found_item).joinedload(FoundItem.detected_object))
+        .where(MatchCandidate.status != "DISMISSED")
         .order_by(MatchCandidate.created_at.desc(), MatchCandidate.id.desc())
         .limit(1)
     )

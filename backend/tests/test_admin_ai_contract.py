@@ -198,6 +198,37 @@ def test_reconcile_updates_existing_qualified_candidate_score(db: Session) -> No
     assert candidate.status == "NOTIFIED"
 
 
+@pytest.mark.parametrize(("found_status", "is_public"), [("CLAIM_PENDING", True), ("RETURNED", True), ("AVAILABLE", False)])
+def test_reconcile_non_matchable_found_item_creates_no_candidate_or_notification(db: Session, found_status: str, is_public: bool) -> None:
+    seed_admin(db)
+    now = datetime(2026, 1, 20, tzinfo=UTC)
+    found = FoundItem(id=100, object_class_id=1, source_type="ADMIN", color="red", area_name="found-area", found_at=now, status=found_status, is_public=is_public, created_at=now, updated_at=now)
+    report = LostReport(id=101, user_id=1, object_class_id=1, color="red", colors=["red"], description="plain", area_name="lost-area", lost_from=now - timedelta(days=10), status="OPEN", created_at=now, updated_at=now)
+    db.add_all([found, report]); db.commit()
+
+    reconcile_match_candidates_for_found_item(db, found)
+    db.commit()
+
+    assert db.query(MatchCandidate).filter_by(found_item_id=100).count() == 0
+    assert db.query(Notification).filter_by(notification_type="MATCH_FOUND").count() == 0
+
+
+def test_reconcile_non_matchable_found_item_preserves_claimed_candidate(db: Session) -> None:
+    seed_admin(db)
+    now = datetime(2026, 1, 20, tzinfo=UTC)
+    found = FoundItem(id=110, object_class_id=1, source_type="ADMIN", color="red", area_name="found-area", found_at=now, status="CLAIM_PENDING", is_public=True, created_at=now, updated_at=now)
+    report = LostReport(id=111, user_id=1, object_class_id=1, color="blue", colors=["blue"], description="plain", area_name="lost-area", lost_from=now - timedelta(days=10), status="CLAIM_PENDING", created_at=now, updated_at=now)
+    candidate = MatchCandidate(lost_report_id=111, found_item_id=110, total_score=60, type_score=40, area_score=0, time_score=10, keyword_score=10, status="CLAIMED", created_at=now, updated_at=now)
+    db.add_all([found, report, candidate]); db.commit()
+
+    reconcile_match_candidates_for_found_item(db, found)
+    db.commit()
+
+    assert candidate.status == "CLAIMED"
+    assert candidate.total_score == 60
+    assert db.query(Notification).filter_by(notification_type="MATCH_FOUND").count() == 0
+
+
 def test_admin_rejects_nonstandard_confirmed_color(client: TestClient, db: Session) -> None:
     seed_admin(db); seed_detection(db, object_id=10, event_id=20, detected_at=datetime(2026, 1, 2, 1, tzinfo=UTC)); login(client)
     assert client.patch("/api/admin/detected-objects/10", json={"confirmed_color": "임의색"}).status_code == 422

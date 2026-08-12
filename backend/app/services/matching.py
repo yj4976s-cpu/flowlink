@@ -10,6 +10,7 @@ from sqlalchemy import select
 from app.core.security import to_utc, utc_now
 from app.models import FoundItem, LostReport, MatchCandidate, Notification
 from app.repositories.user_flow import (
+    MATCHABLE_FOUND_ITEM_STATUSES,
     add_match_candidate,
     add_notification,
     clean_optional_text,
@@ -110,9 +111,33 @@ def _ensure_match_notification(db: Session, candidate: MatchCandidate, lost_repo
     )
 
 
+def _restore_reports_without_active_candidates(db: Session, reports: list[LostReport], now) -> None:
+    db.flush()
+    for lost_report in reports:
+        if lost_report.status != "MATCHED":
+            continue
+        has_active_candidate = db.scalar(
+            select(MatchCandidate.id).where(
+                MatchCandidate.lost_report_id == lost_report.id,
+                MatchCandidate.status != "DISMISSED",
+            ).limit(1)
+        )
+        if has_active_candidate is None:
+            lost_report.status = "OPEN"
+            lost_report.updated_at = now
+
+
 def reconcile_match_candidates_for_found_item(db: Session, found_item: FoundItem) -> None:
     """Reconcile candidate membership and scores after found-item metadata changes."""
     existing = db.scalars(select(MatchCandidate).where(MatchCandidate.found_item_id == found_item.id)).all()
+    if not found_item.is_public or found_item.status not in MATCHABLE_FOUND_ITEM_STATUSES:
+        now = utc_now()
+        for candidate in existing:
+            if candidate.status != "CLAIMED":
+                candidate.status = "DISMISSED"
+                candidate.updated_at = now
+        _restore_reports_without_active_candidates(db, [candidate.lost_report for candidate in existing], now)
+        return
     candidates_by_report = {candidate.lost_report_id: candidate for candidate in existing}
     reports = db.scalars(
         select(LostReport).where(
@@ -166,19 +191,7 @@ def reconcile_match_candidates_for_found_item(db: Session, found_item: FoundItem
         if candidate is not None and candidate.status != "CLAIMED":
             candidate.status = "DISMISSED"
 
-    db.flush()
-    for lost_report in reports_by_id.values():
-        if lost_report.status != "MATCHED":
-            continue
-        has_active_candidate = db.scalar(
-            select(MatchCandidate.id).where(
-                MatchCandidate.lost_report_id == lost_report.id,
-                MatchCandidate.status != "DISMISSED",
-            ).limit(1)
-        )
-        if has_active_candidate is None:
-            lost_report.status = "OPEN"
-            lost_report.updated_at = now
+    _restore_reports_without_active_candidates(db, list(reports_by_id.values()), now)
 
 
 def create_match_candidates_for_lost_report(db: Session, lost_report: LostReport) -> list[MatchCandidate]:

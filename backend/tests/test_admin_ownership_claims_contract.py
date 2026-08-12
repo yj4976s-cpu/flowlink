@@ -12,7 +12,7 @@ import app.services.ownership as ownership_service
 from app.core.security import hash_password, utc_now
 from app.db.session import Base, get_db
 from app.main import app
-from app.models import FoundItem, LostReport, Notification, ObjectClass, OwnershipClaim, ProcessingHistory, User
+from app.models import FoundItem, LostReport, MatchCandidate, Notification, ObjectClass, OwnershipClaim, ProcessingHistory, User
 
 
 @pytest.fixture
@@ -242,6 +242,31 @@ def test_admin_dashboard_supports_operational_periods(client: TestClient, db: Se
         assert isinstance(response.json()["trend"], list)
 
     assert client.get("/api/admin/dashboard", params={"period": "30d"}).status_code == 422
+
+
+def test_admin_dashboard_latest_flow_skips_dismissed_candidate(client: TestClient, db: Session) -> None:
+    seed_admin_claim_data(db)
+    now = utc_now()
+    db.add_all([
+        MatchCandidate(id=40, lost_report_id=20, found_item_id=10, total_score=80, type_score=40, area_score=25, time_score=10, keyword_score=5, status="NOTIFIED", created_at=now, updated_at=now),
+        MatchCandidate(id=41, lost_report_id=20, found_item_id=10, total_score=50, type_score=40, area_score=0, time_score=10, keyword_score=0, status="DISMISSED", created_at=now, updated_at=now),
+    ])
+    db.commit(); login(client, "admin@example.com")
+
+    response = client.get("/api/admin/dashboard")
+    assert response.status_code == 200
+    assert response.json()["latest_flow"]["match_candidate_id"] == 40
+
+
+def test_admin_dashboard_latest_flow_is_null_when_only_dismissed_candidates_exist(client: TestClient, db: Session) -> None:
+    seed_admin_claim_data(db)
+    now = utc_now()
+    db.add(MatchCandidate(id=42, lost_report_id=20, found_item_id=10, total_score=50, type_score=40, area_score=0, time_score=10, keyword_score=0, status="DISMISSED", created_at=now, updated_at=now))
+    db.commit(); login(client, "admin@example.com")
+
+    response = client.get("/api/admin/dashboard")
+    assert response.status_code == 200
+    assert response.json()["latest_flow"] is None
 
 
 def test_admin_ownership_claim_patch_returns_rich_response(client: TestClient, db: Session) -> None:
