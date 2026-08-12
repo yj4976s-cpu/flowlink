@@ -35,6 +35,8 @@ type FoundReportCandidate = {
 const IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 const VIDEO_MAX_BYTES = 100 * 1024 * 1024;
 const VIDEO_MAX_SECONDS = 30;
+const VIDEO_REPORT_FRAME_MAX_WIDTH = 960;
+const VIDEO_REPORT_FRAME_TIMEOUT_MS = 8000;
 const HISTORY_PAGE_SIZE = 8;
 const imageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 const videoTypes = new Set(["video/mp4"]);
@@ -99,6 +101,91 @@ function formatConfidence(value: number) {
 function formatMilliseconds(value: number | null) {
   if (value === null) return "";
   return `${(value / 1000).toFixed(1)}초`;
+}
+
+function getVideoReportTimestampMs(object: DetectionObject) {
+  const firstSeen = object.first_seen_ms;
+  const lastSeen = object.last_seen_ms;
+  if (firstSeen !== null && lastSeen !== null) return (firstSeen + lastSeen) / 2;
+  return firstSeen ?? lastSeen ?? 0;
+}
+
+function waitForVideoEvent(video: HTMLVideoElement, eventName: "loadedmetadata" | "seeked", timeoutMs: number) {
+  return new Promise<void>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      cleanup();
+      reject(new Error("영상 프레임을 준비하지 못했습니다."));
+    }, timeoutMs);
+
+    function cleanup() {
+      window.clearTimeout(timer);
+      video.removeEventListener(eventName, handleEvent);
+      video.removeEventListener("error", handleError);
+    }
+
+    function handleEvent() {
+      cleanup();
+      resolve();
+    }
+
+    function handleError() {
+      cleanup();
+      reject(new Error("영상 프레임을 읽지 못했습니다."));
+    }
+
+    video.addEventListener(eventName, handleEvent, { once: true });
+    video.addEventListener("error", handleError, { once: true });
+  });
+}
+
+async function captureVideoReportFrame(videoFile: File, object: DetectionObject) {
+  if (typeof document === "undefined") return null;
+
+  const objectUrl = URL.createObjectURL(videoFile);
+  const video = document.createElement("video");
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = "metadata";
+
+  try {
+    video.src = objectUrl;
+    video.load();
+    await waitForVideoEvent(video, "loadedmetadata", VIDEO_REPORT_FRAME_TIMEOUT_MS);
+
+    if (!video.videoWidth || !video.videoHeight) return null;
+
+    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
+    const targetSeconds = duration
+      ? Math.min(Math.max(getVideoReportTimestampMs(object) / 1000, 0), Math.max(duration - 0.05, 0))
+      : 0;
+
+    video.currentTime = targetSeconds;
+    await waitForVideoEvent(video, "seeked", VIDEO_REPORT_FRAME_TIMEOUT_MS);
+
+    const scale = Math.min(1, VIDEO_REPORT_FRAME_MAX_WIDTH / video.videoWidth);
+    const width = Math.max(1, Math.round(video.videoWidth * scale));
+    const height = Math.max(1, Math.round(video.videoHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    context.drawImage(video, 0, 0, width, height);
+
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.86));
+    if (!blob) return null;
+
+    const timestampMs = Math.round(targetSeconds * 1000);
+    return new File([blob], `flowlink-video-frame-${timestampMs}.jpg`, { type: "image/jpeg" });
+  } catch {
+    return null;
+  } finally {
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 function toDatetimeLocalInput(value: string) {
@@ -734,16 +821,25 @@ export function DetectionWorkbench() {
     setWebcamReportSuccess(null);
   };
 
-  const openDetectionReport = (object: DetectionObject) => {
+  const openDetectionReport = async (object: DetectionObject) => {
     const classCode = getReportableClassCode(object.class_code);
     if (!classCode || !currentEvent) return;
+    const sourceType = tab;
+    const sourceFile = file;
+    const sourceEvent = currentEvent;
+    const image = sourceType === "image"
+      ? sourceFile
+      : sourceType === "video" && sourceFile
+        ? await captureVideoReportFrame(sourceFile, object)
+        : null;
+
     setWebcamReportCandidate({
-      sourceType: tab,
+      sourceType,
       objectClassCode: classCode,
       objectClassName: object.class_name_ko || reportableClassNames[classCode],
       confidence: object.confidence,
-      image: tab === "image" ? file : null,
-      capturedAt: currentEvent.processing_completed_at ?? currentEvent.created_at,
+      image,
+      capturedAt: sourceEvent.processing_completed_at ?? sourceEvent.created_at,
     });
     setWebcamReportError("");
     setWebcamReportSuccess(null);
@@ -933,7 +1029,7 @@ export function DetectionWorkbench() {
                       <span>{object.class_name_ko || reportableClassNames[object.class_code]}</span>
                       <small>탐지 신뢰도 {formatConfidence(object.confidence)}</small>
                       <div>
-                        <button className="button button-secondary" type="button" onClick={() => openDetectionReport(object)}>
+                        <button className="button button-secondary" type="button" onClick={() => void openDetectionReport(object)}>
                           발견한 물건을 제보할게요
                         </button>
                         <Link className="button button-primary" href={`/lost-reports/new?class_code=${encodeURIComponent(object.class_code)}&source=detection`}>
