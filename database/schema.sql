@@ -669,7 +669,7 @@ CREATE TABLE notifications (
 CREATE TABLE community_posts (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    category VARCHAR(20) NOT NULL CHECK (category IN ('FIELD_STORY', 'QUESTION', 'EXPERIENCE')),
+    category VARCHAR(20) NOT NULL CHECK (category IN ('FIELD_STORY', 'QUESTION', 'EXPERIENCE', 'OPINION')),
     title VARCHAR(120) NOT NULL CHECK (BTRIM(title) <> ''),
     content TEXT NOT NULL CHECK (BTRIM(content) <> ''),
     place_name VARCHAR(120), address VARCHAR(255),
@@ -683,6 +683,7 @@ CREATE TABLE community_posts (
 CREATE TABLE community_comments (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     post_id BIGINT NOT NULL REFERENCES community_posts(id) ON DELETE CASCADE,
+    parent_comment_id BIGINT REFERENCES community_comments(id) ON DELETE CASCADE,
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     content TEXT NOT NULL CHECK (BTRIM(content) <> ''),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), deleted_at TIMESTAMPTZ
@@ -690,6 +691,7 @@ CREATE TABLE community_comments (
 
 CREATE INDEX idx_community_posts_feed ON community_posts (is_notice DESC, created_at DESC) WHERE deleted_at IS NULL;
 CREATE INDEX idx_community_comments_post ON community_comments (post_id, created_at) WHERE deleted_at IS NULL;
+CREATE INDEX idx_community_comments_parent ON community_comments (parent_comment_id, created_at) WHERE deleted_at IS NULL;
 
 CREATE TABLE processing_histories (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

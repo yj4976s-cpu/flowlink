@@ -9,7 +9,7 @@ from app.core.security import utc_now
 from app.models import CommunityComment, CommunityPost, FoundItem, User
 from app.schemas.community import CommunityCommentResponse, CommunityContextResponse, CommunityFeedResponse, CommunityPostResponse, CommunitySystemUpdate
 
-CATEGORIES = {"FIELD_STORY", "QUESTION", "EXPERIENCE"}
+CATEGORIES = {"FIELD_STORY", "QUESTION", "EXPERIENCE", "OPINION"}
 
 
 def post_response(post: CommunityPost) -> CommunityPostResponse:
@@ -18,7 +18,7 @@ def post_response(post: CommunityPost) -> CommunityPostResponse:
 
 
 def comment_response(comment: CommunityComment) -> CommunityCommentResponse:
-    return CommunityCommentResponse(id=comment.id, user_id=comment.user_id, nickname=comment.user.nickname, content=comment.content, created_at=comment.created_at)
+    return CommunityCommentResponse(id=comment.id, parent_comment_id=comment.parent_comment_id, user_id=comment.user_id, nickname=comment.user.nickname, content=comment.content, created_at=comment.created_at)
 
 
 def get_post(db: Session, post_id: int) -> CommunityPost | None:
@@ -31,6 +31,19 @@ def get_comment(db: Session, comment_id: int) -> CommunityComment | None:
 
 def list_comments(db: Session, post_id: int) -> list[CommunityComment]:
     return list(db.scalars(select(CommunityComment).options(joinedload(CommunityComment.user)).where(CommunityComment.post_id == post_id, CommunityComment.deleted_at.is_(None)).order_by(CommunityComment.created_at.asc())).all())
+
+
+def soft_delete_comment_thread(db: Session, comment: CommunityComment) -> None:
+    deleted_at = utc_now()
+    comment.deleted_at = deleted_at
+    comment.updated_at = deleted_at
+    if comment.parent_comment_id is not None:
+        return
+
+    replies = list(db.scalars(select(CommunityComment).where(CommunityComment.parent_comment_id == comment.id, CommunityComment.deleted_at.is_(None))).all())
+    for reply in replies:
+        reply.deleted_at = deleted_at
+        reply.updated_at = deleted_at
 
 
 def list_feed(db: Session, *, category: str | None, query: str | None, place: str | None, sort: str, skip: int, limit: int) -> CommunityFeedResponse:

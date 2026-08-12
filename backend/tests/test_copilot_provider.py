@@ -155,9 +155,13 @@ def test_rate_limited_maps_to_safe_http_429(monkeypatch: pytest.MonkeyPatch) -> 
             raise ProviderResponseError("raw quota 20 secret", status=ChatStatus.RATE_LIMITED, upstream_status=429)
 
     monkeypatch.setattr("app.services.copilot.create_chat_provider", lambda _: RateLimitedProvider())
+    monkeypatch.setattr("app.services.copilot.validated_context", lambda *_: ("GENERAL", None))
+    monkeypatch.setattr("app.services.copilot.get_or_create", lambda *_: Mock(public_id="conversation-id"))
+    monkeypatch.setattr("app.services.copilot.save_message", Mock())
+    monkeypatch.setattr("app.services.copilot.model_history", lambda *_: [{"role": "user", "content": "안녕"}])
     request = CopilotRequest.model_validate({"messages": [{"role": "user", "content": "안녕"}], "context": {"page": "HOME", "path": "/"}})
     with pytest.raises(HTTPException) as captured:
-        asyncio.run(create_copilot_response(Mock(), request, None))
+        asyncio.run(create_copilot_response(Mock(), request, Mock(id=1, role="USER")))
     assert captured.value.status_code == 429
     assert captured.value.detail == {"status": "RATE_LIMITED", "message": "AI 사용량이 잠시 한도에 도달했어요. 잠시 후 다시 시도해 주세요."}
     assert "quota 20" not in str(captured.value.detail)
@@ -169,9 +173,13 @@ def test_general_provider_failure_remains_502(monkeypatch: pytest.MonkeyPatch) -
             raise ProviderResponseError("upstream failed")
 
     monkeypatch.setattr("app.services.copilot.create_chat_provider", lambda _: FailedProvider())
+    monkeypatch.setattr("app.services.copilot.validated_context", lambda *_: ("GENERAL", None))
+    monkeypatch.setattr("app.services.copilot.get_or_create", lambda *_: Mock(public_id="conversation-id"))
+    monkeypatch.setattr("app.services.copilot.save_message", Mock())
+    monkeypatch.setattr("app.services.copilot.model_history", lambda *_: [{"role": "user", "content": "안녕"}])
     request = CopilotRequest.model_validate({"messages": [{"role": "user", "content": "안녕"}], "context": {"page": "HOME", "path": "/"}})
     with pytest.raises(HTTPException) as captured:
-        asyncio.run(create_copilot_response(Mock(), request, None))
+        asyncio.run(create_copilot_response(Mock(), request, Mock(id=1, role="USER")))
     assert captured.value.status_code == 502
 
 

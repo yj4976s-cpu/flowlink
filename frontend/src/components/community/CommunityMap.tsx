@@ -18,7 +18,7 @@ type Point = {
   longitude: number;
   href: string | null;
   type: string;
-  markerType: "story" | "question" | "experience" | "notice" | "found" | "return";
+  markerType: "story" | "question" | "experience" | "opinion" | "notice" | "found" | "return";
 };
 
 type CommunityMapProps = {
@@ -51,8 +51,8 @@ export function CommunityMap({ posts, updates, center, filtered = false, onShowA
       latitude: item.latitude!,
       longitude: item.longitude!,
       href: `/community/${item.id}`,
-      type: item.is_notice ? "공지" : item.category === "FIELD_STORY" ? "현장 이야기" : item.category === "QUESTION" ? "궁금해요" : "이용 경험",
-      markerType: item.is_notice ? "notice" : item.category === "FIELD_STORY" ? "story" : item.category === "QUESTION" ? "question" : "experience",
+      type: item.is_notice ? "공지" : item.category === "FIELD_STORY" ? "목격 제보" : item.category === "QUESTION" ? "도움 요청" : item.category === "OPINION" ? "자유 이야기" : "반환·이용 경험",
+      markerType: item.is_notice ? "notice" : item.category === "FIELD_STORY" ? "story" : item.category === "QUESTION" ? "question" : item.category === "OPINION" ? "opinion" : "experience",
     })),
     ...updates.filter((item) => item.latitude != null && item.longitude != null).map((item): Point => ({
       key: `update-${item.type}-${item.id}`,

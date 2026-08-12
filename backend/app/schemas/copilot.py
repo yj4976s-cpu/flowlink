@@ -23,7 +23,7 @@ class CopilotRequest(BaseModel):
 
 
 class CopilotCard(BaseModel):
-    type: Literal["MATCH", "ANALYSIS", "STATUS", "TIMELINE", "EVIDENCE", "SYSTEM_NOTICE"]
+    type: Literal["MATCH", "ANALYSIS", "STATUS", "TIMELINE", "EVIDENCE", "SYSTEM_NOTICE", "COMMUNITY"]
     title: str = Field(max_length=160)
     subtitle: str | None = Field(default=None, max_length=240)
     score: int | None = Field(default=None, ge=0, le=100)

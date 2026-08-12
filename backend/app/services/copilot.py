@@ -9,7 +9,7 @@ from app.core.config import get_settings
 from app.models import User
 from app.schemas.copilot import CopilotAction, CopilotCard, CopilotRequest, CopilotResponse, CopilotSuggestion
 from app.services.copilot_providers import ChatStatus, ProviderNotConfiguredError, ProviderResponseError, create_chat_provider
-from app.services.copilot_tools import execute_tool, tool_definitions
+from app.services.copilot_tools import execute_tool, search_public_community, tool_definitions
 from app.repositories.detections import list_user_detection_events
 from app.repositories.user_flow import list_lost_reports_for_user, list_matches_for_user, list_notifications_for_user
 from app.services.copilot_memory import get_or_create, model_history, save_message, validated_context
@@ -48,7 +48,7 @@ AI detection confidence는 이미지 객체 분류 신뢰도이며, match score�
 발견물이 사용자 소유라고 확정하지 말고 '유사한 후보이며 추가 확인이 필요하다'고 표현한다.
 권한 없는 개인정보, 보관 상세 위치, 관리자 내부 메모를 노출하지 않는다. FlowLink 범위 밖 질문은 범위를 짧게 설명한다.
 마지막 답변은 JSON 객체만 출력한다: {"message":string,"cards":[],"actions":[],"suggestions":[]}.
-cards type은 MATCH, ANALYSIS, STATUS, TIMELINE, EVIDENCE, SYSTEM_NOTICE만 허용하며 필드는 title, subtitle, score, confidence, status, details, entity_id다.
+cards type은 MATCH, ANALYSIS, STATUS, TIMELINE, EVIDENCE, SYSTEM_NOTICE, COMMUNITY만 허용하며 필드는 title, subtitle, score, confidence, status, details, entity_id다.
 중요한 개인화 답변은 가능하면 답변→근거(EVIDENCE)→행동 순서로 구성한다. EVIDENCE에는 도구에서 실제 확인된 신고·발견물·매칭·분석 식별자와 근거만 넣고 추측을 넣지 않는다.
 신고 진행 상태를 설명할 때는 실제 완료된 단계와 현재 단계만 TIMELINE details에 넣고 미래 완료를 예측하지 않는다.
 사용자가 자연어로 분실 내용을 말하면 자동 저장하지 말고 기억나는 정보로 신고 초안을 요약한 뒤, 부족한 정보를 질문하거나 NAVIGATE로 /lost-reports/new에 연결한다.
@@ -79,6 +79,148 @@ def _model_context(db: Session, request: CopilotRequest, user: User | None) -> t
     role = user.role if user else "GUEST"
     value = f"mode={_mode(user)}, role={role}, page={requested_page}, path={canonical_path}, context_type={context_type}, entity_id={entity_id or 'none'}"
     return value, context_type, entity_id
+
+
+def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
+    return any(keyword in text for keyword in keywords)
+
+
+def _community_cards(items: list[dict]) -> list[CopilotCard]:
+    cards: list[CopilotCard] = []
+    labels = {
+        "FIELD_STORY": "목격 제보",
+        "QUESTION": "도움 요청",
+        "EXPERIENCE": "반환·이용 경험",
+        "OPINION": "자유 이야기",
+    }
+    for item in items:
+        details = [f"분류: {labels.get(str(item.get('category')), '커뮤니티')}"]
+        if item.get("place_name"):
+            details.append(f"장소: {item['place_name']}")
+        if item.get("comment_count") is not None:
+            details.append(f"댓글 {item['comment_count']}개")
+        if item.get("href"):
+            details.append(str(item["href"]))
+        cards.append(
+            CopilotCard(
+                type="COMMUNITY",
+                title=str(item.get("title") or "커뮤니티 글"),
+                subtitle=str(item.get("content_excerpt") or "사용자가 공유한 참고 정보입니다."),
+                details=details,
+                entity_id=item.get("id") if isinstance(item.get("id"), int) else None,
+            )
+        )
+    return cards
+
+
+def _guest_community_response(db: Session, *, category: str, empty_message: str) -> CopilotResponse:
+    items = search_public_community(db, category=category, limit=3)
+    if not items:
+        return CopilotResponse(
+            message=empty_message,
+            cards=[],
+            actions=[CopilotAction(type="NAVIGATE", label="커뮤니티 보기", target="/community")],
+            suggestions=[],
+            mode="GUIDE",
+            provider="flowlink",
+            model="guest-guide",
+        )
+    label = "자유 이야기" if category == "OPINION" else "목격 제보"
+    return CopilotResponse(
+        message=f"최근 {label}를 가져왔어요. 커뮤니티 글은 사용자가 공유한 참고 정보이며, 공식 발견물이나 소유권 확인 근거는 아닙니다.",
+        cards=_community_cards(items),
+        actions=[CopilotAction(type="NAVIGATE", label="커뮤니티에서 보기", target="/community")],
+        suggestions=[],
+        mode="GUIDE",
+        provider="flowlink",
+        model="guest-guide",
+    )
+
+
+def _guest_response(db: Session, request: CopilotRequest) -> CopilotResponse:
+    text = request.messages[-1].content.strip().lower()
+    common_actions = [
+        CopilotAction(type="NAVIGATE", label="이용 안내", target="/guide"),
+        CopilotAction(type="NAVIGATE", label="발견물 보기", target="/found-items"),
+        CopilotAction(type="NAVIGATE", label="로그인", target="/login"),
+    ]
+    if _contains_any(text, ("자유", "의견", "사람들이", "opinion")):
+        return _guest_community_response(db, category="OPINION", empty_message="아직 최근 자유 이야기가 없어요. 커뮤니티에서 사용자가 공유한 참고 정보를 확인해보세요.")
+    if _contains_any(text, ("목격", "제보", "field", "story")):
+        return _guest_community_response(db, category="FIELD_STORY", empty_message="아직 최근 목격 제보가 없어요. 커뮤니티는 사용자가 공유한 참고 정보를 모아 보여줍니다.")
+    if _contains_any(text, ("커뮤니티", "community")):
+        return CopilotResponse(
+            message="커뮤니티는 시민이 목격 제보, 도움 요청, 반환·이용 경험, 자유 이야기를 나누는 공간이에요. 공식 발견물 목록이나 소유권 확정 정보는 아니니 참고 정보로 봐주세요.",
+            cards=[],
+            actions=[CopilotAction(type="NAVIGATE", label="커뮤니티 보기", target="/community")],
+            suggestions=[CopilotSuggestion(id="recent-opinion", message="최근 자유 이야기 보여줘"), CopilotSuggestion(id="recent-field-story", message="최근 목격 제보 있어?")],
+            mode="GUIDE",
+            provider="flowlink",
+            model="guest-guide",
+        )
+    if _contains_any(text, ("분실", "신고", "lost")):
+        return CopilotResponse(
+            message="분실 신고는 로그인 후 등록할 수 있어요. 물품 종류, 색상, 특징, 잃어버린 것으로 추정되는 위치와 시간을 입력하면 공개 발견물과 비교하는 흐름으로 이어집니다.",
+            cards=[],
+            actions=[CopilotAction(type="NAVIGATE", label="로그인하기", target="/login"), CopilotAction(type="NAVIGATE", label="분실 신고 안내", target="/guide")],
+            suggestions=[],
+            mode="GUIDE",
+            provider="flowlink",
+            model="guest-guide",
+        )
+    if _contains_any(text, ("발견물", "찾기", "found")):
+        return CopilotResponse(
+            message="공개 발견물은 누구나 확인할 수 있어요. 종류, 색상, 대략적인 발견 구역을 살펴보되 정확한 보관 장소나 비공개 확인 정보는 공개되지 않습니다.",
+            cards=[],
+            actions=[CopilotAction(type="NAVIGATE", label="발견물 보기", target="/found-items")],
+            suggestions=[],
+            mode="GUIDE",
+            provider="flowlink",
+            model="guest-guide",
+        )
+    if _contains_any(text, ("지도", "map", "위치", "구역")):
+        return CopilotResponse(
+            message="지도에서는 공개 가능한 발견 위치를 대략적인 구역 수준으로 확인할 수 있어요. 개인정보와 보관 안전을 위해 정확한 보관 장소는 공개하지 않습니다.",
+            cards=[],
+            actions=[CopilotAction(type="NAVIGATE", label="지도 보기", target="/map")],
+            suggestions=[],
+            mode="GUIDE",
+            provider="flowlink",
+            model="guest-guide",
+        )
+    if _contains_any(text, ("ai", "탐지", "detect")):
+        return CopilotResponse(
+            message="AI 탐지는 수면 위 객체 후보를 찾아 분류와 매칭을 돕는 기능이에요. AI가 실제 소유자나 동일 물품을 확정하지는 않고, 최종 확인은 관리자 검토를 거칩니다.",
+            cards=[],
+            actions=[CopilotAction(type="NAVIGATE", label="AI 탐지 보기", target="/detect")],
+            suggestions=[],
+            mode="GUIDE",
+            provider="flowlink",
+            model="guest-guide",
+        )
+    if _contains_any(text, ("소유권", "반환", "ownership", "claim")):
+        return CopilotResponse(
+            message="소유권 확인 요청은 로그인 후 매칭 후보에서 진행할 수 있어요. 자동 매칭 점수는 참고 정보이고, 최종 승인과 반환 처리는 관리자 검토를 거칩니다.",
+            cards=[],
+            actions=[CopilotAction(type="NAVIGATE", label="로그인하기", target="/login"), CopilotAction(type="NAVIGATE", label="이용 안내", target="/guide")],
+            suggestions=[],
+            mode="GUIDE",
+            provider="flowlink",
+            model="guest-guide",
+        )
+    return CopilotResponse(
+        message="안녕하세요. FlowLink는 AI 수면 부유 객체 탐지, 공개 발견물 조회, 시민 분실 신고, 관리자 확인과 반환 흐름을 연결하는 서비스예요. 로그인하면 내 신고, 매칭, 알림 같은 개인 기능도 확인할 수 있습니다.",
+        cards=[],
+        actions=common_actions,
+        suggestions=[
+            CopilotSuggestion(id="found-items", message="발견물은 어디서 확인해?"),
+            CopilotSuggestion(id="lost-report", message="분실 신고는 어떻게 해?"),
+            CopilotSuggestion(id="community", message="커뮤니티는 어떤 공간이야?"),
+        ],
+        mode="GUIDE",
+        provider="flowlink",
+        model="guest-guide",
+    )
 
 
 def create_copilot_briefing(db: Session, current_user: User) -> CopilotResponse:
@@ -157,6 +299,8 @@ async def create_copilot_response(db: Session, request: CopilotRequest, current_
     context, context_type, context_entity_id = _model_context(db, request, current_user)
     conversation = None
     current_text = request.messages[-1].content
+    if current_user is None:
+        return _guest_response(db, request)
     if current_user:
         conversation = get_or_create(
             db, current_user, request.conversation_public_id, current_text,
