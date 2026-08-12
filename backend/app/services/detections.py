@@ -6,8 +6,9 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from app.models import DetectedObject, DetectionEvent, User, VideoJob
+from app.models import Camera, DetectedObject, DetectionEvent, User, VideoJob
 from app.repositories.detections import (
+    OPERATION_PURPOSE,
     USER_ANALYSIS_PURPOSE,
     add_detection_event,
     add_video_job,
@@ -21,6 +22,7 @@ from app.services.detection_inference import (
     DetectionInferenceService,
     DetectionInferenceUnavailableError,
 )
+from app.services.color_estimation import estimate_standard_color
 
 SAFE_MODEL_UNAVAILABLE_MESSAGE = "AI detection model is not configured"
 
@@ -81,6 +83,21 @@ def create_user_detection_event(
     return event
 
 
+def create_operation_detection_event(
+    db: Session, *, current_admin: User, camera: Camera, source_type: str, media_key: str
+) -> DetectionEvent:
+    now = utc_now()
+    event = DetectionEvent(
+        user_id=current_admin.id, camera_id=camera.id, purpose=OPERATION_PURPOSE,
+        source_type=source_type, original_media_url=media_key, status="PROCESSING",
+        captured_at=now, processing_started_at=now, created_at=now, updated_at=now,
+    )
+    add_detection_event(db, event)
+    db.commit()
+    db.refresh(event)
+    return event
+
+
 def process_detection_event(
     db: Session,
     *,
@@ -98,7 +115,7 @@ def process_detection_event(
             if event.source_type == "VIDEO"
             else inference_service.analyze_image(media_path)
         )
-        return _complete_with_result(db, event=event, result=result)
+        return _complete_with_result(db, event=event, result=result, media_path=media_path)
     except DetectionInferenceUnavailableError as exc:
         failed_event = _mark_failed(db, event=event, message=sanitize_error_message(str(exc)))
         raise DetectionModelUnavailableError(SAFE_MODEL_UNAVAILABLE_MESSAGE) from exc
@@ -112,6 +129,7 @@ def _complete_with_result(
     *,
     event: DetectionEvent,
     result: DetectionInferenceResult,
+    media_path: Path,
 ) -> DetectionEvent:
     now = utc_now()
     objects: list[DetectedObject] = []
@@ -133,6 +151,13 @@ def _complete_with_result(
                     bbox_y=Decimal(str(prediction.bbox.y)),
                     bbox_width=Decimal(str(prediction.bbox.width)),
                     bbox_height=Decimal(str(prediction.bbox.height)),
+                    ai_color=estimate_standard_color(
+                        media_path,
+                        bbox_x=prediction.bbox.x,
+                        bbox_y=prediction.bbox.y,
+                        bbox_width=prediction.bbox.width,
+                        bbox_height=prediction.bbox.height,
+                    ) if event.purpose == OPERATION_PURPOSE and event.source_type == "IMAGE" else None,
                     first_seen_ms=prediction.first_seen_ms,
                     last_seen_ms=prediction.last_seen_ms,
                     appearance_count=prediction.appearance_count,

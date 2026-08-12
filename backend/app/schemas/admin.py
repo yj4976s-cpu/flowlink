@@ -10,6 +10,7 @@ class DetectedObjectUpdateRequest(BaseModel):
     final_class_code: str | None = None
     processing_status: Literal["PENDING", "CONFIRMED", "REJECTED"] | None = None
     admin_memo: str | None = None
+    confirmed_color: str | None = None
 
 
 class AdminDetectedObjectResponse(BaseModel):
@@ -23,6 +24,8 @@ class AdminDetectedObjectResponse(BaseModel):
     bbox_width: Decimal
     bbox_height: Decimal
     cropped_image_url: str | None
+    ai_color: str | None
+    confirmed_color: str | None
     detected_at: datetime
     processing_status: str
     admin_memo: str | None
@@ -40,6 +43,15 @@ class AdminDetectedObjectFoundItemResponse(BaseModel):
     found_item_id: int
     source_type: Literal["AI"]
     follow_up_status: Literal["COMPLETED"] = "COMPLETED"
+
+
+class AdminCameraResponse(BaseModel):
+    id: int
+    code: str
+    name: str
+    area_name: str
+    latitude: Decimal
+    longitude: Decimal
 
 
 class AdminDetectedObjectCollectionResponse(BaseModel):
@@ -123,10 +135,30 @@ class AdminDashboardMetrics(BaseModel):
     claims: int
     approved: int
     returned: int
+    lost_reports: int
+    match_notifications: int
     citizen_reports: int
     citizen_pending: int
     citizen_linked: int
     citizen_sightings: int
+
+
+class AdminDashboardFlowTrace(BaseModel):
+    detection_id: int | None = None
+    detected_object_id: int | None = None
+    found_item_id: int | None = None
+    lost_report_id: int | None = None
+    match_candidate_id: int | None = None
+    notification_id: int | None = None
+    ownership_claim_id: int | None = None
+    returned: bool = False
+
+
+class AdminDashboardActivity(BaseModel):
+    kind: str
+    entity_id: int
+    label: str
+    occurred_at: datetime
 
 
 class AdminDashboardRecentItem(BaseModel):
@@ -190,3 +222,5 @@ class AdminDashboardResponse(BaseModel):
     average_confidence: Decimal | None = Field(default=None)
     recent_history: list[AdminDashboardHistory]
     trend: list[AdminDashboardTrendPoint]
+    latest_flow: AdminDashboardFlowTrace | None = None
+    recent_activity: list[AdminDashboardActivity]

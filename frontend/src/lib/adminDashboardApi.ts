@@ -1,6 +1,8 @@
+import { resolveUploadedMediaUrl } from "@/lib/mediaUrl";
+
 export type AdminDashboardData = {
   period: "today" | "7d" | "all";
-  metrics: { discovered: number; ai_detections: number; official_found_items: number; confirmed: number; matched: number; claims: number; approved: number; returned: number; citizen_reports: number; citizen_pending: number; citizen_linked: number; citizen_sightings: number };
+  metrics: { discovered: number; ai_detections: number; official_found_items: number; confirmed: number; matched: number; claims: number; approved: number; returned: number; lost_reports: number; match_notifications: number; citizen_reports: number; citizen_pending: number; citizen_linked: number; citizen_sightings: number };
   recent_items: Array<{ id: number; item_category: string; item_category_name: string; color: string | null; public_description: string | null; area_name: string; found_at: string; status: string; image_url: string | null }>;
   recent_detections: Array<{ id: number; detection_event_id: number; item_category: string; item_category_name: string; confidence: number; image_url: string | null; detected_at: string; processing_status: string }>;
   category_counts: Array<{ code: string; name: string; count: number }>;
@@ -8,6 +10,8 @@ export type AdminDashboardData = {
   average_confidence: number | null;
   recent_history: Array<{ id: number; entity_type: string; entity_id: number; action_type: string; new_status: string | null; note: string | null; created_at: string }>;
   trend: Array<{ label: string; discovered: number; matched: number; returned: number }>;
+  latest_flow: { detection_id: number | null; detected_object_id: number | null; found_item_id: number | null; lost_report_id: number | null; match_candidate_id: number | null; notification_id: number | null; ownership_claim_id: number | null; returned: boolean } | null;
+  recent_activity: Array<{ kind: string; entity_id: number; label: string; occurred_at: string }>;
 };
 
 export class AdminDashboardApiError extends Error {
@@ -21,7 +25,7 @@ function getApiBaseUrl() {
 }
 
 export function resolveAdminDashboardImageUrl(value?: string | null) {
-  return value ? new URL(value, `${getApiBaseUrl()}/`).toString() : null;
+  return resolveUploadedMediaUrl(value, getApiBaseUrl());
 }
 
 export async function getAdminDashboard(period: "today" | "7d" | "all" = "today", signal?: AbortSignal) {

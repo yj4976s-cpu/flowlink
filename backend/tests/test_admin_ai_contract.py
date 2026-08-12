@@ -12,8 +12,8 @@ import app.api.admin as admin_api
 from app.core.security import hash_password
 from app.db.session import Base, get_db
 from app.main import app
-from app.models import Camera, DetectedObject, DetectionEvent, FoundItem, LostReport, MatchCandidate, Notification, ObjectClass, ProcessingHistory, User, VideoJob
-from app.services.matching import create_match_candidates_for_found_item
+from app.models import Camera, DetectedObject, DetectionEvent, FoundItem, LostReport, MatchCandidate, Notification, ObjectClass, OwnershipClaim, ProcessingHistory, User, VideoJob
+from app.services.matching import create_match_candidates_for_found_item, reconcile_match_candidates_for_found_item
 
 
 @pytest.fixture
@@ -109,6 +109,8 @@ def test_detection_list_returns_object_contract_and_recent_order(client: TestCli
     assert item["confidence"] == "0.9000"
     assert item["bbox_width"] == "30.0000"
     assert item["cropped_image_url"] == "/uploads/crop-11.jpg"
+    assert item["ai_color"] is None
+    assert item["confirmed_color"] is None
     assert item["admin_memo"] is None
 
 
@@ -123,6 +125,115 @@ def test_detected_object_admin_memo_persists_and_is_returned(client: TestClient,
     assert item["processing_status"] == "CONFIRMED"
     assert item["admin_memo"] == "사진과 객체 경계를 확인함"
     assert db.query(ProcessingHistory).filter_by(entity_type="DETECTED_OBJECT", entity_id=10, action_type="DETECTED_OBJECT_REVIEWED", note="사진과 객체 경계를 확인함").count() == 1
+
+
+def test_admin_confirmed_color_persists_and_updates_existing_found_item(client: TestClient, db: Session) -> None:
+    seed_admin(db)
+    seed_detection(db, object_id=10, event_id=20, detected_at=datetime(2026, 1, 2, 1, tzinfo=UTC))
+    detected = db.get(DetectedObject, 10)
+    detected.ai_color = "검정"
+    now = datetime(2026, 1, 2, tzinfo=UTC)
+    db.add(LostReport(id=50, user_id=1, object_class_id=1, color="남색", colors=["남색"], description="특징 없음", area_name="잠실", lost_from=now - timedelta(hours=1), status="OPEN", created_at=now, updated_at=now))
+    db.commit(); login(client)
+
+    saved = client.patch("/api/admin/detected-objects/10", json={"confirmed_color": "남색"})
+    assert saved.status_code == 200
+    refreshed = client.get("/api/admin/detections").json()[0]["detected_objects"][0]
+    assert refreshed["ai_color"] == "검정"
+    assert refreshed["confirmed_color"] == "남색"
+
+    created = client.post("/api/admin/detected-objects/10/found-item")
+    assert created.status_code == 201
+    found = db.get(FoundItem, created.json()["found_item_id"])
+    assert found.color == "남색"
+    candidate = db.query(MatchCandidate).filter_by(found_item_id=found.id, lost_report_id=50).one()
+    assert candidate.keyword_score == 10
+
+    assert client.patch("/api/admin/detected-objects/10", json={"confirmed_color": "파랑"}).status_code == 200
+    db.refresh(found)
+    assert found.color == "파랑"
+    db.refresh(candidate)
+    assert candidate.keyword_score == 0
+
+
+def test_reconcile_creates_updates_and_dismisses_candidates_without_duplicate_notifications(db: Session) -> None:
+    seed_admin(db)
+    now = datetime(2026, 1, 20, tzinfo=UTC)
+    found = FoundItem(id=80, object_class_id=1, source_type="ADMIN", color="blue", area_name="found-area", found_at=now, status="AVAILABLE", is_public=True, created_at=now, updated_at=now)
+    promoted = LostReport(id=81, user_id=1, object_class_id=1, color="red", colors=["red"], description="plain", area_name="lost-area", lost_from=now - timedelta(days=10), status="OPEN", created_at=now, updated_at=now)
+    retained = LostReport(id=82, user_id=1, object_class_id=1, color="blue", colors=["blue"], description="plain", area_name="lost-area", lost_from=now - timedelta(days=10), status="MATCHED", created_at=now, updated_at=now)
+    claimed = LostReport(id=83, user_id=1, object_class_id=1, color="blue", colors=["blue"], description="plain", area_name="lost-area", lost_from=now - timedelta(days=10), status="MATCHED", created_at=now, updated_at=now)
+    db.add_all([found, promoted, retained, claimed]); db.flush()
+    retained_candidate = MatchCandidate(lost_report_id=82, found_item_id=80, total_score=60, type_score=40, area_score=0, time_score=10, keyword_score=10, status="NOTIFIED", created_at=now, updated_at=now)
+    claimed_candidate = MatchCandidate(lost_report_id=83, found_item_id=80, total_score=60, type_score=40, area_score=0, time_score=10, keyword_score=10, status="CLAIMED", created_at=now, updated_at=now)
+    db.add_all([retained_candidate, claimed_candidate]); db.commit()
+
+    found.color = "red"
+    reconcile_match_candidates_for_found_item(db, found)
+    db.commit()
+    promoted_candidate = db.query(MatchCandidate).filter_by(lost_report_id=81, found_item_id=80).one()
+    assert promoted_candidate.total_score == 60 and promoted_candidate.status == "NOTIFIED"
+    assert db.query(Notification).filter_by(related_type="MATCH_CANDIDATE", related_id=promoted_candidate.id).count() == 1
+    assert retained_candidate.total_score == 50 and retained_candidate.status == "DISMISSED"
+    assert claimed_candidate.total_score == 50 and claimed_candidate.status == "CLAIMED"
+
+    reconcile_match_candidates_for_found_item(db, found)
+    db.commit()
+    assert db.query(MatchCandidate).filter_by(lost_report_id=81, found_item_id=80).count() == 1
+    assert db.query(Notification).filter_by(related_type="MATCH_CANDIDATE", related_id=promoted_candidate.id).count() == 1
+
+
+def test_reconcile_updates_existing_qualified_candidate_score(db: Session) -> None:
+    seed_admin(db)
+    now = datetime(2026, 1, 20, tzinfo=UTC)
+    found = FoundItem(id=90, object_class_id=1, source_type="ADMIN", color="blue", area_name="same-area", found_at=now, status="AVAILABLE", is_public=True, created_at=now, updated_at=now)
+    report = LostReport(id=91, user_id=1, object_class_id=1, color="blue", colors=["blue"], description="plain", area_name="same-area", lost_from=now - timedelta(days=10), status="MATCHED", created_at=now, updated_at=now)
+    candidate = MatchCandidate(lost_report_id=91, found_item_id=90, total_score=60, type_score=40, area_score=0, time_score=10, keyword_score=10, status="NOTIFIED", created_at=now, updated_at=now)
+    db.add_all([found, report, candidate]); db.commit()
+
+    reconcile_match_candidates_for_found_item(db, found)
+    db.commit()
+    assert candidate.total_score == 85
+    assert (candidate.type_score, candidate.area_score, candidate.time_score, candidate.keyword_score) == (40, 25, 10, 10)
+    assert candidate.status == "NOTIFIED"
+
+
+@pytest.mark.parametrize(("found_status", "is_public"), [("CLAIM_PENDING", True), ("RETURNED", True), ("AVAILABLE", False)])
+def test_reconcile_non_matchable_found_item_creates_no_candidate_or_notification(db: Session, found_status: str, is_public: bool) -> None:
+    seed_admin(db)
+    now = datetime(2026, 1, 20, tzinfo=UTC)
+    found = FoundItem(id=100, object_class_id=1, source_type="ADMIN", color="red", area_name="found-area", found_at=now, status=found_status, is_public=is_public, created_at=now, updated_at=now)
+    report = LostReport(id=101, user_id=1, object_class_id=1, color="red", colors=["red"], description="plain", area_name="lost-area", lost_from=now - timedelta(days=10), status="OPEN", created_at=now, updated_at=now)
+    db.add_all([found, report]); db.commit()
+
+    reconcile_match_candidates_for_found_item(db, found)
+    db.commit()
+
+    assert db.query(MatchCandidate).filter_by(found_item_id=100).count() == 0
+    assert db.query(Notification).filter_by(notification_type="MATCH_FOUND").count() == 0
+
+
+def test_reconcile_non_matchable_found_item_preserves_claimed_candidate(db: Session) -> None:
+    seed_admin(db)
+    now = datetime(2026, 1, 20, tzinfo=UTC)
+    found = FoundItem(id=110, object_class_id=1, source_type="ADMIN", color="red", area_name="found-area", found_at=now, status="CLAIM_PENDING", is_public=True, created_at=now, updated_at=now)
+    report = LostReport(id=111, user_id=1, object_class_id=1, color="blue", colors=["blue"], description="plain", area_name="lost-area", lost_from=now - timedelta(days=10), status="CLAIM_PENDING", created_at=now, updated_at=now)
+    candidate = MatchCandidate(lost_report_id=111, found_item_id=110, total_score=60, type_score=40, area_score=0, time_score=10, keyword_score=10, status="CLAIMED", created_at=now, updated_at=now)
+    claim = OwnershipClaim(id=112, user_id=1, lost_report_id=111, found_item_id=110, verification_details="ownership details", status="PENDING", created_at=now, updated_at=now)
+    db.add_all([found, report, candidate, claim]); db.commit()
+
+    reconcile_match_candidates_for_found_item(db, found)
+    db.commit()
+
+    assert candidate.status == "CLAIMED"
+    assert candidate.total_score == 60
+    assert db.get(OwnershipClaim, 112).status == "PENDING"
+    assert db.query(Notification).filter_by(notification_type="MATCH_FOUND").count() == 0
+
+
+def test_admin_rejects_nonstandard_confirmed_color(client: TestClient, db: Session) -> None:
+    seed_admin(db); seed_detection(db, object_id=10, event_id=20, detected_at=datetime(2026, 1, 2, 1, tzinfo=UTC)); login(client)
+    assert client.patch("/api/admin/detected-objects/10", json={"confirmed_color": "임의색"}).status_code == 422
 
 
 def test_admin_creates_ai_found_item_reverse_match_and_prevents_duplicate(client: TestClient, db: Session) -> None:
@@ -187,10 +298,39 @@ def test_admin_collects_waste_persists_state_and_prevents_duplicate(client: Test
     assert client.post("/api/admin/detected-objects/30/collect").status_code == 409
 
 
+def test_completed_follow_up_locks_class_and_status_but_allows_memo_and_color(client: TestClient, db: Session) -> None:
+    seed_admin(db); seed_detection(db, object_id=10, event_id=20, detected_at=datetime(2026, 1, 2, tzinfo=UTC)); seed_waste_detection(db); login(client)
+    assert client.post("/api/admin/detected-objects/10/found-item").status_code == 201
+    assert client.patch("/api/admin/detected-objects/10", json={"final_class_code": "TRASH"}).status_code == 409
+    assert client.patch("/api/admin/detected-objects/10", json={"processing_status": "REJECTED"}).status_code == 409
+    allowed = client.patch("/api/admin/detected-objects/10", json={"admin_memo": "review complete"})
+    assert allowed.status_code == 200
+    item = db.get(DetectedObject, 10)
+    assert item.processing_status == "CONFIRMED" and (item.final_class or item.object_class).code == "BAG"
+
+    assert client.post("/api/admin/detected-objects/30/collect").status_code == 200
+    assert client.patch("/api/admin/detected-objects/30", json={"final_class_code": "BAG"}).status_code == 409
+    assert client.patch("/api/admin/detected-objects/30", json={"processing_status": "REJECTED"}).status_code == 409
+
+
 def test_user_cannot_run_detection_follow_up(client: TestClient, db: Session) -> None:
     seed_user(db); seed_detection(db, object_id=10, event_id=20, detected_at=datetime(2026, 1, 2, tzinfo=UTC)); seed_waste_detection(db); login_user(client)
     assert client.post("/api/admin/detected-objects/10/found-item").status_code == 403
     assert client.post("/api/admin/detected-objects/30/collect").status_code == 403
+
+
+def test_admin_camera_list_only_exposes_active_located_cameras(client: TestClient, db: Session) -> None:
+    seed_admin(db)
+    now = datetime(2026, 1, 2, tzinfo=UTC)
+    db.add_all([
+        Camera(id=1, code="READY", name="발표 카메라", area_name="서울시청", latitude=Decimal("37.566295"), longitude=Decimal("126.977945"), is_active=True, created_at=now, updated_at=now),
+        Camera(id=2, code="NO-LOCATION", name="위치 없음", area_name="미지정", is_active=True, created_at=now, updated_at=now),
+        Camera(id=3, code="INACTIVE", name="비활성", area_name="서울", latitude=Decimal("37.5"), longitude=Decimal("127.0"), is_active=False, created_at=now, updated_at=now),
+    ])
+    db.commit(); login(client)
+    response = client.get("/api/admin/cameras")
+    assert response.status_code == 200
+    assert response.json() == [{"id": 1, "code": "READY", "name": "발표 카메라", "area_name": "서울시청", "latitude": "37.566295", "longitude": "126.977945"}]
 
 
 def test_user_analysis_has_no_follow_up_and_is_blocked_by_services(client: TestClient, db: Session) -> None:

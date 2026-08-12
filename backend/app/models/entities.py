@@ -143,6 +143,8 @@ class DetectedObject(Base):
     bbox_width: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
     bbox_height: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
     cropped_image_url: Mapped[str | None] = mapped_column(Text)
+    ai_color: Mapped[str | None] = mapped_column(String(50))
+    confirmed_color: Mapped[str | None] = mapped_column(String(50))
     first_seen_ms: Mapped[int | None] = mapped_column(BigInteger)
     last_seen_ms: Mapped[int | None] = mapped_column(BigInteger)
     appearance_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

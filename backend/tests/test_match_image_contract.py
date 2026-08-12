@@ -3,7 +3,7 @@ from decimal import Decimal
 from app.core.security import utc_now
 from datetime import timedelta
 
-from app.models import CitizenReport, DetectedObject, FoundItem, LostReport, MatchCandidate, ObjectClass
+from app.models import CitizenReport, DetectedObject, DetectionEvent, FoundItem, LostReport, MatchCandidate, ObjectClass
 from app.services.found_item_images import representative_found_item_image_url
 from app.services.mappers import found_item_list_response, match_candidate_response
 
@@ -25,6 +25,40 @@ def test_match_response_uses_detected_object_crop_as_representative_image() -> N
 def test_match_response_keeps_image_optional_for_icon_fallback() -> None:
     response = match_candidate_response(make_candidate(image_url=None))
     assert response.found_item.image_url is None
+
+
+def test_ai_image_falls_back_to_result_then_original_detection_media() -> None:
+    candidate = make_candidate(image_url=None)
+    now = utc_now()
+    event = DetectionEvent(
+        id=3, purpose="OPERATION", source_type="IMAGE",
+        original_media_url="detections/original.png",
+        result_media_url="detections/result.png",
+        status="COMPLETED", captured_at=now, created_at=now, updated_at=now,
+    )
+    candidate.found_item.detected_object.detection_event = event
+
+    assert representative_found_item_image_url(candidate.found_item) == "/uploads/detections/result.png"
+    assert match_candidate_response(candidate).found_item.image_url == "/uploads/detections/result.png"
+
+    event.result_media_url = None
+    assert representative_found_item_image_url(candidate.found_item) == "/uploads/detections/original.png"
+
+
+def test_ai_detection_media_keeps_absolute_and_upload_urls_stable() -> None:
+    candidate = make_candidate(image_url=None)
+    now = utc_now()
+    event = DetectionEvent(
+        id=3, purpose="OPERATION", source_type="IMAGE",
+        original_media_url="https://storage.example/original.png",
+        result_media_url="/uploads/detections/result.png",
+        status="COMPLETED", captured_at=now, created_at=now, updated_at=now,
+    )
+    candidate.found_item.detected_object.detection_event = event
+
+    assert representative_found_item_image_url(candidate.found_item) == "/uploads/detections/result.png"
+    event.result_media_url = None
+    assert representative_found_item_image_url(candidate.found_item) == "https://storage.example/original.png"
 
 
 def test_citizen_image_uses_earliest_linked_report_deterministically() -> None:

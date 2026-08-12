@@ -308,6 +308,10 @@ CREATE TABLE detected_objects (
             OR BTRIM(cropped_image_url) <> ''
         ),
 
+    -- bbox 이미지 기반 AI 추정값과 관리자 최종 확인값을 구분해 저장합니다.
+    ai_color VARCHAR(50),
+    confirmed_color VARCHAR(50),
+
     first_seen_ms BIGINT
         CHECK (
             first_seen_ms IS NULL

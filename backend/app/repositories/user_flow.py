@@ -70,7 +70,7 @@ def get_active_personal_object_class(db: Session, code: str) -> ObjectClass | No
 def _public_found_items_statement() -> Select[tuple[FoundItem]]:
     return (
         select(FoundItem)
-        .options(joinedload(FoundItem.object_class), joinedload(FoundItem.detected_object), selectinload(FoundItem.citizen_reports))
+        .options(joinedload(FoundItem.object_class), joinedload(FoundItem.detected_object).joinedload(DetectedObject.detection_event), selectinload(FoundItem.citizen_reports))
         .where(
             FoundItem.is_public.is_(True),
             FoundItem.status.in_(PUBLIC_FOUND_ITEM_STATUSES),
@@ -141,7 +141,7 @@ def get_public_found_item_by_id(db: Session, found_item_id: int) -> FoundItem | 
 def get_found_item_by_id(db: Session, found_item_id: int) -> FoundItem | None:
     statement = (
         select(FoundItem)
-        .options(joinedload(FoundItem.object_class), joinedload(FoundItem.detected_object), selectinload(FoundItem.citizen_reports))
+        .options(joinedload(FoundItem.object_class), joinedload(FoundItem.detected_object).joinedload(DetectedObject.detection_event), selectinload(FoundItem.citizen_reports))
         .where(FoundItem.id == found_item_id)
     )
     return db.scalar(statement)
@@ -232,10 +232,10 @@ def list_matches_for_user(db: Session, user_id: int, *, skip: int, limit: int) -
         .options(
             joinedload(MatchCandidate.lost_report).joinedload(LostReport.object_class),
             joinedload(MatchCandidate.found_item).joinedload(FoundItem.object_class),
-            joinedload(MatchCandidate.found_item).joinedload(FoundItem.detected_object),
+            joinedload(MatchCandidate.found_item).joinedload(FoundItem.detected_object).joinedload(DetectedObject.detection_event),
             joinedload(MatchCandidate.found_item).selectinload(FoundItem.citizen_reports),
         )
-        .where(LostReport.user_id == user_id)
+        .where(LostReport.user_id == user_id, MatchCandidate.status != "DISMISSED")
         .order_by(MatchCandidate.total_score.desc(), MatchCandidate.created_at.desc())
         .offset(skip)
         .limit(limit)
@@ -470,6 +470,47 @@ def get_admin_dashboard_data(db: Session, *, since, period: str = "today", now=N
     average_confidence = db.scalar(
         select(func.avg(DetectedObject.confidence)).where(period_condition(DetectedObject.detected_at))
     )
+    latest_match = db.scalar(
+        select(MatchCandidate)
+        .options(joinedload(MatchCandidate.found_item).joinedload(FoundItem.detected_object))
+        .where(MatchCandidate.status != "DISMISSED")
+        .order_by(MatchCandidate.created_at.desc(), MatchCandidate.id.desc())
+        .limit(1)
+    )
+    latest_notification = None
+    latest_claim = None
+    if latest_match is not None:
+        latest_notification = db.scalar(
+            select(Notification).where(
+                Notification.notification_type == "MATCH_FOUND",
+                Notification.related_type == "MATCH_CANDIDATE",
+                Notification.related_id == latest_match.id,
+            ).order_by(Notification.id.desc()).limit(1)
+        )
+        latest_claim = db.scalar(
+            select(OwnershipClaim).where(
+                OwnershipClaim.found_item_id == latest_match.found_item_id,
+                OwnershipClaim.lost_report_id == latest_match.lost_report_id,
+            ).order_by(OwnershipClaim.created_at.desc(), OwnershipClaim.id.desc()).limit(1)
+        )
+
+    activity_rows: list[dict] = []
+    for user_id, nickname, occurred_at in db.execute(
+        select(User.id, User.nickname, User.last_login_at)
+        .where(User.last_login_at.is_not(None), User.deleted_at.is_(None))
+        .order_by(User.last_login_at.desc()).limit(3)
+    ).all():
+        activity_rows.append({"kind": "LOGIN", "entity_id": user_id, "label": nickname, "occurred_at": occurred_at})
+    for model, kind, label, timestamp in (
+        (LostReport, "LOST_REPORT", "분실 신고", LostReport.created_at),
+        (MatchCandidate, "MATCH", "자동 매칭", MatchCandidate.created_at),
+        (OwnershipClaim, "CLAIM", "소유권 요청", OwnershipClaim.created_at),
+        (Notification, "NOTIFICATION", "사용자 알림", Notification.created_at),
+    ):
+        for entity_id, occurred_at in db.execute(select(model.id, timestamp).order_by(timestamp.desc()).limit(3)).all():
+            activity_rows.append({"kind": kind, "entity_id": entity_id, "label": label, "occurred_at": occurred_at})
+    activity_rows.sort(key=lambda item: item["occurred_at"], reverse=True)
+
     return {
         "period": period,
         "metrics": {
@@ -481,6 +522,8 @@ def get_admin_dashboard_data(db: Session, *, since, period: str = "today", now=N
             "claims": count(OwnershipClaim, period_condition(OwnershipClaim.created_at)),
             "approved": count(OwnershipClaim, period_condition(OwnershipClaim.updated_at), OwnershipClaim.status.in_(("APPROVED", "RETURNED"))),
             "returned": count(OwnershipClaim, period_condition(OwnershipClaim.updated_at), OwnershipClaim.status == "RETURNED"),
+            "lost_reports": count(LostReport, period_condition(LostReport.created_at)),
+            "match_notifications": count(Notification, period_condition(Notification.created_at), Notification.notification_type == "MATCH_FOUND"),
             "citizen_reports": count(CitizenReport, period_condition(CitizenReport.created_at)),
             "citizen_pending": count(CitizenReport, CitizenReport.status.in_(("PENDING", "UNDER_REVIEW"))),
             "citizen_linked": count(CitizenReport, period_condition(CitizenReport.linked_at), CitizenReport.status == "LINKED"),
@@ -502,6 +545,17 @@ def get_admin_dashboard_data(db: Session, *, since, period: str = "today", now=N
             for history in histories
         ],
         "trend": [{"label": label, "discovered": found_group[label], "matched": match_group[label], "returned": return_group[label]} for label in labels],
+        "latest_flow": None if latest_match is None else {
+            "detection_id": latest_match.found_item.detected_object.detection_event_id if latest_match.found_item.detected_object else None,
+            "detected_object_id": latest_match.found_item.detected_object_id,
+            "found_item_id": latest_match.found_item_id,
+            "lost_report_id": latest_match.lost_report_id,
+            "match_candidate_id": latest_match.id,
+            "notification_id": latest_notification.id if latest_notification else None,
+            "ownership_claim_id": latest_claim.id if latest_claim else None,
+            "returned": latest_claim is not None and latest_claim.status == "RETURNED",
+        },
+        "recent_activity": activity_rows[:8],
     }
 
 
