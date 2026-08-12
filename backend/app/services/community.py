@@ -33,6 +33,19 @@ def list_comments(db: Session, post_id: int) -> list[CommunityComment]:
     return list(db.scalars(select(CommunityComment).options(joinedload(CommunityComment.user)).where(CommunityComment.post_id == post_id, CommunityComment.deleted_at.is_(None)).order_by(CommunityComment.created_at.asc())).all())
 
 
+def soft_delete_comment_thread(db: Session, comment: CommunityComment) -> None:
+    deleted_at = utc_now()
+    comment.deleted_at = deleted_at
+    comment.updated_at = deleted_at
+    if comment.parent_comment_id is not None:
+        return
+
+    replies = list(db.scalars(select(CommunityComment).where(CommunityComment.parent_comment_id == comment.id, CommunityComment.deleted_at.is_(None))).all())
+    for reply in replies:
+        reply.deleted_at = deleted_at
+        reply.updated_at = deleted_at
+
+
 def list_feed(db: Session, *, category: str | None, query: str | None, place: str | None, sort: str, skip: int, limit: int) -> CommunityFeedResponse:
     comment_count = select(func.count(CommunityComment.id)).where(CommunityComment.post_id == CommunityPost.id, CommunityComment.deleted_at.is_(None)).correlate(CommunityPost).scalar_subquery()
     statement = select(CommunityPost).options(joinedload(CommunityPost.user), selectinload(CommunityPost.comments).joinedload(CommunityComment.user)).where(CommunityPost.deleted_at.is_(None))

@@ -134,6 +134,70 @@ def test_comment_reply_contract(client: TestClient, db: Session) -> None:
     assert [item["parent_comment_id"] for item in comments.json()] == [None, root.json()["id"]]
 
 
+def test_delete_root_comment_soft_deletes_one_level_replies(client: TestClient, db: Session) -> None:
+    owner = user(db, 1)
+    replier = user(db, 2)
+    as_user(owner)
+    post_id = post(client).json()["id"]
+    root = client.post(f"/api/community/posts/{post_id}/comments", data={"content": "root comment"}).json()
+
+    as_user(replier)
+    reply = client.post(f"/api/community/posts/{post_id}/comments", data={"content": "reply comment", "parent_comment_id": str(root["id"])})
+    assert reply.status_code == 201
+
+    comments = client.get(f"/api/community/posts/{post_id}/comments")
+    assert comments.status_code == 200
+    assert len(comments.json()) == 2
+
+    as_user(owner)
+    assert client.delete(f"/api/community/comments/{root['id']}").status_code == 204
+    comments = client.get(f"/api/community/posts/{post_id}/comments")
+    assert comments.status_code == 200
+    assert comments.json() == []
+    detail = client.get(f"/api/community/posts/{post_id}")
+    assert detail.status_code == 200
+    assert detail.json()["comment_count"] == 0
+
+
+def test_delete_reply_keeps_root_comment(client: TestClient, db: Session) -> None:
+    owner = user(db, 1)
+    replier = user(db, 2)
+    as_user(owner)
+    post_id = post(client).json()["id"]
+    root = client.post(f"/api/community/posts/{post_id}/comments", data={"content": "root comment"}).json()
+
+    as_user(replier)
+    reply = client.post(f"/api/community/posts/{post_id}/comments", data={"content": "reply comment", "parent_comment_id": str(root["id"])}).json()
+    assert client.delete(f"/api/community/comments/{reply['id']}").status_code == 204
+
+    comments = client.get(f"/api/community/posts/{post_id}/comments")
+    assert comments.status_code == 200
+    assert [(item["id"], item["parent_comment_id"]) for item in comments.json()] == [(root["id"], None)]
+    detail = client.get(f"/api/community/posts/{post_id}")
+    assert detail.status_code == 200
+    assert detail.json()["comment_count"] == 1
+
+
+def test_comment_delete_permission_regression_for_root_and_reply(client: TestClient, db: Session) -> None:
+    owner = user(db, 1)
+    replier = user(db, 2)
+    other = user(db, 3)
+    admin = user(db, 4, "ADMIN")
+    as_user(owner)
+    post_id = post(client).json()["id"]
+    root = client.post(f"/api/community/posts/{post_id}/comments", data={"content": "root comment"}).json()
+    as_user(replier)
+    reply = client.post(f"/api/community/posts/{post_id}/comments", data={"content": "reply comment", "parent_comment_id": str(root["id"])}).json()
+
+    as_user(other)
+    assert client.delete(f"/api/community/comments/{root['id']}").status_code == 403
+    assert client.delete(f"/api/community/comments/{reply['id']}").status_code == 403
+
+    as_user(admin)
+    assert client.delete(f"/api/community/comments/{root['id']}").status_code == 204
+    assert client.get(f"/api/community/posts/{post_id}/comments").json() == []
+
+
 def test_create_and_update_coordinate_contract(client: TestClient, db: Session) -> None:
     as_user(user(db, 1))
     created = post(client, place_name="서울시청", latitude="37.5665", longitude="126.9780")

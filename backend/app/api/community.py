@@ -10,7 +10,7 @@ from app.core.security import utc_now
 from app.db.session import get_db
 from app.models import CommunityComment, CommunityPost, User
 from app.schemas.community import CommunityCommentResponse, CommunityFeedResponse, CommunityPostResponse
-from app.services.community import CATEGORIES, can_delete, can_edit_post, comment_response, get_comment, get_post, list_comments, list_feed, post_response
+from app.services.community import CATEGORIES, can_delete, can_edit_post, comment_response, get_comment, get_post, list_comments, list_feed, post_response, soft_delete_comment_thread
 from app.services.image_uploads import remove_public_image, save_public_image
 
 router = APIRouter(prefix="/api/community", tags=["community"])
@@ -105,4 +105,4 @@ def delete_comment(id: Annotated[int, ApiPath(ge=1)], current_user: Annotated[Us
     item = get_comment(db, id)
     if item is None: raise HTTPException(status_code=404, detail="댓글을 찾을 수 없습니다.")
     if not can_delete(current_user, item.user_id): raise HTTPException(status_code=403, detail="삭제 권한이 없습니다.")
-    item.deleted_at = utc_now(); item.updated_at = utc_now(); db.commit()
+    soft_delete_comment_thread(db, item); db.commit()
