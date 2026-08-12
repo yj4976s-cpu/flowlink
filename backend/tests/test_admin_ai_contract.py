@@ -13,7 +13,7 @@ from app.core.security import hash_password
 from app.db.session import Base, get_db
 from app.main import app
 from app.models import Camera, DetectedObject, DetectionEvent, FoundItem, LostReport, MatchCandidate, Notification, ObjectClass, ProcessingHistory, User, VideoJob
-from app.services.matching import create_match_candidates_for_found_item
+from app.services.matching import create_match_candidates_for_found_item, reconcile_match_candidates_for_found_item
 
 
 @pytest.fixture
@@ -156,6 +156,48 @@ def test_admin_confirmed_color_persists_and_updates_existing_found_item(client: 
     assert candidate.keyword_score == 0
 
 
+def test_reconcile_creates_updates_and_dismisses_candidates_without_duplicate_notifications(db: Session) -> None:
+    seed_admin(db)
+    now = datetime(2026, 1, 20, tzinfo=UTC)
+    found = FoundItem(id=80, object_class_id=1, source_type="ADMIN", color="blue", area_name="found-area", found_at=now, status="AVAILABLE", is_public=True, created_at=now, updated_at=now)
+    promoted = LostReport(id=81, user_id=1, object_class_id=1, color="red", colors=["red"], description="plain", area_name="lost-area", lost_from=now - timedelta(days=10), status="OPEN", created_at=now, updated_at=now)
+    retained = LostReport(id=82, user_id=1, object_class_id=1, color="blue", colors=["blue"], description="plain", area_name="lost-area", lost_from=now - timedelta(days=10), status="MATCHED", created_at=now, updated_at=now)
+    claimed = LostReport(id=83, user_id=1, object_class_id=1, color="blue", colors=["blue"], description="plain", area_name="lost-area", lost_from=now - timedelta(days=10), status="MATCHED", created_at=now, updated_at=now)
+    db.add_all([found, promoted, retained, claimed]); db.flush()
+    retained_candidate = MatchCandidate(lost_report_id=82, found_item_id=80, total_score=60, type_score=40, area_score=0, time_score=10, keyword_score=10, status="NOTIFIED", created_at=now, updated_at=now)
+    claimed_candidate = MatchCandidate(lost_report_id=83, found_item_id=80, total_score=60, type_score=40, area_score=0, time_score=10, keyword_score=10, status="CLAIMED", created_at=now, updated_at=now)
+    db.add_all([retained_candidate, claimed_candidate]); db.commit()
+
+    found.color = "red"
+    reconcile_match_candidates_for_found_item(db, found)
+    db.commit()
+    promoted_candidate = db.query(MatchCandidate).filter_by(lost_report_id=81, found_item_id=80).one()
+    assert promoted_candidate.total_score == 60 and promoted_candidate.status == "NOTIFIED"
+    assert db.query(Notification).filter_by(related_type="MATCH_CANDIDATE", related_id=promoted_candidate.id).count() == 1
+    assert retained_candidate.total_score == 50 and retained_candidate.status == "DISMISSED"
+    assert claimed_candidate.total_score == 50 and claimed_candidate.status == "CLAIMED"
+
+    reconcile_match_candidates_for_found_item(db, found)
+    db.commit()
+    assert db.query(MatchCandidate).filter_by(lost_report_id=81, found_item_id=80).count() == 1
+    assert db.query(Notification).filter_by(related_type="MATCH_CANDIDATE", related_id=promoted_candidate.id).count() == 1
+
+
+def test_reconcile_updates_existing_qualified_candidate_score(db: Session) -> None:
+    seed_admin(db)
+    now = datetime(2026, 1, 20, tzinfo=UTC)
+    found = FoundItem(id=90, object_class_id=1, source_type="ADMIN", color="blue", area_name="same-area", found_at=now, status="AVAILABLE", is_public=True, created_at=now, updated_at=now)
+    report = LostReport(id=91, user_id=1, object_class_id=1, color="blue", colors=["blue"], description="plain", area_name="same-area", lost_from=now - timedelta(days=10), status="MATCHED", created_at=now, updated_at=now)
+    candidate = MatchCandidate(lost_report_id=91, found_item_id=90, total_score=60, type_score=40, area_score=0, time_score=10, keyword_score=10, status="NOTIFIED", created_at=now, updated_at=now)
+    db.add_all([found, report, candidate]); db.commit()
+
+    reconcile_match_candidates_for_found_item(db, found)
+    db.commit()
+    assert candidate.total_score == 85
+    assert (candidate.type_score, candidate.area_score, candidate.time_score, candidate.keyword_score) == (40, 25, 10, 10)
+    assert candidate.status == "NOTIFIED"
+
+
 def test_admin_rejects_nonstandard_confirmed_color(client: TestClient, db: Session) -> None:
     seed_admin(db); seed_detection(db, object_id=10, event_id=20, detected_at=datetime(2026, 1, 2, 1, tzinfo=UTC)); login(client)
     assert client.patch("/api/admin/detected-objects/10", json={"confirmed_color": "임의색"}).status_code == 422
@@ -221,6 +263,21 @@ def test_admin_collects_waste_persists_state_and_prevents_duplicate(client: Test
     item = client.get("/api/admin/detections").json()[0]["detected_objects"][0]
     assert item["follow_up_kind"] == "WASTE" and item["waste_collection_completed"] is True
     assert client.post("/api/admin/detected-objects/30/collect").status_code == 409
+
+
+def test_completed_follow_up_locks_class_and_status_but_allows_memo_and_color(client: TestClient, db: Session) -> None:
+    seed_admin(db); seed_detection(db, object_id=10, event_id=20, detected_at=datetime(2026, 1, 2, tzinfo=UTC)); seed_waste_detection(db); login(client)
+    assert client.post("/api/admin/detected-objects/10/found-item").status_code == 201
+    assert client.patch("/api/admin/detected-objects/10", json={"final_class_code": "TRASH"}).status_code == 409
+    assert client.patch("/api/admin/detected-objects/10", json={"processing_status": "REJECTED"}).status_code == 409
+    allowed = client.patch("/api/admin/detected-objects/10", json={"admin_memo": "review complete"})
+    assert allowed.status_code == 200
+    item = db.get(DetectedObject, 10)
+    assert item.processing_status == "CONFIRMED" and (item.final_class or item.object_class).code == "BAG"
+
+    assert client.post("/api/admin/detected-objects/30/collect").status_code == 200
+    assert client.patch("/api/admin/detected-objects/30", json={"final_class_code": "BAG"}).status_code == 409
+    assert client.patch("/api/admin/detected-objects/30", json={"processing_status": "REJECTED"}).status_code == 409
 
 
 def test_user_cannot_run_detection_follow_up(client: TestClient, db: Session) -> None:

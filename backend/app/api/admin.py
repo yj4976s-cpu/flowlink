@@ -33,7 +33,7 @@ from app.services.admin_detection_actions import complete_waste_collection, crea
 from app.services.detection_inference import DetectionInferenceService, get_inference_service
 from app.services.detections import DetectionModelUnavailableError, create_operation_detection_event, process_detection_event
 from app.services.color_estimation import normalize_item_color
-from app.services.matching import refresh_match_candidate_scores_for_found_item
+from app.services.matching import reconcile_match_candidates_for_found_item
 from app.api.detections import IMAGE_CONTENT_TYPES, IMAGE_MAX_BYTES, save_upload_file
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -182,12 +182,18 @@ def update_detected_object(
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Detected object not found")
     previous_status = item.processing_status
+    follow_up_completed = item.found_item is not None or item.id in waste_collection_completed_ids(db, [item.id])
     if request.final_class_code is not None:
         code = request.final_class_code.strip().upper()
         if get_object_class_by_code(db, code) is None:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid object class")
+        current_code = (item.final_class or item.object_class).code
+        if follow_up_completed and code != current_code:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Completed follow-up classification cannot be changed")
         item.final_class_code = code
     if request.processing_status is not None:
+        if follow_up_completed and request.processing_status != item.processing_status:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Completed follow-up status cannot be changed")
         item.processing_status = request.processing_status
     if request.admin_memo is not None:
         item.admin_memo = clean_optional_text(request.admin_memo)
@@ -200,7 +206,7 @@ def update_detected_object(
         if linked_found_item is not None:
             linked_found_item.color = item.confirmed_color or item.ai_color
             linked_found_item.updated_at = utc_now()
-            refresh_match_candidate_scores_for_found_item(db, linked_found_item)
+            reconcile_match_candidates_for_found_item(db, linked_found_item)
     db.add(ProcessingHistory(actor_user_id=current_admin.id, entity_type="DETECTED_OBJECT", entity_id=item.id, action_type="DETECTED_OBJECT_REVIEWED", previous_status=previous_status, new_status=item.processing_status, note=item.admin_memo, created_at=utc_now()))
     db.commit()
     return MessageResponse(message="Detected object updated")

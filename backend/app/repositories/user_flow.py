@@ -235,7 +235,7 @@ def list_matches_for_user(db: Session, user_id: int, *, skip: int, limit: int) -
             joinedload(MatchCandidate.found_item).joinedload(FoundItem.detected_object).joinedload(DetectedObject.detection_event),
             joinedload(MatchCandidate.found_item).selectinload(FoundItem.citizen_reports),
         )
-        .where(LostReport.user_id == user_id)
+        .where(LostReport.user_id == user_id, MatchCandidate.status != "DISMISSED")
         .order_by(MatchCandidate.total_score.desc(), MatchCandidate.created_at.desc())
         .offset(skip)
         .limit(limit)

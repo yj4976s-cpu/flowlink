@@ -1,3 +1,5 @@
+import { resolveUploadedMediaUrl } from "@/lib/mediaUrl";
+
 export type AdminDashboardData = {
   period: "today" | "7d" | "all";
   metrics: { discovered: number; ai_detections: number; official_found_items: number; confirmed: number; matched: number; claims: number; approved: number; returned: number; lost_reports: number; match_notifications: number; citizen_reports: number; citizen_pending: number; citizen_linked: number; citizen_sightings: number };
@@ -23,7 +25,7 @@ function getApiBaseUrl() {
 }
 
 export function resolveAdminDashboardImageUrl(value?: string | null) {
-  return value ? new URL(value, `${getApiBaseUrl()}/`).toString() : null;
+  return resolveUploadedMediaUrl(value, getApiBaseUrl());
 }
 
 export async function getAdminDashboard(period: "today" | "7d" | "all" = "today", signal?: AbortSignal) {

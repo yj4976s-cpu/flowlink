@@ -1,3 +1,5 @@
+import { resolveUploadedMediaUrl } from "@/lib/mediaUrl";
+
 export type DetectionObject = {
   id: number; object_class: string; object_class_name: string; final_class_code: string | null;
   confidence: number; bbox_x: number; bbox_y: number; bbox_width: number; bbox_height: number;
@@ -32,17 +34,5 @@ export function updateDetectedObject(id: number, update: DetectionObjectUpdate) 
 export function createFoundItemFromDetection(id: number) { return request<{ detected_object_id: number; found_item_id: number; source_type: "AI"; follow_up_status: "COMPLETED" }>(`/api/admin/detected-objects/${id}/found-item`, { method: "POST" }); }
 export function completeDetectedWasteCollection(id: number) { return request<{ detected_object_id: number; waste_collection_completed: true; follow_up_status: "COMPLETED" }>(`/api/admin/detected-objects/${id}/collect`, { method: "POST" }); }
 export function adminDetectionMediaUrl(value?: string | null) {
-  const trimmed = value?.trim();
-  if (!trimmed) return null;
-  try {
-    if (/^https?:\/\//i.test(trimmed)) {
-      const absolute = new URL(trimmed);
-      return ["http:", "https:"].includes(absolute.protocol) ? absolute.toString() : null;
-    }
-    const relative = trimmed.replace(/^\/+/, "");
-    const mediaPath = relative.startsWith("uploads/") ? `/${relative}` : `/uploads/${relative}`;
-    return new URL(mediaPath, `${baseUrl()}/`).toString();
-  } catch {
-    return null;
-  }
+  return resolveUploadedMediaUrl(value, baseUrl());
 }
