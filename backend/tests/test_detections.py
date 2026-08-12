@@ -411,6 +411,46 @@ def test_webcam_inference_uses_backend_ai_client() -> None:
     assert result.media_height == 24
     assert result.inference_ms == 7.5
     assert result.detected_objects[0].label == "umbrella"
+    assert result.detected_objects[0].class_code == "UMBRELLA"
+    assert result.detected_objects[0].class_name_ko == "우산"
+    assert result.detected_objects[0].group_code == "PERSONAL_ITEM"
+
+
+def test_webcam_inference_maps_business_classes_and_keeps_unknown_safe() -> None:
+    fake_client = FakeAIInferenceClient(
+        AIInferenceResult(
+            media_width=32,
+            media_height=24,
+            inference_ms=7.5,
+            predictions=[
+                AIInferencePrediction(
+                    model_label="shoe",
+                    confidence=0.82,
+                    bbox=AIInferenceBBox(x=1, y=2, width=3, height=4),
+                ),
+                AIInferencePrediction(
+                    model_label="sports ball",
+                    confidence=0.77,
+                    bbox=AIInferenceBBox(x=5, y=6, width=7, height=8),
+                ),
+                AIInferencePrediction(
+                    model_label="mystery",
+                    confidence=0.66,
+                    bbox=AIInferenceBBox(x=9, y=10, width=11, height=12),
+                ),
+            ],
+        )
+    )
+    service = WebcamInferenceService(ai_client=fake_client)
+
+    result = service.analyze_frame(Image.new("RGB", (32, 24), color=(1, 2, 3)))
+
+    assert [detected.class_code for detected in result.detected_objects] == ["FOOTWEAR", "BALL", None]
+    assert [detected.group_code for detected in result.detected_objects] == ["PERSONAL_ITEM", "PERSONAL_ITEM", None]
+    assert result.detected_objects[0].class_name_ko == "신발"
+    assert result.detected_objects[1].class_name_ko == "공"
+    assert result.detected_objects[2].label == "mystery"
+    assert result.detected_objects[2].class_name_ko is None
 
 
 def test_detection_inference_maps_ai_unavailable_to_service_error(tmp_path: Path) -> None:
@@ -740,6 +780,9 @@ def test_webcam_detection_frame_is_allowed_for_user_and_admin(client: TestClient
     assert body["inference_ms"] == 12.5
     assert "model_name" not in body
     assert body["detected_objects"][0]["label"] == "backpack"
+    assert body["detected_objects"][0]["class_code"] is None
+    assert body["detected_objects"][0]["class_name_ko"] is None
+    assert body["detected_objects"][0]["group_code"] is None
     assert body["detected_objects"][0]["confidence"] == 0.91
     assert body["detected_objects"][0]["bbox"] == {"x": 5.0, "y": 6.0, "width": 20.0, "height": 22.0}
     assert db.query(DetectionEvent).count() == 0

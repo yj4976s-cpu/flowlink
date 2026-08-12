@@ -33,6 +33,9 @@ export type DetectionEvent = {
 
 export type WebcamDetectionObject = {
   label: string;
+  class_code: string | null;
+  class_name_ko: string | null;
+  group_code: string | null;
   confidence: number;
   bbox: DetectionBBox;
 };
