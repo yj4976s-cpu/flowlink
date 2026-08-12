@@ -4,6 +4,7 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_AI_DIR = Path(__file__).resolve().parents[2]
+REPO_ROOT = BACKEND_AI_DIR.parent
 
 
 class Settings(BaseSettings):

@@ -57,6 +57,83 @@ def test_create_list_detail_and_optional_location(client: TestClient, db: Sessio
     assert client.get(f"/api/community/posts/{created.json()['id']}").status_code == 200
 
 
+def test_opinion_post_allows_optional_location_and_feed_filter(client: TestClient, db: Session) -> None:
+    as_user(user(db, 1))
+    created = post(client, category="OPINION", title="자유 이야기", content="위치 없이 나누는 의견입니다.")
+    assert created.status_code == 201
+    payload = created.json()
+    assert payload["category"] == "OPINION"
+    assert payload["place_name"] is None
+    assert payload["latitude"] is None
+    assert payload["longitude"] is None
+
+    listing = client.get("/api/community/posts", params={"category": "OPINION"})
+    assert listing.status_code == 200
+    assert [item["id"] for item in listing.json()["posts"]] == [payload["id"]]
+
+
+def test_opinion_post_with_coordinates_is_available_for_map_clients(client: TestClient, db: Session) -> None:
+    as_user(user(db, 1))
+    without_location = post(client, category="OPINION", title="위치 없는 의견", content="지도에는 표시하지 않을 글입니다.").json()
+    with_location = post(
+        client,
+        category="OPINION",
+        title="좌표 있는 의견",
+        content="지도에 표시할 수 있는 글입니다.",
+        place_name="서울 한강공원",
+        latitude="37.5200",
+        longitude="126.9400",
+    ).json()
+
+    listing = client.get("/api/community/posts", params={"category": "OPINION"})
+    assert listing.status_code == 200
+    posts = {item["id"]: item for item in listing.json()["posts"]}
+    assert posts[without_location["id"]]["latitude"] is None
+    assert posts[with_location["id"]]["latitude"] == pytest.approx(37.52)
+    assert posts[with_location["id"]]["longitude"] == pytest.approx(126.94)
+
+
+def test_update_comment_and_soft_delete_opinion_post(client: TestClient, db: Session) -> None:
+    owner = user(db, 1)
+    as_user(owner)
+    created = post(client, title="기존 이야기", content="수정 전입니다.").json()
+    post_id = created["id"]
+
+    updated = client.patch(
+        f"/api/community/posts/{post_id}",
+        data={"category": "OPINION", "title": "자유 이야기로 수정", "content": "수정 후 의견입니다."},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["category"] == "OPINION"
+
+    comment = client.post(f"/api/community/posts/{post_id}/comments", data={"content": "의견에 댓글을 남깁니다."})
+    assert comment.status_code == 201
+
+    assert client.delete(f"/api/community/posts/{post_id}").status_code == 204
+    assert client.get(f"/api/community/posts/{post_id}").status_code == 404
+    listing = client.get("/api/community/posts", params={"category": "OPINION"})
+    assert post_id not in [item["id"] for item in listing.json()["posts"]]
+
+
+def test_comment_reply_contract(client: TestClient, db: Session) -> None:
+    as_user(user(db, 1))
+    post_id = post(client).json()["id"]
+    root = client.post(f"/api/community/posts/{post_id}/comments", data={"content": "원 댓글입니다."})
+    assert root.status_code == 201
+    assert root.json()["parent_comment_id"] is None
+
+    reply = client.post(f"/api/community/posts/{post_id}/comments", data={"content": "답글입니다.", "parent_comment_id": str(root.json()["id"])})
+    assert reply.status_code == 201
+    assert reply.json()["parent_comment_id"] == root.json()["id"]
+
+    nested = client.post(f"/api/community/posts/{post_id}/comments", data={"content": "대댓글의 대댓글입니다.", "parent_comment_id": str(reply.json()["id"])})
+    assert nested.status_code == 422
+
+    comments = client.get(f"/api/community/posts/{post_id}/comments")
+    assert comments.status_code == 200
+    assert [item["parent_comment_id"] for item in comments.json()] == [None, root.json()["id"]]
+
+
 def test_create_and_update_coordinate_contract(client: TestClient, db: Session) -> None:
     as_user(user(db, 1))
     created = post(client, place_name="서울시청", latitude="37.5665", longitude="126.9780")

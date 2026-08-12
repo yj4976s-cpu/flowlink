@@ -7,7 +7,7 @@ from threading import Lock
 
 from PIL import Image
 
-from app.core.config import BACKEND_AI_DIR, get_settings
+from app.core.config import BACKEND_AI_DIR, REPO_ROOT, get_settings
 
 
 @dataclass(frozen=True)
@@ -65,10 +65,22 @@ class YoloRuntime:
         configured = Path(self.model_path)
         if configured.is_absolute():
             return str(configured)
-        if len(configured.parts) > 1:
-            return str((BACKEND_AI_DIR / configured).resolve())
-        local_candidate = (BACKEND_AI_DIR / configured).resolve()
-        return str(local_candidate) if local_candidate.exists() else self.model_path
+        candidates = [
+            (BACKEND_AI_DIR / configured).resolve(),
+            (REPO_ROOT / configured).resolve(),
+        ]
+        if len(configured.parts) == 1:
+            candidates.extend(
+                [
+                    (BACKEND_AI_DIR / "models" / configured).resolve(),
+                    (REPO_ROOT / "models" / configured).resolve(),
+                    (REPO_ROOT / "ai" / configured).resolve(),
+                ]
+            )
+        for candidate in candidates:
+            if candidate.exists():
+                return str(candidate)
+        return self.model_path
 
     def _parse_result(self, model, result, media_width: int, media_height: int) -> list[YoloPrediction]:
         boxes = getattr(result, "boxes", None)
@@ -110,4 +122,3 @@ def get_yolo_runtime() -> YoloRuntime:
         confidence=settings.DETECTION_CONFIDENCE,
         imgsz=settings.DETECTION_IMGSZ,
     )
-

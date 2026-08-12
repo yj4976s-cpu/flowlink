@@ -9,7 +9,7 @@ from app.core.security import utc_now
 from app.models import CommunityComment, CommunityPost, FoundItem, User
 from app.schemas.community import CommunityCommentResponse, CommunityContextResponse, CommunityFeedResponse, CommunityPostResponse, CommunitySystemUpdate
 
-CATEGORIES = {"FIELD_STORY", "QUESTION", "EXPERIENCE"}
+CATEGORIES = {"FIELD_STORY", "QUESTION", "EXPERIENCE", "OPINION"}
 
 
 def post_response(post: CommunityPost) -> CommunityPostResponse:
@@ -18,7 +18,7 @@ def post_response(post: CommunityPost) -> CommunityPostResponse:
 
 
 def comment_response(comment: CommunityComment) -> CommunityCommentResponse:
-    return CommunityCommentResponse(id=comment.id, user_id=comment.user_id, nickname=comment.user.nickname, content=comment.content, created_at=comment.created_at)
+    return CommunityCommentResponse(id=comment.id, parent_comment_id=comment.parent_comment_id, user_id=comment.user_id, nickname=comment.user.nickname, content=comment.content, created_at=comment.created_at)
 
 
 def get_post(db: Session, post_id: int) -> CommunityPost | None:

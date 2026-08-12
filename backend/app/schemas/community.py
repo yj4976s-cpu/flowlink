@@ -16,11 +16,13 @@ class CommunityPostInput(BaseModel):
 
 class CommunityCommentInput(BaseModel):
     content: str = Field(min_length=1, max_length=1000)
+    parent_comment_id: int | None = None
 
 
 class CommunityCommentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
+    parent_comment_id: int | None
     user_id: int
     nickname: str
     content: str

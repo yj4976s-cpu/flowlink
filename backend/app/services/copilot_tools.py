@@ -1,40 +1,133 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.security import utc_now
-from app.models import FoundItem, LostReport, MatchCandidate, OwnershipClaim, User
-from app.repositories.user_flow import get_admin_dashboard_data, list_lost_reports_for_user, list_matches_for_user, list_notifications_for_user
+from app.models import CommunityComment, CommunityPost, FoundItem, LostReport, MatchCandidate, OwnershipClaim, User
 from app.repositories.detections import list_user_detection_events
+from app.repositories.user_flow import get_admin_dashboard_data, list_lost_reports_for_user, list_matches_for_user, list_notifications_for_user
 from app.services.mappers import detection_event_response, lost_report_response, match_candidate_response, notification_response
 
 
-USER_TOOL_NAMES = {"get_my_lost_reports", "get_my_matches", "get_match_detail", "get_my_analysis_results", "get_my_ownership_claims", "get_my_notifications"}
+USER_TOOL_NAMES = {
+    "get_my_lost_reports",
+    "get_my_matches",
+    "get_match_detail",
+    "get_my_analysis_results",
+    "get_my_ownership_claims",
+    "get_my_notifications",
+    "search_public_community",
+}
 ADMIN_TOOL_NAMES = {"get_operations_summary"}
+COMMUNITY_CATEGORIES = {"FIELD_STORY", "QUESTION", "EXPERIENCE", "OPINION"}
 KST = ZoneInfo("Asia/Seoul")
 
 
 def tool_definitions(role: str | None) -> list[dict]:
     if role == "USER":
         return [
-            {"type": "function", "name": "get_my_lost_reports", "description": "로그인 USER가 본인의 분실 신고 목록이나 처리 상태를 명시적으로 질문할 때만 조회한다. 일반 인사와 서비스 사용법 질문에는 사용하지 않는다.", "parameters": {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 10}}, "additionalProperties": False}},
-            {"type": "function", "name": "get_my_matches", "description": "현재 로그인 USER의 분실 신고와 연결된 매칭 후보를 사용자가 명시적으로 묻는 경우에만 조회한다. 일반 인사나 서비스 안내에는 사용하지 않는다. 점수는 소유 확률이 아니라 조건 유사도다.", "parameters": {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 10}}, "additionalProperties": False}},
-            {"type": "function", "name": "get_match_detail", "description": "로그인 USER가 특정 match_id의 추천 이유나 점수 근거를 명시적으로 질문할 때만 본인 범위에서 조회한다.", "parameters": {"type": "object", "properties": {"match_id": {"type": "integer", "minimum": 1}}, "required": ["match_id"], "additionalProperties": False}},
-            {"type": "function", "name": "get_my_analysis_results", "description": "로그인 USER가 본인의 AI 분석 결과나 객체 분류 신뢰도를 명시적으로 질문할 때만 조회한다.", "parameters": {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 10}}, "additionalProperties": False}},
-            {"type": "function", "name": "get_my_ownership_claims", "description": "로그인 USER가 본인의 소유권 확인 요청이나 처리 상태를 명시적으로 질문할 때만 조회한다.", "parameters": {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 10}}, "additionalProperties": False}},
-            {"type": "function", "name": "get_my_notifications", "description": "로그인 USER가 본인의 최근 알림이나 읽지 않은 알림을 명시적으로 질문할 때만 조회한다. 일반 인사에는 사용하지 않는다.", "parameters": {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 10}, "unread_only": {"type": "boolean"}}, "additionalProperties": False}},
+            {
+                "type": "function",
+                "name": "get_my_lost_reports",
+                "description": "로그인 USER가 본인의 분실 신고 목록이나 처리 상태를 명시적으로 질문할 때만 조회한다.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 10}},
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "type": "function",
+                "name": "get_my_matches",
+                "description": "로그인 USER가 본인의 분실 신고와 연결된 매칭 후보를 명시적으로 질문할 때만 조회한다. 점수는 소유 확률이 아니다.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 10}},
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "type": "function",
+                "name": "get_match_detail",
+                "description": "로그인 USER가 특정 match_id의 추천 이유와 점수 근거를 명시적으로 질문할 때만 본인 범위에서 조회한다.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"match_id": {"type": "integer", "minimum": 1}},
+                    "required": ["match_id"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "type": "function",
+                "name": "get_my_analysis_results",
+                "description": "로그인 USER가 본인의 AI 분석 결과와 객체 분류 신뢰도를 명시적으로 질문할 때만 조회한다.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 10}},
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "type": "function",
+                "name": "get_my_ownership_claims",
+                "description": "로그인 USER가 본인의 소유권 확인 요청이나 처리 상태를 명시적으로 질문할 때만 조회한다.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 10}},
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "type": "function",
+                "name": "get_my_notifications",
+                "description": "로그인 USER가 본인의 최근 알림이나 읽지 않은 알림을 명시적으로 질문할 때만 조회한다. 일반 인사에는 사용하지 않는다.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 10},
+                        "unread_only": {"type": "boolean"},
+                    },
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "type": "function",
+                "name": "search_public_community",
+                "description": "공개 커뮤니티 글에서 사용자 공유 참고 정보를 검색한다. 공식 발견물 또는 소유권 확정 정보가 아니며 공개 projection만 반환한다.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "category": {"type": "string", "enum": ["FIELD_STORY", "QUESTION", "EXPERIENCE", "OPINION"]},
+                        "place": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 5},
+                    },
+                    "additionalProperties": False,
+                },
+            },
         ]
     if role == "ADMIN":
-        return [{"type": "function", "name": "get_operations_summary", "description": "관리자가 확인할 오늘의 탐지, 발견물, 매칭, 소유권 요청 운영 집계를 조회한다.", "parameters": {"type": "object", "properties": {}, "additionalProperties": False}}]
+        return [
+            {
+                "type": "function",
+                "name": "get_operations_summary",
+                "description": "관리자가 오늘의 탐지, 발견물, 매칭, 소유권 요청 운영 집계를 조회한다.",
+                "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+            }
+        ]
     return []
 
 
 def _limit(arguments: dict) -> int:
     return max(1, min(int(arguments.get("limit", 5)), 10))
+
+
+def _community_limit(arguments: dict) -> int:
+    return max(1, min(int(arguments.get("limit", 5)), 5))
 
 
 def operations_today_since(now: datetime) -> datetime:
@@ -53,6 +146,52 @@ def _user_ownership_claim_payload(claim: OwnershipClaim) -> dict:
         "reviewed_at": claim.reviewed_at.isoformat() if claim.reviewed_at else None,
         "created_at": claim.created_at.isoformat(),
     }
+
+
+def _community_projection(post: CommunityPost, comment_count: int) -> dict:
+    """Expose only public community fields that are safe to send to an LLM."""
+    content = post.content.strip()
+    return {
+        "id": post.id,
+        "category": post.category,
+        "title": post.title,
+        "content_excerpt": content[:180] + ("..." if len(content) > 180 else ""),
+        "place_name": post.place_name,
+        "comment_count": comment_count,
+        "created_at": post.created_at.isoformat(),
+        "href": f"/community/{post.id}",
+    }
+
+
+def search_public_community(
+    db: Session,
+    *,
+    query: str | None = None,
+    category: str | None = None,
+    place: str | None = None,
+    limit: int = 5,
+) -> list[dict]:
+    comment_count = (
+        select(func.count(CommunityComment.id))
+        .where(CommunityComment.post_id == CommunityPost.id, CommunityComment.deleted_at.is_(None))
+        .correlate(CommunityPost)
+        .scalar_subquery()
+    )
+    statement = select(CommunityPost, comment_count.label("comment_count")).where(CommunityPost.deleted_at.is_(None))
+    if category:
+        normalized = category.strip().upper()
+        if normalized in COMMUNITY_CATEGORIES:
+            statement = statement.where(CommunityPost.category == normalized)
+    if query and query.strip():
+        pattern = f"%{query.strip()}%"
+        statement = statement.where(
+            or_(CommunityPost.title.ilike(pattern), CommunityPost.content.ilike(pattern), CommunityPost.place_name.ilike(pattern))
+        )
+    if place and place.strip():
+        pattern = f"%{place.strip()}%"
+        statement = statement.where(or_(CommunityPost.place_name.ilike(pattern), CommunityPost.address.ilike(pattern)))
+    rows = db.execute(statement.order_by(CommunityPost.created_at.desc()).limit(max(1, min(limit, 5)))).all()
+    return [_community_projection(post, int(count or 0)) for post, count in rows]
 
 
 def execute_tool(db: Session, current_user: User | None, name: str, arguments: dict) -> dict | list:
@@ -82,6 +221,14 @@ def execute_tool(db: Session, current_user: User | None, name: str, arguments: d
     if name == "get_my_ownership_claims":
         items = db.scalars(select(OwnershipClaim).options(joinedload(OwnershipClaim.lost_report).joinedload(LostReport.object_class), joinedload(OwnershipClaim.found_item).joinedload(FoundItem.object_class)).where(OwnershipClaim.user_id == current_user.id).order_by(OwnershipClaim.created_at.desc()).limit(_limit(arguments))).all()
         return [_user_ownership_claim_payload(item) for item in items]
+    if name == "search_public_community":
+        return search_public_community(
+            db,
+            query=arguments.get("query") if isinstance(arguments.get("query"), str) else None,
+            category=arguments.get("category") if isinstance(arguments.get("category"), str) else None,
+            place=arguments.get("place") if isinstance(arguments.get("place"), str) else None,
+            limit=_community_limit(arguments),
+        )
     if name == "get_operations_summary":
         now = utc_now()
         since = operations_today_since(now)

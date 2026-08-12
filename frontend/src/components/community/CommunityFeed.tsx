@@ -22,7 +22,8 @@ type FeedItem =
 const categoryLabel: Record<CommunityCategory, string> = {
   FIELD_STORY: "목격 제보",
   QUESTION: "도움 요청",
-  EXPERIENCE: "발견 정보",
+  EXPERIENCE: "반환·이용 경험",
+  OPINION: "자유 이야기",
 };
 
 const elapsed = (value: string) => {
@@ -162,18 +163,22 @@ export function CommunityFeed() {
         <div>
           <p>COMMUNITY</p>
           <h1>커뮤니티</h1>
-          <span>찾고 있는 물건에 대한 작은 단서도 누군가에게는 중요한 정보가 될 수 있어요.<br />목격한 순간과 발견한 정보를 이곳에서 나눠보세요.</span>
+          <span>잃어버린 물건을 찾는 사람과 현장의 작은 단서를 연결합니다.<br />목격 정보, 발견 위치, 이용 경험을 편하게 남겨주세요.</span>
         </div>
         <div className={styles.heroActions}>
-          <span>목격했거나 발견한 정보가 있나요?</span>
-          <Link className="button button-primary" href="/community/new">글 작성하기</Link>
+          <div className={styles.heroActionCard}>
+            <span>함께 찾는 단서</span>
+            <strong>목격했거나 발견한 정보가 있나요?</strong>
+            <p>사진이나 정확한 위치가 없어도 괜찮아요. 기억나는 특징만 남겨도 누군가에게 도움이 됩니다.</p>
+            <Link className="button button-primary" href="/community/new">글 작성하기 <Icon name="arrow" size={15} /></Link>
+          </div>
         </div>
       </section>
 
       <section className={styles.toolbar} aria-label="커뮤니티 필터와 보기 설정">
         <div className={styles.boardHeading}><span>COMMUNITY BOARD</span><h2>지금 올라온 정보</h2></div>
         <div className={styles.categories} aria-label="이야기 카테고리">
-          {[["", "전체"], ["FIELD_STORY", "목격 제보"], ["EXPERIENCE", "발견 정보"], ["QUESTION", "도움 요청"]].map(([value, label]) => (
+          {[["", "전체"], ["FIELD_STORY", "목격 제보"], ["QUESTION", "도움 요청"], ["EXPERIENCE", "반환·이용 경험"], ["OPINION", "자유 이야기"]].map(([value, label]) => (
             <button type="button" key={label} aria-pressed={category === value} onClick={() => setCategory(value)}>{label}</button>
           ))}
         </div>

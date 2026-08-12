@@ -1,5 +1,5 @@
 export type CopilotMode = "GUIDE" | "PERSONAL" | "OPERATIONS";
-export type CopilotCard = { type: "MATCH" | "ANALYSIS" | "STATUS" | "TIMELINE" | "EVIDENCE" | "SYSTEM_NOTICE"; title: string; subtitle?: string | null; score?: number | null; confidence?: number | null; status?: string | null; details: string[]; entity_id?: number | null };
+export type CopilotCard = { type: "MATCH" | "ANALYSIS" | "STATUS" | "TIMELINE" | "EVIDENCE" | "SYSTEM_NOTICE" | "COMMUNITY"; title: string; subtitle?: string | null; score?: number | null; confidence?: number | null; status?: string | null; details: string[]; entity_id?: number | null };
 export type CopilotAction = { type: "NAVIGATE" | "ASK"; label: string; target: string };
 export type CopilotSuggestion = { id: string; message: string };
 export type CopilotResponse = { message: string; cards: CopilotCard[]; actions: CopilotAction[]; suggestions: CopilotSuggestion[]; mode: CopilotMode; provider: string; model: string; conversation_public_id?: string | null };

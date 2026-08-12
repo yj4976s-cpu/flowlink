@@ -1,6 +1,6 @@
-export type CommunityCategory = "FIELD_STORY" | "QUESTION" | "EXPERIENCE";
+export type CommunityCategory = "FIELD_STORY" | "QUESTION" | "EXPERIENCE" | "OPINION";
 export type CommunityPost = { id: number; user_id: number; nickname: string; category: CommunityCategory; title: string; content: string; place_name: string | null; address: string | null; latitude: number | null; longitude: number | null; image_url: string | null; is_notice: boolean; comment_count: number; created_at: string; updated_at: string };
-export type CommunityComment = { id: number; user_id: number; nickname: string; content: string; created_at: string };
+export type CommunityComment = { id: number; parent_comment_id: number | null; user_id: number; nickname: string; content: string; created_at: string };
 export type CommunitySystemUpdate = { type: "FOUND_ITEM_UPDATE" | "RETURN_UPDATE"; id: number; title: string; place_name: string; latitude: number | null; longitude: number | null; timestamp: string; href: string | null };
 export type CommunityFeed = { posts: CommunityPost[]; system_updates: CommunitySystemUpdate[]; context: { found_items: number; new_stories: number; returns: number }; has_more: boolean };
 export type CommunityPostPayload = { category: CommunityCategory; title: string; content: string; place_name?: string; address?: string; latitude?: number; longitude?: number; is_notice?: boolean; image?: File; remove_image?: boolean };
@@ -17,5 +17,5 @@ export function createCommunityPost(payload: CommunityPostPayload) { return requ
 export function updateCommunityPost(id: string, payload: CommunityPostPayload) { return request<CommunityPost>(`/api/community/posts/${id}`, { method: "PATCH", body: form(payload) }); }
 export function deleteCommunityPost(id: number) { return request<void>(`/api/community/posts/${id}`, { method: "DELETE" }); }
 export function listCommunityComments(id: string, signal?: AbortSignal) { return request<CommunityComment[]>(`/api/community/posts/${id}/comments`, { signal }); }
-export function createCommunityComment(id: string, content: string) { const data = new FormData(); data.set("content", content); return request<CommunityComment>(`/api/community/posts/${id}/comments`, { method: "POST", body: data }); }
+export function createCommunityComment(id: string, content: string, parentCommentId?: number) { const data = new FormData(); data.set("content", content); if (parentCommentId) data.set("parent_comment_id", String(parentCommentId)); return request<CommunityComment>(`/api/community/posts/${id}/comments`, { method: "POST", body: data }); }
 export function deleteCommunityComment(id: number) { return request<void>(`/api/community/comments/${id}`, { method: "DELETE" }); }

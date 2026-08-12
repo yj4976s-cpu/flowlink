@@ -131,7 +131,9 @@ function Card({ card }: { card: CopilotCard }) {
           ? "답변 근거"
           : card.type === "TIMELINE"
             ? "진행 상태"
-            : "FlowLink 상태";
+            : card.type === "COMMUNITY"
+              ? "커뮤니티 참고 정보"
+              : "FlowLink 상태";
   return (
     <article className={styles.dataCard} data-type={card.type}>
       <div>

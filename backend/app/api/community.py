@@ -90,11 +90,14 @@ def comments(id: Annotated[int, ApiPath(ge=1)], db: Annotated[Session, Depends(g
 
 
 @router.post("/posts/{id}/comments", response_model=CommunityCommentResponse, status_code=201)
-def create_comment(id: Annotated[int, ApiPath(ge=1)], current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)], content: Annotated[str, Form()]) -> CommunityCommentResponse:
+def create_comment(id: Annotated[int, ApiPath(ge=1)], current_user: Annotated[User, Depends(get_current_user)], db: Annotated[Session, Depends(get_db)], content: Annotated[str, Form()], parent_comment_id: Annotated[int | None, Form()] = None) -> CommunityCommentResponse:
     if get_post(db, id) is None: raise HTTPException(status_code=404, detail="게시글을 찾을 수 없습니다.")
     content = content.strip()
     if not content or len(content) > 1000: raise HTTPException(status_code=422, detail="댓글 내용을 확인해 주세요.")
-    now = utc_now(); item = CommunityComment(post_id=id, user_id=current_user.id, content=content, created_at=now, updated_at=now); db.add(item); db.commit(); db.refresh(item); return comment_response(get_comment(db, item.id))
+    if parent_comment_id is not None:
+        parent = get_comment(db, parent_comment_id)
+        if parent is None or parent.post_id != id or parent.parent_comment_id is not None: raise HTTPException(status_code=422, detail="답글을 달 댓글을 확인해 주세요.")
+    now = utc_now(); item = CommunityComment(post_id=id, parent_comment_id=parent_comment_id, user_id=current_user.id, content=content, created_at=now, updated_at=now); db.add(item); db.commit(); db.refresh(item); return comment_response(get_comment(db, item.id))
 
 
 @router.delete("/comments/{id}", status_code=204)

@@ -9,7 +9,7 @@ from PIL import Image
 from app.core.config import get_settings
 from app.main import app
 from app.services.inference import ImageInferenceService, InferenceModelUnavailableError, get_inference_service
-from app.services.yolo_runtime import YoloBBox, YoloPrediction, get_yolo_runtime
+from app.services.yolo_runtime import YoloBBox, YoloPrediction, YoloRuntime, get_yolo_runtime
 
 TEST_INTERNAL_API_KEY = "test-internal-api-key"
 
@@ -152,3 +152,22 @@ def test_yolo_runtime_is_cached_and_lazy_loaded(monkeypatch: pytest.MonkeyPatch)
     assert first.imgsz == 512
     assert first._model is None
     get_yolo_runtime.cache_clear()
+
+
+def test_yolo_runtime_resolves_models_from_backend_ai_and_repo_paths(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    backend_ai_dir = tmp_path / "backend-ai"
+    repo_root = tmp_path
+    backend_ai_model = backend_ai_dir / "models" / "local.pt"
+    repo_ai_model = repo_root / "ai" / "custom.pt"
+    repo_relative_model = repo_root / "ai" / "team.pt"
+    backend_ai_model.parent.mkdir(parents=True)
+    repo_ai_model.parent.mkdir(parents=True)
+    backend_ai_model.write_bytes(b"model")
+    repo_ai_model.write_bytes(b"model")
+    repo_relative_model.write_bytes(b"model")
+    monkeypatch.setattr("app.services.yolo_runtime.BACKEND_AI_DIR", backend_ai_dir)
+    monkeypatch.setattr("app.services.yolo_runtime.REPO_ROOT", repo_root)
+
+    assert YoloRuntime(model_path="local.pt", confidence=0.25, imgsz=640)._resolve_model_source() == str(backend_ai_model.resolve())
+    assert YoloRuntime(model_path="custom.pt", confidence=0.25, imgsz=640)._resolve_model_source() == str(repo_ai_model.resolve())
+    assert YoloRuntime(model_path="ai/team.pt", confidence=0.25, imgsz=640)._resolve_model_source() == str(repo_relative_model.resolve())
