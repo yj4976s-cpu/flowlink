@@ -123,6 +123,9 @@ function createSelectedOverlayContent(item: FoundItemMapItem) {
     const image = document.createElement("img");
     image.src = imageUrl;
     image.alt = `${item.item_category_name} 발견물 이미지`;
+    image.addEventListener("error", () => {
+      visual.replaceChildren(createTextElement("span", styles.overlayFallback, getCategoryInitial(item)));
+    }, { once: true });
     visual.appendChild(image);
   } else {
     visual.appendChild(createTextElement("span", styles.overlayFallback, getCategoryInitial(item)));

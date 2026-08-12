@@ -1,3 +1,5 @@
+import { resolveUploadedMediaUrl } from "@/lib/mediaUrl";
+
 export type FoundItemListItem = {
   id: number;
   item_category: string;
@@ -45,7 +47,7 @@ function getApiBaseUrl() {
 }
 
 export function resolveFoundItemImageUrl(value: string | null) {
-  return value ? new URL(value, `${getApiBaseUrl()}/`).toString() : null;
+  return resolveUploadedMediaUrl(value, getApiBaseUrl());
 }
 
 function buildApiUrl(path: string, params?: Record<string, string | number | undefined>) {
