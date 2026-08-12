@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     DETECTION_IMGSZ: int = 640
     IMAGE_MAX_BYTES: int = 20 * 1024 * 1024
     IMAGE_MAX_PIXELS: int = 16_000_000
+    VIDEO_MAX_BYTES: int = 100 * 1024 * 1024
+    VIDEO_MAX_DURATION_SECONDS: int = 30
 
 
 @lru_cache

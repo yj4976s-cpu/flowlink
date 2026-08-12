@@ -70,6 +70,11 @@ function formatConfidence(value: number) {
   return `${Math.round(value * 100)}%`;
 }
 
+function formatMilliseconds(value: number | null) {
+  if (value === null) return "";
+  return `${(value / 1000).toFixed(1)}초`;
+}
+
 function validateFile(file: File, tab: DetectionTab) {
   if (tab === "webcam") return "";
   if (tab === "image") {
@@ -117,6 +122,15 @@ function ResultList({ event }: { event: DetectionEvent | null }) {
           <div>
             <strong>{object.class_name_ko}</strong>
             <span>{object.class_code} · {groupLabels[object.group_code] ?? object.group_code}</span>
+            {event.source_type === "VIDEO" && (
+              <small className={styles.trackMeta}>
+                {object.track_id !== null && `Track #${object.track_id} · `}
+                {object.first_seen_ms !== null && object.last_seen_ms !== null
+                  ? `${formatMilliseconds(object.first_seen_ms)} ~ ${formatMilliseconds(object.last_seen_ms)} · `
+                  : ""}
+                {object.appearance_count}프레임에서 확인
+              </small>
+            )}
           </div>
           <em>탐지 신뢰도 {formatConfidence(object.confidence)}</em>
         </li>

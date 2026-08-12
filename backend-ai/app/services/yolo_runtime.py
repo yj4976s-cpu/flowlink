@@ -25,6 +25,17 @@ class YoloPrediction:
     bbox: YoloBBox
 
 
+@dataclass(frozen=True)
+class YoloTrackPrediction:
+    model_label: str
+    confidence: float
+    bbox: YoloBBox
+    track_id: int | None
+    first_seen_ms: int
+    last_seen_ms: int
+    appearance_count: int
+
+
 class YoloRuntimeUnavailableError(RuntimeError):
     pass
 
@@ -46,6 +57,54 @@ class YoloRuntime:
             except Exception as exc:
                 raise YoloRuntimeUnavailableError("YOLO detection model is unavailable") from exc
         return self._parse_result(model, results[0] if results else None, image.width, image.height)
+
+    def track_video(self, video_path: Path, *, fps: float, media_width: int, media_height: int) -> list[YoloTrackPrediction]:
+        model = self._get_model()
+        tracked: dict[tuple[str, int | None], YoloTrackPrediction] = {}
+        with self._inference_lock:
+            try:
+                results = model.track(
+                    source=str(video_path),
+                    tracker="bytetrack.yaml",
+                    stream=True,
+                    persist=False,
+                    conf=self.confidence,
+                    imgsz=self.imgsz,
+                    verbose=False,
+                )
+                for frame_index, result in enumerate(results):
+                    frame_seen_ms = int(round((frame_index / fps) * 1000))
+                    for prediction in self._parse_track_result(
+                        model,
+                        result,
+                        media_width,
+                        media_height,
+                        seen_ms=frame_seen_ms,
+                    ):
+                        key = (prediction.model_label, prediction.track_id)
+                        previous = tracked.get(key)
+                        if previous is None:
+                            tracked[key] = prediction
+                            continue
+                        tracked[key] = YoloTrackPrediction(
+                            model_label=previous.model_label,
+                            confidence=max(previous.confidence, prediction.confidence),
+                            bbox=prediction.bbox if prediction.confidence >= previous.confidence else previous.bbox,
+                            track_id=previous.track_id,
+                            first_seen_ms=min(previous.first_seen_ms, prediction.first_seen_ms),
+                            last_seen_ms=max(previous.last_seen_ms, prediction.last_seen_ms),
+                            appearance_count=previous.appearance_count + 1,
+                        )
+            except Exception as exc:
+                raise YoloRuntimeUnavailableError("YOLO video tracking model is unavailable") from exc
+        return sorted(
+            tracked.values(),
+            key=lambda prediction: (
+                prediction.first_seen_ms,
+                prediction.track_id if prediction.track_id is not None else 10**12,
+                -prediction.confidence,
+            ),
+        )
 
     def _get_model(self):
         if self._model is not None:
@@ -112,6 +171,65 @@ class YoloRuntime:
                 )
             )
         return predictions
+
+    def _parse_track_result(
+        self,
+        model,
+        result,
+        media_width: int,
+        media_height: int,
+        *,
+        seen_ms: int,
+    ) -> list[YoloTrackPrediction]:
+        boxes = getattr(result, "boxes", None)
+        if boxes is None:
+            return []
+
+        names = getattr(model, "names", {})
+        predictions: list[YoloTrackPrediction] = []
+        for box in boxes:
+            xyxy = box.xyxy[0].tolist()
+            confidence = float(box.conf[0])
+            class_id = int(box.cls[0])
+            model_label = names.get(class_id, str(class_id)) if isinstance(names, dict) else str(class_id)
+            x1, y1, x2, y2 = [float(value) for value in xyxy]
+            left = max(0.0, min(x1, float(media_width)))
+            top = max(0.0, min(y1, float(media_height)))
+            right = max(left, min(x2, float(media_width)))
+            bottom = max(top, min(y2, float(media_height)))
+            predictions.append(
+                YoloTrackPrediction(
+                    model_label=model_label,
+                    confidence=confidence,
+                    bbox=YoloBBox(
+                        x=left,
+                        y=top,
+                        width=right - left,
+                        height=bottom - top,
+                    ),
+                    track_id=self._parse_track_id(box),
+                    first_seen_ms=seen_ms,
+                    last_seen_ms=seen_ms,
+                    appearance_count=1,
+                )
+            )
+        return predictions
+
+    def _parse_track_id(self, box) -> int | None:
+        raw_track_id = getattr(box, "id", None)
+        if raw_track_id is None:
+            return None
+        try:
+            if hasattr(raw_track_id, "numel") and raw_track_id.numel() == 0:
+                return None
+            if hasattr(raw_track_id, "tolist"):
+                value = raw_track_id.tolist()
+                if isinstance(value, list):
+                    return int(value[0]) if value else None
+                return int(value)
+            return int(raw_track_id[0])
+        except (TypeError, ValueError, IndexError):
+            return None
 
 
 @lru_cache
