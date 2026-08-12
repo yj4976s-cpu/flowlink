@@ -8,6 +8,7 @@ from PIL import Image
 
 from app.core.config import get_settings
 from app.main import app
+from app.schemas.inference import InferenceBBox, InferenceVideoTrack, VideoInferenceResponse
 from app.services.inference import ImageInferenceService, InferenceModelUnavailableError, get_inference_service
 from app.services.yolo_runtime import YoloBBox, YoloPrediction, YoloRuntime, get_yolo_runtime
 
@@ -35,6 +36,35 @@ class FailingService:
         raise InferenceModelUnavailableError("model unavailable")
 
 
+class FakeVideoService:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def analyze_video_file(self, video_path, *, content_type: str) -> VideoInferenceResponse:
+        self.calls += 1
+        assert video_path.exists()
+        assert content_type == "video/mp4"
+        return VideoInferenceResponse(
+            media_width=640,
+            media_height=360,
+            duration_ms=2000,
+            frame_count=60,
+            fps=30,
+            inference_ms=14.5,
+            tracks=[
+                InferenceVideoTrack(
+                    label="bag",
+                    confidence=0.82,
+                    bbox=InferenceBBox(x=10, y=20, width=100, height=120),
+                    track_id=3,
+                    first_seen_ms=100,
+                    last_seen_ms=1400,
+                    appearance_count=24,
+                )
+            ],
+        )
+
+
 @pytest.fixture(autouse=True)
 def configure_internal_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(get_settings(), "AI_INTERNAL_API_KEY", TEST_INTERNAL_API_KEY)
@@ -59,6 +89,10 @@ def image_payload(*, width: int = 32, height: int = 24, image_format: str = "JPE
 
 def image_file(content: bytes | None = None, content_type: str = "image/jpeg"):
     return {"file": ("sample.jpg", BytesIO(image_payload() if content is None else content), content_type)}
+
+
+def video_file(content: bytes = b"fake-mp4", content_type: str = "video/mp4"):
+    return {"file": ("sample.mp4", BytesIO(content), content_type)}
 
 
 def test_health_does_not_require_model_load(client: TestClient) -> None:
@@ -136,6 +170,48 @@ def test_inference_model_unavailable_returns_503(client: TestClient) -> None:
     assert response.json()["detail"] == "AI model is unavailable"
 
 
+def test_video_inference_streams_temp_file_and_returns_tracks(client: TestClient) -> None:
+    fake_service = FakeVideoService()
+    app.dependency_overrides[get_inference_service] = lambda: fake_service
+
+    response = client.post("/api/inference/videos", files=video_file(), headers=auth_headers())
+
+    assert response.status_code == 200
+    assert fake_service.calls == 1
+    assert response.json() == {
+        "media_width": 640,
+        "media_height": 360,
+        "duration_ms": 2000,
+        "frame_count": 60,
+        "fps": 30.0,
+        "inference_ms": 14.5,
+        "tracks": [
+            {
+                "label": "bag",
+                "confidence": 0.82,
+                "bbox": {"x": 10.0, "y": 20.0, "width": 100.0, "height": 120.0},
+                "track_id": 3,
+                "first_seen_ms": 100,
+                "last_seen_ms": 1400,
+                "appearance_count": 24,
+            }
+        ],
+    }
+
+
+def test_video_inference_rejects_invalid_uploads(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    app.dependency_overrides[get_inference_service] = lambda: FakeVideoService()
+    monkeypatch.setattr(get_settings(), "VIDEO_MAX_BYTES", 4)
+
+    unsupported = client.post("/api/inference/videos", files=video_file(content_type="image/png"), headers=auth_headers())
+    empty = client.post("/api/inference/videos", files=video_file(content=b""), headers=auth_headers())
+    oversized = client.post("/api/inference/videos", files=video_file(content=b"12345"), headers=auth_headers())
+
+    assert unsupported.status_code == 415
+    assert empty.status_code == 400
+    assert oversized.status_code == 413
+
+
 def test_yolo_runtime_is_cached_and_lazy_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = get_settings()
     monkeypatch.setattr(settings, "DETECTION_MODEL", "fake-model.pt")
@@ -171,3 +247,94 @@ def test_yolo_runtime_resolves_models_from_backend_ai_and_repo_paths(tmp_path, m
     assert YoloRuntime(model_path="local.pt", confidence=0.25, imgsz=640)._resolve_model_source() == str(backend_ai_model.resolve())
     assert YoloRuntime(model_path="custom.pt", confidence=0.25, imgsz=640)._resolve_model_source() == str(repo_ai_model.resolve())
     assert YoloRuntime(model_path="ai/team.pt", confidence=0.25, imgsz=640)._resolve_model_source() == str(repo_relative_model.resolve())
+
+
+class FakeTensor:
+    def __init__(self, value):
+        self.value = value
+
+    def tolist(self):
+        return self.value
+
+
+class FakeTrackBox:
+    def __init__(self, *, xyxy, confidence: float, class_id: int, track_id: int | None) -> None:
+        self.xyxy = [FakeTensor(xyxy)]
+        self.conf = [confidence]
+        self.cls = [class_id]
+        self.id = FakeTensor([track_id]) if track_id is not None else None
+
+
+class FakeTrackResult:
+    def __init__(self, boxes) -> None:
+        self.boxes = boxes
+
+
+class FakeTrackModel:
+    names = {0: "bag", 1: "trash"}
+
+    def track(self, **kwargs):
+        assert kwargs["tracker"] == "bytetrack.yaml"
+        assert kwargs["stream"] is True
+        assert kwargs["persist"] is False
+        return [
+            FakeTrackResult([FakeTrackBox(xyxy=[1, 2, 11, 22], confidence=0.44, class_id=0, track_id=7)]),
+            FakeTrackResult([FakeTrackBox(xyxy=[3, 4, 13, 24], confidence=0.91, class_id=0, track_id=7)]),
+            FakeTrackResult([FakeTrackBox(xyxy=[5, 6, 15, 26], confidence=0.72, class_id=1, track_id=None)]),
+            FakeTrackResult([FakeTrackBox(xyxy=[7, 8, 17, 28], confidence=0.62, class_id=1, track_id=None)]),
+        ]
+
+
+class FakeMultipleTrackModel:
+    names = {0: "bag", 1: "trash"}
+
+    def track(self, **kwargs):
+        return [
+            FakeTrackResult(
+                [
+                    FakeTrackBox(xyxy=[1, 2, 11, 22], confidence=0.44, class_id=0, track_id=7),
+                    FakeTrackBox(xyxy=[21, 22, 31, 42], confidence=0.84, class_id=1, track_id=8),
+                    FakeTrackBox(xyxy=[41, 42, 51, 62], confidence=0.74, class_id=1, track_id=None),
+                ]
+            ),
+            FakeTrackResult(
+                [
+                    FakeTrackBox(xyxy=[3, 4, 13, 24], confidence=0.91, class_id=0, track_id=7),
+                    FakeTrackBox(xyxy=[23, 24, 33, 44], confidence=0.64, class_id=1, track_id=8),
+                    FakeTrackBox(xyxy=[43, 44, 53, 64], confidence=0.72, class_id=1, track_id=None),
+                ]
+            ),
+        ]
+
+
+def test_yolo_runtime_tracks_video_with_bytetrack_and_aggregates_valid_tracks(tmp_path) -> None:
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"fake")
+    runtime = YoloRuntime(model_path="fake.pt", confidence=0.5, imgsz=640)
+    runtime._model = FakeTrackModel()
+
+    tracks = runtime.track_video(video_path, fps=10, media_width=100, media_height=80)
+
+    assert len(tracks) == 1
+    assert tracks[0].model_label == "bag"
+    assert tracks[0].track_id == 7
+    assert tracks[0].confidence == 0.91
+    assert tracks[0].bbox == YoloBBox(x=3.0, y=4.0, width=10.0, height=20.0)
+    assert tracks[0].first_seen_ms == 0
+    assert tracks[0].last_seen_ms == 100
+    assert tracks[0].appearance_count == 2
+
+
+def test_yolo_runtime_drops_untracked_detections_and_keeps_distinct_track_ids(tmp_path) -> None:
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"fake")
+    runtime = YoloRuntime(model_path="fake.pt", confidence=0.5, imgsz=640)
+    runtime._model = FakeMultipleTrackModel()
+
+    tracks = runtime.track_video(video_path, fps=10, media_width=100, media_height=80)
+
+    assert [track.track_id for track in tracks] == [7, 8]
+    assert [track.model_label for track in tracks] == ["bag", "trash"]
+    assert all(track.track_id is not None for track in tracks)
+    assert tracks[0].appearance_count == 2
+    assert tracks[1].appearance_count == 2

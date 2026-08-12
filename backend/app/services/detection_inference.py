@@ -138,7 +138,36 @@ class DetectionInferenceService:
         )
 
     def analyze_video(self, media_path: Path) -> DetectionInferenceResult:
-        raise DetectionInferenceUnavailableError("AI detection model is not configured")
+        from app.services.ai_inference_client import AIInferenceUnavailableError
+
+        try:
+            result = self.ai_client.infer_video_file(media_path)
+        except AIInferenceUnavailableError as exc:
+            raise DetectionInferenceUnavailableError("AI detection model is not configured") from exc
+        except RuntimeError as exc:
+            raise RuntimeError("AI detection video could not be decoded") from exc
+
+        detections: list[DetectionPrediction] = []
+        for track in result.tracks:
+            class_code = model_label_to_class_code(track.model_label)
+            if class_code is None:
+                continue
+            detections.append(
+                DetectionPrediction(
+                    class_code=class_code,
+                    confidence=track.confidence,
+                    bbox=track.bbox,
+                    track_id=track.track_id,
+                    first_seen_ms=track.first_seen_ms,
+                    last_seen_ms=track.last_seen_ms,
+                    appearance_count=track.appearance_count,
+                )
+            )
+        return DetectionInferenceResult(
+            media_width=result.media_width,
+            media_height=result.media_height,
+            detections=detections,
+        )
 
 
 def get_inference_service() -> DetectionInferenceService:

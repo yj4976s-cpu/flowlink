@@ -1,14 +1,18 @@
 from typing import Annotated
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import get_settings
 from app.core.security import require_internal_api_key
-from app.schemas.inference import ImageInferenceResponse
+from app.schemas.inference import ImageInferenceResponse, VideoInferenceResponse
 from app.services.inference import ImageInferenceService, InferenceModelUnavailableError, get_inference_service
 
 router = APIRouter(prefix="/api/inference", tags=["inference"])
+VIDEO_CONTENT_TYPES = {"video/mp4"}
+UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 
 @router.post("/images", response_model=ImageInferenceResponse, summary="이미지 YOLO 추론")
@@ -27,3 +31,50 @@ async def infer_image(
     except InferenceModelUnavailableError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI model is unavailable") from exc
 
+
+@router.post("/videos", response_model=VideoInferenceResponse, summary="영상 YOLO ByteTrack 추론")
+async def infer_video(
+    _: Annotated[None, Depends(require_internal_api_key)],
+    service: Annotated[ImageInferenceService, Depends(get_inference_service)],
+    file: Annotated[UploadFile, File(description="추론할 MP4 영상")],
+) -> VideoInferenceResponse:
+    content_type = file.content_type or ""
+    if content_type not in VIDEO_CONTENT_TYPES:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Unsupported media type")
+
+    video_path = await _save_temp_video(file)
+    try:
+        return await run_in_threadpool(
+            service.analyze_video_file,
+            video_path,
+            content_type=content_type,
+        )
+    except InferenceModelUnavailableError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI model is unavailable") from exc
+    finally:
+        video_path.unlink(missing_ok=True)
+
+
+async def _save_temp_video(file: UploadFile) -> Path:
+    settings = get_settings()
+    video_path: Path | None = None
+    total_bytes = 0
+    try:
+        with NamedTemporaryFile(prefix="flowlink-video-", suffix=".mp4", delete=False) as temp_file:
+            video_path = Path(temp_file.name)
+            while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+                total_bytes += len(chunk)
+                if total_bytes > settings.VIDEO_MAX_BYTES:
+                    raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Uploaded file is too large")
+                temp_file.write(chunk)
+    except Exception:
+        if video_path is not None:
+            video_path.unlink(missing_ok=True)
+        raise
+
+    if video_path is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty")
+    if total_bytes == 0:
+        video_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty")
+    return video_path

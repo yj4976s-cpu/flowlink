@@ -217,7 +217,13 @@ async def detect_video(
         media_path.unlink(missing_ok=True)
         raise
     try:
-        process_detection_event(db, event_id=event.id, media_path=media_path, inference_service=inference_service)
+        await run_in_threadpool(
+            process_detection_event,
+            db,
+            event_id=event.id,
+            media_path=media_path,
+            inference_service=inference_service,
+        )
     except DetectionModelUnavailableError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     except Exception as exc:

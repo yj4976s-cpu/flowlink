@@ -20,7 +20,13 @@ from app.core.security import create_access_token, utc_now
 from app.db.session import Base, get_db
 from app.main import app
 from app.models import DetectedObject, DetectionEvent, ObjectClass, User, VideoJob
-from app.services.ai_inference_client import AIInferenceBBox, AIInferencePrediction, AIInferenceResult
+from app.services.ai_inference_client import (
+    AIInferenceBBox,
+    AIInferencePrediction,
+    AIInferenceResult,
+    AIInferenceVideoResult,
+    AIInferenceVideoTrack,
+)
 from app.services.detection_inference import (
     DetectionBBox,
     DetectionInferenceResult,
@@ -72,15 +78,23 @@ class MockWebcamInferenceService(WebcamInferenceService):
 
 
 class FakeAIInferenceClient:
-    def __init__(self, result: AIInferenceResult) -> None:
+    def __init__(self, result: AIInferenceResult, video_result: AIInferenceVideoResult | None = None) -> None:
         self.result = result
+        self.video_result = video_result
         self.file_calls = 0
+        self.video_file_calls = 0
         self.image_calls = 0
 
     def infer_image_file(self, media_path: Path) -> AIInferenceResult:
         self.file_calls += 1
         assert media_path.exists()
         return self.result
+
+    def infer_video_file(self, media_path: Path) -> AIInferenceVideoResult:
+        self.video_file_calls += 1
+        assert media_path.exists()
+        assert self.video_result is not None
+        return self.video_result
 
     def infer_image(self, image: Image.Image) -> AIInferenceResult:
         self.image_calls += 1
@@ -98,6 +112,9 @@ class FailingAIInferenceClient:
         self.error = error
 
     def infer_image_file(self, media_path: Path) -> AIInferenceResult:
+        raise self.error
+
+    def infer_video_file(self, media_path: Path) -> AIInferenceVideoResult:
         raise self.error
 
     def infer_image(self, image: Image.Image) -> AIInferenceResult:
@@ -277,6 +294,97 @@ def test_default_image_inference_uses_backend_ai_client(client: TestClient, db: 
     assert body["media_height"] == 60
     assert body["detected_objects"][0]["class_code"] == "BAG"
     assert body["detected_objects"][0]["confidence"] == 0.87
+
+
+def test_default_video_inference_uses_backend_ai_client_and_preserves_tracks(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    seed_object_class(db, 1, "FOOTWEAR")
+    seed_object_class(db, 2, "BALL")
+    seed_object_class(db, 3, "TRASH", group_code="WASTE")
+    authenticate(client, user)
+    fake_client = FakeAIInferenceClient(
+        AIInferenceResult(media_width=1, media_height=1, inference_ms=0, predictions=[]),
+        video_result=AIInferenceVideoResult(
+            media_width=640,
+            media_height=360,
+            duration_ms=2800,
+            frame_count=84,
+            fps=30,
+            inference_ms=91.4,
+            tracks=[
+                AIInferenceVideoTrack(
+                    model_label="shoe",
+                    confidence=0.88,
+                    bbox=AIInferenceBBox(x=10, y=20, width=100, height=120),
+                    track_id=4,
+                    first_seen_ms=133,
+                    last_seen_ms=2200,
+                    appearance_count=41,
+                ),
+                AIInferenceVideoTrack(
+                    model_label="ball",
+                    confidence=0.77,
+                    bbox=AIInferenceBBox(x=210, y=80, width=40, height=42),
+                    track_id=9,
+                    first_seen_ms=0,
+                    last_seen_ms=900,
+                    appearance_count=18,
+                ),
+                AIInferenceVideoTrack(
+                    model_label="trash",
+                    confidence=0.66,
+                    bbox=AIInferenceBBox(x=300, y=120, width=30, height=33),
+                    track_id=None,
+                    first_seen_ms=400,
+                    last_seen_ms=700,
+                    appearance_count=3,
+                ),
+            ],
+        ),
+    )
+    app.dependency_overrides[get_inference_service] = lambda: DetectionInferenceService(ai_client=fake_client)
+
+    response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
+
+    assert response.status_code == 201
+    assert fake_client.video_file_calls == 1
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+    assert body["media_width"] == 640
+    assert body["media_height"] == 360
+    assert [item["class_code"] for item in body["detected_objects"]] == ["FOOTWEAR", "BALL", "TRASH"]
+    assert body["detected_objects"][0]["track_id"] == 4
+    assert body["detected_objects"][0]["first_seen_ms"] == 133
+    assert body["detected_objects"][0]["last_seen_ms"] == 2200
+    assert body["detected_objects"][0]["appearance_count"] == 41
+    event = db.query(DetectionEvent).one()
+    job = db.query(VideoJob).one()
+    assert event.status == "COMPLETED"
+    assert job.status == "COMPLETED"
+    assert job.processing_progress == 100
+
+
+def test_video_detection_processes_event_through_threadpool(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    override_inference(DetectionInferenceResult(media_width=320, media_height=180, detections=[]))
+    called = {"value": False}
+
+    async def fake_run_in_threadpool(func, *args, **kwargs):
+        called["value"] = True
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr("app.api.detections.run_in_threadpool", fake_run_in_threadpool)
+
+    response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
+
+    assert response.status_code == 201
+    assert called["value"] is True
+    assert response.json()["status"] == "COMPLETED"
 
 
 def test_webcam_inference_uses_backend_ai_client() -> None:

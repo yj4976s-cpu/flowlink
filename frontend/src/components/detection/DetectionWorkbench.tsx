@@ -70,6 +70,11 @@ function formatConfidence(value: number) {
   return `${Math.round(value * 100)}%`;
 }
 
+function formatMilliseconds(value: number | null) {
+  if (value === null) return "";
+  return `${(value / 1000).toFixed(1)}초`;
+}
+
 function validateFile(file: File, tab: DetectionTab) {
   if (tab === "webcam") return "";
   if (tab === "image") {
@@ -117,6 +122,15 @@ function ResultList({ event }: { event: DetectionEvent | null }) {
           <div>
             <strong>{object.class_name_ko}</strong>
             <span>{object.class_code} · {groupLabels[object.group_code] ?? object.group_code}</span>
+            {event.source_type === "VIDEO" && (
+              <small className={styles.trackMeta}>
+                {object.track_id !== null && `Track #${object.track_id} · `}
+                {object.first_seen_ms !== null && object.last_seen_ms !== null
+                  ? `${formatMilliseconds(object.first_seen_ms)} ~ ${formatMilliseconds(object.last_seen_ms)} · `
+                  : ""}
+                {object.appearance_count}프레임에서 확인
+              </small>
+            )}
           </div>
           <em>탐지 신뢰도 {formatConfidence(object.confidence)}</em>
         </li>
@@ -248,6 +262,7 @@ export function DetectionWorkbench() {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
+  const [videoThumbnailUrl, setVideoThumbnailUrl] = useState("");
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
   const [error, setError] = useState("");
   const [currentEvent, setCurrentEvent] = useState<DetectionEvent | null>(null);
@@ -300,6 +315,97 @@ export function DetectionWorkbench() {
     };
   }, []);
 
+  useEffect(() => {
+    if (tab !== "video" || !previewUrl) return;
+
+    let cancelled = false;
+    let captured = false;
+    let candidateTimes: number[] = [];
+    let candidateIndex = 0;
+    const video = document.createElement("video");
+
+    const isMostlyDarkFrame = (context: CanvasRenderingContext2D, width: number, height: number) => {
+      const sampleWidth = Math.min(80, width);
+      const sampleHeight = Math.min(45, height);
+      const sample = context.getImageData(
+        Math.max(0, Math.floor((width - sampleWidth) / 2)),
+        Math.max(0, Math.floor((height - sampleHeight) / 2)),
+        sampleWidth,
+        sampleHeight,
+      ).data;
+
+      let totalBrightness = 0;
+      for (let index = 0; index < sample.length; index += 4) {
+        totalBrightness += (sample[index] + sample[index + 1] + sample[index + 2]) / 3;
+      }
+
+      return totalBrightness / (sample.length / 4) < 18;
+    };
+
+    const seekToNextCandidate = () => {
+      if (cancelled || candidateIndex >= candidateTimes.length) return;
+      try {
+        video.currentTime = candidateTimes[candidateIndex];
+      } catch {
+        candidateIndex += 1;
+        seekToNextCandidate();
+      }
+    };
+
+    const captureThumbnail = () => {
+      if (cancelled || captured || !video.videoWidth || !video.videoHeight) return;
+
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const context = canvas.getContext("2d");
+        if (!context) return;
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        if (isMostlyDarkFrame(context, canvas.width, canvas.height) && candidateIndex < candidateTimes.length - 1) {
+          candidateIndex += 1;
+          seekToNextCandidate();
+          return;
+        }
+
+        captured = true;
+        setVideoThumbnailUrl(canvas.toDataURL("image/jpeg", 0.86));
+      } catch {
+        setVideoThumbnailUrl("");
+      }
+    };
+
+    const handleLoadedMetadata = () => {
+      const duration = video.duration;
+      if (!cancelled) setVideoDuration(Number.isFinite(duration) ? duration : null);
+
+      const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
+      const safeEnd = Math.max(0, safeDuration - 0.2);
+      candidateTimes = safeDuration
+        ? [0.2, 0.5, 0.75, 0.05].map((ratio) => Math.min(safeEnd, Math.max(0, safeDuration * ratio)))
+        : [0];
+      seekToNextCandidate();
+    };
+
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "metadata";
+    video.addEventListener("loadedmetadata", handleLoadedMetadata);
+    video.addEventListener("seeked", captureThumbnail);
+    video.src = previewUrl;
+    video.load();
+
+    return () => {
+      cancelled = true;
+      video.pause();
+      video.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      video.removeEventListener("seeked", captureThumbnail);
+      video.removeAttribute("src");
+      video.load();
+    };
+  }, [previewUrl, tab]);
+
   const replacePreviewUrl = (nextFile: File | null) => {
     if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
     const objectUrl = nextFile ? URL.createObjectURL(nextFile) : "";
@@ -310,6 +416,7 @@ export function DetectionWorkbench() {
   const resetSelectedFile = () => {
     setFile(null);
     setVideoDuration(null);
+    setVideoThumbnailUrl("");
     setCurrentEvent(null);
     setWebcamFrame(null);
     setWebcamStatus("idle");
@@ -330,6 +437,7 @@ export function DetectionWorkbench() {
     const validationMessage = validateFile(nextFile, tab);
     setCurrentEvent(null);
     setVideoDuration(null);
+    setVideoThumbnailUrl("");
     if (validationMessage) {
       setFile(null);
       replacePreviewUrl(null);
@@ -393,6 +501,7 @@ export function DetectionWorkbench() {
       setFile(null);
       replacePreviewUrl(null);
       setVideoDuration(null);
+      setVideoThumbnailUrl("");
       setTab(result.source_type === "VIDEO" ? "video" : "image");
       setWebcamFrame(null);
       setWebcamStatus("idle");
@@ -513,16 +622,14 @@ export function DetectionWorkbench() {
                       {tab === "image" ? (
                         <ImageOverlay previewUrl={previewUrl} event={currentEvent} />
                       ) : (
-                        <div className={styles.previewFrame}>
-                          <video
-                            src={previewUrl}
-                            muted
-                            playsInline
-                            onLoadedMetadata={(event) => {
-                              const duration = event.currentTarget.duration;
-                              setVideoDuration(Number.isFinite(duration) ? duration : null);
-                            }}
-                          />
+                        <div className={`${styles.previewFrame} ${styles.videoPreviewFrame}`}>
+                          {videoThumbnailUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={videoThumbnailUrl} alt="업로드한 영상 썸네일" />
+                          ) : (
+                            <span className={styles.videoThumbnailStatus}>영상 미리보기를 준비 중입니다.</span>
+                          )}
+                          <span className={styles.videoPlayIndicator} aria-hidden="true" />
                           {videoDuration !== null && (
                             <span className={styles.durationBadge}>재생 시간 {Math.round(videoDuration)}초</span>
                           )}
