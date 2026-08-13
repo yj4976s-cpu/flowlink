@@ -39,6 +39,10 @@ type StickyCandidate = {
 const WEBCAM_FRAME_MAX_WIDTH = 640;
 const WEBCAM_FRAME_INTERVAL_MS = 300;
 const WEBCAM_JPEG_QUALITY = 0.8;
+const WEBCAM_REPORT_CROP_MIN_WIDTH = 260;
+const WEBCAM_REPORT_CROP_MIN_HEIGHT = 220;
+const WEBCAM_REPORT_CROP_MAX_WIDTH = 720;
+const WEBCAM_REPORT_CROP_ASPECT = 4 / 3;
 export const WEBCAM_REPORT_CANDIDATE_TTL_MS = 8000;
 const WEBCAM_REPORT_CANDIDATE_LIMIT = 3;
 const reportableClassCodes = new Set(["BAG", "UMBRELLA", "FOOTWEAR", "BALL"]);
@@ -83,6 +87,89 @@ function getCameraErrorMessage(error: unknown) {
 
 function isAbortError(error: unknown) {
   return error instanceof DOMException && error.name === "AbortError";
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, type = "image/jpeg", quality = 0.86) {
+  return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, quality));
+}
+
+async function decodeBlobForCanvas(blob: Blob): Promise<ImageBitmap | HTMLImageElement> {
+  if (typeof createImageBitmap === "function") return createImageBitmap(blob);
+
+  const image = new Image();
+  image.decoding = "async";
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error("Unable to decode webcam frame"));
+      image.src = objectUrl;
+    });
+    return image;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+function closeDecodedImage(source: ImageBitmap | HTMLImageElement) {
+  if ("close" in source) source.close();
+}
+
+async function cropFrameBlobToObject(blob: Blob, object: WebcamDetectionObject, frame: WebcamDetectionFrame) {
+  if (typeof document === "undefined" || !frame.media_width || !frame.media_height) return blob;
+
+  let source: ImageBitmap | HTMLImageElement;
+  try {
+    source = await decodeBlobForCanvas(blob);
+  } catch {
+    return blob;
+  }
+
+  try {
+    const sourceWidth = source.width;
+    const sourceHeight = source.height;
+    if (!sourceWidth || !sourceHeight) return blob;
+
+    const scaleX = sourceWidth / frame.media_width;
+    const scaleY = sourceHeight / frame.media_height;
+    const bboxX = object.bbox.x * scaleX;
+    const bboxY = object.bbox.y * scaleY;
+    const bboxWidth = object.bbox.width * scaleX;
+    const bboxHeight = object.bbox.height * scaleY;
+    if (bboxWidth <= 1 || bboxHeight <= 1) return blob;
+
+    const centerX = bboxX + bboxWidth / 2;
+    const centerY = bboxY + bboxHeight / 2;
+    const padding = Math.max(bboxWidth, bboxHeight) * 0.45;
+    let cropWidth = Math.max(bboxWidth + padding * 2, WEBCAM_REPORT_CROP_MIN_WIDTH);
+    let cropHeight = Math.max(bboxHeight + padding * 2, WEBCAM_REPORT_CROP_MIN_HEIGHT);
+
+    if (cropWidth / cropHeight < WEBCAM_REPORT_CROP_ASPECT) cropWidth = cropHeight * WEBCAM_REPORT_CROP_ASPECT;
+    else cropHeight = cropWidth / WEBCAM_REPORT_CROP_ASPECT;
+
+    cropWidth = Math.min(cropWidth, sourceWidth);
+    cropHeight = Math.min(cropHeight, sourceHeight);
+    const sourceX = clamp(centerX - cropWidth / 2, 0, Math.max(0, sourceWidth - cropWidth));
+    const sourceY = clamp(centerY - cropHeight / 2, 0, Math.max(0, sourceHeight - cropHeight));
+    const outputScale = Math.min(1, WEBCAM_REPORT_CROP_MAX_WIDTH / cropWidth);
+    const outputWidth = Math.max(1, Math.round(cropWidth * outputScale));
+    const outputHeight = Math.max(1, Math.round(cropHeight * outputScale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = outputWidth;
+    canvas.height = outputHeight;
+    const context = canvas.getContext("2d");
+    if (!context) return blob;
+    context.drawImage(source, sourceX, sourceY, cropWidth, cropHeight, 0, 0, outputWidth, outputHeight);
+
+    return (await canvasToBlob(canvas, "image/jpeg", 0.86)) ?? blob;
+  } finally {
+    closeDecodedImage(source);
+  }
 }
 
 function getVideoContentMetrics(container: Size, media: Size) {
@@ -289,13 +376,14 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
         }, new Map<string, WebcamDetectionObject>()).values());
         if (reportable.length) {
           let next = [...candidatesRef.current];
-          reportable.forEach((object) => {
-            const previewUrl = URL.createObjectURL(blob);
-            const candidate = { object, frame: nextFrame, blob, detectedAt, expiresAt, previewUrl };
+          for (const object of reportable) {
+            const reportBlob = await cropFrameBlobToObject(blob, object, nextFrame);
+            const previewUrl = URL.createObjectURL(reportBlob);
+            const candidate = { object, frame: nextFrame, blob: reportBlob, detectedAt, expiresAt, previewUrl };
             const existingIndex = next.findIndex((item) => item.object.class_code === object.class_code);
             if (existingIndex >= 0) next.splice(existingIndex, 1, candidate);
             else next.unshift(candidate);
-          });
+          }
           next = next.sort((a, b) => b.expiresAt - a.expiresAt).slice(0, WEBCAM_REPORT_CANDIDATE_LIMIT);
           replaceCandidates(next);
         }
