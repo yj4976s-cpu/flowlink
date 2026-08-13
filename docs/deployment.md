@@ -67,7 +67,7 @@ Required production values:
 
 - `FRONTEND_URL`: public HTTPS origin for the deployed site.
 - `NEXT_PUBLIC_API_BASE_URL`: public browser-facing API origin. In the Nginx same-origin setup this is usually the same value as `FRONTEND_URL`.
-- `DATABASE_URL`: Supabase PostgreSQL connection string.
+- `DATABASE_URL`: complete Supabase PostgreSQL connection string copied from the Dashboard. The backend accepts `postgresql://` or `postgres://` and selects SQLAlchemy's psycopg 3 dialect automatically; an explicit `postgresql+psycopg://` URL is also accepted. Preserve any query parameters and keep the URI on one line.
 - `JWT_SECRET_KEY`: at least 32 characters.
 - `AI_INTERNAL_API_KEY`: at least 32 characters; must match between backend and backend-ai.
 - `DETECTION_MODEL`: defaults to `/app/models/best.pt`.
