@@ -6,6 +6,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { FlowLinkLogo } from "@/components/common/FlowLinkLogo";
 import { Icon } from "@/components/common/Icon";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
+import { NotificationToastHost } from "@/components/notifications/NotificationToastHost";
 import { AuthUser, getCurrentUser, logout as logoutRequest } from "@/lib/authApi";
 
 const userNavigation = [
@@ -291,6 +292,7 @@ export function Header() {
         </div>
       )}
       {logoutConfirm && currentUser && <LogoutConfirmDialog user={currentUser} pending={logoutPending} error={logoutError} onCancel={continueSession} onConfirm={() => void handleLogout()} />}
+      <NotificationToastHost key={currentUser?.id ?? "guest"} user={currentUser} />
     </header>
   );
 }

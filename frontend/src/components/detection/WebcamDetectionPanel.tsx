@@ -11,6 +11,8 @@ type WebcamDetectionPanelProps = {
   onFrame: (frame: WebcamDetectionFrame | null) => void;
   onStatusChange: (status: WebcamPanelStatus) => void;
   onReportCandidate: (candidate: WebcamReportCandidate) => void;
+  reportModalOpen: boolean;
+  completedReportClassCode: string | null;
 };
 
 type Size = {
@@ -25,9 +27,20 @@ export type WebcamReportCandidate = {
   capturedAt: string;
 };
 
+type StickyCandidate = {
+  object: WebcamDetectionObject;
+  frame: WebcamDetectionFrame;
+  blob: Blob;
+  detectedAt: string;
+  expiresAt: number;
+  previewUrl: string;
+};
+
 const WEBCAM_FRAME_MAX_WIDTH = 640;
 const WEBCAM_FRAME_INTERVAL_MS = 300;
 const WEBCAM_JPEG_QUALITY = 0.8;
+export const WEBCAM_REPORT_CANDIDATE_TTL_MS = 8000;
+const WEBCAM_REPORT_CANDIDATE_LIMIT = 3;
 const reportableClassCodes = new Set(["BAG", "UMBRELLA", "FOOTWEAR", "BALL"]);
 
 const objectLabels: Record<string, string> = {
@@ -107,7 +120,7 @@ function WebcamOverlayBox({
   );
 }
 
-export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidate }: WebcamDetectionPanelProps) {
+export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidate, reportModalOpen, completedReportClassCode }: WebcamDetectionPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
@@ -117,6 +130,8 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
   const abortControllerRef = useRef<AbortController | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(false);
+  const reportModalWasOpenRef = useRef(false);
+  const candidatesRef = useRef<StickyCandidate[]>([]);
 
   const [cameraStatus, setCameraStatus] = useState<WebcamPanelStatus>("idle");
   const [cameraActive, setCameraActive] = useState(false);
@@ -124,7 +139,18 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
   const [previewSize, setPreviewSize] = useState<Size>({ width: 0, height: 0 });
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
-  const [capturingReportKey, setCapturingReportKey] = useState<string | null>(null);
+  const [candidates, setCandidates] = useState<StickyCandidate[]>([]);
+
+  const replaceCandidates = useCallback((next: StickyCandidate[]) => {
+    const retainedUrls = new Set(next.map((candidate) => candidate.previewUrl));
+    candidatesRef.current.forEach((candidate) => {
+      if (!retainedUrls.has(candidate.previewUrl)) URL.revokeObjectURL(candidate.previewUrl);
+    });
+    candidatesRef.current = next;
+    setCandidates(next);
+  }, []);
+
+  const clearCandidates = useCallback(() => replaceCandidates([]), [replaceCandidates]);
 
   useEffect(() => {
     onStatusChange(cameraStatus);
@@ -161,7 +187,8 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
     onFrame(null);
     setExpanded(false);
     setCameraStatus("idle");
-  }, [onFrame, stopDetection, stopStream]);
+    clearCandidates();
+  }, [clearCandidates, onFrame, stopDetection, stopStream]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -174,6 +201,8 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
       stopStream(streamRef.current);
       streamRef.current = null;
       if (videoElement) videoElement.srcObject = null;
+      candidatesRef.current.forEach((candidate) => URL.revokeObjectURL(candidate.previewUrl));
+      candidatesRef.current = [];
     };
   }, [clearPendingRequest, stopStream]);
 
@@ -221,27 +250,14 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
     });
   }, []);
 
-  const captureReportFrame = async (object: WebcamDetectionObject, index: number) => {
-    if (!frame || !isReportableObject(object) || capturingReportKey) return;
-    const reportKey = `${object.class_code}-${index}-${object.bbox.x}-${object.bbox.y}`;
-    setCapturingReportKey(reportKey);
-    setError("");
-    try {
-      const blob = await captureFrame(true);
-      if (!mountedRef.current || !blob) {
-        if (mountedRef.current) setError("제보용 화면을 캡처하지 못했습니다. 카메라 화면을 확인한 뒤 다시 시도해주세요.");
-        return;
-      }
-      const image = new File([blob], `webcam-report-${Date.now()}.jpg`, { type: "image/jpeg" });
-      onReportCandidate({
-        object,
-        frame,
-        image,
-        capturedAt: new Date().toISOString(),
-      });
-    } finally {
-      if (mountedRef.current) setCapturingReportKey(null);
-    }
+  const openReport = (candidate: StickyCandidate) => {
+    stopDetection();
+    const image = new File([candidate.blob], `webcam-report-${Date.parse(candidate.detectedAt)}.jpg`, { type: "image/jpeg" });
+    onReportCandidate({ object: candidate.object, frame: candidate.frame, image, capturedAt: candidate.detectedAt });
+  };
+
+  const dismissCandidate = (classCode: string | null) => {
+    replaceCandidates(candidatesRef.current.filter((candidate) => candidate.object.class_code !== classCode));
   };
 
   function runDetectionLoop(generation: number) {
@@ -263,6 +279,26 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
         setFrame(nextFrame);
         onFrame(nextFrame);
         setError("");
+        const detectedAt = new Date().toISOString();
+        const expiresAt = Date.now() + WEBCAM_REPORT_CANDIDATE_TTL_MS;
+        const reportable = Array.from(nextFrame.detected_objects.filter(isReportableObject).reduce((byClass, object) => {
+          const classCode = object.class_code as string;
+          const current = byClass.get(classCode);
+          if (!current || object.confidence > current.confidence) byClass.set(classCode, object);
+          return byClass;
+        }, new Map<string, WebcamDetectionObject>()).values());
+        if (reportable.length) {
+          let next = [...candidatesRef.current];
+          reportable.forEach((object) => {
+            const previewUrl = URL.createObjectURL(blob);
+            const candidate = { object, frame: nextFrame, blob, detectedAt, expiresAt, previewUrl };
+            const existingIndex = next.findIndex((item) => item.object.class_code === object.class_code);
+            if (existingIndex >= 0) next.splice(existingIndex, 1, candidate);
+            else next.unshift(candidate);
+          });
+          next = next.sort((a, b) => b.expiresAt - a.expiresAt).slice(0, WEBCAM_REPORT_CANDIDATE_LIMIT);
+          replaceCandidates(next);
+        }
       } catch (caught) {
         if (isAbortError(caught) || !mountedRef.current || generation !== loopGenerationRef.current) return;
         const message = caught instanceof DetectionApiError ? caught.message : "실시간 웹캠 탐지를 처리하지 못했습니다.";
@@ -345,6 +381,32 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
     runDetectionLoop(generation);
   };
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      if (candidatesRef.current.some((candidate) => candidate.expiresAt <= now)) {
+        replaceCandidates(candidatesRef.current.filter((candidate) => candidate.expiresAt > now));
+      }
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [replaceCandidates]);
+
+  useEffect(() => {
+    if (!completedReportClassCode) return;
+    const timer = window.setTimeout(() => replaceCandidates(candidatesRef.current.filter((candidate) => candidate.object.class_code !== completedReportClassCode)), 0);
+    return () => window.clearTimeout(timer);
+  }, [completedReportClassCode, replaceCandidates]);
+
+  useEffect(() => {
+    if (reportModalOpen) reportModalWasOpenRef.current = true;
+    else if (reportModalWasOpenRef.current) {
+      reportModalWasOpenRef.current = false;
+      if (streamRef.current && cameraStatus === "ready") startDetection();
+    }
+  // startDetection intentionally uses the latest render state when the modal closes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameraStatus, reportModalOpen]);
+
   const metrics = useMemo(
     () => (frame ? getVideoContentMetrics(previewSize, { width: frame.media_width, height: frame.media_height }) : null),
     [frame, previewSize],
@@ -412,27 +474,20 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
         )}
       </div>
 
-      {frame?.detected_objects.some(isReportableObject) && (
+      {candidates.length > 0 && (
         <div className={styles.webcamReportPanel}>
           <div>
             <strong>발견 제보로 연결할 수 있는 후보가 있어요.</strong>
-            <span>제보 버튼을 누르는 순간의 프레임 한 장만 첨부합니다.</span>
+            <span>AI가 실제 탐지한 프레임을 8초 동안 안전하게 보관합니다.</span>
           </div>
           <div className={styles.webcamReportActions}>
-            {frame.detected_objects.map((object, index) => {
-              if (!isReportableObject(object)) return null;
-              const reportKey = `${object.class_code}-${index}-${object.bbox.x}-${object.bbox.y}`;
-              return (
-                <button
-                  key={reportKey}
-                  type="button"
-                  onClick={() => void captureReportFrame(object, index)}
-                  disabled={capturingReportKey !== null}
-                >
-                  {capturingReportKey === reportKey ? "캡처 중..." : `${getDisplayLabel(object)} 발견 제보하기`}
-                </button>
-              );
-            })}
+            {candidates.map((candidate) => <article key={candidate.object.class_code} className={styles.webcamCandidateCard}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={candidate.previewUrl} alt={`${getDisplayLabel(candidate.object)} 탐지 프레임`} />
+              <div><strong>{getDisplayLabel(candidate.object)} 후보를 발견했어요</strong><span>AI 탐지 신뢰도 {formatConfidence(candidate.object.confidence)}</span></div>
+              <button type="button" onClick={() => openReport(candidate)}>발견 제보하기</button>
+              <button type="button" className={styles.webcamCandidateClose} aria-label={`${getDisplayLabel(candidate.object)} 후보 닫기`} onClick={() => dismissCandidate(candidate.object.class_code)}><Icon name="close" size={15} /></button>
+            </article>)}
           </div>
         </div>
       )}
