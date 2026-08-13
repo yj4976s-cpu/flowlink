@@ -14,6 +14,7 @@ from app.db.session import Base, get_db
 from app.main import app
 from app.models import Camera, DetectedObject, DetectionEvent, FoundItem, LostReport, MatchCandidate, Notification, ObjectClass, OwnershipClaim, ProcessingHistory, User, VideoJob
 from app.services.matching import create_match_candidates_for_found_item, reconcile_match_candidates_for_found_item
+from app.services.geocoding import Coordinates
 
 
 @pytest.fixture
@@ -88,6 +89,22 @@ def test_ai_orm_models_and_found_item_detection_fk_match_database_contract() -> 
     foreign_key = next(iter(column.foreign_keys))
     assert foreign_key.target_fullname == "detected_objects.id"
     assert foreign_key.ondelete == "SET NULL"
+
+
+def test_recovered_found_item_is_automatically_geocoded_for_map(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    now = datetime(2026, 1, 2, tzinfo=UTC)
+    seed_admin(db)
+    db.add(ObjectClass(id=1, code="BAG", name_ko="가방", group_code="PERSONAL_ITEM", display_order=1, is_active=True, created_at=now, updated_at=now))
+    db.add(FoundItem(id=3, object_class_id=1, registered_by=1, source_type="ADMIN", area_name="서울시청", found_at=now, status="AVAILABLE", is_public=True, created_at=now, updated_at=now))
+    db.commit(); login(client)
+    monkeypatch.setattr(admin_api, "geocode_location", lambda query: Coordinates(latitude=37.5663, longitude=126.9779))
+
+    response = client.patch("/api/admin/found-items/3", json={"status": "RECOVERED"})
+
+    assert response.status_code == 200
+    item = db.get(FoundItem, 3)
+    assert item.latitude == Decimal("37.5663") and item.longitude == Decimal("126.9779")
+    assert [entry["id"] for entry in client.get("/api/found-items/map").json()] == [3]
 
 
 def test_detection_list_empty(client: TestClient, db: Session) -> None:

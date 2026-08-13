@@ -34,6 +34,7 @@ from app.services.detection_inference import DetectionInferenceService, get_infe
 from app.services.detections import DetectionModelUnavailableError, create_operation_detection_event, process_detection_event
 from app.services.color_estimation import normalize_item_color
 from app.services.matching import reconcile_match_candidates_for_found_item
+from app.services.geocoding import GeocodingError, geocode_location
 from app.api.detections import IMAGE_CONTENT_TYPES, IMAGE_MAX_BYTES, save_upload_file
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -232,6 +233,15 @@ def update_found_item(
         item.storage_location = clean_optional_text(request.storage_location)
     if request.admin_memo is not None:
         item.admin_memo = clean_optional_text(request.admin_memo)
+    if item.status == "RECOVERED" and (item.latitude is None or item.longitude is None):
+        try:
+            coordinates = geocode_location(item.area_name)
+        except GeocodingError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="발견 위치를 지도 좌표로 변환하지 못했습니다.") from exc
+        if coordinates is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="발견 위치를 지도에서 찾을 수 없습니다. 발견 지역을 확인해 주세요.")
+        item.latitude = coordinates.latitude
+        item.longitude = coordinates.longitude
     item.updated_at = utc_now()
     db.add(ProcessingHistory(actor_user_id=current_admin.id, entity_type="FOUND_ITEM", entity_id=item.id, action_type="FOUND_ITEM_UPDATED", previous_status=previous_status, new_status=item.status, note=item.admin_memo, created_at=item.updated_at))
     db.commit()
