@@ -64,6 +64,7 @@ NEXT_PUBLIC_KAKAO_MAP_KEY=
 ```
 
 Kakao 지도는 REST API 키가 아니라 JavaScript 키를 사용합니다. 로컬 개발 시 Kakao Developers의 JavaScript 키를 `NEXT_PUBLIC_KAKAO_MAP_JS_KEY`에 넣고, 허용 도메인에 `http://localhost:3000`을 등록해주세요.
+Frontend의 `NEXT_PUBLIC_KAKAO_MAP_JS_KEY`는 브라우저 지도 렌더링용 JavaScript 키이고, Backend의 `KAKAO_REST_API_KEY`는 관리자 회수 물품 좌표 보정을 위한 Kakao Local API 주소/키워드 검색 REST 키입니다.
 
 운영 Frontend는 배포된 Backend HTTPS origin을 사용합니다.
 
@@ -88,6 +89,7 @@ SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 SUPABASE_STORAGE_BUCKET=
 FRONTEND_URL=http://localhost:3000
+KAKAO_REST_API_KEY=
 AI_SERVICE_URL=http://127.0.0.1:8001
 AI_INTERNAL_API_KEY=
 AI_SERVICE_TIMEOUT_SECONDS=30

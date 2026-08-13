@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { createRoot, type Root } from "react-dom/client";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/common/Icon";
 import { FoundItemMapItem, listMapFoundItems, resolveFoundItemImageUrl } from "@/lib/foundItemsApi";
@@ -112,9 +113,18 @@ function createMarkerElement(item: FoundItemMapItem, selected: boolean, onSelect
   return marker;
 }
 
+function OverlayLinkContent() {
+  return (
+    <>
+      <span>발견물 자세히 보기</span>
+      <Icon name="chevronRight" size={15} />
+    </>
+  );
+}
+
 function createSelectedOverlayContent(item: FoundItemMapItem) {
-  const root = document.createElement("article");
-  root.className = styles.selectedOverlay;
+  const container = document.createElement("article");
+  container.className = styles.selectedOverlay;
 
   const imageUrl = getImageUrl(item);
   const visual = document.createElement("div");
@@ -130,7 +140,7 @@ function createSelectedOverlayContent(item: FoundItemMapItem) {
   } else {
     visual.appendChild(createTextElement("span", styles.overlayFallback, getCategoryInitial(item)));
   }
-  root.appendChild(visual);
+  container.appendChild(visual);
 
   const body = document.createElement("div");
   const status = createTextElement("span", styles.overlayStatus, statusLabels[item.status] ?? item.status);
@@ -139,11 +149,13 @@ function createSelectedOverlayContent(item: FoundItemMapItem) {
   const meta = createTextElement("small", "", formatFoundAt(item.found_at));
   const link = document.createElement("a");
   link.href = `/found-items/${item.id}`;
-  link.textContent = "발견물 자세히 보기 →";
+  link.className = styles.overlayLink;
+  const root = createRoot(link);
+  root.render(<OverlayLinkContent />);
   body.append(status, title, area, meta, link);
-  root.appendChild(body);
+  container.appendChild(body);
 
-  return root;
+  return { container, root };
 }
 
 function AreaPicker({ value, options, onChange, onSelect }: { value: string; options: string[]; onChange: (value: string) => void; onSelect: (value: string) => void }) {
@@ -233,6 +245,7 @@ export function FoundItemMapClient() {
   const markerOverlaysRef = useRef<Map<number, KakaoCustomOverlay>>(new Map());
   const markerElementsRef = useRef<Map<number, HTMLElement>>(new Map());
   const selectedOverlayRef = useRef<KakaoCustomOverlay | null>(null);
+  const selectedOverlayRootRef = useRef<Root | null>(null);
   const listItemRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
   const selectionSourceRef = useRef<SelectionSource>("list");
 
@@ -431,15 +444,19 @@ export function FoundItemMapClient() {
 
     selectedOverlayRef.current?.setMap(null);
     selectedOverlayRef.current = null;
+    selectedOverlayRootRef.current?.unmount();
+    selectedOverlayRootRef.current = null;
 
     const map = mapRef.current;
     const maps = mapsRef.current;
     if (!map || !maps || !selectedItem) return;
 
     const position = new maps.LatLng(selectedItem.latitude, selectedItem.longitude);
+    const overlayContent = createSelectedOverlayContent(selectedItem);
+    selectedOverlayRootRef.current = overlayContent.root;
     selectedOverlayRef.current = new maps.CustomOverlay({
       position,
-      content: createSelectedOverlayContent(selectedItem),
+      content: overlayContent.container,
       yAnchor: 1.72,
       zIndex: 4,
     });
@@ -450,6 +467,11 @@ export function FoundItemMapClient() {
       listItemRefs.current.get(selectedItem.id)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
   }, [activeItemId, selectedItem]);
+
+  useEffect(() => () => {
+    selectedOverlayRef.current?.setMap(null);
+    selectedOverlayRootRef.current?.unmount();
+  }, []);
 
   useEffect(() => {
     if (!mapReady) return;

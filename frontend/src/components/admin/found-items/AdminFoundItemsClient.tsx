@@ -5,7 +5,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Icon } from "@/components/common/Icon";
-import { AdminFoundItemsApiError, updateAdminFoundItem } from "@/lib/adminFoundItemsApi";
+import { AdminFoundItemsApiError, updateAdminFoundItem, type AdminFoundItemUpdate } from "@/lib/adminFoundItemsApi";
 import {
   getFoundItem,
   listFoundItems,
@@ -183,6 +183,9 @@ export function AdminFoundItemsClient() {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
+  const [area, setArea] = useState("");
+  const [latitude, setLatitude] = useState("");
+  const [longitude, setLongitude] = useState("");
   const [storage, setStorage] = useState("");
   const [memo, setMemo] = useState("");
   const [message, setMessage] = useState("");
@@ -192,7 +195,10 @@ export function AdminFoundItemsClient() {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   const filtersActive = Boolean(query || categoryFilter || statusFilter || dateFilter);
-  const dirty = Boolean(selected && (status !== selected.status || storage.trim() || memo.trim()));
+  const locationDirty = Boolean(
+    selected && (area.trim() !== selected.area_name || latitude.trim() || longitude.trim()),
+  );
+  const dirty = Boolean(selected && (status !== selected.status || locationDirty || storage.trim() || memo.trim()));
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -225,11 +231,15 @@ export function AdminFoundItemsClient() {
     setStorage("");
     setMemo("");
     setStatus(item.status);
+    setArea(item.area_name);
+    setLatitude("");
+    setLongitude("");
     setSelected({ ...item, created_at: item.found_at });
     try {
       const detail = await getFoundItem(String(item.id));
       setSelected(detail);
       setStatus(detail.status);
+      setArea(detail.area_name);
     } catch {
       setSelected({ ...item, created_at: item.found_at });
       setSaveError("상세 정보를 다시 불러오지 못해 목록의 최신 정보로 표시합니다.");
@@ -246,6 +256,9 @@ export function AdminFoundItemsClient() {
   const applyClose = useCallback(() => {
     setSelected(null);
     setStatus("");
+    setArea("");
+    setLatitude("");
+    setLongitude("");
     setStorage("");
     setMemo("");
     setMessage("");
@@ -279,17 +292,33 @@ export function AdminFoundItemsClient() {
     setMessage("");
     setSaveError("");
     try {
-      const update: { status?: string; storage_location?: string; admin_memo?: string } = {};
+      const update: AdminFoundItemUpdate = {};
       if (status !== selected.status) update.status = status;
+      if (area.trim() !== selected.area_name) update.area_name = area.trim();
+      if (latitude.trim()) {
+        const parsedLatitude = Number(latitude);
+        if (!Number.isFinite(parsedLatitude)) throw new AdminFoundItemsApiError("위도는 숫자로 입력해 주세요.");
+        update.latitude = parsedLatitude;
+      }
+      if (longitude.trim()) {
+        const parsedLongitude = Number(longitude);
+        if (!Number.isFinite(parsedLongitude)) throw new AdminFoundItemsApiError("경도는 숫자로 입력해 주세요.");
+        update.longitude = parsedLongitude;
+      }
       if (storage.trim()) update.storage_location = storage.trim();
       if (memo.trim()) update.admin_memo = memo.trim();
       await updateAdminFoundItem(selected.id, update);
       setPageMessage(`발견물 #${selected.id}의 관리 정보를 저장했습니다.`);
       setStorage("");
       setMemo("");
+      setLatitude("");
+      setLongitude("");
       setMessage("변경사항을 저장했습니다.");
       const updatedStatus = status;
-      setSelected((current) => current ? { ...current, status: updatedStatus } : current);
+      const updatedArea = area.trim();
+      setSelected((current) => current
+        ? { ...current, status: updatedStatus, area_name: updatedArea || current.area_name }
+        : current);
       await load();
       if (updatedStatus !== "RECOVERED" && updatedStatus !== "AVAILABLE") applyClose();
     } catch (reason) {
@@ -378,11 +407,16 @@ export function AdminFoundItemsClient() {
               </section>
 
               <section className={styles.editSection} aria-labelledby="found-edit-title">
-                <div className={styles.sectionTitle}><span>B</span><div><h3 id="found-edit-title">관리 정보</h3><p>기존 관리자 PATCH API 지원 범위</p></div></div>
+                <div className={styles.sectionTitle}><span>B</span><div><h3 id="found-edit-title">관리 정보</h3><p>회수 상태와 지도 표시 위치를 함께 보정합니다.</p></div></div>
                 <label><span>상태</span><CustomSelect label="발견물 상태" value={status} options={statuses} onChange={setStatus} disabled={saving} /></label>
+                <label><span>발견 지역</span><input value={area} onChange={(event) => { setArea(event.target.value); setSaveError(""); }} maxLength={100} disabled={saving} placeholder="예: 수원역 4번 출구" /></label>
+                <div className={styles.coordinateGrid}>
+                  <label><span>위도 <i>선택</i></span><input value={latitude} onChange={(event) => { setLatitude(event.target.value); setSaveError(""); }} inputMode="decimal" disabled={saving} placeholder="예: 37.2656" /></label>
+                  <label><span>경도 <i>선택</i></span><input value={longitude} onChange={(event) => { setLongitude(event.target.value); setSaveError(""); }} inputMode="decimal" disabled={saving} placeholder="예: 127.0001" /></label>
+                </div>
                 <label><span>보관 위치 <i>변경할 때만 입력</i></span><input value={storage} onChange={(event) => { setStorage(event.target.value); setSaveError(""); }} maxLength={255} disabled={saving} placeholder="예: 관리실 보관함 A-3" /></label>
                 <label><span>관리자 메모 <i>변경할 때만 입력</i></span><textarea value={memo} onChange={(event) => { setMemo(event.target.value); setSaveError(""); }} maxLength={2000} disabled={saving} placeholder="처리 과정에서 필요한 메모" rows={4} /></label>
-                <p className={styles.contractNotice}><Icon name="info" size={17} />공개 조회 API는 기존 보관 위치와 관리자 메모를 제공하지 않습니다. 빈 입력은 기존 서버 값을 변경하지 않습니다.</p>
+                <p className={styles.contractNotice}><Icon name="info" size={17} />좌표를 직접 입력하면 Kakao 검색 없이 저장합니다. 좌표를 비우고 회수 확인으로 저장하면 발견 지역으로 지도 좌표를 검색합니다.</p>
                 {message && <p className={styles.success} role="status">{message}</p>}
                 {saveError && <p className={styles.saveError} role="alert">{saveError}</p>}
               </section>

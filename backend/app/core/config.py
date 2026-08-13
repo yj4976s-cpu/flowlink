@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     SUPABASE_SERVICE_ROLE_KEY: str = ""
     SUPABASE_STORAGE_BUCKET: str = ""
     FRONTEND_URL: str = DEFAULT_FRONTEND_URL
+    KAKAO_REST_API_KEY: str = ""
     AI_SERVICE_URL: str = "http://127.0.0.1:8001"
     AI_INTERNAL_API_KEY: str = ""
     AI_SERVICE_TIMEOUT_SECONDS: float = 30.0

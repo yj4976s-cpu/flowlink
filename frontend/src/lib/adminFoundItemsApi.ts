@@ -1,5 +1,8 @@
 export type AdminFoundItemUpdate = {
   status?: string;
+  area_name?: string;
+  latitude?: number;
+  longitude?: number;
   storage_location?: string;
   admin_memo?: string;
 };
@@ -25,13 +28,15 @@ export async function updateAdminFoundItem(id: number, update: AdminFoundItemUpd
     body: JSON.stringify(update),
   });
   if (!response.ok) {
-    const message = response.status === 403
+    let serverDetail = "";
+    try { serverDetail = ((await response.json()) as { detail?: string }).detail ?? ""; } catch { /* fallback below */ }
+    const message = serverDetail || (response.status === 403
       ? "관리자 권한이 필요합니다."
       : response.status === 404
         ? "발견물을 찾을 수 없습니다."
         : response.status === 422
           ? "현재 상태로 변경할 수 없습니다."
-          : "발견물 관리 정보를 저장하지 못했습니다.";
+          : "발견물 관리 정보를 저장하지 못했습니다.");
     throw new AdminFoundItemsApiError(message, response.status);
   }
   return response.json() as Promise<{ message: string }>;

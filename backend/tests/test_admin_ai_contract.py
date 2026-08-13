@@ -9,11 +9,13 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.api.admin as admin_api
+import app.services.geocoding as geocoding_service
 from app.core.security import hash_password
 from app.db.session import Base, get_db
 from app.main import app
 from app.models import Camera, DetectedObject, DetectionEvent, FoundItem, LostReport, MatchCandidate, Notification, ObjectClass, OwnershipClaim, ProcessingHistory, User, VideoJob
 from app.services.matching import create_match_candidates_for_found_item, reconcile_match_candidates_for_found_item
+from app.services.geocoding import Coordinates
 
 
 @pytest.fixture
@@ -78,6 +80,47 @@ def seed_waste_detection(db: Session, *, object_id: int = 30, event_id: int = 40
     db.commit()
 
 
+def seed_admin_found_item(
+    db: Session,
+    *,
+    item_id: int = 3,
+    area_name: str = "서울시청",
+    latitude: Decimal | None = None,
+    longitude: Decimal | None = None,
+) -> FoundItem:
+    now = datetime(2026, 1, 2, tzinfo=UTC)
+    if db.get(ObjectClass, 1) is None:
+        db.add(
+            ObjectClass(
+                id=1,
+                code="BAG",
+                name_ko="가방",
+                group_code="PERSONAL_ITEM",
+                display_order=1,
+                is_active=True,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    item = FoundItem(
+        id=item_id,
+        object_class_id=1,
+        registered_by=1,
+        source_type="ADMIN",
+        area_name=area_name,
+        latitude=latitude,
+        longitude=longitude,
+        found_at=now,
+        status="AVAILABLE",
+        is_public=True,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(item)
+    db.commit()
+    return item
+
+
 def test_ai_orm_models_and_found_item_detection_fk_match_database_contract() -> None:
     assert Camera.__tablename__ == "cameras"
     assert DetectionEvent.__tablename__ == "detection_events"
@@ -88,6 +131,184 @@ def test_ai_orm_models_and_found_item_detection_fk_match_database_contract() -> 
     foreign_key = next(iter(column.foreign_keys))
     assert foreign_key.target_fullname == "detected_objects.id"
     assert foreign_key.ondelete == "SET NULL"
+
+
+def test_recovered_found_item_is_automatically_geocoded_for_map(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_admin(db)
+    seed_admin_found_item(db)
+    login(client)
+    monkeypatch.setattr(admin_api, "geocode_location", lambda query: Coordinates(latitude=37.5663, longitude=126.9779))
+
+    response = client.patch("/api/admin/found-items/3", json={"status": "RECOVERED"})
+
+    assert response.status_code == 200
+    item = db.get(FoundItem, 3)
+    assert item.latitude == Decimal("37.5663") and item.longitude == Decimal("126.9779")
+    assert [entry["id"] for entry in client.get("/api/found-items/map").json()] == [3]
+
+
+def test_recovered_found_item_with_existing_coordinates_skips_geocoding(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed_admin(db)
+    seed_admin_found_item(db, latitude=Decimal("37.500000"), longitude=Decimal("127.000000"))
+    login(client)
+
+    def fail_geocoding(query: str):
+        raise AssertionError(f"geocoding should not be called for {query}")
+
+    monkeypatch.setattr(admin_api, "geocode_location", fail_geocoding)
+
+    response = client.patch("/api/admin/found-items/3", json={"status": "RECOVERED"})
+
+    assert response.status_code == 200
+    item = db.get(FoundItem, 3)
+    assert item.status == "RECOVERED"
+    assert item.latitude == Decimal("37.500000")
+    assert item.longitude == Decimal("127.000000")
+
+
+def test_recovered_found_item_without_kakao_key_rolls_back(
+    client: TestClient,
+    db: Session,
+) -> None:
+    seed_admin(db)
+    seed_admin_found_item(db)
+    login(client)
+
+    response = client.patch("/api/admin/found-items/3", json={"status": "RECOVERED"})
+
+    assert response.status_code == 503
+    assert "KAKAO_REST_API_KEY" in response.json()["detail"]
+    item = db.get(FoundItem, 3)
+    assert item.status == "AVAILABLE"
+    assert item.latitude is None and item.longitude is None
+    assert db.query(ProcessingHistory).filter_by(entity_type="FOUND_ITEM", entity_id=3).count() == 0
+
+
+def test_recovered_found_item_unmatched_geocoding_rolls_back(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed_admin(db)
+    seed_admin_found_item(db)
+    login(client)
+    monkeypatch.setattr(admin_api, "geocode_location", lambda query: None)
+
+    response = client.patch("/api/admin/found-items/3", json={"status": "RECOVERED"})
+
+    assert response.status_code == 422
+    assert "위도/경도" in response.json()["detail"]
+    item = db.get(FoundItem, 3)
+    assert item.status == "AVAILABLE"
+    assert item.latitude is None and item.longitude is None
+    assert db.query(ProcessingHistory).filter_by(entity_type="FOUND_ITEM", entity_id=3).count() == 0
+
+
+def test_recovered_found_item_uses_keyword_fallback_after_address_miss(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed_admin(db)
+    seed_admin_found_item(db, area_name="수원역")
+    login(client)
+    monkeypatch.setattr(geocoding_service.get_settings(), "KAKAO_REST_API_KEY", "test-rest-key")
+    requested_paths: list[str] = []
+
+    class FakeKakaoResponse:
+        def __init__(self, documents: list[dict[str, str]]) -> None:
+            self._documents = documents
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, list[dict[str, str]]]:
+            return {"documents": self._documents}
+
+    class FakeKakaoClient:
+        def __init__(self, timeout: int) -> None:
+            assert timeout == 8
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            return None
+
+        def get(self, url: str, **kwargs):
+            assert kwargs["params"] == {"query": "수원역", "size": 1}
+            requested_paths.append(url.rsplit("/", 1)[-1])
+            if url.endswith("search/address.json"):
+                return FakeKakaoResponse([])
+            return FakeKakaoResponse([{"y": "37.2656", "x": "127.0001"}])
+
+    monkeypatch.setattr(geocoding_service.httpx, "Client", FakeKakaoClient)
+
+    response = client.patch("/api/admin/found-items/3", json={"status": "RECOVERED"})
+
+    assert response.status_code == 200
+    assert requested_paths == ["address.json", "keyword.json"]
+    item = db.get(FoundItem, 3)
+    assert item.status == "RECOVERED"
+    assert item.latitude == Decimal("37.2656")
+    assert item.longitude == Decimal("127.0001")
+
+
+def test_found_item_update_area_name_then_geocodes(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed_admin(db)
+    seed_admin_found_item(db, area_name="오래된 위치")
+    login(client)
+
+    def geocode_updated_area(query: str) -> Coordinates:
+        assert query == "수원역 4번 출구"
+        return Coordinates(latitude=37.266, longitude=127.001)
+
+    monkeypatch.setattr(admin_api, "geocode_location", geocode_updated_area)
+
+    response = client.patch(
+        "/api/admin/found-items/3",
+        json={"status": "RECOVERED", "area_name": "수원역 4번 출구"},
+    )
+
+    assert response.status_code == 200
+    item = db.get(FoundItem, 3)
+    assert item.area_name == "수원역 4번 출구"
+    assert item.latitude == Decimal("37.266")
+    assert item.longitude == Decimal("127.001")
+
+
+def test_found_item_manual_coordinates_skip_geocoding(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed_admin(db)
+    seed_admin_found_item(db)
+    login(client)
+
+    def fail_geocoding(query: str):
+        raise AssertionError(f"geocoding should not be called for {query}")
+
+    monkeypatch.setattr(admin_api, "geocode_location", fail_geocoding)
+
+    response = client.patch(
+        "/api/admin/found-items/3",
+        json={"status": "RECOVERED", "latitude": 37.123456, "longitude": 127.654321},
+    )
+
+    assert response.status_code == 200
+    item = db.get(FoundItem, 3)
+    assert item.status == "RECOVERED"
+    assert item.latitude == Decimal("37.123456")
+    assert item.longitude == Decimal("127.654321")
 
 
 def test_detection_list_empty(client: TestClient, db: Session) -> None:
