@@ -155,14 +155,61 @@ Certbot runs on the EC2 host and manages the certificate under `/etc/letsencrypt
 /etc/letsencrypt/live/flowlink-project.duckdns.org/privkey.pem
 ```
 
-The host directory `certbot/www` is mounted read-only at `/var/www/certbot` in Nginx. Renew with the repository root as the current directory so Certbot and the container share the same webroot:
+The host directory `/home/ubuntu/flowlink/certbot/www` is mounted read-only at `/var/www/certbot` in Nginx. Nginx serves `/.well-known/acme-challenge/` from this directory over HTTP.
+
+### One-time EC2 renewal migration
+
+The certificate was initially issued with Certbot's `standalone` authenticator. Run this migration once after the production stack is running so future renewals do not try to bind host port 80.
+
+First confirm that Certbot reports the expected certificate name:
 
 ```bash
-sudo certbot renew --webroot -w "$(pwd)/certbot/www"
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml exec reverse-proxy nginx -s reload
+sudo certbot certificates
 ```
 
-Nginx serves `/.well-known/acme-challenge/` from this webroot over HTTP. Do not commit generated challenge tokens, certificates, or private keys.
+With Certbot 5.x, `reconfigure` accepts both `--authenticator webroot` and `--webroot-path`. It performs a staging renewal test and saves the new renewal options only when that test succeeds:
+
+```bash
+sudo certbot reconfigure \
+  --cert-name flowlink-project.duckdns.org \
+  --authenticator webroot \
+  --webroot-path /home/ubuntu/flowlink/certbot/www
+```
+
+After this succeeds, ordinary `certbot renew` runs reuse the saved `webroot` authenticator and path; do not manually edit `/etc/letsencrypt/renewal/flowlink-project.duckdns.org.conf`. See the [Certbot renewal configuration documentation](https://eff-certbot.readthedocs.io/en/stable/using.html#modifying-the-renewal-configuration-of-existing-certificates).
+
+### Reload Nginx after a successful renewal
+
+Certbot deploy hooks run only after a certificate is successfully issued or renewed. Install a root-owned executable hook so the running Nginx container reloads the updated files from the read-only `/etc/letsencrypt` mount:
+
+```bash
+sudo install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
+sudo tee /etc/letsencrypt/renewal-hooks/deploy/flowlink-nginx-reload >/dev/null <<'EOF'
+#!/bin/sh
+set -eu
+cd /home/ubuntu/flowlink
+exec /usr/bin/docker compose --env-file .env.production \
+  -f compose.yaml -f compose.prod.yaml \
+  exec -T reverse-proxy nginx -s reload
+EOF
+sudo chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/flowlink-nginx-reload
+```
+
+Confirm that Docker is installed at `/usr/bin/docker`; adjust the absolute path in the hook if `command -v docker` reports a different location. Test the hook once against the currently running container:
+
+```bash
+sudo /etc/letsencrypt/renewal-hooks/deploy/flowlink-nginx-reload
+```
+
+Finally, verify the saved webroot renewal configuration with Let's Encrypt's staging environment:
+
+```bash
+sudo certbot renew --dry-run
+```
+
+A normal dry run validates renewal but does not execute deploy hooks unless `--run-deploy-hooks` is also supplied, so the manual hook test above is intentional. The host's Certbot systemd timer can then continue running ordinary `certbot renew`; no Nginx stop/start hooks are needed. See the [Certbot deploy hook documentation](https://eff-certbot.readthedocs.io/en/stable/using.html#renewing-certificates).
+
+Do not commit generated challenge tokens, certificates, private keys, renewal configuration, or hook files; all remain host-managed under `/etc/letsencrypt` or the ignored `certbot/www` contents.
 
 ## URLs to check
 
