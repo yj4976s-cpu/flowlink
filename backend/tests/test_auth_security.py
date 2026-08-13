@@ -193,7 +193,13 @@ def test_production_settings_require_non_default_database_url() -> None:
 
 @pytest.mark.parametrize(
     "frontend_url",
-    ["", "http://localhost:3000", "http://127.0.0.1:3000"],
+    [
+        "",
+        "flowlink.example",
+        "http://flowlink.example",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
 )
 def test_production_settings_require_public_frontend_url(frontend_url: str) -> None:
     with pytest.raises(ValidationError, match="FRONTEND_URL"):

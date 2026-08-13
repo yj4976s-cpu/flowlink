@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -60,6 +61,8 @@ class Settings(BaseSettings):
         jwt_secret = self.JWT_SECRET_KEY.strip()
         database_url = self.DATABASE_URL.strip()
         frontend_url = self.FRONTEND_URL.strip()
+        parsed_frontend_url = urlparse(frontend_url)
+        frontend_hostname = parsed_frontend_url.hostname
         ai_internal_api_key = self.AI_INTERNAL_API_KEY.strip()
 
         if len(jwt_secret) < 32 or jwt_secret == DEFAULT_JWT_SECRET_KEY:
@@ -71,10 +74,16 @@ class Settings(BaseSettings):
         if (
             not frontend_url
             or frontend_url == DEFAULT_FRONTEND_URL
-            or "localhost" in frontend_url.lower()
-            or "127.0.0.1" in frontend_url
+            or parsed_frontend_url.scheme != "https"
+            or not frontend_hostname
+            or frontend_hostname.lower() == "localhost"
+            or frontend_hostname.startswith("127.")
+            or parsed_frontend_url.path not in {"", "/"}
+            or bool(parsed_frontend_url.params)
+            or bool(parsed_frontend_url.query)
+            or bool(parsed_frontend_url.fragment)
         ):
-            errors.append("FRONTEND_URL must be the production frontend origin")
+            errors.append("FRONTEND_URL must be a valid HTTPS production origin")
         if len(ai_internal_api_key) < 32:
             errors.append(
                 "AI_INTERNAL_API_KEY must be configured with at least 32 characters"

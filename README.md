@@ -65,6 +65,15 @@ NEXT_PUBLIC_KAKAO_MAP_KEY=
 
 Kakao 지도는 REST API 키가 아니라 JavaScript 키를 사용합니다. 로컬 개발 시 Kakao Developers의 JavaScript 키를 `NEXT_PUBLIC_KAKAO_MAP_JS_KEY`에 넣고, 허용 도메인에 `http://localhost:3000`을 등록해주세요.
 
+운영 Frontend는 배포된 Backend HTTPS origin을 사용합니다.
+
+```env
+NEXT_PUBLIC_API_BASE_URL=https://api.flowlink.example
+NEXT_PUBLIC_KAKAO_MAP_JS_KEY=
+```
+
+실제 배포 domain은 Kakao Developers의 JavaScript 키 허용 도메인에 함께 등록해야 합니다.
+
 ### Backend
 
 ```env
@@ -108,10 +117,10 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 
 - `JWT_SECRET_KEY`: 기본값이 아닌 32자 이상 비밀값
 - `DATABASE_URL`: 운영 PostgreSQL 연결 문자열
-- `FRONTEND_URL`: 배포된 Frontend origin, localhost/127.0.0.1 금지
+- `FRONTEND_URL`: 배포된 Frontend HTTPS origin, localhost/127.0.0.1 및 HTTP 금지
 - `AI_INTERNAL_API_KEY`: Backend와 Backend AI에 동일하게 넣는 32자 이상 비공개 값
 
-Backend AI도 운영 환경에서는 `AI_INTERNAL_API_KEY`가 비어 있으면 시작되지 않습니다.
+Backend AI도 운영 환경에서는 startup 단계에서 설정을 즉시 검증합니다. `AI_INTERNAL_API_KEY`가 비어 있거나 32자 미만이면 `/health`가 뜨기 전에 서버 시작이 실패합니다. 운영에서는 팀 custom YOLO 모델을 사용해야 하므로 `DETECTION_MODEL`도 비어 있거나 기본 `yolo11n.pt` 그대로이면 시작되지 않습니다. 모델 파일은 Git에 올리지 않고 배포 환경에만 두며, 운영 `.env`에 `DETECTION_MODEL=models/best.pt`와 팀 권장 `DETECTION_CONFIDENCE` 값을 명시합니다.
 Supabase Storage는 선택 사항입니다. `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET` 세 값이 모두 설정되면 공개 이미지가 Supabase Storage에 저장되고, 하나라도 비어 있으면 기존 로컬 `/uploads` 저장소를 사용합니다.
 
 ## 로컬 실행
@@ -172,7 +181,7 @@ Backend AI의 `/health`는 모델을 로드하지 않습니다. 첫 추론 요�
 - 관리자 화면: 대시보드, 탐지/제보/발견물/소유권 검토
 - 지도: 시민용 발견물 지도와 발견물 센터 내 지도 탐색
 - 이미지 AI: Backend → Backend AI → YOLO 실제 추론
-- 웹캠 AI: 실시간 프레임 추론, DB 저장 없음
+- 웹캠 AI: 실시간 raw inference frame은 자동 DB 저장하지 않지만, 사용자가 발견 제보를 확정하면 선택된 탐지 frame이 CitizenReport evidence 이미지로 저장됨
 - 영상 AI: 업로드, VideoJob 저장, Backend AI ByteTrack 추론 메타데이터 보존
 - Custom model: 모델 파일은 Git에 올리지 않고 `backend-ai/.env`의 `DETECTION_MODEL=models/best.pt`처럼 배포 환경에서만 경로 지정
 
