@@ -227,7 +227,7 @@ function OfficialCard({ item }: { item: FoundItemListItem }) {
     <div className={styles.cardBody}><div className={styles.cardHead}><span>{item.item_category_name}</span><b>{statusLabels[item.status] ?? item.status}</b></div>
       <h3>{item.public_description || `${item.item_category_name} 발견물`}</h3>
       <p>{format(item.found_at)} · {item.area_name}</p><p>{item.color || "색상 미상"} 계열</p>
-      <Link href={`/found-items/${item.id}`}>상세 보기 <Icon name="arrow" size={16} /></Link>
+      <Link href={`/found-items/${item.id}`}>상세 보기 <Icon name="chevronRight" size={15} /></Link>
     </div>
   </article>;
 }
@@ -246,7 +246,7 @@ function CitizenCard({ report, onOpen }: { report: CitizenReport; onOpen: () => 
     <CitizenVisual report={report} />
     <div className={styles.cardBody}><div className={styles.cardHead}><span>{report.category}</span><b>{report.status}</b></div><h3>{report.title}</h3>
       <p>{report.areaName} · {format(report.foundAt, true)}</p><p>{report.description}</p>
-      <div className={styles.cardLink}><span>추가 목격 {Math.max(0, report.history.length - 1)}건</span><span>상세 보기 <Icon name="arrow" size={16} /></span></div>
+      <div className={styles.cardLink}><span>추가 목격 {Math.max(0, report.history.length - 1)}건</span><span>상세 보기 <Icon name="chevronRight" size={15} /></span></div>
     </div>
   </button>;
 }
@@ -360,7 +360,7 @@ export function DiscoveryNetworkClient() {
   };
 
   return <main className={styles.page}>
-    <section className={styles.hero}><div><p>DISCOVERY CENTER</p><h1>발견물 센터</h1><span>AI 탐지와 발견 제보로 확인된 물품을 한곳에서 살펴보고 내 분실 신고와 비교해 보세요.</span></div><aside className={styles.smartPanel}><Icon name="match" size={22} /><div><b>내 신고와 비교하기</b><span>등록한 분실 신고와 유사한 발견물을 확인해 보세요.</span></div><Link href="/matches">내 신고 확인 <Icon name="arrow" size={15} /></Link></aside></section>
+    <section className={styles.hero}><div><p>DISCOVERY CENTER</p><h1>발견물 센터</h1><span>AI 탐지와 발견 제보로 확인된 물품을 한곳에서 살펴보고 내 분실 신고와 비교해 보세요.</span></div><aside className={styles.smartPanel}><Icon name="match" size={22} /><div><b>내 신고와 비교하기</b><span>등록한 분실 신고와 유사한 발견물을 확인해 보세요.</span></div><Link href="/matches">내 신고 확인 <Icon name="chevronRight" size={15} /></Link></aside></section>
 
     <section className={styles.recommendations} aria-labelledby="recommend-title"><div className={styles.sectionHeading}><div><p>SMART MATCH</p><h2 id="recommend-title">내 신고와 비슷한 발견물</h2></div>{matches.length > 3 && <Link href="/matches">전체 보기</Link>}</div>
       {loading ? <div className={styles.skeletonRow}>{[0, 1, 2].map((key) => <i key={key} />)}</div> : matches.length > 0 ? <div className={styles.recommendGrid}>{matches.slice(0, 3).map((match) => <RecommendationCard key={match.id} match={match} />)}</div> : <div className={styles.matchEmpty}><Icon name="match" size={28} /><div><strong>{activeReport ? "아직 비슷한 발견물을 찾지 못했어요." : "잃어버린 물건이 있나요?"}</strong><p>{activeReport ? "새로운 발견물이 등록되면 신고 내용과 다시 비교해 드려요." : "분실 신고를 등록하면 새로운 발견물과 자동으로 비교해 드려요."}</p></div>{!activeReport && <Link className="button button-primary" href="/lost-reports/new">분실 신고하기</Link>}</div>}

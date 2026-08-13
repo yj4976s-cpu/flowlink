@@ -709,6 +709,24 @@
   text-decoration: none;
 }
 
+.overlayLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+}
+
+.overlayLink :global(.icon) {
+  flex: 0 0 auto;
+  color: currentColor;
+  transition: transform 0.18s ease;
+}
+
+.overlayLink:hover :global(.icon),
+.overlayLink:focus-visible :global(.icon) {
+  transform: translateX(2px);
+}
+
 .overlayStatus {
   width: fit-content;
   border-radius: 999px;
@@ -937,5 +955,16 @@ html[data-theme="night"] .mapTint {
     color: var(--color-primary);
     font-weight: 900;
     text-decoration: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlayLink :global(.icon) {
+    transition: none;
+  }
+
+  .overlayLink:hover :global(.icon),
+  .overlayLink:focus-visible :global(.icon) {
+    transform: none;
   }
 }
