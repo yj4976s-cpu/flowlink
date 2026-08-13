@@ -1,6 +1,6 @@
 # FlowLink production Docker deployment
 
-This document describes the production Docker structure for FlowLink. It intentionally stops at application packaging and container orchestration. Cloud provisioning, DNS, TLS certificate automation, and cost planning are separate deployment steps.
+This document describes the production Docker structure for FlowLink, including TLS termination for the production DuckDNS domain. Cloud provisioning and cost planning are separate deployment steps.
 
 ## Architecture
 
@@ -8,7 +8,7 @@ This document describes the production Docker structure for FlowLink. It intenti
 Internet
   |
   v
-reverse-proxy:80
+reverse-proxy:80,443
   |-- /              -> frontend:3000
   |-- /api/*         -> backend:8000
   |-- /uploads/*     -> backend:8000
@@ -28,7 +28,8 @@ Only the reverse proxy should be published to the Internet. The frontend, backen
 
 - `compose.yaml`: base application services, networks, volumes, environment contract, and health checks.
 - `compose.prod.yaml`: production restart policy and Nginx reverse proxy.
-- `nginx/nginx.conf`: routes `/`, `/api/*`, and `/uploads/*`.
+- `nginx/nginx.conf`: redirects HTTP to HTTPS and routes `/`, `/api/*`, and `/uploads/*` over TLS.
+- `certbot/www/.gitkeep`: keeps the host Certbot renewal webroot in Git without committing challenge tokens.
 - `frontend/Dockerfile`: multi-stage Next.js standalone image.
 - `backend/Dockerfile`: FastAPI application image.
 - `backend-ai/Dockerfile`: FastAPI AI inference image with runtime libraries for image/video processing.
@@ -133,6 +134,7 @@ The production Compose override publishes only the reverse proxy:
 ```yaml
 ports:
   - "${HTTP_PORT:-80}:80"
+  - "443:443"
 ```
 
 Do not publish these ports directly:
@@ -142,11 +144,76 @@ Do not publish these ports directly:
 - `8001` backend-ai
 - `5432` PostgreSQL
 
-TLS termination on `443` should be added when the host domain and certificate strategy are finalized.
+The production site is served at `https://flowlink-project.duckdns.org` on port `443`. Port `80` remains public for the Nginx health check, ACME HTTP-01 challenges, and redirects all other requests to HTTPS.
+
+## HTTPS and certificate renewal
+
+Certbot runs on the EC2 host and manages the certificate under `/etc/letsencrypt`. The production Compose override mounts that host directory read-only at the same path in the Nginx container. The configured certificate files are:
+
+```text
+/etc/letsencrypt/live/flowlink-project.duckdns.org/fullchain.pem
+/etc/letsencrypt/live/flowlink-project.duckdns.org/privkey.pem
+```
+
+The host directory `/home/ubuntu/flowlink/certbot/www` is mounted read-only at `/var/www/certbot` in Nginx. Nginx serves `/.well-known/acme-challenge/` from this directory over HTTP.
+
+### One-time EC2 renewal migration
+
+The certificate was initially issued with Certbot's `standalone` authenticator. Run this migration once after the production stack is running so future renewals do not try to bind host port 80.
+
+First confirm that Certbot reports the expected certificate name:
+
+```bash
+sudo certbot certificates
+```
+
+With Certbot 5.x, `reconfigure` accepts both `--authenticator webroot` and `--webroot-path`. It performs a staging renewal test and saves the new renewal options only when that test succeeds:
+
+```bash
+sudo certbot reconfigure \
+  --cert-name flowlink-project.duckdns.org \
+  --authenticator webroot \
+  --webroot-path /home/ubuntu/flowlink/certbot/www
+```
+
+After this succeeds, ordinary `certbot renew` runs reuse the saved `webroot` authenticator and path; do not manually edit `/etc/letsencrypt/renewal/flowlink-project.duckdns.org.conf`. See the [Certbot renewal configuration documentation](https://eff-certbot.readthedocs.io/en/stable/using.html#modifying-the-renewal-configuration-of-existing-certificates).
+
+### Reload Nginx after a successful renewal
+
+Certbot deploy hooks run only after a certificate is successfully issued or renewed. Install a root-owned executable hook so the running Nginx container reloads the updated files from the read-only `/etc/letsencrypt` mount:
+
+```bash
+sudo install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
+sudo tee /etc/letsencrypt/renewal-hooks/deploy/flowlink-nginx-reload >/dev/null <<'EOF'
+#!/bin/sh
+set -eu
+cd /home/ubuntu/flowlink
+exec /usr/bin/docker compose --env-file .env.production \
+  -f compose.yaml -f compose.prod.yaml \
+  exec -T reverse-proxy nginx -s reload
+EOF
+sudo chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/flowlink-nginx-reload
+```
+
+Confirm that Docker is installed at `/usr/bin/docker`; adjust the absolute path in the hook if `command -v docker` reports a different location. Test the hook once against the currently running container:
+
+```bash
+sudo /etc/letsencrypt/renewal-hooks/deploy/flowlink-nginx-reload
+```
+
+Finally, verify the saved webroot renewal configuration with Let's Encrypt's staging environment:
+
+```bash
+sudo certbot renew --dry-run
+```
+
+A normal dry run validates renewal but does not execute deploy hooks unless `--run-deploy-hooks` is also supplied, so the manual hook test above is intentional. The host's Certbot systemd timer can then continue running ordinary `certbot renew`; no Nginx stop/start hooks are needed. See the [Certbot deploy hook documentation](https://eff-certbot.readthedocs.io/en/stable/using.html#renewing-certificates).
+
+Do not commit generated challenge tokens, certificates, private keys, renewal configuration, or hook files; all remain host-managed under `/etc/letsencrypt` or the ignored `certbot/www` contents.
 
 ## URLs to check
 
-- Frontend through proxy: `http://localhost/`
+- Production frontend: `https://flowlink-project.duckdns.org/`
 - Reverse proxy health: `http://localhost/healthz`
 - Backend health inside Docker network: `http://backend:8000/health`
 - Backend AI health inside Docker network: `http://backend-ai:8001/health`
@@ -167,7 +234,7 @@ The backend API routers already include `/api/...` prefixes, so Nginx forwards `
 - The frontend image bakes `NEXT_PUBLIC_*` variables at build time. Rebuild the frontend image after changing public frontend environment variables.
 - The backend production config requires secure cookie settings and a valid HTTPS `FRONTEND_URL`.
 - Nginx overwrites `X-Forwarded-For` with the direct public client address. The backend trusts proxy headers only from Nginx's fixed `172.30.0.10` address on the private Compose network; keep that address aligned with `FORWARDED_ALLOW_IPS` if the network configuration changes.
-- For a local HTTP-only smoke test, pages and health checks can be tested, but production auth cookies require HTTPS.
+- HTTP requests other than `/healthz` and ACME challenges redirect to the production HTTPS origin. Production auth cookies require HTTPS.
 - Supabase PostgreSQL is external. This stack does not run a PostgreSQL container.
 - Choose host CPU, RAM, disk, and GPU/CPU inference capacity after measuring the real video workload and model latency. Tiny instances are unlikely to be a safe default for video inference.
 
@@ -177,6 +244,6 @@ The backend API routers already include `/api/...` prefixes, so Nginx forwards `
 - Install Docker Engine and Docker Compose.
 - Put real secrets in `.env.production` on the host only.
 - Put the trained model at `models/best.pt` on the host only.
-- Configure security groups so only `80` and, after TLS setup, `443` are public.
-- Add domain, DNS, HTTPS certificates, and HTTP-to-HTTPS redirect in a separate step.
+- Configure the EC2 security group so `80`/`443` are public, `22` is restricted to the administrator's **My IP** CIDR, and `3000`/`8000`/`8001`/`5432` have no public inbound rules.
+- Point `flowlink-project.duckdns.org` at the EC2 host and keep the host-managed Certbot certificate renewable through `certbot/www`.
 - Confirm Docker log rotation policy on the host if long-running production logs become large.

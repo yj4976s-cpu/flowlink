@@ -1,6 +1,6 @@
 services:
   reverse-proxy:
-    image: nginx:1.27-alpine
+    image: nginx:1.30.4-alpine
     depends_on:
       frontend:
         condition: service_healthy
@@ -8,8 +8,11 @@ services:
         condition: service_healthy
     ports:
       - "${HTTP_PORT:-80}:80"
+      - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certbot/www:/var/www/certbot:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
     networks:
       flowlink:
         ipv4_address: 172.30.0.10
