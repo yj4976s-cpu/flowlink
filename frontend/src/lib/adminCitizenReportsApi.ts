@@ -1,3 +1,5 @@
+import { resolveUploadedMediaUrl } from "@/lib/mediaUrl";
+
 export type AdminCitizenSighting = {
   id: number;
   sighted_at: string;
@@ -68,7 +70,7 @@ async function request<T>(path: string, init?: RequestInit) {
 }
 
 export function adminImageUrl(value: string | null) {
-  return value ? new URL(value, `${baseUrl()}/`).toString() : null;
+  return resolveUploadedMediaUrl(value, baseUrl());
 }
 
 export function listAdminCitizenReports(status?: string, signal?: AbortSignal) {
