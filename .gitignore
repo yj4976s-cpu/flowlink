@@ -13,6 +13,8 @@ frontend/npm-debug.log*
 # Python
 backend/.venv/
 backend/venv/
+backend-ai/.venv/
+backend-ai/venv/
 backend/__pycache__/
 **/__pycache__/
 *.py[cod]
