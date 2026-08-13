@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlparse
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -11,6 +11,15 @@ DEFAULT_DATABASE_URL = (
 )
 DEFAULT_JWT_SECRET_KEY = "change-this-secret-key"
 DEFAULT_FRONTEND_URL = "http://localhost:3000"
+
+
+def normalize_database_url(value: str) -> str:
+    """Select SQLAlchemy's psycopg 3 dialect for conventional PostgreSQL URLs."""
+
+    for scheme in ("postgresql://", "postgres://"):
+        if value.startswith(scheme):
+            return "postgresql+psycopg://" + value[len(scheme) :]
+    return value
 
 
 class Settings(BaseSettings):
@@ -52,6 +61,13 @@ class Settings(BaseSettings):
     COPILOT_ADMIN_RATE_LIMIT: int = 60
     COPILOT_MAX_OUTPUT_TOKENS: int = 1200
     COPILOT_PROVIDER_COOLDOWN_SECONDS: int = 30
+
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def use_psycopg_driver(cls, value: object) -> object:
+        if isinstance(value, str):
+            return normalize_database_url(value)
+        return value
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":
