@@ -465,8 +465,13 @@
   flex-wrap: wrap;
   gap: 10px;
 }
+.webcamCandidateCard { position: relative; flex: 1 1 100%; display: grid; grid-template-columns: 72px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px 36px 9px 9px; border: 1px solid var(--color-border); border-radius: 13px; background: var(--color-surface-elevated); box-shadow: var(--shadow-card); }
+.webcamCandidateCard img { width: 72px; height: 52px; border-radius: 9px; object-fit: contain; background: var(--color-surface-soft); }
+.webcamCandidateCard div { min-width: 0; display: grid; gap: 3px; }.webcamCandidateCard div strong { font-size: 11px; }.webcamCandidateCard div span { color: var(--color-text-muted); font-size: 9px; }
+.webcamCandidateCard > button:not(.webcamCandidateClose) { min-height: 34px; padding: 0 10px; border: 0; border-radius: 9px; background: var(--color-primary); color: white; font: inherit; font-size: 9px; font-weight: 850; cursor: pointer; }
+.webcamCandidateClose { position: absolute; top: 6px; right: 6px; width: 25px; height: 25px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--color-text-muted); display: grid; place-items: center; cursor: pointer; }
 
-.webcamReportActions button {
+.webcamReportActions > button {
   min-height: 40px;
   padding: 0 14px;
   border: 1px solid color-mix(in srgb, var(--color-primary) 36%, var(--color-border));
@@ -479,12 +484,12 @@
   cursor: pointer;
 }
 
-.webcamReportActions button:hover:not(:disabled) {
+.webcamReportActions > button:hover:not(:disabled) {
   border-color: var(--color-primary);
   box-shadow: 0 10px 24px color-mix(in srgb, var(--color-primary) 14%, transparent);
 }
 
-.webcamReportActions button:disabled {
+.webcamReportActions > button:disabled {
   cursor: wait;
   opacity: .66;
 }

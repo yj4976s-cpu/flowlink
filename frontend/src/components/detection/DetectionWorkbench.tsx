@@ -482,7 +482,7 @@ function WebcamReportModal({
           <div className={styles.reportSuccess}>
             <Icon name="check" size={28} />
             <strong>발견 제보가 접수되었습니다.</strong>
-            <p>관리자가 사진과 설명을 확인한 뒤 공개 발견물 연결 여부를 검토합니다.</p>
+            <p>관리자 확인 후 공식 발견물로 연결됩니다.</p>
             <div>
               <Link className="button button-secondary" href="/mypage#my-activity">내 제보 보기</Link>
               <button className="button button-primary" type="button" onClick={onClose}>탐지 계속하기</button>
@@ -1009,7 +1009,7 @@ export function DetectionWorkbench() {
 
         <div className={styles.grid}>
           {tab === "webcam" ? (
-            <WebcamDetectionPanel onFrame={setWebcamFrame} onStatusChange={setWebcamStatus} onReportCandidate={openWebcamReport} />
+            <WebcamDetectionPanel onFrame={setWebcamFrame} onStatusChange={setWebcamStatus} onReportCandidate={openWebcamReport} reportModalOpen={webcamReportCandidate !== null} completedReportClassCode={webcamReportSuccess ? webcamReportCandidate?.objectClassCode ?? null : null} />
           ) : (
             <section className={styles.uploadPanel} aria-labelledby="workbench-title">
               <div className={styles.panelHeading}>

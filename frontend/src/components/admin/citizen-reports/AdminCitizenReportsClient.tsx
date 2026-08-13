@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@/components/common/Icon";
@@ -55,8 +54,13 @@ function elapsed(value: string) {
 function ReportImage({ url, label, compact = false }: { url: string | null; label: string; compact?: boolean }) {
   const source = adminImageUrl(url);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
-  if (!source || failedUrl === source) return compact ? <span className={styles.thumb}><Icon name="fileSearch" size={20} /></span> : null;
-  return <span className={compact ? styles.thumb : styles.evidenceImage}><Image src={source} alt={label} fill sizes={compact ? "52px" : "(max-width: 760px) 100vw, 520px"} unoptimized onError={() => setFailedUrl(source)} /></span>;
+  if (!source || failedUrl === source) return <span className={compact ? styles.thumb : styles.evidenceImage}><span className={styles.imagePlaceholder}><Icon name="fileSearch" size={compact ? 20 : 34} />{!compact && <strong>등록된 사진 없음</strong>}</span></span>;
+  return (
+    <span className={compact ? styles.thumb : styles.evidenceImage}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={source} alt={label} onError={() => setFailedUrl(source)} />
+    </span>
+  );
 }
 
 function QuietState({ children, icon }: { children: React.ReactNode; icon?: "document" | "info" | "fileSearch" }) {

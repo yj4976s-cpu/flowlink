@@ -1,4 +1,5 @@
 from datetime import UTC, timedelta
+from decimal import Decimal
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
@@ -224,24 +225,56 @@ def update_found_item(
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Found item not found")
     previous_status = item.status
+
+    next_status = item.status
+    next_area_name = item.area_name
+    next_latitude = item.latitude
+    next_longitude = item.longitude
+    next_storage_location = item.storage_location
+    next_admin_memo = item.admin_memo
+
     if request.status is not None:
         next_status = request.status.strip().upper()
         if next_status not in FOUND_ITEM_STATUSES:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid found item status")
-        item.status = next_status
+    if request.area_name is not None:
+        cleaned_area_name = clean_optional_text(request.area_name)
+        if cleaned_area_name is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="발견 지역을 입력해 주세요.")
+        next_area_name = cleaned_area_name
+    manual_coordinates = request.latitude is not None or request.longitude is not None
+    if manual_coordinates:
+        if request.latitude is None or request.longitude is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="위도와 경도는 함께 입력해 주세요.")
+        next_latitude = request.latitude
+        next_longitude = request.longitude
     if request.storage_location is not None:
-        item.storage_location = clean_optional_text(request.storage_location)
+        next_storage_location = clean_optional_text(request.storage_location)
     if request.admin_memo is not None:
-        item.admin_memo = clean_optional_text(request.admin_memo)
-    if item.status == "RECOVERED" and (item.latitude is None or item.longitude is None):
+        next_admin_memo = clean_optional_text(request.admin_memo)
+    if next_status == "RECOVERED" and (next_latitude is None or next_longitude is None):
         try:
-            coordinates = geocode_location(item.area_name)
+            coordinates = geocode_location(next_area_name)
         except GeocodingError as exc:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="발견 위치를 지도 좌표로 변환하지 못했습니다.") from exc
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Kakao Local API 설정 또는 연결 문제로 발견 위치를 좌표로 변환하지 못했습니다. KAKAO_REST_API_KEY를 확인하거나 위도/경도를 직접 입력해 주세요.",
+            ) from exc
         if coordinates is None:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="발견 위치를 지도에서 찾을 수 없습니다. 발견 지역을 확인해 주세요.")
-        item.latitude = coordinates.latitude
-        item.longitude = coordinates.longitude
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="발견 위치를 지도에서 찾을 수 없습니다. 발견 지역을 더 구체적으로 수정하거나 위도/경도를 직접 입력해 주세요.",
+            )
+        next_latitude = Decimal(str(coordinates.latitude))
+        next_longitude = Decimal(str(coordinates.longitude))
+    item.status = next_status
+    item.area_name = next_area_name
+    item.latitude = next_latitude
+    item.longitude = next_longitude
+    item.storage_location = next_storage_location
+    item.admin_memo = next_admin_memo
     item.updated_at = utc_now()
     db.add(ProcessingHistory(actor_user_id=current_admin.id, entity_type="FOUND_ITEM", entity_id=item.id, action_type="FOUND_ITEM_UPDATED", previous_status=previous_status, new_status=item.status, note=item.admin_memo, created_at=item.updated_at))
     db.commit()

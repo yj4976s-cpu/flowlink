@@ -1,6 +1,7 @@
 from datetime import datetime
+from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class FoundItemListItemResponse(BaseModel):
@@ -29,5 +30,8 @@ class FoundItemMapItemResponse(FoundItemListItemResponse):
 
 class FoundItemUpdateRequest(BaseModel):
     status: str | None = None
+    area_name: str | None = Field(default=None, min_length=1, max_length=100)
+    latitude: Decimal | None = Field(default=None, ge=-90, le=90)
+    longitude: Decimal | None = Field(default=None, ge=-180, le=180)
     storage_location: str | None = None
     admin_memo: str | None = None

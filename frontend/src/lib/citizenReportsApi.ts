@@ -2,12 +2,46 @@ import type { CitizenReport, CitizenReportDraft, SightingDraft } from "@/types/d
 
 type ApiSighting = { id: number; sighted_at: string; location_name: string; description: string; image_url: string | null };
 type ApiReport = { id: number; item_category: string; item_category_name: string; color: string | null; description: string; image_url: string | null; area_name: string; found_at: string; status: string; sightings: ApiSighting[]; linked_found_item: { id: number; status: string } | null };
+type ApiValidationError = { msg?: string };
+
+export class CitizenReportsApiError extends Error {
+  constructor(message: string, readonly status?: number) {
+    super(message);
+    this.name = "CitizenReportsApiError";
+  }
+}
 
 const categoryCodes: Record<string, string> = { "공": "BALL", "가방": "BAG", "우산": "UMBRELLA", "신발·슬리퍼류": "FOOTWEAR", "신발/슬리퍼": "FOOTWEAR" };
 const statusLabels: Record<string, CitizenReport["status"]> = { PENDING: "검토 대기", UNDER_REVIEW: "관리자 확인 중", LINKED: "기존 발견물 연결", REJECTED: "반려", CANCELLED: "취소" };
 
-function baseUrl() { const value = process.env.NEXT_PUBLIC_API_BASE_URL?.trim(); if (!value) throw new Error("API 서버 주소가 설정되지 않았습니다."); return value.replace(/\/+$/, ""); }
-async function request<T>(path: string, init?: RequestInit) { const response = await fetch(`${baseUrl()}${path}`, { ...init, credentials: "include" }); if (!response.ok) throw new Error("발견 제보 요청을 처리하지 못했습니다."); return response.json() as Promise<T>; }
+function baseUrl() { const value = process.env.NEXT_PUBLIC_API_BASE_URL?.trim(); if (!value) throw new CitizenReportsApiError("API 서버 주소가 설정되지 않았습니다."); return value.replace(/\/+$/, ""); }
+function fallbackMessage(status: number) {
+  if (status === 401) return "로그인 세션이 만료되었습니다. 다시 로그인해주세요.";
+  if (status === 413) return "첨부 이미지가 너무 큽니다. 5MB 이하 이미지를 사용해주세요.";
+  if (status === 415) return "첨부 이미지를 읽을 수 없습니다. JPG, PNG 또는 WebP 이미지를 사용해주세요.";
+  if (status === 422) return "발견 제보 입력 내용을 확인해주세요.";
+  return "발견 제보 요청을 처리하지 못했습니다.";
+}
+function detailMessage(detail: unknown, status: number) {
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const messages = detail.map((item: ApiValidationError) => item?.msg).filter((message): message is string => Boolean(message));
+    if (messages.length) return messages.join(" ");
+  }
+  return fallbackMessage(status);
+}
+async function request<T>(path: string, init?: RequestInit) {
+  const response = await fetch(`${baseUrl()}${path}`, { ...init, credentials: "include" });
+  if (!response.ok) {
+    let message = fallbackMessage(response.status);
+    try {
+      const body = await response.json() as { detail?: unknown };
+      message = detailMessage(body.detail, response.status);
+    } catch { /* Keep the status-specific fallback for non-JSON responses. */ }
+    throw new CitizenReportsApiError(message, response.status);
+  }
+  return response.json() as Promise<T>;
+}
 function imageUrl(value: string | null) { return value ? new URL(value, `${baseUrl()}/`).toString() : null; }
 function mapReport(report: ApiReport): CitizenReport {
   const category = report.item_category_name;

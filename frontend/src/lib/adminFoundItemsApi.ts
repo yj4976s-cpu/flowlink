@@ -1,5 +1,8 @@
 export type AdminFoundItemUpdate = {
   status?: string;
+  area_name?: string;
+  latitude?: number;
+  longitude?: number;
   storage_location?: string;
   admin_memo?: string;
 };
