@@ -26,6 +26,10 @@ backend/__pycache__/
 backend/uploads/*
 !backend/uploads/.gitkeep
 
+# Certbot HTTP-01 challenge tokens
+certbot/www/*
+!certbot/www/.gitkeep
+
 # AI datasets and models
 ai/datasets/
 ai/data/
