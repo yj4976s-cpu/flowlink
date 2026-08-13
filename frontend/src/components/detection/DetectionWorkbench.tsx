@@ -745,6 +745,7 @@ export function DetectionWorkbench() {
   };
 
   const resetSelectedFile = () => {
+    revokeReportPreviewUrl();
     setFile(null);
     setVideoDuration(null);
     setVideoThumbnailUrl("");
