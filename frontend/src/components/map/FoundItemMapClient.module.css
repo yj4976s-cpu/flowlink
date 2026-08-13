@@ -716,14 +716,14 @@
   width: fit-content;
 }
 
-.overlayLink :global(.icon) {
+.overlayChevron {
   flex: 0 0 auto;
   color: currentColor;
   transition: transform 0.18s ease;
 }
 
-.overlayLink:hover :global(.icon),
-.overlayLink:focus-visible :global(.icon) {
+.overlayLink:hover .overlayChevron,
+.overlayLink:focus-visible .overlayChevron {
   transform: translateX(2px);
 }
 
@@ -959,12 +959,12 @@ html[data-theme="night"] .mapTint {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .overlayLink :global(.icon) {
+  .overlayChevron {
     transition: none;
   }
 
-  .overlayLink:hover :global(.icon),
-  .overlayLink:focus-visible :global(.icon) {
+  .overlayLink:hover .overlayChevron,
+  .overlayLink:focus-visible .overlayChevron {
     transform: none;
   }
 }
