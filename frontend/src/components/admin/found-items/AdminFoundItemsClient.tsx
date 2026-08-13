@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element */
+
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Icon } from "@/components/common/Icon";
@@ -49,16 +51,12 @@ function formatDate(value: string) {
 }
 
 function ItemImage({ item, compact = false }: { item: FoundItemListItem; compact?: boolean }) {
-  const resolved = resolveFoundItemImageUrl(item.image_url);
-  const [failedUrl, setFailedUrl] = useState<string | null>(null);
-  const visible = resolved && failedUrl !== resolved;
+  const originalUrl = resolveFoundItemImageUrl(item.image_url);
+  const [failedUrl, setFailedImageUrl] = useState<string | null>(null);
+  const resolved = originalUrl && failedUrl !== originalUrl ? originalUrl : null;
   return (
     <span className={compact ? styles.thumb : styles.image}>
-      {visible ? (
-        // Existing upload URLs can be external and are not constrained to Next Image host patterns.
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={resolved} alt={`${item.item_category_name} 발견물 이미지`} onError={() => setFailedUrl(resolved)} />
-      ) : <Icon name="archive" size={compact ? 23 : 42} />}
+      {resolved ? <img src={resolved} alt={`${item.item_category_name} 발견물 이미지`} onError={() => setFailedImageUrl(resolved)} /> : <span className={styles.imagePlaceholder}><Icon name="fileSearch" size={compact ? 23 : 38} /><small>등록된 사진 없음</small></span>}
     </span>
   );
 }

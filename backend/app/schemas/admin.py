@@ -139,6 +139,10 @@ class AdminDashboardMetrics(BaseModel):
     match_notifications: int
     citizen_reports: int
     citizen_pending: int
+    operation_detection_pending: int
+    citizen_review_pending: int
+    ownership_claim_pending: int
+    ownership_return_pending: int
     citizen_linked: int
     citizen_sightings: int
 

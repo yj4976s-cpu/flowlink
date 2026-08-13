@@ -22,6 +22,7 @@ function duration(event: DetectionEvent) {
 function finalCode(item: DetectionObject) { return item.final_class_code || item.object_class; }
 function isCorrection(item: DetectionObject) { return Boolean(item.final_class_code && item.final_class_code !== item.object_class); }
 function pct(value: number, total: number) { return total ? `${(value / total * 100).toFixed(1)}%` : "–"; }
+function isAbortError(reason: unknown) { return reason instanceof DOMException && reason.name === "AbortError"; }
 
 export function reviewBuckets(objects: ReportObject[]) {
   const rejected = objects.filter((item) => item.processing_status === "REJECTED");
@@ -39,8 +40,8 @@ export function AdminAiReportClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [reportNow] = useState(() => Date.now());
-  const load = () => { const controller = new AbortController(); setLoading(true); setError(""); listAdminDetections(controller.signal).then(setEvents).catch(() => setError("AI 탐지 리포트를 불러오지 못했습니다.")).finally(() => setLoading(false)); return controller; };
-  useEffect(() => { const controller = new AbortController(); listAdminDetections(controller.signal).then(setEvents).catch(() => setError("AI 탐지 리포트를 불러오지 못했습니다.")).finally(() => setLoading(false)); return () => controller.abort(); }, []);
+  const load = () => { const controller = new AbortController(); setLoading(true); setError(""); listAdminDetections(controller.signal).then(setEvents).catch((reason) => { if (!isAbortError(reason)) setError("AI 탐지 리포트를 불러오지 못했습니다."); }).finally(() => { if (!controller.signal.aborted) setLoading(false); }); return controller; };
+  useEffect(() => { const controller = new AbortController(); listAdminDetections(controller.signal).then(setEvents).catch((reason) => { if (!isAbortError(reason)) setError("AI 탐지 리포트를 불러오지 못했습니다."); }).finally(() => { if (!controller.signal.aborted) setLoading(false); }); return () => controller.abort(); }, []);
 
   const report = useMemo(() => {
     const cutoff = reportNow - period * 86400000;
@@ -84,6 +85,9 @@ function ReviewSummary({ report }: { report: Report }) { const total = report.ob
 function NeedsReview({ items }: { items: Report["pending"] }) { if (!items.length) return <p className={styles.empty}>현재 확인을 기다리는 탐지가 없습니다.</p>; return <div className={styles.reviewCards}>{items.map((item) => <Link href={`/admin/detections?detection=${item.event.id}`} key={item.id}><Thumb item={item} /><div><strong>{item.object_class_name}</strong><span>AI 신뢰도 {Math.round(Number(item.confidence) * 100)}%</span><small>{item.event.camera_id ? `카메라 #${item.event.camera_id}` : "위치 정보 없음"} · {dateTime.format(new Date(item.detected_at))}</small><em>신뢰도와 분류를 관리자 확인 중입니다.</em></div></Link>)}</div>; }
 function Corrections({ items }: { items: Report["corrected"] }) { if (!items.length) return <p className={styles.empty}>선택 기간에 관리자 분류 수정 기록이 없습니다.</p>; return <div className={styles.corrections}>{items.map((item) => <Link href={`/admin/detections?detection=${item.event.id}`} key={item.id}><span><small>AI 판단</small><strong>{item.object_class_name} · {Math.round(Number(item.confidence) * 100)}%</strong></span><b aria-hidden="true">→</b><span><small>관리자 확인</small><strong>{item.final_class_code}</strong></span></Link>)}</div>; }
 function ClassTable({ data }: { data: Report["classes"] }) { const max = Math.max(1, ...data.map((item) => item.count)); return <div className={styles.classTable}><div><span>클래스</span><span>탐지</span><span>평균 신뢰도</span><span>관리자 수정</span><span>확인 필요</span></div>{data.map((item) => <article key={item.code}><strong>{item.name}<small>{item.code}</small></strong><span><i><b style={{ width: `${item.count / max * 100}%` }} /></i>{item.count}건</span><span>{(item.confidence / item.count * 100).toFixed(1)}%</span><span>{item.corrected}건</span><span>{item.pending}건</span></article>)}</div>; }
-function Thumb({ item }: { item: DetectionObject }) { const url = adminDetectionMediaUrl(item.cropped_image_url); return <span className={styles.thumb}>{url ? <Image src={url} width={68} height={68} alt={`${item.object_class_name} 탐지 이미지`} unoptimized /> : <Icon name="scanLine" size={24} />}</span>; }
+function reportObjectImageUrl(item: ReportObject) {
+  return adminDetectionMediaUrl(item.cropped_image_url) ?? (item.event.source_type === "IMAGE" ? adminDetectionMediaUrl(item.event.result_media_url || item.event.original_media_url) : null);
+}
+function Thumb({ item }: { item: ReportObject }) { const url = reportObjectImageUrl(item); const [failedUrl, setFailedUrl] = useState<string | null>(null); return <span className={styles.thumb}>{url && failedUrl !== url ? <Image src={url} width={68} height={68} alt={`${item.object_class_name} 탐지 이미지`} unoptimized onError={() => setFailedUrl(url)} /> : <Icon name="scanLine" size={24} />}</span>; }
 function ModelEmpty() { return <section className={`${styles.panel} ${styles.modelEmpty}`}><Icon name="layers" size={30} /><h2>모델 평가 데이터가 연결되지 않았습니다.</h2><p>현재 데이터베이스에는 모델 버전별 Precision, Recall, mAP 및 추론 평가 결과가 없습니다. 실제 평가 데이터가 연결되면 현재 운영 모델과 이전 모델을 이 탭에서 비교할 수 있습니다.</p></section>; }
 function ReportState({ loading = false, error, retry }: { loading?: boolean; error?: string; retry?: () => void }) { return <section className={styles.state} role={error ? "alert" : "status"}>{loading ? <><div><i /><i /><i /></div><strong>AI 탐지 데이터를 불러오고 있습니다.</strong></> : error ? <><Icon name="info" size={25} /><strong>{error}</strong><button type="button" onClick={retry}>다시 불러오기</button></> : <><Icon name="scanLine" size={28} /><strong>선택 기간에 탐지 데이터가 없습니다.</strong><span>새 탐지가 처리되면 실제 운영 지표가 표시됩니다.</span></>}</section>; }

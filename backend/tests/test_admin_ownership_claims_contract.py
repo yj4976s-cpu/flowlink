@@ -12,7 +12,7 @@ import app.services.ownership as ownership_service
 from app.core.security import hash_password, utc_now
 from app.db.session import Base, get_db
 from app.main import app
-from app.models import FoundItem, LostReport, MatchCandidate, Notification, ObjectClass, OwnershipClaim, ProcessingHistory, User
+from app.models import CitizenReport, FoundItem, LostReport, MatchCandidate, Notification, ObjectClass, OwnershipClaim, ProcessingHistory, User
 
 
 @pytest.fixture
@@ -212,6 +212,13 @@ def test_admin_ownership_claims_keep_admin_authorization(client: TestClient, db:
 
 def test_admin_dashboard_returns_today_operational_summary(client: TestClient, db: Session) -> None:
     seed_admin_claim_data(db)
+    now = utc_now()
+    db.add_all([
+        CitizenReport(id=50, user_id=1, object_class_id=1, color="검정", description="검정 백팩을 봤습니다.", area_name="잠실 한강공원", found_at=now, status="PENDING", created_at=now, updated_at=now),
+        CitizenReport(id=51, user_id=1, object_class_id=1, color="파랑", description="파란 가방을 봤습니다.", area_name="잠실 한강공원", found_at=now, status="UNDER_REVIEW", created_at=now, updated_at=now),
+        OwnershipClaim(id=31, user_id=1, found_item_id=10, lost_report_id=20, verification_details="승인된 요청입니다.", status="APPROVED", created_at=now, updated_at=now),
+    ])
+    db.commit()
     login(client, "admin@example.com")
 
     response = client.get("/api/admin/dashboard")
@@ -223,10 +230,15 @@ def test_admin_dashboard_returns_today_operational_summary(client: TestClient, d
     assert body["metrics"]["official_found_items"] == 1
     assert body["metrics"]["lost_reports"] == 1
     assert body["metrics"]["match_notifications"] == 0
-    assert body["metrics"]["claims"] == 1
+    assert body["metrics"]["claims"] == 2
+    assert body["metrics"]["operation_detection_pending"] == 0
+    assert body["metrics"]["citizen_pending"] == 2
+    assert body["metrics"]["citizen_review_pending"] == 1
+    assert body["metrics"]["ownership_claim_pending"] == 1
+    assert body["metrics"]["ownership_return_pending"] == 1
     assert body["recent_items"][0]["item_category"] == "BAG"
     assert body["category_counts"] == []
-    assert body["claim_status_counts"] == [{"status": "PENDING", "count": 1}]
+    assert body["claim_status_counts"] == [{"status": "APPROVED", "count": 1}, {"status": "PENDING", "count": 1}]
     assert body["latest_flow"] is None
     assert {item["kind"] for item in body["recent_activity"]} >= {"LOGIN", "LOST_REPORT", "CLAIM"}
 

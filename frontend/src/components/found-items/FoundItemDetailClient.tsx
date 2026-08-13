@@ -51,6 +51,7 @@ export function FoundItemDetailClient() {
       try {
         const data = await getFoundItem(id, controller.signal);
         setItem(data);
+        setImageFailed(false);
         try {
           const matches = await listMyMatches(controller.signal);
           setRelatedMatch(matches.find((match) => match.found_item.id === data.id) ?? null);
@@ -90,7 +91,19 @@ export function FoundItemDetailClient() {
       {!loading && error && <section className="found-state-card found-state-error" role="alert">{error}</section>}
       {!loading && item && (
         <article className="found-detail-card" aria-labelledby="found-detail-title">
-          <div className="found-detail-image">{resolveFoundItemImageUrl(item.image_url) && !imageFailed ? <img src={resolveFoundItemImageUrl(item.image_url)!} alt={`${item.item_category_name} 발견물 이미지`} onError={() => setImageFailed(true)} /> : <Icon name="fileSearch" size={42} />}</div>
+          <div className="found-detail-image">{(() => {
+            const imageUrl = resolveFoundItemImageUrl(item.image_url);
+            const visibleUrl = imageUrl && !imageFailed ? imageUrl : null;
+            return visibleUrl ? (
+              <img
+                src={visibleUrl}
+                alt={`${item.item_category_name} 발견물 이미지`}
+                onError={() => setImageFailed(true)}
+              />
+            ) : (
+              <span className="found-detail-image-placeholder"><Icon name="fileSearch" size={42} /><strong>등록된 사진 없음</strong></span>
+            );
+          })()}</div>
           <div className="found-detail-summary">
             <p className="placeholder-eyebrow">FOUND ITEM DETAIL</p>
             <div className="found-detail-title-row">

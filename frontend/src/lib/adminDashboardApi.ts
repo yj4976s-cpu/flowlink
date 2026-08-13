@@ -2,7 +2,26 @@ import { resolveUploadedMediaUrl } from "@/lib/mediaUrl";
 
 export type AdminDashboardData = {
   period: "today" | "7d" | "all";
-  metrics: { discovered: number; ai_detections: number; official_found_items: number; confirmed: number; matched: number; claims: number; approved: number; returned: number; lost_reports: number; match_notifications: number; citizen_reports: number; citizen_pending: number; citizen_linked: number; citizen_sightings: number };
+  metrics: {
+    discovered: number;
+    ai_detections: number;
+    official_found_items: number;
+    confirmed: number;
+    matched: number;
+    claims: number;
+    approved: number;
+    returned: number;
+    lost_reports: number;
+    match_notifications: number;
+    citizen_reports: number;
+    citizen_pending: number;
+    operation_detection_pending: number;
+    citizen_review_pending: number;
+    ownership_claim_pending: number;
+    ownership_return_pending: number;
+    citizen_linked: number;
+    citizen_sightings: number;
+  };
   recent_items: Array<{ id: number; item_category: string; item_category_name: string; color: string | null; public_description: string | null; area_name: string; found_at: string; status: string; image_url: string | null }>;
   recent_detections: Array<{ id: number; detection_event_id: number; item_category: string; item_category_name: string; confidence: number; image_url: string | null; detected_at: string; processing_status: string }>;
   category_counts: Array<{ code: string; name: string; count: number }>;
