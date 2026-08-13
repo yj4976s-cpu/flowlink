@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_AI_DIR = Path(__file__).resolve().parents[2]
@@ -23,6 +24,18 @@ class Settings(BaseSettings):
     IMAGE_MAX_PIXELS: int = 16_000_000
     VIDEO_MAX_BYTES: int = 100 * 1024 * 1024
     VIDEO_MAX_DURATION_SECONDS: int = 30
+
+    @model_validator(mode="after")
+    def validate_production_settings(self) -> "Settings":
+        if self.APP_ENV.lower() not in {"production", "prod"}:
+            return self
+
+        if len(self.AI_INTERNAL_API_KEY.strip()) < 32:
+            raise ValueError(
+                "Invalid production settings: AI_INTERNAL_API_KEY must be configured "
+                "with at least 32 characters"
+            )
+        return self
 
 
 @lru_cache

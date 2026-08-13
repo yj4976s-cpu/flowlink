@@ -68,21 +68,27 @@ Kakao 지도는 REST API 키가 아니라 JavaScript 키를 사용합니다. 로
 ### Backend
 
 ```env
+APP_ENV=development
 DATABASE_URL=postgresql+psycopg://flowlink_user:password@127.0.0.1:5432/flowlink
 JWT_SECRET_KEY=change-this-secret-key
 JWT_ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=480
 AUTH_COOKIE_NAME=flowlink_access_token
 UPLOAD_DIR=uploads
+SUPABASE_URL=
+SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_STORAGE_BUCKET=
 FRONTEND_URL=http://localhost:3000
 AI_SERVICE_URL=http://127.0.0.1:8001
 AI_INTERNAL_API_KEY=
 AI_SERVICE_TIMEOUT_SECONDS=30
+AI_VIDEO_SERVICE_TIMEOUT_SECONDS=120
 ```
 
 ### Backend AI
 
 ```env
+APP_ENV=development
 AI_INTERNAL_API_KEY=
 DETECTION_MODEL=yolo11n.pt
 DETECTION_CONFIDENCE=0.25
@@ -95,6 +101,18 @@ DETECTION_IMGSZ=640
 ```powershell
 python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
+
+### 운영 환경 필수 설정
+
+`APP_ENV=production` 또는 `APP_ENV=prod`에서는 안전하지 않은 기본값을 사용하면 Backend가 시작되지 않습니다.
+
+- `JWT_SECRET_KEY`: 기본값이 아닌 32자 이상 비밀값
+- `DATABASE_URL`: 운영 PostgreSQL 연결 문자열
+- `FRONTEND_URL`: 배포된 Frontend origin, localhost/127.0.0.1 금지
+- `AI_INTERNAL_API_KEY`: Backend와 Backend AI에 동일하게 넣는 32자 이상 비공개 값
+
+Backend AI도 운영 환경에서는 `AI_INTERNAL_API_KEY`가 비어 있으면 시작되지 않습니다.
+Supabase Storage는 선택 사항입니다. `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET` 세 값이 모두 설정되면 공개 이미지가 Supabase Storage에 저장되고, 하나라도 비어 있으면 기존 로컬 `/uploads` 저장소를 사용합니다.
 
 ## 로컬 실행
 
@@ -155,8 +173,8 @@ Backend AI의 `/health`는 모델을 로드하지 않습니다. 첫 추론 요�
 - 지도: 시민용 발견물 지도와 발견물 센터 내 지도 탐색
 - 이미지 AI: Backend → Backend AI → YOLO 실제 추론
 - 웹캠 AI: 실시간 프레임 추론, DB 저장 없음
-- 영상 AI: 업로드와 VideoJob 구조는 있으나 실제 tracking inference는 다음 PR 대상
-- Custom model: 팀 모델 `best.pt` 전달 후 `backend-ai/.env`의 `DETECTION_MODEL=models/best.pt`로 교체 예정
+- 영상 AI: 업로드, VideoJob 저장, Backend AI ByteTrack 추론 메타데이터 보존
+- Custom model: 모델 파일은 Git에 올리지 않고 `backend-ai/.env`의 `DETECTION_MODEL=models/best.pt`처럼 배포 환경에서만 경로 지정
 
 ## AI 모델 전달 체크리스트
 
@@ -172,6 +190,8 @@ AI 담당자는 모델 파일만 전달하지 말고 아래 정보를 함께 전
 - sample video
 
 모델 파일(`*.pt`, `*.pth`, `*.onnx`)은 `.gitignore`로 보호하며 Git에 올리지 않습니다.
+
+데이터베이스를 완전히 초기화해야 할 때는 `database/reset.sql`을 사용할 수 있지만, 기존 FlowLink 테이블과 데이터를 삭제합니다. 운영 DB나 보존해야 할 데이터가 있는 DB에서는 실행하지 마세요.
 
 ## 검증 명령
 
