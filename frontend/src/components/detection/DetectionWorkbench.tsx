@@ -29,6 +29,7 @@ type FoundReportCandidate = {
   objectClassName: string;
   confidence: number;
   image: File | null;
+  previewUrl: string;
   capturedAt: string;
 };
 
@@ -443,7 +444,7 @@ function WebcamReportModal({
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
-  const previewUrl = useMemo(() => candidate.image ? URL.createObjectURL(candidate.image) : "", [candidate.image]);
+  const previewUrl = candidate.previewUrl;
   const defaultClassCode = candidate.objectClassCode || "BAG";
   const label = candidate.objectClassName;
   const emptyPreviewTitle = candidate.sourceType === "image" ? "이미지를 첨부하지 못했습니다." : "대표 이미지는 첨부하지 않습니다.";
@@ -452,12 +453,6 @@ function WebcamReportModal({
     : candidate.sourceType === "video"
       ? "영상 프레임을 캡처하지 못한 경우 물품 종류와 설명만으로 제보를 시작합니다."
       : "현재 프레임을 캡처하지 못한 경우 물품 종류와 설명만으로 제보를 시작합니다.";
-
-  useEffect(() => {
-    return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-    };
-  }, [previewUrl]);
 
   return (
     <div className={styles.reportModalBackdrop} role="presentation" onMouseDown={onClose}>
@@ -604,6 +599,7 @@ export function DetectionWorkbench() {
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewUrlRef = useRef("");
+  const reportPreviewUrlRef = useRef("");
 
   const personalItemObjects = useMemo(
     () => currentEvent?.detected_objects.filter(isReportablePersonalItem) ?? [],
@@ -630,6 +626,13 @@ export function DetectionWorkbench() {
     }
   }, []);
 
+  const revokeReportPreviewUrl = useCallback(() => {
+    if (reportPreviewUrlRef.current) {
+      URL.revokeObjectURL(reportPreviewUrlRef.current);
+      reportPreviewUrlRef.current = "";
+    }
+  }, []);
+
   useEffect(() => {
     const controller = new AbortController();
     queueMicrotask(() => void refreshHistory(controller.signal));
@@ -639,6 +642,7 @@ export function DetectionWorkbench() {
   useEffect(() => {
     return () => {
       if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+      if (reportPreviewUrlRef.current) URL.revokeObjectURL(reportPreviewUrlRef.current);
     };
   }, []);
 
@@ -741,6 +745,7 @@ export function DetectionWorkbench() {
   };
 
   const resetSelectedFile = () => {
+    revokeReportPreviewUrl();
     setFile(null);
     setVideoDuration(null);
     setVideoThumbnailUrl("");
@@ -890,12 +895,16 @@ export function DetectionWorkbench() {
   const openWebcamReport = (candidate: WebcamReportCandidate) => {
     const classCode = getReportableClassCode(candidate.object.class_code);
     if (!classCode) return;
+    const reportPreviewUrl = URL.createObjectURL(candidate.image);
+    revokeReportPreviewUrl();
+    reportPreviewUrlRef.current = reportPreviewUrl;
     setWebcamReportCandidate({
       sourceType: "webcam",
       objectClassCode: classCode,
       objectClassName: candidate.object.class_name_ko ?? reportableClassNames[classCode] ?? candidate.object.label,
       confidence: candidate.object.confidence,
       image: candidate.image,
+      previewUrl: reportPreviewUrl,
       capturedAt: candidate.capturedAt,
     });
     setWebcamReportError("");
@@ -921,12 +930,17 @@ export function DetectionWorkbench() {
       image = await captureVideoReportFrame(sourceFile, object);
     }
 
+    const reportPreviewUrl = image ? URL.createObjectURL(image) : "";
+    revokeReportPreviewUrl();
+    reportPreviewUrlRef.current = reportPreviewUrl;
+
     setWebcamReportCandidate({
       sourceType,
       objectClassCode: classCode,
       objectClassName: object.class_name_ko || reportableClassNames[classCode],
       confidence: object.confidence,
       image,
+      previewUrl: reportPreviewUrl,
       capturedAt: sourceEvent.processing_completed_at ?? sourceEvent.created_at,
     });
     setWebcamReportError(imageError);
@@ -935,6 +949,7 @@ export function DetectionWorkbench() {
 
   const closeWebcamReport = () => {
     if (webcamReportSubmitting) return;
+    revokeReportPreviewUrl();
     setWebcamReportCandidate(null);
     setWebcamReportError("");
     setWebcamReportSuccess(null);
