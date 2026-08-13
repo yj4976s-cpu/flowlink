@@ -48,10 +48,18 @@ Do not commit either file. `models/best.pt` is mounted into `backend-ai` as read
 
 ## Environment setup
 
-Copy the example and fill in real values on the deployment host:
+Copy the example and fill in real values on the deployment host.
+
+Windows PowerShell:
 
 ```powershell
 Copy-Item .env.production.example .env.production
+```
+
+Linux/Ubuntu:
+
+```bash
+cp .env.production.example .env.production
 ```
 
 Required production values:
@@ -63,9 +71,9 @@ Required production values:
 - `AI_INTERNAL_API_KEY`: at least 32 characters; must match between backend and backend-ai.
 - `DETECTION_MODEL`: defaults to `/app/models/best.pt`.
 
-Optional values:
+Feature-specific and optional integration values:
 
-- `NEXT_PUBLIC_KAKAO_MAP_JS_KEY`: browser-side Kakao map JavaScript key.
+- `NEXT_PUBLIC_KAKAO_MAP_JS_KEY`: not required to start the containers, but required for a production deployment that uses FlowLink's Kakao map features. Register the actual production domain in Kakao Developers as an allowed JavaScript SDK domain.
 - `KAKAO_REST_API_KEY`: server-side Kakao geocoding key.
 - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET`: server-only Supabase Storage integration.
 - `ROBOFLOW_API_KEY`, `ROBOFLOW_PROJECT_ID`, `ROBOFLOW_MODEL_VERSION`: optional Roboflow integration values.
@@ -158,6 +166,7 @@ The backend API routers already include `/api/...` prefixes, so Nginx forwards `
 
 - The frontend image bakes `NEXT_PUBLIC_*` variables at build time. Rebuild the frontend image after changing public frontend environment variables.
 - The backend production config requires secure cookie settings and a valid HTTPS `FRONTEND_URL`.
+- Nginx overwrites `X-Forwarded-For` with the direct public client address. The backend trusts proxy headers only from Nginx's fixed `172.30.0.10` address on the private Compose network; keep that address aligned with `FORWARDED_ALLOW_IPS` if the network configuration changes.
 - For a local HTTP-only smoke test, pages and health checks can be tested, but production auth cookies require HTTPS.
 - Supabase PostgreSQL is external. This stack does not run a PostgreSQL container.
 - Choose host CPU, RAM, disk, and GPU/CPU inference capacity after measuring the real video workload and model latency. Tiny instances are unlikely to be a safe default for video inference.

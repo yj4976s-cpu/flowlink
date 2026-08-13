@@ -36,6 +36,7 @@ services:
       APP_ENV: ${APP_ENV:-production}
       APP_HOST: 0.0.0.0
       APP_PORT: "8000"
+      FORWARDED_ALLOW_IPS: 172.30.0.10
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
@@ -119,6 +120,9 @@ services:
 networks:
   flowlink:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
 
 volumes:
   flowlink_uploads:
