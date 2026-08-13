@@ -244,6 +244,6 @@ The backend API routers already include `/api/...` prefixes, so Nginx forwards `
 - Install Docker Engine and Docker Compose.
 - Put real secrets in `.env.production` on the host only.
 - Put the trained model at `models/best.pt` on the host only.
-- Configure security groups so only `80` and `443` are public.
+- Configure the EC2 security group so `80`/`443` are public, `22` is restricted to the administrator's **My IP** CIDR, and `3000`/`8000`/`8001`/`5432` have no public inbound rules.
 - Point `flowlink-project.duckdns.org` at the EC2 host and keep the host-managed Certbot certificate renewable through `certbot/www`.
 - Confirm Docker log rotation policy on the host if long-running production logs become large.
