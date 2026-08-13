@@ -13,7 +13,6 @@ import {
   type FoundItemDetail,
   type FoundItemListItem,
 } from "@/lib/foundItemsApi";
-import { getItemTypeMeta } from "@/lib/itemTypeMeta";
 import styles from "./AdminFoundItemsClient.module.css";
 
 const statuses = [
@@ -51,24 +50,13 @@ function formatDate(value: string) {
   return Number.isNaN(parsed.getTime()) ? "일시 확인 중" : formatter.format(parsed);
 }
 
-function fallbackFoundItemImage(item: Pick<FoundItemListItem, "item_category" | "item_category_name">) {
-  const family = getItemTypeMeta(item.item_category, item.item_category_name).family;
-  if (family === "bag") return "/found-backpack-day.png";
-  if (family === "umbrella") return "/found-umbrella-day.png";
-  if (family === "neutral") return "/found-branch-day.png";
-  return "/found-container-day.png";
-}
-
 function ItemImage({ item, compact = false }: { item: FoundItemListItem; compact?: boolean }) {
   const originalUrl = resolveFoundItemImageUrl(item.image_url);
   const [failedUrl, setFailedImageUrl] = useState<string | null>(null);
-  const resolved = originalUrl && failedUrl !== originalUrl ? originalUrl : fallbackFoundItemImage(item);
-  const setFailedUrl = (url: string) => {
-    if (url === originalUrl) setFailedImageUrl(url);
-  };
+  const resolved = originalUrl && failedUrl !== originalUrl ? originalUrl : null;
   return (
     <span className={compact ? styles.thumb : styles.image}>
-      <img src={resolved} alt={`${item.item_category_name} 발견물 이미지`} onError={() => setFailedUrl(resolved)} />
+      {resolved ? <img src={resolved} alt={`${item.item_category_name} 발견물 이미지`} onError={() => setFailedImageUrl(resolved)} /> : <span className={styles.imagePlaceholder}><Icon name="fileSearch" size={compact ? 23 : 38} /><small>등록된 사진 없음</small></span>}
     </span>
   );
 }

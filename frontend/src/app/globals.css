@@ -839,6 +839,7 @@ html[data-theme="night"] .auth-register-copy-card { background: linear-gradient(
 
 .found-detail-image { position: relative; min-height: clamp(220px, 35vw, 390px); overflow: hidden; background: var(--color-surface-soft); color: var(--color-primary); display: grid; place-items: center; }
 .found-detail-image img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.found-detail-image-placeholder { display: grid; place-items: center; gap: 10px; color: var(--color-text-muted); text-align: center; }.found-detail-image-placeholder strong { font-size: 13px; }
 /* AI guide groups the supported detection classes by handling flow. */
 .guide-ai-classes { grid-template-columns: repeat(2, 1fr); }
 @media (max-width: 600px) { .guide-ai-classes { grid-template-columns: 1fr; } }

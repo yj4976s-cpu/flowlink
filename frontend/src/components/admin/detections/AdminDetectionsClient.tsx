@@ -1,7 +1,5 @@
 "use client";
 
-/* eslint-disable @next/next/no-img-element */
-
 import Image from "next/image";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -44,188 +42,19 @@ function SelectBox({ label, value, options, onChange, disabled, compact = false 
 }
 
 type DetectionMediaType = "IMAGE" | "VIDEO";
-const VIDEO_POSTER_MAX_WIDTH = 960;
-
-function isMostlyDarkFrame(context: CanvasRenderingContext2D, width: number, height: number) {
-  const sampleWidth = Math.min(80, width);
-  const sampleHeight = Math.min(45, height);
-  const sample = context.getImageData(
-    Math.max(0, Math.floor((width - sampleWidth) / 2)),
-    Math.max(0, Math.floor((height - sampleHeight) / 2)),
-    sampleWidth,
-    sampleHeight,
-  ).data;
-
-  let totalBrightness = 0;
-  for (let index = 0; index < sample.length; index += 4) totalBrightness += (sample[index] + sample[index + 1] + sample[index + 2]) / 3;
-  return totalBrightness / (sample.length / 4) < 18;
-}
-
-function useVideoPoster(src: string | null, enabled: boolean) {
-  const [poster, setPoster] = useState<{ src: string; url: string } | null>(null);
-
-  useEffect(() => () => {
-    if (poster?.url) URL.revokeObjectURL(poster.url);
-  }, [poster?.url]);
-
-  useEffect(() => {
-    if (!enabled || !src) return;
-
-    let cancelled = false;
-    let captured = false;
-    let capturedUrl: string | null = null;
-    let sourceObjectUrl: string | null = null;
-    let candidateTimes: number[] = [];
-    let candidateIndex = 0;
-    const controller = new AbortController();
-    const video = document.createElement("video");
-
-    const stopVideo = () => {
-      video.pause();
-      video.removeAttribute("src");
-      video.load();
-    };
-
-    const seekToNextCandidate = () => {
-      if (cancelled || candidateIndex >= candidateTimes.length) return;
-      try {
-        video.currentTime = candidateTimes[candidateIndex];
-      } catch {
-        candidateIndex += 1;
-        seekToNextCandidate();
-      }
-    };
-
-    const capturePoster = () => {
-      if (cancelled || captured || !video.videoWidth || !video.videoHeight) return;
-
-      try {
-        const scale = Math.min(1, VIDEO_POSTER_MAX_WIDTH / video.videoWidth);
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
-        canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
-        const context = canvas.getContext("2d");
-        if (!context) return;
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-        if (isMostlyDarkFrame(context, canvas.width, canvas.height) && candidateIndex < candidateTimes.length - 1) {
-          candidateIndex += 1;
-          seekToNextCandidate();
-          return;
-        }
-
-        captured = true;
-        canvas.toBlob((blob) => {
-          if (cancelled || !blob) return;
-          capturedUrl = URL.createObjectURL(blob);
-          setPoster((current) => {
-            if (current?.url) URL.revokeObjectURL(current.url);
-            return capturedUrl ? { src, url: capturedUrl } : current;
-          });
-        }, "image/jpeg", 0.86);
-      } catch {
-        captured = true;
-      }
-    };
-
-    const handleLoadedMetadata = () => {
-      const duration = video.duration;
-      const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
-      const safeEnd = Math.max(0, safeDuration - 0.2);
-      candidateTimes = safeDuration
-        ? [0.2, 0.45, 0.65, 0.08].map((ratio) => Math.min(safeEnd, Math.max(0, safeDuration * ratio)))
-        : [0];
-      seekToNextCandidate();
-    };
-
-    const handleLoadedData = () => {
-      if (!captured && candidateTimes[0] === 0) capturePoster();
-    };
-
-    const timeoutId = window.setTimeout(() => {
-      if (!captured) {
-        cancelled = true;
-        stopVideo();
-      }
-    }, 6000);
-
-    video.muted = true;
-    video.playsInline = true;
-    video.preload = "metadata";
-    video.addEventListener("loadedmetadata", handleLoadedMetadata);
-    video.addEventListener("loadeddata", handleLoadedData);
-    video.addEventListener("seeked", capturePoster);
-
-    const loadVideo = async () => {
-      let captureSrc = src;
-
-      try {
-        const response = await fetch(src, { credentials: "include", signal: controller.signal });
-        if (response.ok) {
-          const blob = await response.blob();
-          if (cancelled) return;
-          sourceObjectUrl = URL.createObjectURL(blob);
-          captureSrc = sourceObjectUrl;
-        }
-      } catch (reason) {
-        if (reason instanceof DOMException && reason.name === "AbortError") return;
-      }
-
-      if (cancelled) return;
-      video.src = captureSrc;
-      video.load();
-    };
-
-    void loadVideo();
-
-    return () => {
-      cancelled = true;
-      controller.abort();
-      window.clearTimeout(timeoutId);
-      video.removeEventListener("loadedmetadata", handleLoadedMetadata);
-      video.removeEventListener("loadeddata", handleLoadedData);
-      video.removeEventListener("seeked", capturePoster);
-      stopVideo();
-      if (sourceObjectUrl) URL.revokeObjectURL(sourceObjectUrl);
-      if (capturedUrl) URL.revokeObjectURL(capturedUrl);
-    };
-  }, [enabled, src]);
-
-  return enabled && poster?.src === src ? poster.url : null;
-}
 
 function Media({ src, fallbackSrc, alt, compact = false, mediaType = "IMAGE" }: { src: string | null; fallbackSrc?: string | null; alt: string; compact?: boolean; mediaType?: DetectionMediaType }) {
   const resolved = adminDetectionMediaUrl(src) ?? adminDetectionMediaUrl(fallbackSrc);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
-  const [activeVideoUrl, setActiveVideoUrl] = useState<string | null>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
   const visibleUrl = resolved && failedUrl !== resolved ? resolved : null;
-  const posterUrl = useVideoPoster(visibleUrl, mediaType === "VIDEO");
-  const showPoster = mediaType === "VIDEO" && posterUrl && activeVideoUrl !== visibleUrl;
-
-  const playVideo = () => {
-    if (!visibleUrl) return;
-    setActiveVideoUrl(visibleUrl);
-    window.setTimeout(() => void videoRef.current?.play().catch(() => undefined), 0);
-  };
 
   return (
     <span className={compact ? styles.thumb : styles.media}>
-      {visibleUrl ? (
+      {mediaType === "VIDEO" && compact ? (
+        <span className={styles.videoPlaceholder}><Icon name="arrow" size={20} /><small>VIDEO</small></span>
+      ) : visibleUrl ? (
         mediaType === "VIDEO" ? (
-          <>
-            <video ref={videoRef} src={visibleUrl} poster={posterUrl ?? undefined} aria-label={alt} controls={!compact} muted playsInline preload="metadata" onError={() => setFailedUrl(visibleUrl)} />
-            {showPoster && (
-              compact ? (
-                <img className={styles.videoPosterImage} src={posterUrl} alt="" aria-hidden="true" />
-              ) : (
-                <button type="button" className={styles.videoPosterButton} onClick={playVideo} aria-label={`${alt} 재생`}>
-                  <img className={styles.videoPosterImage} src={posterUrl} alt="" aria-hidden="true" />
-                  <span><Icon name="arrow" size={22} /></span>
-                </button>
-              )
-            )}
-          </>
+          <video src={visibleUrl} aria-label={alt} controls muted playsInline preload="metadata" onError={() => setFailedUrl(visibleUrl)} />
         ) : (
           <Image src={visibleUrl} alt={alt} fill sizes={compact ? "72px" : "(max-width: 1024px) 100vw, 680px"} unoptimized onError={() => setFailedUrl(visibleUrl)} />
         )

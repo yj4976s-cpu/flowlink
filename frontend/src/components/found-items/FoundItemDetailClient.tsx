@@ -5,7 +5,6 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Icon } from "@/components/common/Icon";
 import { FoundItemDetail, FoundItemsApiError, getFoundItem, resolveFoundItemImageUrl } from "@/lib/foundItemsApi";
-import { getItemTypeMeta } from "@/lib/itemTypeMeta";
 import { listMyMatches, type MatchCandidate } from "@/lib/matchesApi";
 
 const dateFormatter = new Intl.DateTimeFormat("ko-KR", {
@@ -25,14 +24,6 @@ function formatDateTime(value: string) {
 
 function getStatusLabel(status: string) {
   return statusLabel[status] ?? status;
-}
-
-function fallbackFoundItemImage(item: Pick<FoundItemDetail, "item_category" | "item_category_name">) {
-  const family = getItemTypeMeta(item.item_category, item.item_category_name).family;
-  if (family === "bag") return "/found-backpack-day.png";
-  if (family === "umbrella") return "/found-umbrella-day.png";
-  if (family === "neutral") return "/found-branch-day.png";
-  return "/found-container-day.png";
 }
 
 export function FoundItemDetailClient() {
@@ -102,16 +93,15 @@ export function FoundItemDetailClient() {
         <article className="found-detail-card" aria-labelledby="found-detail-title">
           <div className="found-detail-image">{(() => {
             const imageUrl = resolveFoundItemImageUrl(item.image_url);
-            const fallbackUrl = fallbackFoundItemImage(item);
-            const visibleUrl = imageUrl && !imageFailed ? imageUrl : fallbackUrl;
+            const visibleUrl = imageUrl && !imageFailed ? imageUrl : null;
             return visibleUrl ? (
               <img
                 src={visibleUrl}
                 alt={`${item.item_category_name} 발견물 이미지`}
-                onError={visibleUrl === imageUrl ? () => setImageFailed(true) : undefined}
+                onError={() => setImageFailed(true)}
               />
             ) : (
-              <Icon name="fileSearch" size={42} />
+              <span className="found-detail-image-placeholder"><Icon name="fileSearch" size={42} /><strong>등록된 사진 없음</strong></span>
             );
           })()}</div>
           <div className="found-detail-summary">

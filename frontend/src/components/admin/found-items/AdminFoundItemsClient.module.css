@@ -55,6 +55,7 @@
 .thumb { width: 62px; height: 62px; flex: 0 0 62px; border-radius: 13px; }
 .image { width: 100%; aspect-ratio: 16 / 8; border-radius: 16px; }
 .thumb img, .image img { width: 100%; height: 100%; object-fit: cover; }
+.imagePlaceholder { display: grid; place-items: center; gap: 6px; text-align: center; }.imagePlaceholder small { color: var(--color-text-muted); font-size: 9px; font-weight: 800; }.thumb .imagePlaceholder small { display: none; }
 .statusBadge { width: fit-content; padding: 5px 8px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface-soft); color: var(--color-text-muted); font-size: 9px; font-weight: 900; white-space: nowrap; }
 .statusDETECTED, .statusRECOVERED { border-color: color-mix(in srgb, var(--color-accent) 35%, var(--color-border)); background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface)); color: var(--color-accent); }
 .statusAVAILABLE, .statusCLAIM_PENDING { border-color: color-mix(in srgb, var(--color-primary) 30%, var(--color-border)); background: var(--color-primary-soft); color: var(--color-primary); }
