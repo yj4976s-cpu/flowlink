@@ -20,6 +20,17 @@ from app.schemas.auth import LoginRequest, PasswordChangeRequest, RegisterReques
 from app.services.auth import validate_registration_agreements
 
 
+PRODUCTION_SETTINGS = {
+    "APP_ENV": "production",
+    "DATABASE_URL": (
+        "postgresql+psycopg://flowlink_user:strong-password@db.flowlink.example:5432/flowlink"
+    ),
+    "JWT_SECRET_KEY": "flowlink-test-secret-with-at-least-32-characters",
+    "FRONTEND_URL": "https://flowlink.example",
+    "AI_INTERNAL_API_KEY": "flowlink-test-ai-internal-key-32-chars",
+}
+
+
 def make_user(*, role: str = "USER", active: bool = True) -> User:
     return User(
         id=1,
@@ -145,8 +156,68 @@ def test_expired_token_is_rejected() -> None:
 
 
 def test_auth_cookie_secure_follows_app_env() -> None:
-    assert not Settings(APP_ENV="development").auth_cookie_secure
-    assert Settings(APP_ENV="production").auth_cookie_secure
+    assert not Settings(_env_file=None, APP_ENV="development").auth_cookie_secure
+    assert Settings(_env_file=None, **PRODUCTION_SETTINGS).auth_cookie_secure
+
+
+def test_production_settings_require_non_default_jwt_secret() -> None:
+    with pytest.raises(ValidationError, match="JWT_SECRET_KEY"):
+        Settings(
+            _env_file=None,
+            **(PRODUCTION_SETTINGS | {"JWT_SECRET_KEY": "change-this-secret-key"}),
+        )
+
+
+def test_production_settings_require_strong_jwt_secret() -> None:
+    with pytest.raises(ValidationError, match="JWT_SECRET_KEY"):
+        Settings(
+            _env_file=None,
+            **(PRODUCTION_SETTINGS | {"JWT_SECRET_KEY": "short-secret"}),
+        )
+
+
+def test_production_settings_require_non_default_database_url() -> None:
+    with pytest.raises(ValidationError, match="DATABASE_URL"):
+        Settings(
+            _env_file=None,
+            **(
+                PRODUCTION_SETTINGS
+                | {
+                    "DATABASE_URL": (
+                        "postgresql+psycopg://flowlink_user:password@127.0.0.1:5432/flowlink"
+                    )
+                }
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "frontend_url",
+    [
+        "",
+        "flowlink.example",
+        "http://flowlink.example",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+)
+def test_production_settings_require_public_frontend_url(frontend_url: str) -> None:
+    with pytest.raises(ValidationError, match="FRONTEND_URL"):
+        Settings(
+            _env_file=None,
+            **(PRODUCTION_SETTINGS | {"FRONTEND_URL": frontend_url}),
+        )
+
+
+def test_production_settings_require_ai_internal_api_key() -> None:
+    with pytest.raises(ValidationError, match="AI_INTERNAL_API_KEY"):
+        Settings(_env_file=None, **(PRODUCTION_SETTINGS | {"AI_INTERNAL_API_KEY": ""}))
+
+
+def test_production_settings_accept_required_values() -> None:
+    settings = Settings(_env_file=None, **PRODUCTION_SETTINGS)
+
+    assert settings.auth_cookie_secure
 
 
 def test_user_and_admin_roles_are_separated() -> None:
