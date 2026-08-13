@@ -60,6 +60,7 @@
 @media (prefers-reduced-motion: reduce) { .focusBackdrop, .focusDialog, .focusViewport img { animation: none; transition: none; } }
 .field > select { width: 100%; min-height: 40px; padding: 0 10px; border: 1px solid var(--color-border); border-radius: 10px; outline: 0; background: var(--color-surface); color: var(--color-text); font: inherit; font-size: 11px; }
 .field > select:focus { border-color: var(--color-primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 14%, transparent); }
+.analysisNotice a { color: var(--color-primary); font-weight: 900; text-decoration: underline; text-underline-offset: 2px; }
 .colorReview { padding: 11px 12px; border: 1px solid color-mix(in srgb, var(--color-primary) 18%, var(--color-border)); border-radius: 11px; background: var(--color-primary-soft); }
 .colorReview > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .colorReview span { color: var(--color-text-muted); font-size: 10px; font-weight: 800; }

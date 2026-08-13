@@ -99,7 +99,7 @@ export function AdminDashboardClient() {
   const ownershipReturnPending = current?.metrics.ownership_return_pending ?? 0;
   const waiting = operationDetectionPending + citizenReviewPending + ownershipClaimPending + ownershipReturnPending;
   const priorities = [
-    { key: "operation-detection", tone: "attention", label: "AI 탐지 검토 대기", title: "운영 탐지에서 확인할 객체", count: operationDetectionPending, detail: "OPERATION · PENDING", href: "/admin/detections", action: "탐지 검토" },
+    { key: "operation-detection", tone: "attention", label: "AI 탐지 검토 대기", title: "운영 탐지에서 확인할 객체", count: operationDetectionPending, detail: "OPERATION · PENDING", href: "/admin/detections?purpose=OPERATION&status=PENDING", action: "탐지 검토" },
     { key: "citizen-report", tone: "citizen", label: "시민 발견 제보 검토", title: "새로 접수된 발견 제보", count: citizenReviewPending, detail: "CitizenReport · PENDING", href: "/admin/citizen-reports", action: "제보 검토" },
     { key: "ownership-claim", tone: "claim", label: "소유권 요청 검토", title: "소유권 확인 요청", count: ownershipClaimPending, detail: "OwnershipClaim · PENDING", href: "/admin/ownership-claims", action: "요청 검토" },
     { key: "ownership-return", tone: "return", label: "반환 처리", title: "승인 후 반환 대기", count: ownershipReturnPending, detail: "OwnershipClaim · APPROVED", href: "/admin/ownership-claims", action: "반환 처리" },
