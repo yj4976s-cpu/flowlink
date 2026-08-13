@@ -18,6 +18,7 @@ import styles from "./AdminFoundItemsClient.module.css";
 const statuses = [
   { value: "RECOVERED", label: "회수 확인" },
   { value: "AVAILABLE", label: "보관 중" },
+  { value: "DISPOSED", label: "비공개 처리" },
 ] as const;
 
 const publicStatusFilters = [
