@@ -67,6 +67,32 @@ def provider_should_not_run(monkeypatch: pytest.MonkeyPatch) -> Mock:
     return provider
 
 
+def test_guest_team_roles_does_not_call_provider(db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = provider_should_not_run(monkeypatch)
+    response = asyncio.run(create_copilot_response(db, request("팀원 역할 알려줘"), None))
+    assert provider.call_count == 0
+    assert response.provider == "flowlink"
+    assert response.model == "local-team-roles"
+    assert response.mode == "GUIDE"
+    assert "고태영" in response.message
+    assert "홍진욱" in response.message
+    assert "유진설" in response.message
+    assert "조정화" in response.message
+    assert "Roboflow" in response.message
+
+
+def test_guest_dataset_team_role_filters_members(db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = provider_should_not_run(monkeypatch)
+    response = asyncio.run(create_copilot_response(db, request("데이터셋 담당 누구야?"), None))
+    assert provider.call_count == 0
+    assert response.provider == "flowlink"
+    assert response.model == "local-team-roles"
+    assert "고태영" in response.message
+    assert "홍진욱" in response.message
+    assert "유진설" not in response.message
+    assert "조정화" not in response.message
+
+
 def test_guest_greeting_does_not_call_provider(db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
     provider = provider_should_not_run(monkeypatch)
     response = asyncio.run(create_copilot_response(db, request("안녕"), None))
