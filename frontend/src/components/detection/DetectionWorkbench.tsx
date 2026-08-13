@@ -956,6 +956,11 @@ export function DetectionWorkbench() {
       return;
     }
 
+    if (webcamReportCandidate.sourceType === "webcam" && (!webcamReportCandidate.image || webcamReportCandidate.image.size === 0)) {
+      setWebcamReportError("웹캠 탐지 프레임을 첨부하지 못했습니다. 다시 탐지한 뒤 발견 제보를 접수해 주세요.");
+      return;
+    }
+
     setWebcamReportSubmitting(true);
     setWebcamReportError("");
     try {

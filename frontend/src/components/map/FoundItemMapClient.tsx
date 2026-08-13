@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { createRoot, type Root } from "react-dom/client";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/common/Icon";
 import { FoundItemMapItem, listMapFoundItems, resolveFoundItemImageUrl } from "@/lib/foundItemsApi";
@@ -113,15 +112,6 @@ function createMarkerElement(item: FoundItemMapItem, selected: boolean, onSelect
   return marker;
 }
 
-function OverlayLinkContent() {
-  return (
-    <>
-      <span>발견물 자세히 보기</span>
-      <Icon name="chevronRight" size={15} />
-    </>
-  );
-}
-
 function createSelectedOverlayContent(item: FoundItemMapItem) {
   const container = document.createElement("article");
   container.className = styles.selectedOverlay;
@@ -150,12 +140,14 @@ function createSelectedOverlayContent(item: FoundItemMapItem) {
   const link = document.createElement("a");
   link.href = `/found-items/${item.id}`;
   link.className = styles.overlayLink;
-  const root = createRoot(link);
-  root.render(<OverlayLinkContent />);
+  link.append(
+    createTextElement("span", "", "발견물 자세히 보기"),
+    createTextElement("span", styles.overlayChevron, "→"),
+  );
   body.append(status, title, area, meta, link);
   container.appendChild(body);
 
-  return { container, root };
+  return container;
 }
 
 function AreaPicker({ value, options, onChange, onSelect }: { value: string; options: string[]; onChange: (value: string) => void; onSelect: (value: string) => void }) {
@@ -245,7 +237,6 @@ export function FoundItemMapClient() {
   const markerOverlaysRef = useRef<Map<number, KakaoCustomOverlay>>(new Map());
   const markerElementsRef = useRef<Map<number, HTMLElement>>(new Map());
   const selectedOverlayRef = useRef<KakaoCustomOverlay | null>(null);
-  const selectedOverlayRootRef = useRef<Root | null>(null);
   const listItemRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
   const selectionSourceRef = useRef<SelectionSource>("list");
 
@@ -444,8 +435,6 @@ export function FoundItemMapClient() {
 
     selectedOverlayRef.current?.setMap(null);
     selectedOverlayRef.current = null;
-    selectedOverlayRootRef.current?.unmount();
-    selectedOverlayRootRef.current = null;
 
     const map = mapRef.current;
     const maps = mapsRef.current;
@@ -453,10 +442,9 @@ export function FoundItemMapClient() {
 
     const position = new maps.LatLng(selectedItem.latitude, selectedItem.longitude);
     const overlayContent = createSelectedOverlayContent(selectedItem);
-    selectedOverlayRootRef.current = overlayContent.root;
     selectedOverlayRef.current = new maps.CustomOverlay({
       position,
-      content: overlayContent.container,
+      content: overlayContent,
       yAnchor: 1.72,
       zIndex: 4,
     });
@@ -470,7 +458,6 @@ export function FoundItemMapClient() {
 
   useEffect(() => () => {
     selectedOverlayRef.current?.setMap(null);
-    selectedOverlayRootRef.current?.unmount();
   }, []);
 
   useEffect(() => {
