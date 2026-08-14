@@ -1790,11 +1790,13 @@
   cursor: pointer;
 }
 .historyFooter { margin-top: 14px; display: grid; gap: 10px; }
-.historyPagination { min-height: 40px; border-top: 1px solid var(--color-border); padding-top: 10px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; }
-.historyPagination button { min-height: 34px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-surface); color: var(--color-text); font-weight: 700; }
-.historyPagination button:last-child { justify-self: end; }
-.historyPagination button:disabled { opacity: .42; }
-.historyPagination span { color: var(--color-text-muted); font-size: 12px; font-weight: 750; }
+.historyPagination { width: fit-content; min-height: 40px; margin-inline: auto; display: inline-flex; align-items: center; justify-content: center; gap: 12px; }
+.historyPagination button { width: 38px; height: 38px; padding: 0; border: 1px solid var(--color-border); border-radius: 50%; background: var(--color-surface); color: var(--color-text); display: grid; place-items: center; cursor: pointer; transition: color .18s ease, border-color .18s ease, background-color .18s ease; }
+.historyPagination button:hover:not(:disabled), .historyPagination button:focus-visible { border-color: color-mix(in srgb, var(--color-primary) 42%, var(--color-border)); background: var(--color-primary-soft); color: var(--color-primary); }
+.historyPagination button:disabled { background: var(--color-surface-soft); color: var(--color-text-muted); opacity: .58; cursor: not-allowed; }
+.historyPageStatus { min-width: 62px; color: var(--color-text-muted); display: inline-flex; align-items: baseline; justify-content: center; font-size: 14px; line-height: 1; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.historyPageStatus strong { color: var(--color-text); font-size: 14px; line-height: inherit; font-weight: 850; }
+.historyPageStatus span { color: var(--color-text-muted); }
 .historyBulkActions { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .historyBulkActions span { margin-right: auto; color: var(--color-text-muted); font-size: 12px; font-weight: 700; }
 .historyBulkActions button { min-height: 34px; padding: 0 10px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-surface); color: var(--color-error); font-weight: 750; }
@@ -1987,4 +1989,88 @@
 }
 .conversationUtility > button {
   min-height: 44px;
+}
+
+/* Expanded workspace used only while the conversation history is open. */
+.historyPanelOpen {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  bottom: 24px;
+  width: 78vw;
+  max-width: 1020px;
+  height: auto;
+}
+.historyPanelOpen > header { min-height: 88px; padding: 17px 22px; gap: 14px; }
+.historyPanelOpen > header strong { font-size: 18px; }
+.historyPanelOpen > header span { color: var(--color-text-muted); font-size: 13px; font-weight: 600; }
+.historyPanelOpen .contextLine { min-height: 36px; padding-inline: 22px; }
+.historyPanelOpen .contextLine span { font-size: 12px; }
+.historyPanelOpen .contextLine strong { font-size: 13px; }
+.historyUtilityActive { min-height: 62px; padding: 7px 20px; grid-template-columns: minmax(110px, auto) minmax(150px, auto) 1fr; justify-content: start; gap: 6px; }
+.historyUtilityActive > button { position: relative; width: auto; min-height: 48px; padding-inline: 18px; border-color: transparent; background: transparent; color: var(--color-text-muted); }
+.historyUtilityActive .historyButton[aria-pressed="true"] { border-color: transparent; background: transparent; color: var(--color-primary); }
+.historyUtilityActive .historyButton[aria-pressed="true"]::after { content: ""; position: absolute; right: 14px; bottom: -8px; left: 14px; height: 3px; border-radius: 99px; background: var(--color-primary); }
+.historyUtilityActive .historyButton small { min-width: 24px; padding: 3px 7px; border-radius: 99px; background: var(--color-primary-soft); color: var(--color-primary); font-size: 12px; font-weight: 850; }
+.historyUtilityActive .newConversationButton { justify-self: end; border-color: color-mix(in srgb, var(--color-primary) 36%, var(--color-border)); background: var(--color-primary-soft); color: var(--color-primary); }
+.historyPanelOpen .messages { padding: 24px 26px 18px; scrollbar-width: thin; scrollbar-color: var(--color-border) transparent; }
+.historyPanelOpen .memoryPanel { max-width: 100%; }
+.historyPanelOpen .historyHeading { gap: 14px; }
+.historyPanelOpen .historyHeading h3 { font-size: 25px; }
+.historyPanelOpen .historyHeading p { margin-bottom: 0; color: var(--color-text-muted); font-size: 14px; }
+.historyPanelOpen .historyCount { font-size: 13px; }
+.historyTools { margin-top: 20px; display: grid; grid-template-columns: minmax(0, 1fr) 190px; gap: 10px; }
+.historyTools .historySearch { min-height: 48px; margin-top: 0; padding-inline: 14px; }
+.historyTools .historySearch input { font-size: 14px; }
+.historyFilter { position: relative; min-width: 0; }
+.historyFilter > button { width: 100%; min-height: 48px; padding: 0 13px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface-soft); color: var(--color-text); display: flex; align-items: center; justify-content: space-between; gap: 10px; text-align: left; font: inherit; font-size: 14px; font-weight: 650; cursor: pointer; }
+.historyFilter > button:hover, .historyFilter > button[aria-expanded="true"] { border-color: color-mix(in srgb, var(--color-primary) 42%, var(--color-border)); background: color-mix(in srgb, var(--color-primary-soft) 62%, var(--color-surface)); color: var(--color-primary); }
+.historyFilter > button:focus-visible { outline: 3px solid color-mix(in srgb, var(--color-primary) 36%, transparent); outline-offset: 2px; }
+.historyFilter > button[aria-expanded="true"] :global(.icon) { transform: rotate(180deg); }
+.historyFilterMenu { position: absolute; z-index: 12; top: calc(100% + 7px); right: 0; width: max(100%, 210px); max-width: min(320px, calc(100vw - 32px)); max-height: min(320px, calc(100dvh - 160px)); overflow-y: auto; padding: 7px; border: 1px solid var(--color-border); border-radius: 14px; background: var(--color-surface-elevated); box-shadow: var(--shadow-floating); }
+.historyFilterMenu > button { width: 100%; min-height: 46px; padding: 0 11px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--color-text); display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: left; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.historyFilterMenu > button:hover, .historyFilterMenu > button[data-active="true"] { background: var(--color-surface-soft); }
+.historyFilterMenu > button[aria-selected="true"] { border-color: color-mix(in srgb, var(--color-primary) 28%, var(--color-border)); background: var(--color-primary-soft); color: var(--color-primary); font-weight: 800; }
+.historyFilterMenu > button:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+.historyFilterMenu > button :global(.icon) { flex: 0 0 auto; color: var(--color-primary); }
+.historyPanelOpen .historyGroups { margin-top: 22px; gap: 22px; }
+.historyPanelOpen .historyGroups section > h4 { margin-bottom: 10px; color: var(--color-text); font-size: 14px; font-weight: 850; }
+.historyPanelOpen .historyGroups ul { gap: 10px; }
+.historyPanelOpen .historyGroups li { min-height: 82px; padding: 14px 94px 14px 42px; border-radius: 16px; transition: transform .16s ease, border-color .16s ease, background-color .16s ease; }
+.historyPanelOpen .historyGroups li::before { content: ""; position: absolute; top: 50%; left: 18px; width: 9px; height: 9px; border-radius: 50%; background: var(--color-accent); transform: translateY(-50%); }
+.historyPanelOpen .historyGroups li:hover { border-color: color-mix(in srgb, var(--color-primary) 28%, var(--color-border)); background: color-mix(in srgb, var(--color-primary-soft) 26%, var(--color-surface)); transform: translateY(-1px); }
+.historyPanelOpen .historyGroups li:has(.historySelect) { padding-left: 58px; }
+.historyPanelOpen .historyGroups li:has(.historySelect)::before { display: none; }
+.historyPanelOpen .resumeButton { min-height: 52px; text-align: left; }
+.historyPanelOpen .resumeButton strong { overflow: hidden; font-size: 18px; font-weight: 700; line-height: 1.4; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.historyPanelOpen .resumeButton span { margin-top: 5px; color: var(--color-text-muted); font-size: 14px; }
+.historyPanelOpen .conversationMenu { top: 22px; right: 14px; }
+.historyPanelOpen .historyFooter { position: sticky; z-index: 3; bottom: -18px; margin: 20px -26px -18px; padding: 12px 26px 16px; border-top: 1px solid var(--color-border); background: color-mix(in srgb, var(--color-surface-elevated) 94%, transparent); backdrop-filter: blur(8px); }
+.historyPanelOpen .historyPagination { min-height: 42px; }
+.historyPanelOpen .historyPagination button { width: 40px; height: 40px; }
+.historyPanelOpen .historyPageStatus { min-width: 66px; font-size: 15px; }
+.historyPanelOpen .historyPageStatus strong { font-size: 15px; }
+
+@media (min-width: 761px) and (max-width: 1024px) {
+  .historyPanelOpen { width: calc(100vw - 48px); max-width: none; }
+  .historyTools { grid-template-columns: 1fr; }
+  .historyFilterMenu { right: auto; left: 0; width: 100%; max-width: 100%; }
+}
+
+@media (max-width: 760px) {
+  .historyPanelOpen { position: fixed; inset: 0; width: 100%; height: 100dvh; max-height: none; border: 0; border-radius: 0; padding-bottom: env(safe-area-inset-bottom); }
+  .historyPanelOpen > header { min-height: 78px; padding: max(14px, env(safe-area-inset-top)) 16px 14px; }
+  .historyPanelOpen .contextLine { padding-inline: 16px; }
+  .historyUtilityActive { padding-inline: 10px; grid-template-columns: auto auto 1fr; overflow-x: auto; }
+  .historyUtilityActive > button { min-height: 44px; padding-inline: 11px; white-space: nowrap; }
+  .historyPanelOpen .messages { padding: 18px 14px 14px; }
+  .historyPanelOpen .historyFooter { bottom: -14px; margin: 18px -14px -14px; padding: 11px 14px max(14px, env(safe-area-inset-bottom)); }
+  .historyTools { grid-template-columns: 1fr; }
+  .historyPanelOpen .historyGroups li { padding-left: 38px; }
+  .historyPanelOpen .resumeButton strong { font-size: 17px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .historyPanelOpen .historyGroups li { transition: none; }
+  .historyPanelOpen .historyGroups li:hover { transform: none; }
 }

@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { Icon } from "@/components/common/Icon";
 import { getCurrentUser, type AuthUser } from "@/lib/authApi";
@@ -102,6 +103,42 @@ function conversationContext(item: CopilotConversationSummary) {
   return item.context_entity_id && labels[item.context_type]
     ? `${labels[item.context_type]} #${item.context_entity_id}`
     : null;
+}
+
+function conversationContextLabel(value: string) {
+  return ({ GENERAL: "일반 문의", DETECTION: "탐지 분석", ANALYSIS: "탐지 분석", LOST_REPORT: "분실 신고", OWNERSHIP: "소유권 확인", OWNERSHIP_CLAIM: "소유권 확인", ADMIN: "관리자 운영", MATCH: "매칭", FOUND_ITEM: "발견물" } as Record<string, string>)[value] ?? "일반 문의";
+}
+
+function HistoryContextSelect({ value, options, onChange }: { value: string; options: string[]; onChange: (value: string) => void }) {
+  const values = ["", ...options];
+  const selectedIndex = Math.max(0, values.indexOf(value));
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(selectedIndex);
+  const root = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false); };
+    window.addEventListener("pointerdown", close);
+    return () => window.removeEventListener("pointerdown", close);
+  }, [open]);
+
+  const choose = (index: number) => { onChange(values[index]); setActiveIndex(index); setOpen(false); };
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+      event.preventDefault();
+      setOpen(true);
+      setActiveIndex((current) => event.key === "Home" ? 0 : event.key === "End" ? values.length - 1 : event.key === "ArrowDown" ? (current + 1) % values.length : (current - 1 + values.length) % values.length);
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      if (open) choose(activeIndex); else setOpen(true);
+    } else if (event.key === "Escape") setOpen(false);
+  };
+
+  return <div className={styles.historyFilter} ref={root}>
+    <button type="button" aria-label="대화 컨텍스트 필터" aria-haspopup="listbox" aria-expanded={open} onKeyDown={onKeyDown} onClick={() => { setActiveIndex(selectedIndex); setOpen((current) => !current); }}><span>{value ? conversationContextLabel(value) : "전체 대화"}</span><Icon name="chevron" size={15} /></button>
+    {open && <div className={styles.historyFilterMenu} role="listbox" aria-label="대화 컨텍스트 필터">{values.map((option, index) => <button type="button" role="option" aria-selected={option === value} data-active={activeIndex === index} key={option || "all"} onMouseEnter={() => setActiveIndex(index)} onClick={() => choose(index)}><span>{option ? conversationContextLabel(option) : "전체 대화"}</span>{option === value && <Icon name="check" size={15} />}</button>)}</div>}
+  </div>;
 }
 
 function pageContext(path: string): ChatPageContext {
@@ -240,6 +277,7 @@ export function FlowCopilot() {
   const [memoryLoading, setMemoryLoading] = useState(false);
   const [memoryError, setMemoryError] = useState(false);
   const [historyQuery, setHistoryQuery] = useState("");
+  const [historyContext, setHistoryContext] = useState("");
   const [historyPage, setHistoryPage] = useState(1);
   const [conversationCount, setConversationCount] = useState(0);
   const [manageHistory, setManageHistory] = useState(false);
@@ -1208,12 +1246,13 @@ export function FlowCopilot() {
       </section>
     </div>
   );
+  const historyContextOptions = Array.from(new Set(conversations.map((item) => item.context_type).filter(Boolean))).sort();
   const filteredConversations = conversations.filter(
-    (item) =>
+    (item) => (!historyContext || item.context_type === historyContext) && (
       item.title.toLowerCase().includes(historyQuery.trim().toLowerCase()) ||
       (conversationContext(item) ?? "")
         .toLowerCase()
-        .includes(historyQuery.trim().toLowerCase()),
+        .includes(historyQuery.trim().toLowerCase())),
   );
   const totalHistoryPages = Math.max(1, Math.ceil(filteredConversations.length / 5));
   const safeHistoryPage = Math.min(historyPage, totalHistoryPages);
@@ -1225,7 +1264,7 @@ export function FlowCopilot() {
     (groups[group] ??= []).push(item);
     return groups;
   }, {});
-  useEffect(() => setHistoryPage(1), [historyQuery]);
+  useEffect(() => setHistoryPage(1), [historyContext, historyQuery]);
   useEffect(() => { if (historyPage > totalHistoryPages) setHistoryPage(totalHistoryPages); }, [historyPage, totalHistoryPages]);
   const contextLabel = `${context.replaceAll("_", " ")}${entityId ? ` · #${entityId}` : ""}`;
 
@@ -1234,7 +1273,7 @@ export function FlowCopilot() {
       {open && (
         <section
           id="flowlink-copilot-panel"
-          className={styles.panel}
+          className={`${styles.panel} ${memoryOpen ? styles.historyPanelOpen : ""}`}
           aria-label="FlowLink AI Copilot"
         >
           <header>
@@ -1262,7 +1301,9 @@ export function FlowCopilot() {
             <span>현재</span>
             <strong>{contextLabel}</strong>
           </div>
-          <nav className={styles.conversationUtility} aria-label="대화 관리">
+          <nav className={`${styles.conversationUtility} ${memoryOpen ? styles.historyUtilityActive : ""}`} aria-label="대화 관리">
+            {memoryOpen && <button type="button" className={styles.conversationTab} onClick={() => { setMemoryOpen(false); setManageHistory(false); setSelectedConversationIds(new Set()); }}>대화</button>}
+            {memoryOpen && <button ref={historyButtonRef} type="button" className={styles.historyButton} aria-pressed="true" onClick={() => undefined}>대화 기록{conversationCount > 0 && <small>{conversationCount}</small>}</button>}
             <button
               type="button"
               className={styles.newConversationButton}
@@ -1270,7 +1311,7 @@ export function FlowCopilot() {
             >
               <Icon name="plus" size={18} />새 대화
             </button>
-            <button
+            {!memoryOpen && <button
               ref={historyButtonRef}
               type="button"
               className={styles.historyButton}
@@ -1288,7 +1329,7 @@ export function FlowCopilot() {
               {conversationCount > 0 && (
                 <small>{conversationCount}</small>
               )}
-            </button>
+            </button>}
           </nav>
           <div
             className={`${styles.messages} ${memoryOpen ? styles.historyViewActive : ""}`}
@@ -1326,7 +1367,7 @@ export function FlowCopilot() {
                   {user && conversations.length > 0 && <button ref={manageHistoryButtonRef} type="button" className={styles.manageHistoryButton} onClick={() => { setManageHistory((current) => { if (current) setSelectedConversationIds(new Set()); return !current; }); setConversationMenu(null); }}>{manageHistory ? "완료" : "기록 관리"}</button>}
                 </div>
                 {user && conversations.length >= 5 && (
-                  <label className={styles.historySearch}>
+                  <div className={styles.historyTools}><label className={styles.historySearch}>
                     <Icon name="search" size={17} />
                     <input
                       value={historyQuery}
@@ -1334,7 +1375,7 @@ export function FlowCopilot() {
                       placeholder="대화 제목 또는 연결 항목 검색"
                       aria-label="대화 기록 검색"
                     />
-                  </label>
+                  </label><HistoryContextSelect value={historyContext} options={historyContextOptions} onChange={setHistoryContext} /></div>
                 )}
                 {memoryLoading ? (
                   <div className={styles.historySkeleton} role="status">
@@ -1514,7 +1555,7 @@ export function FlowCopilot() {
                 )}
                 {!memoryLoading && !memoryError && filteredConversations.length > 0 && <footer className={styles.historyFooter}>
                   {manageHistory && <div className={styles.historyBulkActions}><span>선택 {selectedConversationIds.size}개</span><button type="button" disabled={selectedConversationIds.size === 0} onClick={() => { setDeleteError(""); setBulkDeleteMode("selected"); }}>선택 삭제</button><button type="button" onClick={() => { setDeleteError(""); setBulkDeleteMode("all"); }}>전체 삭제</button></div>}
-                  {filteredConversations.length > 5 && <nav className={styles.historyPagination} aria-label="대화 기록 페이지"><button type="button" disabled={safeHistoryPage === 1} onClick={() => setHistoryPage((page) => Math.max(1, page - 1))}>‹ 이전</button><span aria-live="polite">{safeHistoryPage} / {totalHistoryPages}</span><button type="button" disabled={safeHistoryPage === totalHistoryPages} onClick={() => setHistoryPage((page) => Math.min(totalHistoryPages, page + 1))}>다음 ›</button></nav>}
+                  {filteredConversations.length > 5 && <nav className={styles.historyPagination} aria-label="대화 기록 페이지"><button type="button" aria-label="이전 페이지" disabled={safeHistoryPage === 1} onClick={() => setHistoryPage((page) => Math.max(1, page - 1))}><Icon name="chevronLeft" size={16} /></button><span className={styles.historyPageStatus} aria-live="polite"><strong>{safeHistoryPage}</strong><span> / {totalHistoryPages}</span></span><button type="button" aria-label="다음 페이지" disabled={safeHistoryPage === totalHistoryPages} onClick={() => setHistoryPage((page) => Math.min(totalHistoryPages, page + 1))}><Icon name="chevronRight" size={16} /></button></nav>}
                 </footer>}
               </section>
             ) : (
