@@ -443,7 +443,8 @@ function WebcamReportModal({
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
-  const previewUrl = useMemo(() => candidate.image ? URL.createObjectURL(candidate.image) : "", [candidate.image]);
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [previewFailed, setPreviewFailed] = useState(false);
   const defaultClassCode = candidate.objectClassCode || "BAG";
   const label = candidate.objectClassName;
   const emptyPreviewTitle = candidate.sourceType === "image" ? "이미지를 첨부하지 못했습니다." : "대표 이미지는 첨부하지 않습니다.";
@@ -454,10 +455,30 @@ function WebcamReportModal({
       : "현재 프레임을 캡처하지 못한 경우 물품 종류와 설명만으로 제보를 시작합니다.";
 
   useEffect(() => {
+    let active = true;
+    if (!candidate.image || candidate.image.size === 0) {
+      queueMicrotask(() => {
+        if (!active) return;
+        setPreviewFailed(false);
+        setPreviewUrl("");
+      });
+      return () => {
+        active = false;
+      };
+    }
+
+    const url = URL.createObjectURL(candidate.image);
+    queueMicrotask(() => {
+      if (!active) return;
+      setPreviewFailed(false);
+      setPreviewUrl(url);
+    });
+
     return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      active = false;
+      URL.revokeObjectURL(url);
     };
-  }, [previewUrl]);
+  }, [candidate.image]);
 
   return (
     <div className={styles.reportModalBackdrop} role="presentation" onMouseDown={onClose}>
@@ -491,14 +512,18 @@ function WebcamReportModal({
         ) : (
           <form className={styles.reportForm} onSubmit={onSubmit}>
             <div className={styles.reportPreviewGrid}>
-              {previewUrl ? (
+              {previewUrl && !previewFailed ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={previewUrl} alt="발견 제보에 첨부할 탐지 이미지" />
+                <img
+                  src={previewUrl}
+                  alt="발견 제보에 첨부할 탐지 이미지"
+                  onError={() => setPreviewFailed(true)}
+                />
               ) : (
                 <div className={styles.reportPreviewEmpty}>
                   <Icon name="document" size={26} />
-                  <strong>{emptyPreviewTitle}</strong>
-                  <p>{emptyPreviewText}</p>
+                  <strong>{previewFailed ? "탐지 프레임을 불러오지 못했어요." : emptyPreviewTitle}</strong>
+                  <p>{previewFailed ? "다시 실시간 탐지 후 제보해주세요." : emptyPreviewText}</p>
                 </div>
               )}
               <div className={styles.reportCandidateMeta}>
