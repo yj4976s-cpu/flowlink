@@ -1317,7 +1317,7 @@ export function FlowCopilot() {
             <strong>{contextLabel}</strong>
           </div>
           <nav className={`${styles.conversationUtility} ${memoryOpen ? styles.historyUtilityActive : ""}`} aria-label="대화 관리">
-            {memoryOpen && <button type="button" className={styles.conversationTab} onClick={() => { setMemoryOpen(false); setManageHistory(false); setSelectedConversationIds(new Set()); }}>대화</button>}
+            {memoryOpen && <button type="button" className={styles.conversationTab} onClick={() => { setMemoryOpen(false); setManageHistory(false); setSelectedConversationIds(new Set()); window.setTimeout(() => historyButtonRef.current?.focus()); }}>대화</button>}
             {memoryOpen && <span className={styles.historyButton} aria-current="page">대화 기록{conversationCount > 0 && <small>{conversationCount}</small>}</span>}
             <button
               type="button"
