@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -115,6 +116,10 @@ function HistoryContextSelect({ value, options, onChange }: { value: string; opt
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(selectedIndex);
   const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const id = useId();
+  const listboxId = `${id}-listbox`;
+  const optionId = (index: number) => `${id}-option-${index}`;
 
   useEffect(() => {
     if (!open) return;
@@ -123,7 +128,12 @@ function HistoryContextSelect({ value, options, onChange }: { value: string; opt
     return () => window.removeEventListener("pointerdown", close);
   }, [open]);
 
-  const choose = (index: number) => { onChange(values[index]); setActiveIndex(index); setOpen(false); };
+  const choose = (index: number) => {
+    onChange(values[index]);
+    setActiveIndex(index);
+    setOpen(false);
+    window.requestAnimationFrame(() => trigger.current?.focus());
+  };
   const onKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
     if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
       event.preventDefault();
@@ -132,12 +142,16 @@ function HistoryContextSelect({ value, options, onChange }: { value: string; opt
     } else if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       if (open) choose(activeIndex); else setOpen(true);
-    } else if (event.key === "Escape") setOpen(false);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      setOpen(false);
+      trigger.current?.focus();
+    } else if (event.key === "Tab") setOpen(false);
   };
 
-  return <div className={styles.historyFilter} ref={root}>
-    <button type="button" aria-label="대화 컨텍스트 필터" aria-haspopup="listbox" aria-expanded={open} onKeyDown={onKeyDown} onClick={() => { setActiveIndex(selectedIndex); setOpen((current) => !current); }}><span>{value ? conversationContextLabel(value) : "전체 대화"}</span><Icon name="chevron" size={15} /></button>
-    {open && <div className={styles.historyFilterMenu} role="listbox" aria-label="대화 컨텍스트 필터">{values.map((option, index) => <button type="button" role="option" aria-selected={option === value} data-active={activeIndex === index} key={option || "all"} onMouseEnter={() => setActiveIndex(index)} onClick={() => choose(index)}><span>{option ? conversationContextLabel(option) : "전체 대화"}</span>{option === value && <Icon name="check" size={15} />}</button>)}</div>}
+  return <div className={styles.historyFilter} ref={root} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setOpen(false); }}>
+    <button ref={trigger} id={`${id}-trigger`} type="button" role="combobox" aria-label="대화 컨텍스트 필터" aria-haspopup="listbox" aria-expanded={open} aria-controls={listboxId} aria-activedescendant={open ? optionId(activeIndex) : undefined} onKeyDown={onKeyDown} onClick={() => { setActiveIndex(selectedIndex); setOpen((current) => !current); }}><span>{value ? conversationContextLabel(value) : "전체 대화"}</span><Icon name="chevron" size={15} /></button>
+    {open && <div id={listboxId} className={styles.historyFilterMenu} role="listbox" aria-labelledby={`${id}-trigger`}>{values.map((option, index) => <button id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={option === value} data-active={activeIndex === index} key={option || "all"} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActiveIndex(index)} onClick={() => choose(index)}><span>{option ? conversationContextLabel(option) : "전체 대화"}</span>{option === value && <Icon name="check" size={15} />}</button>)}</div>}
   </div>;
 }
 
@@ -333,6 +347,7 @@ export function FlowCopilot() {
     setMemoryLoading(false);
     setMemoryError(false);
     setHistoryQuery("");
+    setHistoryContext("");
     setHistoryPage(1);
     setManageHistory(false);
     setSelectedConversationIds(new Set());
@@ -1303,7 +1318,7 @@ export function FlowCopilot() {
           </div>
           <nav className={`${styles.conversationUtility} ${memoryOpen ? styles.historyUtilityActive : ""}`} aria-label="대화 관리">
             {memoryOpen && <button type="button" className={styles.conversationTab} onClick={() => { setMemoryOpen(false); setManageHistory(false); setSelectedConversationIds(new Set()); }}>대화</button>}
-            {memoryOpen && <button ref={historyButtonRef} type="button" className={styles.historyButton} aria-pressed="true" onClick={() => undefined}>대화 기록{conversationCount > 0 && <small>{conversationCount}</small>}</button>}
+            {memoryOpen && <span className={styles.historyButton} aria-current="page">대화 기록{conversationCount > 0 && <small>{conversationCount}</small>}</span>}
             <button
               type="button"
               className={styles.newConversationButton}
