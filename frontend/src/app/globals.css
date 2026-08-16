@@ -448,10 +448,29 @@ html[data-theme="night"] .auth-visual { background-image: url("/flowlink-river-n
 .auth-field > input:hover, .auth-input-wrap:hover { border-color: color-mix(in srgb, var(--color-text-muted) 45%, var(--color-border)); }
 .auth-field > input:focus, .auth-input-wrap:focus-within { border-color: var(--color-primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 12%, transparent); }
 .auth-field > input[aria-invalid="true"], .auth-input-wrap.has-error { border-color: var(--color-error); }
+.auth-input-wrap.is-valid { border-color: color-mix(in srgb, var(--color-success) 58%, var(--color-border)); background: color-mix(in srgb, var(--color-success) 5%, var(--color-surface)); }
+.auth-input-wrap.is-valid:focus-within { border-color: var(--color-primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 12%, transparent); }
+.auth-input-wrap.has-error, .auth-input-wrap.has-error:focus-within { border-color: var(--color-error); }
+.auth-input-wrap.has-error:focus-within { box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-error) 12%, transparent); }
 .password-toggle { position: absolute; right: 7px; width: 40px; height: 40px; padding: 9px; border: 0; border-radius: 9px; color: var(--color-text-muted); background: transparent; cursor: pointer; }
 .password-toggle:hover { color: var(--color-primary); background: var(--color-primary-soft); }
 .password-toggle svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .auth-error { margin: -2px 0 0; color: var(--color-error); font-size: 11px; line-height: 1.45; }
+.auth-password-guide { margin-top: 1px; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 11px; background: var(--color-surface-soft); color: var(--color-text-muted); }
+.auth-password-guide > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 11px; }
+.auth-password-guide > div span { font-weight: 700; }
+.auth-password-guide > div b { color: var(--color-text-muted); font-size: 10px; font-weight: 800; }
+.auth-password-guide.is-complete > div b { color: var(--color-success); }
+.auth-password-guide ul { margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 7px 13px; list-style: none; }
+.auth-password-guide li { display: inline-flex; align-items: center; gap: 5px; color: var(--color-text-muted); font-size: 10px; }
+.auth-password-guide li.is-met { color: var(--color-success); }
+.auth-condition-icon { width: 15px; height: 15px; display: inline-grid; place-items: center; }
+.auth-condition-icon i { width: 6px; height: 6px; border: 1px solid var(--color-text-muted); border-radius: 50%; opacity: .58; }
+.auth-password-guide li.is-met .auth-condition-icon { animation: auth-condition-complete 180ms ease-out both; }
+.auth-password-success { margin: -1px 0 0; color: var(--color-success); display: inline-flex; align-items: center; gap: 5px; font-size: 11px; line-height: 1.45; }
+.auth-password-field.is-shaking { animation: auth-password-shake 280ms ease-out both; }
+@keyframes auth-condition-complete { from { opacity: .35; transform: scale(.82); } to { opacity: 1; transform: scale(1); } }
+@keyframes auth-password-shake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-4px); } 50% { transform: translateX(3px); } 75% { transform: translateX(-2px); } }
 .auth-agreements { min-width: 0; margin: 20px 0 0; padding: 15px 0 0; border: 0; border-top: 1px solid var(--color-border); display: grid; gap: 12px; }
 .auth-agreement-row { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 9px; }
 .auth-agreements label { position: relative; min-width: 0; display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 9px; cursor: pointer; }
@@ -474,9 +493,14 @@ html[data-theme="night"] .auth-visual { background-image: url("/flowlink-river-n
 .auth-portal-link { margin: 14px 0 0; color: var(--color-text-muted); text-align: center; font-size: 11px; }
 .auth-portal-link a { margin-left: 4px; color: var(--color-primary); font-weight: 750; }
 .auth-role-action { width: fit-content; margin: 12px auto 0; color: var(--color-primary); display: block; font-size: 12px; font-weight: 800; }
-html[data-theme="night"] .auth-field > input, html[data-theme="night"] .auth-input-wrap, html[data-theme="night"] .auth-checkbox { border-color: #28334d; background: #11182a; }
+html[data-theme="night"] .auth-field > input, html[data-theme="night"] .auth-checkbox { border-color: #28334d; background: #11182a; }
 html[data-theme="night"] .auth-visual::after { background: linear-gradient(90deg, transparent, #090d1a); }
 html[data-theme="night"] .auth-detection { border-color: rgba(151,163,194,.4); background: rgba(8,13,27,.44); }
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-password-guide li.is-met .auth-condition-icon,
+  .auth-password-field.is-shaking { animation: none; }
+}
 
 html[data-theme="dawn"] .auth-register-visual { background-image: url("/flowlink-auth-register-dawn-shoe.png"); background-position: 58% center; }
 html[data-theme="day"] .auth-register-visual { background-image: url("/flowlink-river-day.png"); background-position: 72% center; }

@@ -64,6 +64,16 @@ export default function AboutPage() {
 
         <ServiceFlow />
 
+        <section id="daru" className="info-notice info-notice-accent" aria-labelledby="daru-about-title">
+          <div className="info-notice-icon"><Icon name="user" size={28} /></div>
+          <div>
+            <p className="info-eyebrow">MEET DARU</p>
+            <h2 id="daru-about-title">다루와 FlowLink</h2>
+            <p>다루는 수면 위 작은 변화를 살펴보고 필요한 다음 과정을 안내하는 FlowLink의 수달 친구입니다. 처음 방문한 사용자에게는 서비스를 소개하고, 일반 사용자에게는 분실물 이용 흐름을, 관리자에게는 운영 메뉴를 안내합니다.</p>
+            <p>DAWN, DAY, NIGHT 테마에 따라 스카프 색도 따뜻한 코랄, 코발트 블루, 부드러운 라일락으로 달라집니다.</p>
+          </div>
+        </section>
+
         <aside className="info-notice info-notice-accent" aria-labelledby="ai-boundary">
           <div className="info-notice-icon"><Icon name="spark" size={30} /></div>
           <div><p className="info-eyebrow">HUMAN IN THE LOOP</p><h2 id="ai-boundary">AI는 연결을 돕고, 사람은 최종 확인합니다</h2>

@@ -3,8 +3,8 @@ import re
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-PASSWORD_POLICY_MESSAGE = "비밀번호는 영문 대문자와 소문자를 포함한 정확히 8자로 입력해주세요."
-PASSWORD_PATTERN = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])[A-Za-z]{8}$")
+PASSWORD_POLICY_MESSAGE = "비밀번호는 영문과 숫자를 조합해 8자 이상 입력해주세요."
+PASSWORD_PATTERN = re.compile(r"^(?=.*[A-Za-z])(?=.*[0-9]).{8,}$")
 
 
 def validate_new_password(value: str) -> str:

@@ -41,6 +41,7 @@ def seed(db: Session) -> None:
         User(id=9, email="admin@example.com", password_hash=hash_password("password123"), nickname="admin", role="ADMIN", active=True, terms_agreed_at=now, privacy_agreed_at=now, created_at=now, updated_at=now),
         ObjectClass(id=1, code="BAG", name_ko="가방", group_code="PERSONAL_ITEM", display_order=1, is_active=True, created_at=now, updated_at=now),
         ObjectClass(id=2, code="TRASH", name_ko="폐기물", group_code="WASTE", display_order=2, is_active=True, created_at=now, updated_at=now),
+        ObjectClass(id=3, code="FOOTWEAR", name_ko="신발", group_code="PERSONAL_ITEM", display_order=3, is_active=True, created_at=now, updated_at=now),
         LostReport(id=10, user_id=2, object_class_id=1, color="검정", description="검정 가방", area_name="잠실", lost_from=now - timedelta(hours=1), status="OPEN", created_at=now, updated_at=now),
     ])
     db.commit()
@@ -54,6 +55,41 @@ def create_report(client: TestClient) -> dict:
     response = client.post("/api/citizen-reports", data={"object_class": "BAG", "color": "검정", "description": "검정 가방을 발견했습니다", "area_name": "잠실", "found_at": "2026-08-10T01:00:00Z"})
     assert response.status_code == 201
     return response.json()
+
+
+def test_webcam_style_footwear_report_attaches_image_and_is_pending_for_admin(
+    client: TestClient, db: Session, tmp_path, monkeypatch
+) -> None:
+    seed(db)
+    login(client, "user@example.com")
+    monkeypatch.setattr("app.api.citizen_reports.upload_root", lambda: tmp_path)
+    image = BytesIO()
+    Image.new("RGB", (8, 8), "black").save(image, format="JPEG")
+
+    response = client.post(
+        "/api/citizen-reports",
+        data={
+            "object_class": "FOOTWEAR",
+            "color": "검정",
+            "description": "웹캠에서 검정 신발을 발견했습니다",
+            "area_name": "한강공원 A구역",
+            "found_at": "2026-08-10T01:00:00Z",
+        },
+        files={"image": ("webcam-frame.jpg", image.getvalue(), "image/jpeg")},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["item_category"] == "FOOTWEAR"
+    assert body["status"] == "PENDING"
+    assert body["image_url"] is not None
+    assert db.query(CitizenReport).count() == 1
+    assert (tmp_path / body["image_url"].removeprefix("/uploads/")).stat().st_size > 0
+
+    login(client, "admin@example.com")
+    admin_reports = client.get("/api/admin/citizen-reports?status=PENDING")
+    assert admin_reports.status_code == 200
+    assert [report["id"] for report in admin_reports.json()] == [body["id"]]
 
 
 def test_citizen_orm_contract_has_explicit_source_and_one_to_many_sightings() -> None:

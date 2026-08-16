@@ -2,16 +2,23 @@ from collections.abc import Generator
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from app.core.config import get_settings
 
 
 settings = get_settings()
 
-engine = create_engine(
-    settings.DATABASE_URL,
-    pool_pre_ping=True,
-)
+engine_options: dict[str, object] = {"pool_pre_ping": True}
+if not settings._is_production:
+    # Local development often shares Supabase's small session-pool allowance
+    # with deployed services. Do not retain idle database connections locally.
+    engine_options["poolclass"] = NullPool
+if ":6543/" in settings.DATABASE_URL:
+    # Supabase transaction pooling does not support prepared statements.
+    engine_options["connect_args"] = {"prepare_threshold": None}
+
+engine = create_engine(settings.DATABASE_URL, **engine_options)
 
 SessionLocal = sessionmaker(
     bind=engine,
