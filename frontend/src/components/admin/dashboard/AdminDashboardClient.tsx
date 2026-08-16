@@ -29,6 +29,7 @@ const entityLabel: Record<string, string> = {
   CITIZEN_REPORT: "발견 제보", DETECTION_EVENT: "탐지 이벤트",
 };
 const periodLabel: Record<Period, string> = { today: "오늘", "7d": "최근 7일", all: "전체" };
+const HISTORY_PAGE_SIZE = 5;
 
 function SectionHeading({ id, title, href, action }: { id?: string; title: string; href?: string; action?: string }) {
   return <div className={styles.sectionHeading}><h2 id={id}>{title}</h2>{href && <Link href={href}>{action}<Icon name="arrow" size={14} /></Link>}</div>;
@@ -67,6 +68,8 @@ export function AdminDashboardClient() {
   const [currentError, setCurrentError] = useState(false);
   const [insightsError, setInsightsError] = useState(false);
   const [insightsLoading, setInsightsLoading] = useState(false);
+  const [historyPage, setHistoryPage] = useState(1);
+  const historySectionRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -104,6 +107,19 @@ export function AdminDashboardClient() {
     { key: "ownership-claim", tone: "claim", label: "소유권 요청 검토", title: "소유권 확인 요청", count: ownershipClaimPending, detail: "OwnershipClaim · PENDING", href: "/admin/ownership-claims", action: "요청 검토" },
     { key: "ownership-return", tone: "return", label: "반환 처리", title: "승인 후 반환 대기", count: ownershipReturnPending, detail: "OwnershipClaim · APPROVED", href: "/admin/ownership-claims", action: "반환 처리" },
   ].filter((item) => item.count > 0);
+  const historyRecords = current?.recent_history ?? [];
+  const historyPageCount = Math.max(1, Math.ceil(historyRecords.length / HISTORY_PAGE_SIZE));
+  const activeHistoryPage = Math.min(historyPage, historyPageCount);
+  const visibleHistoryRecords = historyRecords.slice(
+    (activeHistoryPage - 1) * HISTORY_PAGE_SIZE,
+    activeHistoryPage * HISTORY_PAGE_SIZE,
+  );
+  const changeHistoryPage = (nextPage: number) => {
+    const validPage = Math.min(Math.max(nextPage, 1), historyPageCount);
+    if (validPage === activeHistoryPage) return;
+    setHistoryPage(validPage);
+    requestAnimationFrame(() => historySectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
 
   return <main className={styles.page}>
     <header className={styles.intro}><p>ADMIN CONTROL</p><h1>관리자 대시보드</h1><span>발견부터 검토·매칭·반환까지 현재 운영 흐름을 확인합니다.</span>{waiting > 0 && <b><i />확인 필요 업무 {waiting}건</b>}</header>
@@ -151,8 +167,9 @@ export function AdminDashboardClient() {
       {!current ? currentError ? <State error>발견 제보 현황을 불러오지 못했습니다.</State> : <Skeleton rows={1} /> : <CitizenSummary metrics={current.metrics} />}
     </section>
 
-    <section className={styles.history} aria-labelledby="history-title"><SectionHeading id="history-title" title="최근 운영 기록" />
-      {!current ? <Skeleton /> : current.recent_history.length ? <div>{current.recent_history.map((record) => <div key={record.id}><time>{timeOnly.format(new Date(record.created_at))}</time><span><strong>{actionLabel[record.action_type] ?? record.action_type}</strong><small>{entityLabel[record.entity_type] ?? record.entity_type} #{record.entity_id}</small></span><b>{record.new_status ? statusLabel[record.new_status] ?? record.new_status : "처리 기록"}</b></div>)}</div> : <State>아직 기록된 운영 활동이 없습니다.</State>}
+    <section className={styles.history} aria-labelledby="history-title" ref={historySectionRef}><SectionHeading id="history-title" title="최근 운영 기록" />
+      {!current ? <Skeleton /> : historyRecords.length ? <div className={styles.historyList}>{visibleHistoryRecords.map((record) => <div key={record.id}><time>{timeOnly.format(new Date(record.created_at))}</time><span><strong>{actionLabel[record.action_type] ?? record.action_type}</strong><small>{entityLabel[record.entity_type] ?? record.entity_type} #{record.entity_id}</small></span><b>{record.new_status ? statusLabel[record.new_status] ?? record.new_status : "처리 기록"}</b></div>)}</div> : <State>아직 기록된 운영 활동이 없습니다.</State>}
+      {current && <footer className={styles.historyFooter}><span>총 {historyRecords.length}건</span>{historyRecords.length > HISTORY_PAGE_SIZE && <nav className={styles.pagination} aria-label="최근 운영 기록 페이지"><button type="button" disabled={activeHistoryPage === 1} onClick={() => changeHistoryPage(activeHistoryPage - 1)}>이전</button>{Array.from({ length: historyPageCount }, (_, index) => index + 1).map((page) => <button type="button" key={page} aria-current={page === activeHistoryPage ? "page" : undefined} onClick={() => changeHistoryPage(page)}>{page}</button>)}<button type="button" disabled={activeHistoryPage === historyPageCount} onClick={() => changeHistoryPage(activeHistoryPage + 1)}>다음</button></nav>}</footer>}
     </section>
   </main>;
 }

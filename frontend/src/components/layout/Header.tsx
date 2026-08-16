@@ -7,6 +7,7 @@ import { FlowLinkLogo } from "@/components/common/FlowLinkLogo";
 import { Icon } from "@/components/common/Icon";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { NotificationToastHost } from "@/components/notifications/NotificationToastHost";
+import { DaruSettings } from "@/components/mascot";
 import { AuthUser, getCurrentUser, logout as logoutRequest } from "@/lib/authApi";
 
 const userNavigation = [
@@ -223,6 +224,7 @@ export function Header() {
         </nav>
         <div className="header-actions">
           <ThemeToggle />
+          <DaruSettings />
           {authResolved && (currentUser ? (
             <div className="profile-menu-wrap" ref={profileRef}>
               <button className="profile-trigger" type="button" aria-haspopup="menu" aria-expanded={profileOpen} onClick={() => { setProfileOpen((value) => !value); setLogoutConfirm(false); setLogoutError(""); }}>

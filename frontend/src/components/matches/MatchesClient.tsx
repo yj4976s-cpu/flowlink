@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { Icon } from "@/components/common/Icon";
+import { useDaru } from "@/components/mascot";
 import type { IconName } from "@/components/common/Icon";
 import { OwnershipClaimForm } from "@/components/ownership-claims/OwnershipClaimForm";
 import { listMyLostReports } from "@/lib/lostReportsApi";
@@ -202,6 +204,10 @@ function MatchCard({ match, isClaimFormOpen, onOpenClaimForm, onCloseClaimForm, 
 }
 
 export function MatchesClient() {
+  const { cue: cueDaru } = useDaru();
+  const searchParams = useSearchParams();
+  const matchIdParam = searchParams.get("matchId");
+  const requestedMatchId = matchIdParam && /^\d+$/.test(matchIdParam) ? Number(matchIdParam) : null;
   const [matches, setMatches] = useState<MatchCandidate[]>([]);
   const [reports, setReports] = useState<LostReportResponse[]>([]);
   const [selectedReportId, setSelectedReportId] = useState<number | null>(null);
@@ -216,13 +222,20 @@ export function MatchesClient() {
     try {
       const [matchData, reportData] = await Promise.all([listMyMatches(signal), listMyLostReports(signal)]);
       setMatches(matchData); setReports(reportData);
-      setSelectedReportId((current) => current && reportData.some((report) => report.id === current) ? current : (matchData[0]?.lost_report.id ?? reportData[0]?.id ?? null));
+      if (matchData.length) cueDaru("match", { source: "service" });
+      const requestedMatch = Number.isSafeInteger(requestedMatchId)
+        ? matchData.find((match) => match.id === requestedMatchId)
+        : undefined;
+      setSelectedReportId((current) => requestedMatch?.lost_report.id
+        ?? (current && reportData.some((report) => report.id === current)
+          ? current
+          : (matchData[0]?.lost_report.id ?? reportData[0]?.id ?? null)));
     } catch (caught) {
       if (caught instanceof DOMException && caught.name === "AbortError") return;
       setErrorStatus(caught instanceof MatchesApiError ? (caught.status ?? null) : null);
       setError(caught instanceof MatchesApiError ? caught.message : "잠시 후 다시 시도해 주세요.");
     } finally { if (!signal?.aborted) setLoading(false); }
-  }, []);
+  }, [cueDaru, requestedMatchId]);
 
   useEffect(() => {
     const controller = new AbortController();
