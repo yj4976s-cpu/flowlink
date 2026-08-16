@@ -213,14 +213,21 @@ export function FlowCopilot() {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [value, setValue] = useState("");
   const [loading, setLoading] = useState(false);
+  const previousOpenRef = useRef(open);
   const wasLoadingRef = useRef(false);
 
   useEffect(() => {
     window.dispatchEvent(new CustomEvent("flowlink:daru-occlusion", { detail: { open } }));
-    cueDaru(open ? "alert" : "rest", { source: "service", duration: open ? 1800 : 2400 });
     return () => {
       window.dispatchEvent(new CustomEvent("flowlink:daru-occlusion", { detail: { open: false } }));
     };
+  }, [open]);
+
+  useEffect(() => {
+    const previousOpen = previousOpenRef.current;
+    previousOpenRef.current = open;
+    if (previousOpen === open) return;
+    cueDaru(open ? "alert" : "rest", { source: "service", duration: open ? 1800 : 2400 });
   }, [cueDaru, open]);
 
   useEffect(() => {
