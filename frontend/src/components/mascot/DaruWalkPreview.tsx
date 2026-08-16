@@ -63,6 +63,7 @@ export function DaruWalkPreview() {
   const [facing, setFacing] = useState<DaruFacing>("right");
   const [locomotion, setLocomotion] = useState<DaruRendererState["locomotion"]>("idle");
   const [idleSource, setIdleSource] = useState<IdleSource>("front");
+  const [walkPoseIdleFrame, setWalkPoseIdleFrame] = useState(0);
   const [candidateScale, setCandidateScale] = useState(1.06);
   const [candidateOffsetX, setCandidateOffsetX] = useState(0);
   const [candidateOffsetY, setCandidateOffsetY] = useState(5);
@@ -198,7 +199,7 @@ export function DaruWalkPreview() {
   const idleSrc = idleSource === "front"
     ? FRONT_IDLE_IMAGES[theme]
     : idleSource === "walk-type"
-      ? DARU_SPRITE_CONFIG.day.walkFrames[0]
+      ? DARU_SPRITE_CONFIG[theme].walkFrames[walkPoseIdleFrame]
       : "/mascot/daru-idle-transparent.png";
   const idleStyle = idleSource === "front"
     ? { backgroundImage: `url(${idleSrc})`, transform: `translate(${candidateOffsetX}px, ${candidateOffsetY}px) scale(${candidateScale})` }
@@ -238,7 +239,7 @@ export function DaruWalkPreview() {
           <strong>IDLE SOURCE</strong>
           <div>
             <button type="button" data-active={idleSource === "original" || undefined} onClick={() => { setIdleSource("original"); setTheme("day"); }}>A · Original Idle</button>
-            <button type="button" data-active={idleSource === "walk-type" || undefined} onClick={() => { setIdleSource("walk-type"); setTheme("day"); }}>B · 3/4 Walk-type Idle</button>
+            <button type="button" data-active={idleSource === "walk-type" || undefined} onClick={() => setIdleSource("walk-type")}>B · 3/4 Walk-type Idle</button>
             <button type="button" data-active={idleSource === "front" || undefined} onClick={() => setIdleSource("front")}>C · Front Idle</button>
           </div>
           <span>{idleSource === "original" ? "기존 원래 정면 IDLE" : idleSource === "walk-type" ? "현재 3/4 WALK형 IDLE" : `정면 IDLE · ${theme.toUpperCase()}`}</span>
@@ -248,9 +249,12 @@ export function DaruWalkPreview() {
             <button
               type="button"
               key={src}
-              data-active={undefined}
+              data-active={idleSource === "walk-type" && walkPoseIdleFrame === index || undefined}
               aria-label={`walk frame ${String(index + 1).padStart(2, "0")}를 idle로 선택`}
-              onClick={() => setIdleSource("front")}
+              onClick={() => {
+                setWalkPoseIdleFrame(index);
+                setIdleSource("walk-type");
+              }}
             >
               <span style={{ backgroundImage: `url(${src})` }} />
               <small>{String(index + 1).padStart(2, "0")}</small>

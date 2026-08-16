@@ -183,7 +183,7 @@ export function DaruStage() {
     setDragging(false);
     setLocomotion("land");
     if (locomotionTimerRef.current !== null) window.clearTimeout(locomotionTimerRef.current);
-    locomotionTimerRef.current = window.setTimeout(() => { setLocomotion("idle"); locomotionTimerRef.current = null; }, 220);
+    locomotionTimerRef.current = window.setTimeout(() => { setLocomotion("idle"); locomotionTimerRef.current = null; }, DARU_GROUNDED_ROAMING_CONFIG.stopWalkMs);
   }, []);
 
   useEffect(() => {
@@ -221,7 +221,7 @@ export function DaruStage() {
         setLocomotion("start_walk");
         setRoaming(true);
         setPosition(target);
-        locomotionTimerRef.current = window.setTimeout(() => { setLocomotion("walk"); locomotionTimerRef.current = null; }, 170);
+        locomotionTimerRef.current = window.setTimeout(() => { setLocomotion("walk"); locomotionTimerRef.current = null; }, DARU_GROUNDED_ROAMING_CONFIG.startWalkMs);
       };
       if (nextFacing !== facing) {
         setLocomotion("turn");
@@ -240,8 +240,8 @@ export function DaruStage() {
       setMovementSpeed(0);
       setLocomotion("stop_walk");
       if (locomotionTimerRef.current !== null) window.clearTimeout(locomotionTimerRef.current);
-      locomotionTimerRef.current = window.setTimeout(() => { setLocomotion("idle"); locomotionTimerRef.current = null; }, 220);
-    }, roamDuration + 80);
+      locomotionTimerRef.current = window.setTimeout(() => { setLocomotion("idle"); locomotionTimerRef.current = null; }, DARU_GROUNDED_ROAMING_CONFIG.stopWalkMs);
+    }, roamDuration + DARU_GROUNDED_ROAMING_CONFIG.arrivalSlackMs);
     return () => window.clearTimeout(timer);
   }, [roamDuration, roaming]);
 
