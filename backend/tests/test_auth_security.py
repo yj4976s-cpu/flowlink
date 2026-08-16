@@ -100,6 +100,33 @@ def test_register_rejects_password_policy(password: str) -> None:
         )
 
 
+@pytest.mark.parametrize("length", [8, 128])
+def test_register_accepts_password_length_boundaries(length: int) -> None:
+    password = "a1" + "x" * (length - 2)
+
+    request = RegisterRequest(
+        email="boundary@example.com",
+        password=password,
+        nickname="tester",
+        terms_agreed=True,
+        privacy_agreed=True,
+    )
+
+    assert request.password == password
+
+
+@pytest.mark.parametrize("length", [7, 129])
+def test_register_rejects_password_outside_length_boundaries(length: int) -> None:
+    with pytest.raises(ValidationError):
+        RegisterRequest(
+            email="boundary@example.com",
+            password="a1" + "x" * (length - 2),
+            nickname="tester",
+            terms_agreed=True,
+            privacy_agreed=True,
+        )
+
+
 @pytest.mark.parametrize("new_password", ["abcd1234", "ABC12345", "Abcd1234!"])
 def test_password_change_accepts_new_password_policy(new_password: str) -> None:
     request = PasswordChangeRequest(current_password="legacy-password123!", new_password=new_password)
@@ -112,6 +139,24 @@ def test_password_change_accepts_new_password_policy(new_password: str) -> None:
 def test_password_change_rejects_new_password_policy(new_password: str) -> None:
     with pytest.raises(ValidationError):
         PasswordChangeRequest(current_password="legacy-password123!", new_password=new_password)
+
+
+@pytest.mark.parametrize("length", [8, 128])
+def test_password_change_accepts_length_boundaries(length: int) -> None:
+    password = "a1" + "x" * (length - 2)
+
+    request = PasswordChangeRequest(current_password="legacy-password123!", new_password=password)
+
+    assert request.new_password == password
+
+
+@pytest.mark.parametrize("length", [7, 129])
+def test_password_change_rejects_outside_length_boundaries(length: int) -> None:
+    with pytest.raises(ValidationError):
+        PasswordChangeRequest(
+            current_password="legacy-password123!",
+            new_password="a1" + "x" * (length - 2),
+        )
 
 
 def test_login_request_allows_legacy_password_format() -> None:

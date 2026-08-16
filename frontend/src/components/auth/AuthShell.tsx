@@ -14,13 +14,13 @@ type AuthPortal = "default" | "admin";
 type FieldErrors = Record<string, string>;
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const passwordPattern = /^(?=.*[A-Za-z])(?=.*[0-9]).{8,}$/;
-const passwordPolicyMessage = "비밀번호는 영문과 숫자를 조합해 8자 이상 입력해주세요.";
+const passwordPattern = /^(?=.*[A-Za-z])(?=.*[0-9]).{8,128}$/;
+const passwordPolicyMessage = "비밀번호는 영문과 숫자를 조합해 8~128자로 입력해주세요.";
 const passwordMismatchMessage = "비밀번호가 일치하지 않습니다.";
 
 function getPasswordConditions(password: string) {
   return [
-    { label: "8자 이상", met: password.length >= 8 },
+    { label: "8~128자", met: password.length >= 8 && password.length <= 128 },
     { label: "영문 포함", met: /[A-Za-z]/.test(password) },
     { label: "숫자 포함", met: /[0-9]/.test(password) },
   ];
@@ -458,7 +458,8 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
                 error={errors.password}
                 autoComplete={isLogin ? "current-password" : "new-password"}
                 minLength={isLogin ? undefined : 8}
-                pattern={isLogin ? undefined : "^(?=.*[A-Za-z])(?=.*[0-9]).{8,}$"}
+                maxLength={isLogin ? undefined : 128}
+                pattern={isLogin ? undefined : "^(?=.*[A-Za-z])(?=.*[0-9]).{8,128}$"}
                 onChange={isLogin ? undefined : handlePasswordChange}
                 onBlur={isLogin ? undefined : handlePasswordBlur}
                 value={isLogin ? undefined : password}
@@ -468,7 +469,7 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
               >
                 {!isLogin && <PasswordConditions password={password} />}
               </PasswordField>
-              {!isLogin && <PasswordField id="password-confirm" label="비밀번호 확인" placeholder="비밀번호를 한 번 더 입력해주세요" error={errors["password-confirm"]} autoComplete="new-password" onChange={handleConfirmChange} onBlur={handleConfirmBlur} value={passwordConfirm} valid={passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password} shakeKey={confirmShakeKey} describedBy={passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password ? "password-confirm-success" : undefined}>{passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password && <p className="auth-password-success" id="password-confirm-success"><Icon name="check" size={15} />비밀번호와 일치해요</p>}</PasswordField>}
+              {!isLogin && <PasswordField id="password-confirm" label="비밀번호 확인" placeholder="비밀번호를 한 번 더 입력해주세요" error={errors["password-confirm"]} autoComplete="new-password" maxLength={128} onChange={handleConfirmChange} onBlur={handleConfirmBlur} value={passwordConfirm} valid={passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password} shakeKey={confirmShakeKey} describedBy={passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password ? "password-confirm-success" : undefined}>{passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password && <p className="auth-password-success" id="password-confirm-success"><Icon name="check" size={15} />비밀번호와 일치해요</p>}</PasswordField>}
             </div>
 
             {!isLogin && (
