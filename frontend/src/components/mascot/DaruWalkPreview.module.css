@@ -9,11 +9,30 @@
 .modeBar button[data-active] { border-color: var(--color-primary); background: var(--color-primary-soft); color: var(--color-primary); }
 .track { position: relative; width: min(100%, 568px); height: 230px; margin: 0 auto; overflow: hidden; border: 1px solid var(--color-border); border-radius: 24px; background: color-mix(in srgb, var(--color-surface-elevated) 88%, var(--color-primary-soft)); }
 .stage { position: absolute; z-index: 2; left: 0; bottom: 24px; width: 148px; height: 148px; translate: var(--preview-x) 0; }
-.stage[data-walking] { transition: translate var(--preview-duration) linear; }
-.idle { display: block; width: 100%; height: 100%; background: transparent url("/mascot/daru-idle-day.png") center bottom / contain no-repeat; }
+.stage[data-walking] { will-change: translate; }
+.idle { display: block; width: 100%; height: 100%; transform-origin: center bottom; background: transparent url("/mascot/daru-idle-day.png") center bottom / contain no-repeat; }
 .ground { position: absolute; right: 24px; bottom: 22px; left: 24px; height: 1px; background: color-mix(in srgb, var(--color-text) 14%, transparent); }
+.decodeStatus { position: absolute; right: 16px; bottom: 10px; z-index: 3; color: var(--color-text-muted); font-size: 11px; }
 .controls { width: min(100%, 568px); margin: 20px auto 0; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 14px 20px; }
 .controls button { min-height: 38px; padding: 0 16px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface-elevated); color: var(--color-primary); font-weight: 800; cursor: pointer; }
+.idleControls { grid-column: 1 / -1; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px 14px; }
+.idleControls strong { color: var(--color-text-muted); font-size: 11px; letter-spacing: .06em; }
+.idleControls div { display: flex; gap: 6px; }
+.idleControls button { min-height: 34px; padding: 0 12px; font-size: 12px; }
+.idleControls button[data-active] { border-color: var(--color-primary); background: var(--color-primary-soft); box-shadow: inset 0 0 0 1px var(--color-primary); }
+.idleControls span { grid-column: 2; color: var(--color-text-muted); font-size: 11px; }
+.thumbnailGrid { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+.thumbnailGrid button { position: relative; min-width: 0; min-height: 64px; padding: 3px; overflow: hidden; }
+.thumbnailGrid button[data-active] { border-color: var(--color-primary); background: var(--color-primary-soft); box-shadow: inset 0 0 0 1px var(--color-primary); }
+.thumbnailGrid button > span { display: block; height: 46px; background: transparent center bottom / contain no-repeat; }
+.thumbnailGrid small { position: absolute; right: 4px; bottom: 2px; color: var(--color-text-muted); font-size: 9px; }
+.candidateTuning { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, 1fr); align-items: end; gap: 8px; padding: 12px; border: 1px dashed var(--color-border); border-radius: 12px; }
+.candidateTuning > strong { grid-column: 1 / -1; color: var(--color-text-muted); font-size: 11px; }
+.candidatePresets { grid-column: 1 / -1; display: flex; gap: 6px; }
+.candidatePresets button[data-active] { border-color: var(--color-primary); background: var(--color-primary-soft); box-shadow: inset 0 0 0 1px var(--color-primary); }
+.candidateTuning label { display: grid; grid-template-columns: auto auto; justify-content: space-between; gap: 4px; color: var(--color-text-muted); font-size: 10px; }
+.candidateTuning input { grid-column: 1 / -1; width: 100%; accent-color: var(--color-primary); }
+.candidateTuning button { min-height: 32px; padding: 0 10px; font-size: 10px; }
 .cadenceControls { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .cadenceControls button[data-active] { border-color: var(--color-primary); background: var(--color-primary-soft); box-shadow: inset 0 0 0 1px var(--color-primary); }
 .quickControls { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
@@ -21,7 +40,8 @@
 .controls label { display: grid; grid-template-columns: auto auto; justify-content: space-between; gap: 8px; color: var(--color-text-muted); font-size: 12px; }
 .controls input { grid-column: 1 / -1; width: 100%; accent-color: var(--color-primary); }
 .controls p { grid-column: 1 / -1; margin: 0; color: var(--color-text-muted); font-size: 12px; }
+.controls .notice { padding: 10px 12px; border-radius: 10px; background: var(--color-primary-soft); color: var(--color-text); line-height: 1.5; }
 .checklist { width: min(100%, 568px); margin: 20px auto 0; padding: 16px; border: 1px solid var(--color-border); border-radius: 16px; background: var(--color-surface-elevated); }
 .checklist strong { font-size: 13px; }
 .checklist ul { margin: 10px 0 0; padding-left: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 5px 18px; color: var(--color-text-muted); font-size: 11px; }
-@media (max-width: 640px) { .track { height: 190px; }.stage { bottom: 20px; width: 108px; height: 108px; }.controls { grid-template-columns: 1fr; }.controls label, .controls p { grid-column: 1; } }
+@media (max-width: 640px) { .track { height: 190px; }.stage { bottom: 20px; width: 108px; height: 108px; }.controls { grid-template-columns: 1fr; }.controls label, .controls p { grid-column: 1; }.thumbnailGrid { grid-template-columns: repeat(4, 1fr); }.idleControls { grid-template-columns: 1fr; }.idleControls span { grid-column: 1; }.candidateTuning { grid-template-columns: 1fr; }.candidateTuning > strong { grid-column: 1; } }
