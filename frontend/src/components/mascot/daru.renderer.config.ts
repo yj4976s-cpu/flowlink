@@ -27,6 +27,10 @@ export const DARU_GROUNDED_ROAMING_CONFIG = {
   mobileGroundInset: 14,
   mobileRange: 180,
   stridePx: DARU_WALK_STRIDE_PX,
+  normalCycleMs: DARU_NORMAL_WALK_CYCLE_MS,
+  startWalkMs: 170,
+  arrivalSlackMs: 80,
+  stopWalkMs: 220,
 } as const;
 
 export const DARU_ROAMING_PAUSED_STORAGE_KEY = "flowlink:daru-roaming-paused";
