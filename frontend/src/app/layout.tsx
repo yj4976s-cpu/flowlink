@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Noto_Sans_KR, Noto_Serif_KR } from "next/font/google";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
 import { FlowCopilot } from "@/components/copilot/FlowCopilot";
+import { DaruProvider, DaruStage } from "@/components/mascot";
 import "./globals.css";
 
 const notoSans = Noto_Sans_KR({
@@ -51,7 +52,13 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
       <body>
-        <ThemeProvider>{children}<FlowCopilot /></ThemeProvider>
+        <ThemeProvider>
+          <DaruProvider>
+            {children}
+            <DaruStage />
+            <FlowCopilot />
+          </DaruProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

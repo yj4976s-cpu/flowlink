@@ -27,6 +27,11 @@ const publicStatusFilters = [
   { value: "AVAILABLE", label: "보관 중" },
 ] as const;
 
+const pageSizeOptions = [
+  { value: "5", label: "5개" },
+  { value: "10", label: "10개" },
+] as const;
+
 const categoryOptions = [
   { value: "", label: "모든 물품" },
   { value: "BALL", label: "공" },
@@ -192,6 +197,8 @@ export function AdminFoundItemsClient() {
   const [pageMessage, setPageMessage] = useState("");
   const [saveError, setSaveError] = useState("");
   const [pendingNavigation, setPendingNavigation] = useState<PendingNavigation>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(5);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   const filtersActive = Boolean(query || categoryFilter || statusFilter || dateFilter);
@@ -199,6 +206,9 @@ export function AdminFoundItemsClient() {
     selected && (area.trim() !== selected.area_name || latitude.trim() || longitude.trim()),
   );
   const dirty = Boolean(selected && (status !== selected.status || locationDirty || storage.trim() || memo.trim()));
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const visibleItems = items.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -333,6 +343,12 @@ export function AdminFoundItemsClient() {
     setCategoryFilter("");
     setStatusFilter("");
     setDateFilter("");
+    setPage(1);
+  };
+
+  const changePageSize = (value: string) => {
+    setPageSize(Number(value));
+    setPage(1);
   };
 
   return (
@@ -343,22 +359,22 @@ export function AdminFoundItemsClient() {
       </header>
 
       <section className={styles.toolbar} aria-label="발견물 검색 및 필터">
-        <label className={styles.searchField}><Icon name="search" size={18} /><span className="sr-only">발견물 검색</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="물품명, 특징, 지역 검색" /></label>
-        <CustomSelect label="물품 종류 필터" value={categoryFilter} options={categoryOptions} onChange={setCategoryFilter} />
-        <CustomSelect label="상태 필터" value={statusFilter} options={publicStatusFilters} onChange={setStatusFilter} />
-        <DateFilter value={dateFilter} onChange={setDateFilter} />
+        <label className={styles.searchField}><Icon name="search" size={18} /><span className="sr-only">발견물 검색</span><input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="물품명, 특징, 지역 검색" /></label>
+        <CustomSelect label="물품 종류 필터" value={categoryFilter} options={categoryOptions} onChange={(value) => { setCategoryFilter(value); setPage(1); }} />
+        <CustomSelect label="상태 필터" value={statusFilter} options={publicStatusFilters} onChange={(value) => { setStatusFilter(value); setPage(1); }} />
+        <DateFilter value={dateFilter} onChange={(value) => { setDateFilter(value); setPage(1); }} />
         <button type="button" className={styles.resetButton} disabled={!filtersActive} onClick={resetFilters}>초기화</button>
       </section>
 
       <div className={styles.businessFilters} role="group" aria-label="발견물 업무 상태">
         <span>업무 상태</span>
-        {publicStatusFilters.map((option) => <button type="button" key={option.value || "all"} aria-pressed={statusFilter === option.value} onClick={() => setStatusFilter(option.value)}>{option.label}</button>)}
+        {publicStatusFilters.map((option) => <button type="button" key={option.value || "all"} aria-pressed={statusFilter === option.value} onClick={() => { setStatusFilter(option.value); setPage(1); }}>{option.label}</button>)}
       </div>
 
       {pageMessage && <p className={styles.pageFeedback} role="status">{pageMessage}</p>}
 
       <section className={styles.listSection} aria-labelledby="found-item-list-title" aria-busy={loading}>
-        <div className={styles.listHeading}><div><p>OPERATIONS LIST</p><h2 id="found-item-list-title">발견물 업무 목록</h2><span>공식 발견물의 공개 상태와 기본 정보를 빠르게 비교합니다.</span></div>{!loading && !error && <strong>{items.length}건</strong>}</div>
+        <div className={styles.listHeading}><div><p>OPERATIONS LIST</p><h2 id="found-item-list-title">발견물 업무 목록</h2><span>공식 발견물의 공개 상태와 기본 정보를 빠르게 비교합니다.</span></div></div>
 
         {loading ? (
           <div className={styles.state} role="status"><i /><i /><i /><span>발견물 목록을 불러오는 중입니다.</span></div>
@@ -369,7 +385,7 @@ export function AdminFoundItemsClient() {
         ) : (
           <div className={styles.itemList} role="list">
             <div className={styles.tableHead} aria-hidden="true"><span>발견물</span><span>발견 위치</span><span>발견 시각</span><span>출처</span><span>현재 상태</span></div>
-            {items.map((item) => (
+            {visibleItems.map((item) => (
               <button type="button" role="listitem" aria-label={`${item.item_category_name} 발견물 관리 열기`} aria-current={selected?.id === item.id ? "true" : undefined} onClick={() => requestSelection(item)} key={item.id}>
                 <span className={styles.itemIdentity}><ItemImage item={item} compact /><span><b>{item.color ? `${item.color} ` : ""}{item.item_category_name}</b><small>발견물 #{item.id}</small></span></span>
                 <span data-label="발견 위치">{item.area_name}</span>
@@ -380,6 +396,11 @@ export function AdminFoundItemsClient() {
             ))}
           </div>
         )}
+        {!loading && !error && items.length > 0 && <footer className={styles.paginationFooter}>
+          <div className={styles.pageSizeControl}><span>페이지당</span><CustomSelect label="페이지당 표시 개수" value={String(pageSize)} options={pageSizeOptions} onChange={changePageSize} /></div>
+          <nav className={styles.pagination} aria-label="발견물 목록 페이지"><button type="button" aria-label="이전 페이지" disabled={safePage === 1} onClick={() => setPage(Math.max(1, safePage - 1))}><Icon name="chevronLeft" size={16} /></button><span aria-live="polite"><strong>{safePage}</strong><span> / {totalPages}</span></span><button type="button" aria-label="다음 페이지" disabled={safePage === totalPages} onClick={() => setPage(Math.min(totalPages, safePage + 1))}><Icon name="chevronRight" size={16} /></button></nav>
+          <strong className={styles.totalCount}>총 {items.length}건</strong>
+        </footer>}
       </section>
 
       {selected && (

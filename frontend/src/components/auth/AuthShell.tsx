@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import { FlowLinkLogo } from "@/components/common/FlowLinkLogo";
+import { Icon } from "@/components/common/Icon";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { AuthApiError, getCurrentUser, login, register } from "@/lib/authApi";
@@ -13,8 +14,17 @@ type AuthPortal = "default" | "admin";
 type FieldErrors = Record<string, string>;
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const passwordPattern = /^(?=.*[a-z])(?=.*[A-Z])[A-Za-z]{8}$/;
-const passwordPolicyMessage = "비밀번호는 영문 대문자와 소문자를 포함한 정확히 8자로 입력해주세요.";
+const passwordPattern = /^(?=.*[A-Za-z])(?=.*[0-9]).{8,128}$/;
+const passwordPolicyMessage = "비밀번호는 영문과 숫자를 조합해 8~128자로 입력해주세요.";
+const passwordMismatchMessage = "비밀번호가 일치하지 않습니다.";
+
+function getPasswordConditions(password: string) {
+  return [
+    { label: "8~128자", met: password.length >= 8 && password.length <= 128 },
+    { label: "영문 포함", met: /[A-Za-z]/.test(password) },
+    { label: "숫자 포함", met: /[0-9]/.test(password) },
+  ];
+}
 
 const loginScene = {
   dawn: {
@@ -113,6 +123,13 @@ function PasswordField({
   minLength,
   maxLength,
   pattern,
+  onChange,
+  onBlur,
+  value,
+  valid = false,
+  shakeKey = 0,
+  describedBy,
+  children,
 }: {
   id: string;
   label: string;
@@ -122,14 +139,33 @@ function PasswordField({
   minLength?: number;
   maxLength?: number;
   pattern?: string;
+  onChange?: (event: ChangeEvent<HTMLInputElement>) => void;
+  onBlur?: (event: React.FocusEvent<HTMLInputElement>) => void;
+  value?: string;
+  valid?: boolean;
+  shakeKey?: number;
+  describedBy?: string;
+  children?: React.ReactNode;
 }) {
   const [visible, setVisible] = useState(false);
+  const fieldRef = useRef<HTMLDivElement>(null);
   const errorId = `${id}-error`;
 
+  useEffect(() => {
+    if (shakeKey === 0) return;
+    const field = fieldRef.current;
+    if (!field) return;
+    field.classList.remove("is-shaking");
+    void field.offsetWidth;
+    field.classList.add("is-shaking");
+    const timeout = window.setTimeout(() => field.classList.remove("is-shaking"), 300);
+    return () => window.clearTimeout(timeout);
+  }, [shakeKey]);
+
   return (
-    <div className="auth-field">
+    <div className={`auth-field auth-password-field${valid ? " is-valid" : ""}`} ref={fieldRef}>
       <label htmlFor={id}>{label}</label>
-      <div className={`auth-input-wrap${error ? " has-error" : ""}`}>
+      <div className={`auth-input-wrap${error ? " has-error" : ""}${valid ? " is-valid" : ""}`}>
         <input
           id={id}
           name={id}
@@ -137,10 +173,13 @@ function PasswordField({
           placeholder={placeholder}
           autoComplete={autoComplete}
           aria-invalid={Boolean(error)}
-          aria-describedby={error ? errorId : undefined}
+          aria-describedby={[describedBy, error ? errorId : undefined].filter(Boolean).join(" ") || undefined}
           minLength={minLength}
           maxLength={maxLength}
           pattern={pattern}
+          onChange={onChange}
+          onBlur={onBlur}
+          value={value}
         />
         <button
           type="button"
@@ -158,7 +197,30 @@ function PasswordField({
           </svg>
         </button>
       </div>
+      {children}
       {error && <p className="auth-error" id={errorId}>{error}</p>}
+    </div>
+  );
+}
+
+function PasswordConditions({ password }: { password: string }) {
+  const conditions = getPasswordConditions(password);
+  const metCount = conditions.filter((condition) => condition.met).length;
+  const hasInput = password.length > 0;
+  return (
+    <div className={`auth-password-guide${metCount === conditions.length ? " is-complete" : ""}`} id="password-conditions">
+      <div><span>비밀번호 조건</span><b>{metCount} / {conditions.length}</b></div>
+      <ul aria-label="비밀번호 조건 충족 상태">
+        {conditions.map((condition) => (
+          <li key={condition.label} className={hasInput && condition.met ? "is-met" : "is-neutral"}>
+            <span className="auth-condition-icon" aria-hidden="true">
+              {hasInput && condition.met ? <Icon name="check" size={15} /> : <i />}
+            </span>
+            <span>{condition.label}</span>
+            <span className="sr-only">{hasInput && condition.met ? "완료" : "미완료"}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -225,6 +287,10 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
   const [isCheckingSession, setIsCheckingSession] = useState(isLogin);
   const [submitMessage, setSubmitMessage] = useState("");
   const [roleMismatch, setRoleMismatch] = useState(false);
+  const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
+  const [passwordShakeKey, setPasswordShakeKey] = useState(0);
+  const [confirmShakeKey, setConfirmShakeKey] = useState(0);
 
   useEffect(() => {
     if (!isLogin) return;
@@ -252,19 +318,53 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
 
     if (!email) nextErrors.email = "이메일을 입력해주세요.";
     else if (!emailPattern.test(email)) nextErrors.email = "올바른 이메일 형식을 입력해주세요.";
-    if (!password) nextErrors.password = "비밀번호를 입력해주세요.";
+    if (!password) nextErrors.password = isLogin ? "비밀번호를 입력해주세요." : passwordPolicyMessage;
 
     if (!isLogin) {
       const nickname = String(data.get("nickname") ?? "").trim();
       const confirm = String(data.get("password-confirm") ?? "");
       if (!nickname) nextErrors.nickname = "닉네임을 입력해주세요.";
       else if (nickname.length < 2) nextErrors.nickname = "닉네임은 2자 이상 입력해주세요.";
-      if (password && !passwordPattern.test(password)) nextErrors.password = passwordPolicyMessage;
+      if (!passwordPattern.test(password)) nextErrors.password = passwordPolicyMessage;
       if (!confirm) nextErrors["password-confirm"] = "비밀번호를 한 번 더 입력해주세요.";
-      else if (password !== confirm) nextErrors["password-confirm"] = "비밀번호가 일치하지 않습니다.";
+      else if (password !== confirm) nextErrors["password-confirm"] = passwordMismatchMessage;
       if (data.get("terms") !== "on" || data.get("privacy") !== "on") nextErrors.agreements = "필수 항목에 동의해주세요.";
     }
     return nextErrors;
+  };
+
+  const clearFieldError = (field: string) => {
+    setErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+  };
+
+  const handlePasswordChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const nextPassword = event.currentTarget.value;
+    setPassword(nextPassword);
+    if (passwordPattern.test(nextPassword)) clearFieldError("password");
+    if (passwordConfirm === nextPassword) clearFieldError("password-confirm");
+  };
+
+  const handleConfirmChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const nextConfirm = event.currentTarget.value;
+    setPasswordConfirm(nextConfirm);
+    if (nextConfirm === password) clearFieldError("password-confirm");
+  };
+
+  const handlePasswordBlur = () => {
+    if (password && !passwordPattern.test(password)) {
+      setErrors((current) => ({ ...current, password: passwordPolicyMessage }));
+    }
+  };
+
+  const handleConfirmBlur = () => {
+    if (passwordConfirm && passwordConfirm !== password) {
+      setErrors((current) => ({ ...current, "password-confirm": passwordMismatchMessage }));
+    }
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -273,7 +373,14 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
     setRoleMismatch(false);
     const nextErrors = validate(event.currentTarget);
     setErrors(nextErrors);
-    if (Object.keys(nextErrors).length > 0) return;
+    if (Object.keys(nextErrors).length > 0) {
+      if (nextErrors.password) setPasswordShakeKey((current) => current + 1);
+      if (nextErrors["password-confirm"]) setConfirmShakeKey((current) => current + 1);
+      requestAnimationFrame(() => {
+        event.currentTarget.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+      });
+      return;
+    }
 
     const data = new FormData(event.currentTarget);
     const email = String(data.get("email") ?? "").trim();
@@ -347,14 +454,22 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
               <PasswordField
                 id="password"
                 label="비밀번호"
-                placeholder={isLogin ? "비밀번호를 입력해주세요" : "영문 대·소문자 조합 8자"}
+                placeholder={isLogin ? "비밀번호를 입력해주세요" : "영문·숫자 조합 8자 이상"}
                 error={errors.password}
                 autoComplete={isLogin ? "current-password" : "new-password"}
                 minLength={isLogin ? undefined : 8}
-                maxLength={isLogin ? undefined : 8}
-                pattern={isLogin ? undefined : "^(?=.*[a-z])(?=.*[A-Z])[A-Za-z]{8}$"}
-              />
-              {!isLogin && <PasswordField id="password-confirm" label="비밀번호 확인" placeholder="비밀번호를 한 번 더 입력해주세요" error={errors["password-confirm"]} autoComplete="new-password" />}
+                maxLength={isLogin ? undefined : 128}
+                pattern={isLogin ? undefined : "^(?=.*[A-Za-z])(?=.*[0-9]).{8,128}$"}
+                onChange={isLogin ? undefined : handlePasswordChange}
+                onBlur={isLogin ? undefined : handlePasswordBlur}
+                value={isLogin ? undefined : password}
+                valid={!isLogin && password.length > 0 && passwordPattern.test(password)}
+                shakeKey={passwordShakeKey}
+                describedBy={!isLogin ? "password-conditions" : undefined}
+              >
+                {!isLogin && <PasswordConditions password={password} />}
+              </PasswordField>
+              {!isLogin && <PasswordField id="password-confirm" label="비밀번호 확인" placeholder="비밀번호를 한 번 더 입력해주세요" error={errors["password-confirm"]} autoComplete="new-password" maxLength={128} onChange={handleConfirmChange} onBlur={handleConfirmBlur} value={passwordConfirm} valid={passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password} shakeKey={confirmShakeKey} describedBy={passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password ? "password-confirm-success" : undefined}>{passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password && <p className="auth-password-success" id="password-confirm-success"><Icon name="check" size={15} />비밀번호와 일치해요</p>}</PasswordField>}
             </div>
 
             {!isLogin && (
