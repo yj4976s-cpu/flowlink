@@ -328,6 +328,10 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
             else next.unshift(candidate);
           }
           next = next.sort((a, b) => b.expiresAt - a.expiresAt).slice(0, WEBCAM_REPORT_CANDIDATE_LIMIT);
+          const retainedUrls = new Set(next.map((candidate) => candidate.previewUrl));
+          frameCandidates.forEach((candidate) => {
+            if (!retainedUrls.has(candidate.previewUrl)) URL.revokeObjectURL(candidate.previewUrl);
+          });
           replaceCandidates(next);
 
           const representative = frameCandidates.reduce((best, candidate) => (

@@ -207,6 +207,27 @@ def test_register_rejects_invalid_password_policy(client: TestClient, password: 
     assert response.status_code == 422
 
 
+@pytest.mark.parametrize("length", [8, 128])
+def test_register_accepts_password_length_boundaries(client: TestClient, length: int) -> None:
+    response = register(
+        client,
+        email=f"register-boundary-{length}@example.com",
+        password="a1" + "x" * (length - 2),
+    )
+
+    assert response.status_code == 201
+
+
+def test_register_rejects_password_over_max_length(client: TestClient) -> None:
+    response = register(
+        client,
+        email="register-over-limit@example.com",
+        password="a1" + "x" * 127,
+    )
+
+    assert response.status_code == 422
+
+
 def test_registration_rolls_back_when_token_creation_fails(
     client: TestClient,
     db: Session,
@@ -320,6 +341,35 @@ def test_change_password_rejects_invalid_new_password_policy(
     response = client.patch(
         "/api/auth/me/password",
         json={"current_password": "legacy-password123!", "new_password": new_password},
+    )
+
+    assert response.status_code == 422
+    client.cookies.clear()
+    assert login(client, password="legacy-password123!").status_code == 200
+
+
+def test_change_password_accepts_max_length_boundary(client: TestClient, db: Session) -> None:
+    seed_user(db, password="legacy-password123!")
+    assert login(client, password="legacy-password123!").status_code == 200
+    new_password = "a1" + "x" * 126
+
+    response = client.patch(
+        "/api/auth/me/password",
+        json={"current_password": "legacy-password123!", "new_password": new_password},
+    )
+
+    assert response.status_code == 200
+    client.cookies.clear()
+    assert login(client, password=new_password).status_code == 200
+
+
+def test_change_password_rejects_over_max_length(client: TestClient, db: Session) -> None:
+    seed_user(db, password="legacy-password123!")
+    assert login(client, password="legacy-password123!").status_code == 200
+
+    response = client.patch(
+        "/api/auth/me/password",
+        json={"current_password": "legacy-password123!", "new_password": "a1" + "x" * 127},
     )
 
     assert response.status_code == 422
