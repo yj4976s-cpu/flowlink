@@ -10,6 +10,7 @@ import {
   type FormEvent,
 } from "react";
 import { Icon } from "@/components/common/Icon";
+import { useDaru } from "@/components/mascot";
 import { getCurrentUser, type AuthUser } from "@/lib/authApi";
 import {
   deleteAllCopilotConversations,
@@ -203,6 +204,7 @@ function QuestionButton({
 }
 
 export function FlowCopilot() {
+  const { cue: cueDaru } = useDaru();
   const pathname = usePathname();
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -211,6 +213,21 @@ export function FlowCopilot() {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [value, setValue] = useState("");
   const [loading, setLoading] = useState(false);
+  const wasLoadingRef = useRef(false);
+
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("flowlink:daru-occlusion", { detail: { open } }));
+    cueDaru(open ? "alert" : "rest", { source: "service", duration: open ? 1800 : 2400 });
+    return () => {
+      window.dispatchEvent(new CustomEvent("flowlink:daru-occlusion", { detail: { open: false } }));
+    };
+  }, [cueDaru, open]);
+
+  useEffect(() => {
+    if (loading) cueDaru("listen", { source: "service" });
+    else if (wasLoadingRef.current) cueDaru("happy", { source: "service" });
+    wasLoadingRef.current = loading;
+  }, [cueDaru, loading]);
   const [cooldownRemaining, setCooldownRemaining] = useState(0);
   const [unread, setUnread] = useState(0);
   const [briefing, setBriefing] = useState<CopilotResponse | null>(null);

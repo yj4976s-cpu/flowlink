@@ -36,11 +36,19 @@ type StickyCandidate = {
   previewUrl: string;
 };
 
+type StableDetection = {
+  classCode: string;
+  consecutiveFrames: number;
+  bestCandidate: StickyCandidate;
+};
+
 const WEBCAM_FRAME_MAX_WIDTH = 640;
 const WEBCAM_FRAME_INTERVAL_MS = 300;
 const WEBCAM_JPEG_QUALITY = 0.8;
 export const WEBCAM_REPORT_CANDIDATE_TTL_MS = 8000;
 const WEBCAM_REPORT_CANDIDATE_LIMIT = 3;
+export const WEBCAM_AUTO_REPORT_STABLE_FRAMES = 3;
+export const WEBCAM_AUTO_REPORT_COOLDOWN_MS = 3000;
 const reportableClassCodes = new Set(["BAG", "UMBRELLA", "FOOTWEAR", "BALL"]);
 
 const objectLabels: Record<string, string> = {
@@ -131,6 +139,11 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(false);
   const reportModalWasOpenRef = useRef(false);
+  const reportModalOpenRef = useRef(reportModalOpen);
+  const openedClassCodeRef = useRef<string | null>(null);
+  const reportCooldownClassesRef = useRef(new Set<string>());
+  const reportCooldownTimersRef = useRef(new Map<string, number>());
+  const stableDetectionRef = useRef<StableDetection | null>(null);
   const candidatesRef = useRef<StickyCandidate[]>([]);
 
   const [cameraStatus, setCameraStatus] = useState<WebcamPanelStatus>("idle");
@@ -151,6 +164,10 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
   }, []);
 
   const clearCandidates = useCallback(() => replaceCandidates([]), [replaceCandidates]);
+
+  useEffect(() => {
+    reportModalOpenRef.current = reportModalOpen;
+  }, [reportModalOpen]);
 
   useEffect(() => {
     onStatusChange(cameraStatus);
@@ -193,6 +210,7 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
   useEffect(() => {
     mountedRef.current = true;
     const videoElement = videoRef.current;
+    const cooldownTimers = reportCooldownTimersRef.current;
     return () => {
       mountedRef.current = false;
       cameraRequestGenerationRef.current += 1;
@@ -203,6 +221,8 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
       if (videoElement) videoElement.srcObject = null;
       candidatesRef.current.forEach((candidate) => URL.revokeObjectURL(candidate.previewUrl));
       candidatesRef.current = [];
+      cooldownTimers.forEach((timer) => window.clearTimeout(timer));
+      cooldownTimers.clear();
     };
   }, [clearPendingRequest, stopStream]);
 
@@ -251,8 +271,16 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
   }, []);
 
   const openReport = (candidate: StickyCandidate) => {
+    if (reportModalOpenRef.current || !candidate.blob.size) return;
+    reportModalOpenRef.current = true;
+    stableDetectionRef.current = null;
+    openedClassCodeRef.current = candidate.object.class_code;
     stopDetection();
     const image = new File([candidate.blob], `webcam-report-${Date.parse(candidate.detectedAt)}.jpg`, { type: "image/jpeg" });
+    if (!image.size) {
+      reportModalOpenRef.current = false;
+      return;
+    }
     onReportCandidate({ object: candidate.object, frame: candidate.frame, image, capturedAt: candidate.detectedAt });
   };
 
@@ -289,16 +317,45 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
         }, new Map<string, WebcamDetectionObject>()).values());
         if (reportable.length) {
           let next = [...candidatesRef.current];
+          const frameCandidates: StickyCandidate[] = [];
           for (const object of reportable) {
             const reportBlob = blob;
             const previewUrl = URL.createObjectURL(reportBlob);
             const candidate = { object, frame: nextFrame, blob: reportBlob, detectedAt, expiresAt, previewUrl };
+            frameCandidates.push(candidate);
             const existingIndex = next.findIndex((item) => item.object.class_code === object.class_code);
             if (existingIndex >= 0) next.splice(existingIndex, 1, candidate);
             else next.unshift(candidate);
           }
           next = next.sort((a, b) => b.expiresAt - a.expiresAt).slice(0, WEBCAM_REPORT_CANDIDATE_LIMIT);
           replaceCandidates(next);
+
+          const representative = frameCandidates.reduce((best, candidate) => (
+            candidate.object.confidence > best.object.confidence ? candidate : best
+          ));
+          const classCode = representative.object.class_code as string;
+          const previous = stableDetectionRef.current;
+          stableDetectionRef.current = previous?.classCode === classCode
+            ? {
+                classCode,
+                consecutiveFrames: previous.consecutiveFrames + 1,
+                bestCandidate: representative.object.confidence >= previous.bestCandidate.object.confidence
+                  ? representative
+                  : previous.bestCandidate,
+              }
+            : { classCode, consecutiveFrames: 1, bestCandidate: representative };
+
+          const stable = stableDetectionRef.current;
+          if (
+            stable.consecutiveFrames >= WEBCAM_AUTO_REPORT_STABLE_FRAMES
+            && !reportCooldownClassesRef.current.has(classCode)
+            && !reportModalOpenRef.current
+          ) {
+            openReport(stable.bestCandidate);
+            return;
+          }
+        } else {
+          stableDetectionRef.current = null;
         }
       } catch (caught) {
         if (isAbortError(caught) || !mountedRef.current || generation !== loopGenerationRef.current) return;
@@ -399,9 +456,26 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
   }, [completedReportClassCode, replaceCandidates]);
 
   useEffect(() => {
-    if (reportModalOpen) reportModalWasOpenRef.current = true;
+    if (reportModalOpen) {
+      reportModalWasOpenRef.current = true;
+      reportModalOpenRef.current = true;
+    }
     else if (reportModalWasOpenRef.current) {
       reportModalWasOpenRef.current = false;
+      reportModalOpenRef.current = false;
+      stableDetectionRef.current = null;
+      const classCode = openedClassCodeRef.current;
+      if (classCode) {
+        reportCooldownClassesRef.current.add(classCode);
+        const previousTimer = reportCooldownTimersRef.current.get(classCode);
+        if (previousTimer) window.clearTimeout(previousTimer);
+        const timer = window.setTimeout(() => {
+          reportCooldownClassesRef.current.delete(classCode);
+          reportCooldownTimersRef.current.delete(classCode);
+        }, WEBCAM_AUTO_REPORT_COOLDOWN_MS);
+        reportCooldownTimersRef.current.set(classCode, timer);
+        openedClassCodeRef.current = null;
+      }
       if (streamRef.current && cameraStatus === "ready") startDetection();
     }
   // startDetection intentionally uses the latest render state when the modal closes.

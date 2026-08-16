@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon, type IconName } from "@/components/common/Icon";
+import { useDaru } from "@/components/mascot";
 import type { AuthUser } from "@/lib/authApi";
 import { listNotifications, markNotificationRead, NotificationsApiError, type NotificationResponse } from "@/lib/notificationsApi";
 import styles from "./NotificationToastHost.module.css";
@@ -41,6 +42,7 @@ function Toast({ notification, onClose, onAction }: { notification: Notification
 }
 
 export function NotificationToastHost({ user }: { user: AuthUser | null }) {
+  const { cue: cueDaru } = useDaru();
   const router = useRouter();
   const [toasts, setToasts] = useState<NotificationResponse[]>([]);
   const baselineReadyRef = useRef(false);
@@ -69,7 +71,11 @@ export function NotificationToastHost({ user }: { user: AuthUser | null }) {
         }
         const fresh = notifications.filter((item) => toastMeta(item) && !shownIdsRef.current.has(item.id));
         fresh.forEach((item) => shownIdsRef.current.add(item.id));
-        if (fresh.length) setToasts((current) => [...fresh, ...current].slice(0, TOAST_LIMIT));
+        if (fresh.length) {
+          setToasts((current) => [...fresh, ...current].slice(0, TOAST_LIMIT));
+          if (fresh.some((item) => item.notification_type === "MATCH_FOUND")) cueDaru("match", { source: "service" });
+          else if (fresh.some((item) => item.notification_type === "STATUS_CHANGED")) cueDaru("happy", { source: "service" });
+        }
       } catch (caught) {
         if (caught instanceof DOMException && caught.name === "AbortError") return;
         if (caught instanceof NotificationsApiError && caught.status === 401 && intervalId !== null) {
@@ -85,7 +91,7 @@ export function NotificationToastHost({ user }: { user: AuthUser | null }) {
       controller?.abort();
       if (intervalId !== null) window.clearInterval(intervalId);
     };
-  }, [user]);
+  }, [cueDaru, user]);
 
   const act = async (notification: NotificationResponse) => {
     const meta = toastMeta(notification);

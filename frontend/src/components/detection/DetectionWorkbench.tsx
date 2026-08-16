@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ChangeEvent, DragEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/common/Icon";
+import { useDaru } from "@/components/mascot";
 import { createCitizenReport } from "@/lib/citizenReportsApi";
 import {
   DetectionApiError,
@@ -477,10 +478,10 @@ function WebcamReportModal({
           <div className={styles.reportSuccess}>
             <Icon name="check" size={28} />
             <strong>발견 제보가 접수되었습니다.</strong>
-            <p>관리자 확인 후 공식 발견물로 연결됩니다.</p>
+            <p>관리자가 탐지 내용과 발견 정보를 확인한 뒤 공식 발견물로 등록합니다.</p>
             <div>
-              <Link className="button button-secondary" href="/mypage#my-activity">내 제보 보기</Link>
-              <button className="button button-primary" type="button" onClick={onClose}>탐지 계속하기</button>
+              <Link className="button button-secondary" href="/mypage#my-activity">내 제보 확인</Link>
+              <button className="button button-primary" type="button" onClick={onClose}>계속 탐지하기</button>
             </div>
           </div>
         ) : (
@@ -576,6 +577,7 @@ function OverlayBox({
 }
 
 export function DetectionWorkbench() {
+  const { cue: cueDaru } = useDaru();
   const [tab, setTab] = useState<DetectionTab>("image");
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
@@ -600,6 +602,27 @@ export function DetectionWorkbench() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewUrlRef = useRef("");
   const reportPreviewUrlRef = useRef("");
+  const webcamReportSubmittingRef = useRef(false);
+  const webcamFoundSignatureRef = useRef("");
+
+  useEffect(() => {
+    if (tab !== "webcam") return;
+    if (webcamStatus === "running") cueDaru("scan", { source: "service" });
+    else if (webcamStatus === "error") cueDaru("rest", { source: "service" });
+  }, [cueDaru, tab, webcamStatus]);
+
+  useEffect(() => {
+    if (tab !== "webcam") return;
+    const signature = (webcamFrame?.detected_objects ?? []).map((object) => object.class_code).sort().join(":");
+    if (!signature) {
+      webcamFoundSignatureRef.current = "";
+      return;
+    }
+    if (signature !== webcamFoundSignatureRef.current) {
+      webcamFoundSignatureRef.current = signature;
+      cueDaru("found", { source: "service" });
+    }
+  }, [cueDaru, tab, webcamFrame]);
 
   const personalItemObjects = useMemo(
     () => currentEvent?.detected_objects.filter(isReportablePersonalItem) ?? [],
@@ -812,11 +835,13 @@ export function DetectionWorkbench() {
     }
 
     setSubmitState("analyzing");
+    cueDaru("scan", { source: "service" });
     setError("");
     try {
       const result = tab === "image" ? await uploadDetectionImage(file) : await uploadDetectionVideo(file);
       setCurrentEvent(result);
       setSubmitState("success");
+      cueDaru(result.detected_objects.length ? "found" : "look", { source: "service" });
       setHistoryLoading(true);
       setHistoryError("");
       await refreshHistory();
@@ -824,6 +849,7 @@ export function DetectionWorkbench() {
       const message = caught instanceof DetectionApiError ? caught.message : "AI 탐지를 처리하지 못했습니다.";
       setError(message);
       setSubmitState("error");
+      cueDaru("rest", { source: "service" });
     }
   };
 
@@ -948,7 +974,7 @@ export function DetectionWorkbench() {
   };
 
   const closeWebcamReport = () => {
-    if (webcamReportSubmitting) return;
+    if (webcamReportSubmittingRef.current) return;
     revokeReportPreviewUrl();
     setWebcamReportCandidate(null);
     setWebcamReportError("");
@@ -957,7 +983,7 @@ export function DetectionWorkbench() {
 
   const handleWebcamReportSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!webcamReportCandidate || webcamReportSubmitting) return;
+    if (!webcamReportCandidate || webcamReportSubmittingRef.current) return;
 
     const formData = new FormData(event.currentTarget);
     const objectClass = String(formData.get("objectClass") ?? "");
@@ -976,6 +1002,7 @@ export function DetectionWorkbench() {
       return;
     }
 
+    webcamReportSubmittingRef.current = true;
     setWebcamReportSubmitting(true);
     setWebcamReportError("");
     try {
@@ -992,6 +1019,7 @@ export function DetectionWorkbench() {
       const message = caught instanceof Error ? caught.message : "발견 제보를 접수하지 못했습니다. 잠시 후 다시 시도해주세요.";
       setWebcamReportError(message);
     } finally {
+      webcamReportSubmittingRef.current = false;
       setWebcamReportSubmitting(false);
     }
   };

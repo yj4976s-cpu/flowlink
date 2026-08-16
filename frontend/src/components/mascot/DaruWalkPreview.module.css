@@ -1,0 +1,27 @@
+.page { min-height: 100vh; padding: 48px clamp(20px, 6vw, 88px); background: var(--color-background); color: var(--color-text); }
+.page header { display: grid; gap: 6px; max-width: 760px; margin: 0 auto 32px; }
+.page header p, .page header h1 { margin: 0; }
+.page header p { color: var(--color-primary); font-size: 12px; font-weight: 800; text-transform: uppercase; }
+.page header span { color: var(--color-text-muted); font-size: 13px; }
+.modeBar { width: min(100%, 568px); margin: 0 auto 14px; display: flex; justify-content: space-between; gap: 12px; }
+.modeBar div { display: flex; gap: 6px; }
+.modeBar button, .modeBar select { min-height: 34px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-surface-elevated); color: var(--color-text-muted); font: inherit; font-size: 12px; font-weight: 800; cursor: pointer; }
+.modeBar button[data-active] { border-color: var(--color-primary); background: var(--color-primary-soft); color: var(--color-primary); }
+.track { position: relative; width: min(100%, 568px); height: 230px; margin: 0 auto; overflow: hidden; border: 1px solid var(--color-border); border-radius: 24px; background: color-mix(in srgb, var(--color-surface-elevated) 88%, var(--color-primary-soft)); }
+.stage { position: absolute; z-index: 2; left: 0; bottom: 24px; width: 148px; height: 148px; translate: var(--preview-x) 0; }
+.stage[data-walking] { transition: translate var(--preview-duration) linear; }
+.idle { display: block; width: 100%; height: 100%; background: transparent url("/mascot/daru-idle-day.png") center bottom / contain no-repeat; }
+.ground { position: absolute; right: 24px; bottom: 22px; left: 24px; height: 1px; background: color-mix(in srgb, var(--color-text) 14%, transparent); }
+.controls { width: min(100%, 568px); margin: 20px auto 0; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 14px 20px; }
+.controls button { min-height: 38px; padding: 0 16px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface-elevated); color: var(--color-primary); font-weight: 800; cursor: pointer; }
+.cadenceControls { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.cadenceControls button[data-active] { border-color: var(--color-primary); background: var(--color-primary-soft); box-shadow: inset 0 0 0 1px var(--color-primary); }
+.quickControls { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+.quickControls button { min-height: 32px; padding: 0 10px; font-size: 11px; }
+.controls label { display: grid; grid-template-columns: auto auto; justify-content: space-between; gap: 8px; color: var(--color-text-muted); font-size: 12px; }
+.controls input { grid-column: 1 / -1; width: 100%; accent-color: var(--color-primary); }
+.controls p { grid-column: 1 / -1; margin: 0; color: var(--color-text-muted); font-size: 12px; }
+.checklist { width: min(100%, 568px); margin: 20px auto 0; padding: 16px; border: 1px solid var(--color-border); border-radius: 16px; background: var(--color-surface-elevated); }
+.checklist strong { font-size: 13px; }
+.checklist ul { margin: 10px 0 0; padding-left: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 5px 18px; color: var(--color-text-muted); font-size: 11px; }
+@media (max-width: 640px) { .track { height: 190px; }.stage { bottom: 20px; width: 108px; height: 108px; }.controls { grid-template-columns: 1fr; }.controls label, .controls p { grid-column: 1; } }

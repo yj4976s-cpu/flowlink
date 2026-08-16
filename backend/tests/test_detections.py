@@ -135,6 +135,11 @@ def test_flowlink_custom_model_labels_map_directly(model_label: str, expected: s
     assert model_label_to_class_code(model_label) == expected
 
 
+@pytest.mark.parametrize("model_label", ["shoe", "sneaker", "footwear"])
+def test_footwear_model_labels_map_to_footwear(model_label: str) -> None:
+    assert model_label_to_class_code(model_label) == "FOOTWEAR"
+
+
 @pytest.fixture
 def db() -> Iterator[Session]:
     engine = create_engine(
@@ -468,6 +473,32 @@ def test_webcam_inference_maps_business_classes_and_keeps_unknown_safe() -> None
     assert result.detected_objects[1].class_name_ko == "공"
     assert result.detected_objects[2].label == "mystery"
     assert result.detected_objects[2].class_name_ko is None
+
+
+@pytest.mark.parametrize("model_label", ["shoe", "sneaker", "footwear"])
+def test_webcam_footwear_metadata_contract(model_label: str) -> None:
+    fake_client = FakeAIInferenceClient(
+        AIInferenceResult(
+            media_width=32,
+            media_height=24,
+            inference_ms=7.5,
+            predictions=[
+                AIInferencePrediction(
+                    model_label=model_label,
+                    confidence=0.91,
+                    bbox=AIInferenceBBox(x=1, y=2, width=3, height=4),
+                )
+            ],
+        )
+    )
+
+    detected = WebcamInferenceService(ai_client=fake_client).analyze_frame(
+        Image.new("RGB", (32, 24), color=(1, 2, 3))
+    ).detected_objects[0]
+
+    assert detected.class_code == "FOOTWEAR"
+    assert detected.class_name_ko == "신발"
+    assert detected.group_code == "PERSONAL_ITEM"
 
 
 def test_detection_inference_maps_ai_unavailable_to_service_error(tmp_path: Path) -> None:
