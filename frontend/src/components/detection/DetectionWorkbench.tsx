@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { ChangeEvent, DragEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, FormEvent, type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/common/Icon";
 import { useDaru } from "@/components/mascot";
 import { createCitizenReport } from "@/lib/citizenReportsApi";
 import {
   DetectionApiError,
+  DetectionBBox,
   DetectionEvent,
   DetectionObject,
   WebcamDetectionFrame,
@@ -29,9 +30,22 @@ type FoundReportCandidate = {
   objectClassCode: string;
   objectClassName: string;
   confidence: number;
+  bbox: DetectionBBox | null;
+  mediaWidth: number | null;
+  mediaHeight: number | null;
   image: File | null;
   previewUrl: string;
   capturedAt: string;
+};
+type OverlayItem = {
+  key: string;
+  bbox: DetectionBBox;
+  label: string;
+  confidence: number;
+};
+type Size = {
+  width: number;
+  height: number;
 };
 
 const IMAGE_MAX_BYTES = 20 * 1024 * 1024;
@@ -43,6 +57,8 @@ const VIDEO_MAX_SECONDS = 30;
 const VIDEO_REPORT_FRAME_MAX_WIDTH = 960;
 const VIDEO_REPORT_FRAME_TIMEOUT_MS = 8000;
 const HISTORY_PAGE_SIZE = 8;
+const RESULT_PAGE_SIZE = 4;
+const CTA_PAGE_SIZE = 4;
 const imageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 const videoTypes = new Set(["video/mp4"]);
 
@@ -289,7 +305,135 @@ function validateFile(file: File, tab: DetectionTab) {
   return "";
 }
 
+function getContainedMediaMetrics(container: Size, media: Size) {
+  if (!container.width || !container.height || !media.width || !media.height) return null;
+  const scale = Math.min(container.width / media.width, container.height / media.height);
+  const renderedWidth = media.width * scale;
+  const renderedHeight = media.height * scale;
+  return {
+    scale,
+    renderedWidth,
+    renderedHeight,
+    offsetX: (container.width - renderedWidth) / 2,
+    offsetY: (container.height - renderedHeight) / 2,
+  };
+}
+
+function overlayStyleFor(bbox: DetectionBBox, metrics: NonNullable<ReturnType<typeof getContainedMediaMetrics>>): CSSProperties {
+  return {
+    left: metrics.offsetX + bbox.x * metrics.scale,
+    top: metrics.offsetY + bbox.y * metrics.scale,
+    width: bbox.width * metrics.scale,
+    height: bbox.height * metrics.scale,
+  };
+}
+
+function detectionObjectToOverlayItem(object: DetectionObject): OverlayItem {
+  return {
+    key: String(object.id),
+    bbox: object.bbox,
+    label: object.class_name_ko,
+    confidence: object.confidence,
+  };
+}
+
+function reportCandidateOverlayItem(candidate: FoundReportCandidate): OverlayItem | null {
+  if (!candidate.bbox) return null;
+  return {
+    key: `${candidate.sourceType}-${candidate.objectClassCode}-${candidate.bbox.x}-${candidate.bbox.y}`,
+    bbox: candidate.bbox,
+    label: candidate.objectClassName,
+    confidence: candidate.confidence,
+  };
+}
+
+function BboxOverlay({
+  items,
+  mediaWidth,
+  mediaHeight,
+  containerSize,
+}: {
+  items: OverlayItem[];
+  mediaWidth: number | null | undefined;
+  mediaHeight: number | null | undefined;
+  containerSize: Size;
+}) {
+  const metrics = mediaWidth && mediaHeight
+    ? getContainedMediaMetrics(containerSize, { width: mediaWidth, height: mediaHeight })
+    : null;
+  if (!metrics || items.length === 0) return null;
+
+  return (
+    <div className={styles.overlay} aria-hidden="true">
+      {items.map((item) => (
+        <span key={item.key} className={styles.overlayBox} style={overlayStyleFor(item.bbox, metrics)}>
+          <b>{item.label} {formatConfidence(item.confidence)}</b>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function PreviewImageWithOverlay({
+  previewUrl,
+  alt,
+  className,
+  mediaWidth,
+  mediaHeight,
+  overlayItems,
+}: {
+  previewUrl: string;
+  alt: string;
+  className: string;
+  mediaWidth: number | null | undefined;
+  mediaHeight: number | null | undefined;
+  overlayItems: OverlayItem[];
+}) {
+  const frameRef = useRef<HTMLDivElement>(null);
+  const [containerSize, setContainerSize] = useState<Size>({ width: 0, height: 0 });
+
+  const updateSize = useCallback(() => {
+    const rect = frameRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setContainerSize({ width: rect.width, height: rect.height });
+  }, []);
+
+  useEffect(() => {
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    if (frameRef.current) observer.observe(frameRef.current);
+    return () => observer.disconnect();
+  }, [updateSize, previewUrl]);
+
+  return (
+    <div ref={frameRef} className={className}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={previewUrl} alt={alt} onLoad={updateSize} />
+      <BboxOverlay
+        items={overlayItems}
+        mediaWidth={mediaWidth}
+        mediaHeight={mediaHeight}
+        containerSize={containerSize}
+      />
+    </div>
+  );
+}
+
 function ResultList({ event }: { event: DetectionEvent | null }) {
+  const [pageState, setPageState] = useState({ key: "", page: 1 });
+  const objects = event?.detected_objects ?? [];
+  const pageKey = `${event?.id ?? "empty"}:${objects.length}`;
+  const pageCount = Math.max(1, Math.ceil(objects.length / RESULT_PAGE_SIZE));
+  const requestedPage = pageState.key === pageKey ? pageState.page : 1;
+  const activePage = Math.min(requestedPage, pageCount);
+  const pagedObjects = objects.slice((activePage - 1) * RESULT_PAGE_SIZE, activePage * RESULT_PAGE_SIZE);
+  const setResultPage = (updater: (current: number) => number) => {
+    setPageState((current) => {
+      const currentPage = current.key === pageKey ? current.page : 1;
+      return { key: pageKey, page: updater(currentPage) };
+    });
+  };
+
   if (!event) {
     return (
       <div className={styles.emptyResult}>
@@ -318,26 +462,39 @@ function ResultList({ event }: { event: DetectionEvent | null }) {
   }
 
   return (
-    <ul className={styles.resultList} aria-label="탐지 객체 목록">
-      {event.detected_objects.map((object) => (
-        <li key={object.id}>
-          <div>
-            <strong>{object.class_name_ko}</strong>
-            <span>{object.class_code} · {groupLabels[object.group_code] ?? object.group_code}</span>
-            {event.source_type === "VIDEO" && (
-              <small className={styles.trackMeta}>
-                {object.track_id !== null && `Track #${object.track_id} · `}
-                {object.first_seen_ms !== null && object.last_seen_ms !== null
-                  ? `${formatMilliseconds(object.first_seen_ms)} ~ ${formatMilliseconds(object.last_seen_ms)} · `
-                  : ""}
-                {object.appearance_count}프레임에서 확인
-              </small>
-            )}
-          </div>
-          <em>탐지 신뢰도 {formatConfidence(object.confidence)}</em>
-        </li>
-      ))}
-    </ul>
+    <div className={styles.resultListWrap}>
+      <ul className={styles.resultList} aria-label="탐지 객체 목록">
+        {pagedObjects.map((object) => (
+          <li key={object.id}>
+            <div>
+              <strong>{object.class_name_ko}</strong>
+              <span>{object.class_code} · {groupLabels[object.group_code] ?? object.group_code}</span>
+              {event.source_type === "VIDEO" && (
+                <small className={styles.trackMeta}>
+                  {object.track_id !== null && `Track #${object.track_id} · `}
+                  {object.first_seen_ms !== null && object.last_seen_ms !== null
+                    ? `${formatMilliseconds(object.first_seen_ms)} ~ ${formatMilliseconds(object.last_seen_ms)} · `
+                    : ""}
+                  {object.appearance_count}프레임에서 확인
+                </small>
+              )}
+            </div>
+            <em>탐지 신뢰도 {formatConfidence(object.confidence)}</em>
+          </li>
+        ))}
+      </ul>
+      {objects.length > RESULT_PAGE_SIZE && (
+        <div className={styles.inlinePager} aria-label="탐지 객체 목록 페이지">
+          <button type="button" onClick={() => setResultPage((current) => Math.max(1, current - 1))} disabled={activePage <= 1} aria-label="이전 탐지 객체">
+            ←
+          </button>
+          <span>{activePage} / {pageCount}</span>
+          <button type="button" onClick={() => setResultPage((current) => Math.min(pageCount, current + 1))} disabled={activePage >= pageCount} aria-label="다음 탐지 객체">
+            →
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -388,45 +545,15 @@ function ImageOverlay({
   event: DetectionEvent | null;
   previewUrl: string;
 }) {
-  const imageRef = useRef<HTMLImageElement>(null);
-  const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
-
-  const updateSize = useCallback(() => {
-    const rect = imageRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setImageSize({ width: rect.width, height: rect.height });
-  }, []);
-
-  useEffect(() => {
-    updateSize();
-    const observer = new ResizeObserver(updateSize);
-    if (imageRef.current) observer.observe(imageRef.current);
-    return () => observer.disconnect();
-  }, [updateSize, previewUrl]);
-
-  const canRenderOverlay = Boolean(
-    event?.media_width && event.media_height && event.detected_objects.length > 0 && imageSize.width && imageSize.height,
-  );
-
   return (
-    <div className={styles.previewFrame}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img ref={imageRef} src={previewUrl} alt="업로드한 이미지 미리보기" onLoad={updateSize} />
-      {canRenderOverlay && (
-        <div className={styles.overlay} aria-hidden="true">
-          {event!.detected_objects.map((object) => (
-            <OverlayBox
-              key={object.id}
-              object={object}
-              mediaWidth={event!.media_width!}
-              mediaHeight={event!.media_height!}
-              imageWidth={imageSize.width}
-              imageHeight={imageSize.height}
-            />
-          ))}
-        </div>
-      )}
-    </div>
+    <PreviewImageWithOverlay
+      previewUrl={previewUrl}
+      alt="업로드한 이미지 미리보기"
+      className={styles.previewFrame}
+      mediaWidth={event?.media_width}
+      mediaHeight={event?.media_height}
+      overlayItems={event?.detected_objects.map(detectionObjectToOverlayItem) ?? []}
+    />
   );
 }
 
@@ -454,6 +581,7 @@ function WebcamReportModal({
     : candidate.sourceType === "video"
       ? "영상 프레임을 캡처하지 못한 경우 물품 종류와 설명만으로 제보를 시작합니다."
       : "현재 프레임을 캡처하지 못한 경우 물품 종류와 설명만으로 제보를 시작합니다.";
+  const overlayItem = reportCandidateOverlayItem(candidate);
 
   return (
     <div className={styles.reportModalBackdrop} role="presentation" onMouseDown={onClose}>
@@ -488,8 +616,14 @@ function WebcamReportModal({
           <form className={styles.reportForm} onSubmit={onSubmit}>
             <div className={styles.reportPreviewGrid}>
               {previewUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={previewUrl} alt="발견 제보에 첨부할 탐지 이미지" />
+                <PreviewImageWithOverlay
+                  previewUrl={previewUrl}
+                  alt="발견 제보에 첨부할 탐지 이미지"
+                  className={styles.reportPreviewFrame}
+                  mediaWidth={candidate.mediaWidth}
+                  mediaHeight={candidate.mediaHeight}
+                  overlayItems={overlayItem ? [overlayItem] : []}
+                />
               ) : (
                 <div className={styles.reportPreviewEmpty}>
                   <Icon name="document" size={26} />
@@ -547,35 +681,6 @@ function WebcamReportModal({
   );
 }
 
-function OverlayBox({
-  object,
-  mediaWidth,
-  mediaHeight,
-  imageWidth,
-  imageHeight,
-}: {
-  object: DetectionObject;
-  mediaWidth: number;
-  mediaHeight: number;
-  imageWidth: number;
-  imageHeight: number;
-}) {
-  const scaleX = imageWidth / mediaWidth;
-  const scaleY = imageHeight / mediaHeight;
-  const style = {
-    left: object.bbox.x * scaleX,
-    top: object.bbox.y * scaleY,
-    width: object.bbox.width * scaleX,
-    height: object.bbox.height * scaleY,
-  };
-
-  return (
-    <span className={styles.overlayBox} style={style}>
-      <b>{object.class_name_ko} {formatConfidence(object.confidence)}</b>
-    </span>
-  );
-}
-
 export function DetectionWorkbench() {
   const { cue: cueDaru } = useDaru();
   const [tab, setTab] = useState<DetectionTab>("image");
@@ -598,6 +703,7 @@ export function DetectionWorkbench() {
   const [deletingHistoryIds, setDeletingHistoryIds] = useState<Set<number>>(() => new Set());
   const [deletingAllHistory, setDeletingAllHistory] = useState(false);
   const [historyPage, setHistoryPage] = useState(1);
+  const [ctaPageState, setCtaPageState] = useState({ key: "", page: 1 });
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewUrlRef = useRef("");
@@ -628,6 +734,20 @@ export function DetectionWorkbench() {
     () => currentEvent?.detected_objects.filter(isReportablePersonalItem) ?? [],
     [currentEvent],
   );
+  const ctaPageKey = `${currentEvent?.id ?? "empty"}:${personalItemObjects.length}`;
+  const ctaPageCount = Math.max(1, Math.ceil(personalItemObjects.length / CTA_PAGE_SIZE));
+  const requestedCtaPage = ctaPageState.key === ctaPageKey ? ctaPageState.page : 1;
+  const activeCtaPage = Math.min(requestedCtaPage, ctaPageCount);
+  const pagedPersonalItemObjects = useMemo(() => {
+    const start = (activeCtaPage - 1) * CTA_PAGE_SIZE;
+    return personalItemObjects.slice(start, start + CTA_PAGE_SIZE);
+  }, [activeCtaPage, personalItemObjects]);
+  const setCtaPage = (updater: (current: number) => number) => {
+    setCtaPageState((current) => {
+      const currentPage = current.key === ctaPageKey ? current.page : 1;
+      return { key: ctaPageKey, page: updater(currentPage) };
+    });
+  };
   const historyPageCount = Math.max(1, Math.ceil(history.length / HISTORY_PAGE_SIZE));
   const activeHistoryPage = Math.min(historyPage, historyPageCount);
   const pagedHistory = useMemo(() => {
@@ -929,6 +1049,9 @@ export function DetectionWorkbench() {
       objectClassCode: classCode,
       objectClassName: candidate.object.class_name_ko ?? reportableClassNames[classCode] ?? candidate.object.label,
       confidence: candidate.object.confidence,
+      bbox: candidate.object.bbox,
+      mediaWidth: candidate.frame.media_width,
+      mediaHeight: candidate.frame.media_height,
       image: candidate.image,
       previewUrl: reportPreviewUrl,
       capturedAt: candidate.capturedAt,
@@ -965,6 +1088,9 @@ export function DetectionWorkbench() {
       objectClassCode: classCode,
       objectClassName: object.class_name_ko || reportableClassNames[classCode],
       confidence: object.confidence,
+      bbox: object.bbox,
+      mediaWidth: sourceEvent.media_width,
+      mediaHeight: sourceEvent.media_height,
       image,
       previewUrl: reportPreviewUrl,
       capturedAt: sourceEvent.processing_completed_at ?? sourceEvent.created_at,
@@ -1160,7 +1286,7 @@ export function DetectionWorkbench() {
                 <strong>개인 물품 후보를 어떻게 처리할까요?</strong>
                 <p>AI가 실제 소유자를 확정하지는 않습니다. 상황에 맞는 다음 행동을 선택해주세요.</p>
                 <div className={styles.ctaObjectList}>
-                  {personalItemObjects.map((object) => (
+                  {pagedPersonalItemObjects.map((object) => (
                     <article key={object.id} className={styles.ctaObjectCard}>
                       <span>{object.class_name_ko || reportableClassNames[object.class_code]}</span>
                       <small>탐지 신뢰도 {formatConfidence(object.confidence)}</small>
@@ -1177,6 +1303,17 @@ export function DetectionWorkbench() {
                 </div>
                 <div className={styles.ctaFooter}>
                   <Link className="button button-secondary" href="/found-items">비슷한 발견물 보기</Link>
+                  {personalItemObjects.length > CTA_PAGE_SIZE && (
+                    <div className={styles.inlinePager} aria-label="개인 물품 후보 페이지">
+                      <button type="button" onClick={() => setCtaPage((current) => Math.max(1, current - 1))} disabled={activeCtaPage <= 1} aria-label="이전 개인 물품 후보">
+                        ←
+                      </button>
+                      <span>{activeCtaPage} / {ctaPageCount}</span>
+                      <button type="button" onClick={() => setCtaPage((current) => Math.min(ctaPageCount, current + 1))} disabled={activeCtaPage >= ctaPageCount} aria-label="다음 개인 물품 후보">
+                        →
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

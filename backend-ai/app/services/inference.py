@@ -6,7 +6,7 @@ from pathlib import Path
 from time import perf_counter
 
 from fastapi import HTTPException, status
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from app.core.config import get_settings
 from app.schemas.inference import (
@@ -42,15 +42,20 @@ class ImageInferenceService:
         try:
             with Image.open(BytesIO(payload)) as image:
                 image.load()
-                width, height = image.size
-                if width <= 0 or height <= 0:
-                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid image dimensions")
-                if width * height > settings.IMAGE_MAX_PIXELS:
-                    raise HTTPException(
-                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-                        detail="Uploaded image dimensions are too large",
-                    )
-                rgb_image = image.convert("RGB")
+                normalized_image = ImageOps.exif_transpose(image)
+                try:
+                    width, height = normalized_image.size
+                    if width <= 0 or height <= 0:
+                        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid image dimensions")
+                    if width * height > settings.IMAGE_MAX_PIXELS:
+                        raise HTTPException(
+                            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                            detail="Uploaded image dimensions are too large",
+                        )
+                    rgb_image = normalized_image.convert("RGB")
+                finally:
+                    if normalized_image is not image:
+                        normalized_image.close()
         except HTTPException:
             raise
         except (UnidentifiedImageError, OSError) as exc:
