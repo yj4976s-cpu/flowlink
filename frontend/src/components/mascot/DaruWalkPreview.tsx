@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { DaruSpriteRenderer } from "./DaruSpriteRenderer";
 import { DaruSmoothSpritePreviewRenderer } from "./DaruSmoothSpritePreviewRenderer";
 import type { DaruRendererState } from "./daru.animation.adapter";
 import { DARU_GROUNDED_ROAMING_CONFIG, type DaruFacing } from "./daru.renderer.config";
@@ -9,6 +8,7 @@ import { DARU_SPRITE_CONFIG } from "./daru.sprite.config";
 import type { DaruRhythm } from "./types";
 import { DaruPoseAudit } from "./DaruPoseAudit";
 import { DaruWalkCandidateComparison } from "./DaruWalkCandidateComparison";
+import { useTheme } from "../theme/ThemeProvider";
 import styles from "./DaruWalkPreview.module.css";
 
 type IdleSource = "original" | "walk-type" | "front";
@@ -42,7 +42,34 @@ function waitForImage(image: HTMLImageElement) {
   });
 }
 
-async function loadDecodedFrame(src: string) {
+function recolorNightScarf(image: HTMLImageElement) {
+  const canvas = document.createElement("canvas");
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) return image.src;
+  context.drawImage(image, 0, 0);
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+  const { data } = pixels;
+  for (let offset = 0; offset < data.length; offset += 4) {
+    const red = data[offset];
+    const green = data[offset + 1];
+    const blue = data[offset + 2];
+    const scarfBlue = data[offset + 3] > 0
+      && blue > 105
+      && blue > red * 1.12
+      && blue > green * 1.08
+      && green < red * 1.4;
+    if (scarfBlue) {
+      data[offset] = Math.min(255, Math.round(blue * 0.68));
+      data[offset + 1] = Math.round(green * 0.55);
+    }
+  }
+  context.putImageData(pixels, 0, 0);
+  return canvas.toDataURL("image/png");
+}
+
+async function loadDecodedFrame(src: string, theme: DaruRhythm) {
   const image = new Image();
   image.src = src;
   try {
@@ -51,7 +78,11 @@ async function loadDecodedFrame(src: string) {
   } catch {
     await waitForImage(image);
   }
-  return image;
+  if (theme !== "night") return image;
+  const themedImage = new Image();
+  themedImage.src = recolorNightScarf(image);
+  await waitForImage(themedImage);
+  return themedImage;
 }
 
 function movementProgress(elapsedMs: number) {
@@ -80,7 +111,8 @@ export function DaruWalkPreview() {
   const [candidateOffsetY, setCandidateOffsetY] = useState(5);
   const [transitionCheck, setTransitionCheck] = useState(false);
   const [transitionPass, setTransitionPass] = useState(0);
-  const [theme, setTheme] = useState<DaruRhythm>("day");
+  const { theme, setTheme } = useTheme();
+  const [themedIdle, setThemedIdle] = useState<{ key: string; src: string } | null>(null);
   const [decodeResult, setDecodeResult] = useState<{ theme: DaruRhythm; frames: readonly HTMLImageElement[] } | null>(null);
   const [failedTheme, setFailedTheme] = useState<DaruRhythm | null>(null);
   const decodedFrames = decodeResult?.theme === theme ? decodeResult.frames : null;
@@ -89,7 +121,7 @@ export function DaruWalkPreview() {
 
   useEffect(() => {
     let active = true;
-    Promise.all(previewWalkFrames(theme).map(loadDecodedFrame))
+    Promise.all(previewWalkFrames(theme).map((src) => loadDecodedFrame(src, theme)))
       .then((frames) => {
         if (!active) return;
         setFailedTheme(null);
@@ -213,9 +245,19 @@ export function DaruWalkPreview() {
     : idleSource === "walk-type"
       ? walkFrames[walkPoseIdleFrame] ?? walkFrames[0]
       : "/mascot/daru-idle-transparent.png";
+  useEffect(() => {
+    let active = true;
+    loadDecodedFrame(idleSrc, theme).then((image) => {
+      if (active) setThemedIdle({ key: `${theme}:${idleSrc}`, src: image.src });
+    }).catch(() => {
+      if (active) setThemedIdle({ key: `${theme}:${idleSrc}`, src: idleSrc });
+    });
+    return () => { active = false; };
+  }, [idleSrc, theme]);
+  const themedIdleSrc = themedIdle?.key === `${theme}:${idleSrc}` ? themedIdle.src : idleSrc;
   const idleStyle = idleSource === "front"
-    ? { backgroundImage: `url(${idleSrc})`, transform: `translate(${candidateOffsetX}px, ${candidateOffsetY}px) scale(${candidateScale})` }
-    : { backgroundImage: `url(${idleSrc})` };
+    ? { backgroundImage: `url(${themedIdleSrc})`, transform: `translate(${candidateOffsetX}px, ${candidateOffsetY}px) scale(${candidateScale})` }
+    : { backgroundImage: `url(${themedIdleSrc})` };
 
   return (
     <main className={styles.page}>
@@ -239,11 +281,7 @@ export function DaruWalkPreview() {
           {!decodedFrames || locomotion === "idle" ? (
             <span className={styles.idle} style={idleStyle} />
           ) : (
-            theme === "day" ? (
-              <DaruSmoothSpritePreviewRenderer state={state} frames={decodedFrames} />
-            ) : (
-              <DaruSpriteRenderer state={state} theme={theme} />
-            )
+            <DaruSmoothSpritePreviewRenderer state={state} frames={decodedFrames} />
           )}
         </div>
         <span className={styles.ground} />
@@ -254,7 +292,7 @@ export function DaruWalkPreview() {
         <div className={styles.idleControls}>
           <strong>IDLE SOURCE</strong>
           <div>
-            <button type="button" data-active={idleSource === "original" || undefined} onClick={() => { setIdleSource("original"); setTheme("day"); }}>A · Original Idle</button>
+            <button type="button" data-active={idleSource === "original" || undefined} onClick={() => setIdleSource("original")}>A · Original Idle</button>
             <button type="button" data-active={idleSource === "walk-type" || undefined} onClick={() => setIdleSource("walk-type")}>B · 3/4 Walk-type Idle</button>
             <button type="button" data-active={idleSource === "front" || undefined} onClick={() => setIdleSource("front")}>C · Front Idle</button>
           </div>

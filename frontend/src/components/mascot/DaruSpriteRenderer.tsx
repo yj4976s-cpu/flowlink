@@ -5,6 +5,7 @@ import type { DaruRendererState } from "./daru.animation.adapter";
 import { DARU_SPRITE_CONFIG } from "./daru.sprite.config";
 import type { DaruRhythm } from "./types";
 import styles from "./DaruMascot.module.css";
+import { loadThemedDaruImageSrc } from "./daru.theme-image";
 
 const preloadPromises = new Map<DaruRhythm, Promise<void>>();
 
@@ -39,10 +40,21 @@ export function DaruSpriteRenderer({ state, theme = "day" }: { state: DaruRender
   const travelledRef = useRef(0);
   const lastXRef = useRef<number | null>(null);
   const frameRef = useRef(-1);
+  const themedFramesRef = useRef<readonly string[]>(DARU_SPRITE_CONFIG[theme].walkFrames);
   const walking = !state.reducedMotion && (state.locomotion === "start_walk" || state.locomotion === "walk");
 
   useEffect(() => {
     void preloadDaruWalkFrames(theme);
+    let active = true;
+    themedFramesRef.current = DARU_SPRITE_CONFIG[theme].walkFrames;
+    frameRef.current = -1;
+    Promise.all(DARU_SPRITE_CONFIG[theme].walkFrames.map((src) => loadThemedDaruImageSrc(src, theme))).then((frames) => {
+      if (!active) return;
+      themedFramesRef.current = frames;
+      frameRef.current = -1;
+      if (imageRef.current) imageRef.current.src = frames[0];
+    });
+    return () => { active = false; };
   }, [theme]);
 
   useEffect(() => {
@@ -64,7 +76,7 @@ export function DaruSpriteRenderer({ state, theme = "day" }: { state: DaruRender
       lastXRef.current = x;
 
       const cycleProgress = (travelledRef.current % DARU_SPRITE_CONFIG.stridePx) / DARU_SPRITE_CONFIG.stridePx;
-      const walkFrames = DARU_SPRITE_CONFIG[theme].walkFrames;
+      const walkFrames = themedFramesRef.current;
       const nextFrame = Math.floor(cycleProgress * walkFrames.length);
       if (nextFrame !== frameRef.current) {
         image.src = walkFrames[nextFrame];
