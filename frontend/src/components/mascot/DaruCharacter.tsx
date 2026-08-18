@@ -1,25 +1,15 @@
 "use client";
 
-import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
-import { DARU_RIVE_CONFIG } from "./daru.renderer.config";
+import { useCallback, useState } from "react";
 import type { DaruRendererState } from "./daru.animation.adapter";
 import { StaticDaruFallback } from "./NaturalDaruRenderer";
-import { DaruSpriteRenderer, preloadDaruWalkFrames } from "./DaruSpriteRenderer";
+import { LayeredDaruRenderer } from "./LayeredDaruRenderer";
 import { useTheme } from "../theme/ThemeProvider";
 
-const RiveDaruRenderer = dynamic(() => import("./RiveDaruRenderer").then((module) => module.RiveDaruRenderer), { ssr: false });
-
 export function DaruCharacter({ state }: { state: DaruRendererState }) {
-  const [riveFailed, setRiveFailed] = useState(false);
   const { theme } = useTheme();
-
-  useEffect(() => {
-    void preloadDaruWalkFrames(theme);
-  }, [theme]);
-
-  const walking = state.locomotion === "start_walk" || state.locomotion === "walk";
-  if (walking && !state.reducedMotion) return <DaruSpriteRenderer state={state} theme={theme} />;
-  if (!DARU_RIVE_CONFIG.assetPath || riveFailed) return <StaticDaruFallback state={state} theme={theme} />;
-  return <RiveDaruRenderer state={state} onFallback={() => setRiveFailed(true)} />;
+  const [failedTheme, setFailedTheme] = useState<typeof theme | null>(null);
+  const handleAssetError = useCallback(() => setFailedTheme(theme), [theme]);
+  if (state.reducedMotion || failedTheme === theme) return <StaticDaruFallback state={state} theme={theme} />;
+  return <LayeredDaruRenderer state={state} theme={theme} onAssetError={handleAssetError} />;
 }
