@@ -8,6 +8,7 @@ import { DARU_SPRITE_CONFIG } from "./daru.sprite.config";
 import type { DaruRhythm } from "./types";
 import { DaruPoseAudit } from "./DaruPoseAudit";
 import { DaruWalkCandidateComparison } from "./DaruWalkCandidateComparison";
+import { loadThemedDaruImageSrc } from "./daru.theme-image";
 import { useTheme } from "../theme/ThemeProvider";
 import styles from "./DaruWalkPreview.module.css";
 
@@ -25,14 +26,6 @@ const TRAVEL_DISTANCE_PX = DARU_SPRITE_CONFIG.stridePx * 10;
 const TRAVEL_DURATION_MS = (TRAVEL_DISTANCE_PX / WALK_SPEED_PX_PER_SECOND) * 1000;
 const IDLE_HOLD_MS = 350;
 const ACCELERATION_RATIO = 0.04;
-const DAY_DEV_WALK_FRAMES = Array.from(
-  { length: 16 },
-  (_, index) => `/mascot/sprites/day/walk/walk-${String(index + 1).padStart(2, "0")}.png`,
-);
-
-function previewWalkFrames(theme: DaruRhythm) {
-  return theme === "day" ? DAY_DEV_WALK_FRAMES : DARU_SPRITE_CONFIG[theme].walkFrames;
-}
 
 function waitForImage(image: HTMLImageElement) {
   if (image.complete && image.naturalWidth > 0) return Promise.resolve();
@@ -42,47 +35,17 @@ function waitForImage(image: HTMLImageElement) {
   });
 }
 
-function recolorNightScarf(image: HTMLImageElement) {
-  const canvas = document.createElement("canvas");
-  canvas.width = image.naturalWidth;
-  canvas.height = image.naturalHeight;
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  if (!context) return image.src;
-  context.drawImage(image, 0, 0);
-  const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
-  const { data } = pixels;
-  for (let offset = 0; offset < data.length; offset += 4) {
-    const red = data[offset];
-    const green = data[offset + 1];
-    const blue = data[offset + 2];
-    const scarfBlue = data[offset + 3] > 0
-      && blue > 105
-      && blue > red * 1.12
-      && blue > green * 1.08
-      && green < red * 1.4;
-    if (scarfBlue) {
-      data[offset] = Math.min(255, Math.round(blue * 0.68));
-      data[offset + 1] = Math.round(green * 0.55);
-    }
-  }
-  context.putImageData(pixels, 0, 0);
-  return canvas.toDataURL("image/png");
-}
-
 async function loadDecodedFrame(src: string, theme: DaruRhythm) {
+  const themedSrc = await loadThemedDaruImageSrc(src, theme);
   const image = new Image();
-  image.src = src;
+  image.src = themedSrc;
   try {
     if (typeof image.decode === "function") await image.decode();
     else await waitForImage(image);
   } catch {
     await waitForImage(image);
   }
-  if (theme !== "night") return image;
-  const themedImage = new Image();
-  themedImage.src = recolorNightScarf(image);
-  await waitForImage(themedImage);
-  return themedImage;
+  return image;
 }
 
 function movementProgress(elapsedMs: number) {
@@ -117,11 +80,11 @@ export function DaruWalkPreview() {
   const [failedTheme, setFailedTheme] = useState<DaruRhythm | null>(null);
   const decodedFrames = decodeResult?.theme === theme ? decodeResult.frames : null;
   const decodeFailed = failedTheme === theme;
-  const walkFrames = previewWalkFrames(theme);
+  const walkFrames = DARU_SPRITE_CONFIG[theme].walkFrames;
 
   useEffect(() => {
     let active = true;
-    Promise.all(previewWalkFrames(theme).map((src) => loadDecodedFrame(src, theme)))
+    Promise.all(DARU_SPRITE_CONFIG[theme].walkFrames.map((src) => loadDecodedFrame(src, theme)))
       .then((frames) => {
         if (!active) return;
         setFailedTheme(null);
@@ -268,7 +231,7 @@ export function DaruWalkPreview() {
       </header>
 
       <section className={styles.modeBar} aria-label="프레임 모드와 테마 선택">
-        <strong>{theme === "day" ? "DAY DEV · 16-frame WALK" : "Original 8"}</strong>
+        <strong>{theme.toUpperCase()} · runtime 8-frame WALK</strong>
         <select value={theme} onChange={(event) => setTheme(event.target.value as DaruRhythm)} aria-label="테마">
           <option value="dawn">DAWN</option>
           <option value="day">DAY</option>
