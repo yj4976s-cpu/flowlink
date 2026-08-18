@@ -57,6 +57,18 @@ def create_report(client: TestClient) -> dict:
     return response.json()
 
 
+def image_bytes(*, width: int = 8, height: int = 8, image_format: str = "JPEG", orientation: int | None = None) -> bytes:
+    payload = BytesIO()
+    image = Image.new("RGB", (width, height), "red")
+    if orientation is None:
+        image.save(payload, format=image_format)
+    else:
+        exif = Image.Exif()
+        exif[274] = orientation
+        image.save(payload, format=image_format, exif=exif)
+    return payload.getvalue()
+
+
 def test_webcam_style_footwear_report_attaches_image_and_is_pending_for_admin(
     client: TestClient, db: Session, tmp_path, monkeypatch
 ) -> None:
@@ -207,8 +219,54 @@ def test_image_upload_decodes_reencodes_and_rejects_non_images(tmp_path) -> None
     image_bytes = BytesIO(); Image.new("RGB", (8, 8), "red").save(image_bytes, format="JPEG", exif=b"Exif\x00\x00test")
     saved = asyncio.run(save_public_image(UploadFile(filename="photo.jpg", file=BytesIO(image_bytes.getvalue())), tmp_path))
     assert saved and saved.endswith(".jpg")
-    with Image.open(tmp_path / saved.removeprefix("/uploads/")) as stored: assert not stored.getexif()
+    with Image.open(tmp_path / saved.removeprefix("/uploads/")) as stored:
+        assert stored.size == (8, 8)
+        assert not stored.getexif()
     with pytest.raises(Exception): asyncio.run(save_public_image(UploadFile(filename="fake.jpg", file=BytesIO(b"not-image")), tmp_path))
+
+
+@pytest.mark.parametrize("orientation", [6, 8])
+def test_image_upload_applies_exif_orientation_and_removes_metadata(tmp_path, orientation: int) -> None:
+    saved = asyncio.run(
+        save_public_image(
+            UploadFile(filename="photo.jpg", file=BytesIO(image_bytes(width=40, height=20, orientation=orientation))),
+            tmp_path,
+        )
+    )
+
+    assert saved and saved.endswith(".jpg")
+    with Image.open(tmp_path / saved.removeprefix("/uploads/")) as stored:
+        assert stored.size == (20, 40)
+        assert not stored.getexif()
+        assert stored.getexif().get(274) is None
+
+
+def test_image_upload_supabase_path_uses_same_exif_normalized_payload(tmp_path, monkeypatch) -> None:
+    captured: dict[str, bytes | str] = {}
+
+    async def fake_upload(object_key: str, payload: bytes, content_type: str) -> str:
+        captured["object_key"] = object_key
+        captured["payload"] = payload
+        captured["content_type"] = content_type
+        return f"https://storage.example/{object_key}"
+
+    monkeypatch.setattr("app.services.image_uploads._supabase_configured", lambda: True)
+    monkeypatch.setattr("app.services.image_uploads._upload_to_supabase", fake_upload)
+
+    saved = asyncio.run(
+        save_public_image(
+            UploadFile(filename="photo.jpg", file=BytesIO(image_bytes(width=40, height=20, orientation=6))),
+            tmp_path,
+        )
+    )
+
+    assert saved == f"https://storage.example/{captured['object_key']}"
+    assert captured["content_type"] == "image/jpeg"
+    payload = captured["payload"]
+    assert isinstance(payload, bytes)
+    with Image.open(BytesIO(payload)) as stored:
+        assert stored.size == (20, 40)
+        assert not stored.getexif()
 
 
 def test_lost_report_image_upload_is_optional_validated_and_persisted(client: TestClient, db: Session, tmp_path, monkeypatch) -> None:
