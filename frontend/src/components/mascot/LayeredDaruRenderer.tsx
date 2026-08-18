@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- transparent rig layers must preserve their exact source geometry */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { DaruRendererState } from "./daru.animation.adapter";
 import { DARU_LAYERED_ASSETS, DARU_LAYERED_LAYOUT, DARU_LAYERED_SCARF, DARU_LAYER_ORDER, DARU_RIG_SPACE, type DaruLayerName, type DaruRigLayer } from "./daru.layered.config";
 import type { DaruRhythm } from "./types";
@@ -45,7 +45,13 @@ function smoothstep(value: number) {
   return clamped * clamped * (3 - 2 * clamped);
 }
 
-function gaitStage(phase: number): "contact" | "down" | "passing" | "up" {
+export interface DaruGaitSnapshot {
+  phase: number;
+  nearStage: "contact" | "down" | "passing" | "up";
+  farStage: "contact" | "down" | "passing" | "up";
+}
+
+function gaitStage(phase: number): DaruGaitSnapshot["nearStage"] {
   if (phase < 0.125 || phase >= 0.95) return "contact";
   if (phase < 0.25) return "down";
   if (phase >= 0.625 && phase < 0.875) return "passing";
@@ -73,7 +79,7 @@ function StaticLayer({ name, layer, src, motion }: { name: DaruLayerName; layer:
   </span>;
 }
 
-export function LayeredDaruRenderer({ state, theme, onAssetError }: { state: DaruRendererState; theme: DaruRhythm; onAssetError?: () => void }) {
+export function LayeredDaruRenderer({ state, theme, onAssetError, phaseOverride, onGaitSnapshot }: { state: DaruRendererState; theme: DaruRhythm; onAssetError?: () => void; phaseOverride?: number; onGaitSnapshot?: (snapshot: DaruGaitSnapshot) => void }) {
   const [readyTheme, setReadyTheme] = useState<DaruRhythm | null>(null);
   const [failedTheme, setFailedTheme] = useState<DaruRhythm | null>(null);
   const [motion, setMotion] = useState({ phase: 0, amplitude: 0 });
@@ -86,6 +92,7 @@ export function LayeredDaruRenderer({ state, theme, onAssetError }: { state: Dar
     return () => { current = false; };
   }, [onAssetError, theme]);
   useEffect(() => {
+    if (phaseOverride !== undefined) return;
     let frame = 0;
     const animate = (now: number) => {
       const last = lastFrameRef.current ?? now;
@@ -106,21 +113,24 @@ export function LayeredDaruRenderer({ state, theme, onAssetError }: { state: Dar
     };
     frame = requestAnimationFrame(animate);
     return () => { cancelAnimationFrame(frame); lastFrameRef.current = null; };
-  }, [state.locomotion, state.movementSpeed]);
+  }, [phaseOverride, state.locomotion, state.movementSpeed]);
 
-  const near = sampleLeg(motion.phase);
-  const far = sampleLeg((motion.phase + 0.5) % 1);
-  const amplitude = state.reducedMotion ? 0 : motion.amplitude;
+  const renderedMotion = phaseOverride === undefined ? motion : { phase: (phaseOverride + 1) % 1, amplitude: 1 };
+  const near = sampleLeg(renderedMotion.phase);
+  const far = sampleLeg((renderedMotion.phase + 0.5) % 1);
+  const amplitude = state.reducedMotion ? 0 : renderedMotion.amplitude;
   const bodyBob = amplitude * (near.stage === "down" || far.stage === "down" ? 3 : near.stage === "up" || far.stage === "up" ? -2 : 0);
-  const weightShift = amplitude * Math.sin(motion.phase * Math.PI * 2) * 2;
+  const weightShift = amplitude * Math.sin(renderedMotion.phase * Math.PI * 2) * 2;
   const motions: Partial<Record<DaruLayerName, { x: number; y: number; rotation: number }>> = {
     legNear: { x: near.x * amplitude, y: near.y * amplitude, rotation: near.rotation * amplitude },
     legFar: { x: far.x * amplitude, y: far.y * amplitude, rotation: far.rotation * amplitude },
     armNear: { x: -far.x * 0.18 * amplitude, y: 0, rotation: -far.rotation * 0.72 * amplitude },
     armFar: { x: -near.x * 0.18 * amplitude, y: 0, rotation: -near.rotation * 0.72 * amplitude },
   };
+  const snapshot = useMemo<DaruGaitSnapshot>(() => ({ phase: renderedMotion.phase, nearStage: near.stage, farStage: far.stage }), [far.stage, near.stage, renderedMotion.phase]);
+  useEffect(() => { onGaitSnapshot?.(snapshot); }, [onGaitSnapshot, snapshot]);
   if (failedTheme === theme) return null;
-  return <span className={styles.renderer} data-renderer="layered" data-rig-mode={amplitude === 0 ? "neutral" : "walk"} data-locomotion={state.locomotion} data-facing={state.facing} data-ready={readyTheme === theme || undefined} data-gait-phase={motion.phase.toFixed(3)} data-near-stage={near.stage} data-far-stage={far.stage} aria-hidden="true">
+  return <span className={styles.renderer} data-renderer="layered" data-rig-mode={amplitude === 0 ? "neutral" : "walk"} data-locomotion={state.locomotion} data-facing={state.facing} data-ready={readyTheme === theme || undefined} data-gait-phase={renderedMotion.phase.toFixed(3)} data-near-stage={near.stage} data-far-stage={far.stage} aria-hidden="true">
     <span className={styles.contactShadow} />
     <span className={styles.motionRoot} style={{ translate: `${percent(weightShift, "x")} ${percent(bodyBob, "y")}` }}><span className={styles.facing}>
       {DARU_LAYER_ORDER.map((name) => {

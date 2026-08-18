@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LayeredDaruRenderer, preloadDaruLayeredAssets } from "./LayeredDaruRenderer";
+import { LayeredDaruRenderer, preloadDaruLayeredAssets, type DaruGaitSnapshot } from "./LayeredDaruRenderer";
 import type { DaruRendererState } from "./daru.animation.adapter";
 import { DARU_GROUNDED_ROAMING_CONFIG, type DaruFacing } from "./daru.renderer.config";
 import { DARU_SPRITE_CONFIG } from "./daru.sprite.config";
@@ -53,6 +53,8 @@ export function DaruWalkPreview() {
   const [referenceOpacity, setReferenceOpacity] = useState(0);
   const [readyTheme, setReadyTheme] = useState<DaruRhythm | null>(null);
   const [failedTheme, setFailedTheme] = useState<DaruRhythm | null>(null);
+  const [phaseOverride, setPhaseOverride] = useState<number | null>(null);
+  const [gaitSnapshot, setGaitSnapshot] = useState<DaruGaitSnapshot | null>(null);
   const assetsReady = readyTheme === theme;
   const decodeFailed = failedTheme === theme;
   const walkFrames = previewWalkFrames(theme);
@@ -197,7 +199,7 @@ export function DaruWalkPreview() {
 
       <section className={styles.track} aria-label="다루 걷기 미리보기">
         <div ref={stageRef} className={styles.stage} data-daru-stage="true" data-walking={walking || undefined} data-locomotion={locomotion}>
-          <span className={styles.layeredCalibration} style={{ opacity: layeredOpacity }}><LayeredDaruRenderer state={state} theme={theme} /></span>
+          <span className={styles.layeredCalibration} style={{ opacity: layeredOpacity }}><LayeredDaruRenderer state={state} theme={theme} phaseOverride={phaseOverride ?? undefined} onGaitSnapshot={setGaitSnapshot} /></span>
           <span className={styles.spriteOverlay} style={{ opacity: referenceOpacity, backgroundImage: `url(${DARU_SPRITE_CONFIG[theme].walkFrames[0]})` }} />
         </div>
         <span className={styles.ground} />
@@ -205,6 +207,11 @@ export function DaruWalkPreview() {
       </section>
 
       <section className={styles.controls} aria-label="걷기 조절">
+        <div className={styles.phaseInspector}>
+          <strong>GAIT PHASE INSPECTOR · DEV ONLY</strong>
+          <div>{[0, 0.25, 0.5, 0.75].map((phase) => <button type="button" key={phase} data-active={phaseOverride === phase || undefined} onClick={() => { setPlaying(false); setLocomotion("walk"); setPhaseOverride(phase); }}>{Math.round(phase * 100)}%</button>)}<button type="button" data-active={phaseOverride === null || undefined} onClick={() => { setPhaseOverride(null); setLocomotion("idle"); setPlaying(true); }}>LIVE</button></div>
+          <span>phase {((gaitSnapshot?.phase ?? 0) * 100).toFixed(1)}% · near {gaitSnapshot?.nearStage ?? "neutral"} · far {gaitSnapshot?.farStage ?? "neutral"}</span>
+        </div>
         <div className={styles.neutralCalibration}>
           <strong>NEUTRAL SILHOUETTE OVERLAY · DEV ONLY</strong>
           <label>Layered opacity <span>{Math.round(layeredOpacity * 100)}%</span><input type="range" min="0" max="1" step="0.05" value={layeredOpacity} onChange={(event) => setLayeredOpacity(Number(event.target.value))} /></label>
