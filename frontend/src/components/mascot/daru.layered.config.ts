@@ -20,4 +20,6 @@ export const DARU_LAYERED_LAYOUT: Record<DaruLayerName, DaruRigLayer> = {
 };
 
 export const DARU_LAYER_ORDER: readonly DaruLayerName[] = ["armFar", "legFar", "body", "legNear", "armNear", "scarf"];
-export const DARU_LAYERED_ASSETS = [...Object.values(DARU_LAYERED_LAYOUT).map((layer) => layer.src), ...Object.values(DARU_LAYERED_SCARF)] as const;
+export const DARU_LAYERED_ASSETS = Object.entries(DARU_LAYERED_LAYOUT)
+  .filter(([name]) => name !== "scarf")
+  .map(([, layer]) => layer.src);

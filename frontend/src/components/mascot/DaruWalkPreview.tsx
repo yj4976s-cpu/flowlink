@@ -8,22 +8,21 @@ import { DARU_SPRITE_CONFIG } from "./daru.sprite.config";
 import type { DaruRhythm } from "./types";
 import { DaruPoseAudit } from "./DaruPoseAudit";
 import { DaruWalkCandidateComparison } from "./DaruWalkCandidateComparison";
+import { useTheme } from "../theme/ThemeProvider";
 import styles from "./DaruWalkPreview.module.css";
 
 type IdleSource = "original" | "walk-type" | "front";
 
-const WALK_CYCLE_MS = DARU_GROUNDED_ROAMING_CONFIG.normalCycleMs;
-const WALK_SPEED_PX_PER_SECOND = DARU_SPRITE_CONFIG.stridePx / (WALK_CYCLE_MS / 1000);
-const TRAVEL_DISTANCE_PX = DARU_SPRITE_CONFIG.stridePx * 10;
-const TRAVEL_DURATION_MS = (TRAVEL_DISTANCE_PX / WALK_SPEED_PX_PER_SECOND) * 1000;
+const WALK_CYCLE_CANDIDATES = [620, 720, 780, 840] as const;
+const MAX_TRAVEL_DISTANCE_PX = DARU_SPRITE_CONFIG.stridePx * 10;
 const IDLE_HOLD_MS = 350;
 const ACCELERATION_RATIO = 0.04;
 function previewWalkFrames(theme: DaruRhythm) {
   return DARU_SPRITE_CONFIG[theme].walkFrames;
 }
 
-function movementProgress(elapsedMs: number) {
-  const time = Math.min(1, Math.max(0, elapsedMs / TRAVEL_DURATION_MS));
+function movementProgress(elapsedMs: number, travelDurationMs: number) {
+  const time = Math.min(1, Math.max(0, elapsedMs / travelDurationMs));
   const ramp = ACCELERATION_RATIO;
   const normalization = 1 - ramp;
   if (time < ramp) return (time * time) / (2 * ramp * normalization);
@@ -35,6 +34,7 @@ function movementProgress(elapsedMs: number) {
 }
 
 export function DaruWalkPreview() {
+  const trackRef = useRef<HTMLElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const directionRef = useRef<DaruFacing>("right");
   const transitionRunRef = useRef(0);
@@ -48,16 +48,32 @@ export function DaruWalkPreview() {
   const [candidateOffsetY, setCandidateOffsetY] = useState(5);
   const [transitionCheck, setTransitionCheck] = useState(false);
   const [transitionPass, setTransitionPass] = useState(0);
-  const [theme, setTheme] = useState<DaruRhythm>("day");
+  const { theme, setTheme } = useTheme();
   const [layeredOpacity, setLayeredOpacity] = useState(1);
   const [referenceOpacity, setReferenceOpacity] = useState(0);
   const [readyTheme, setReadyTheme] = useState<DaruRhythm | null>(null);
   const [failedTheme, setFailedTheme] = useState<DaruRhythm | null>(null);
   const [phaseOverride, setPhaseOverride] = useState<number | null>(null);
   const [gaitSnapshot, setGaitSnapshot] = useState<DaruGaitSnapshot | null>(null);
+  const [cycleMs, setCycleMs] = useState<number>(DARU_GROUNDED_ROAMING_CONFIG.normalCycleMs);
+  const [travelDistancePx, setTravelDistancePx] = useState(MAX_TRAVEL_DISTANCE_PX);
   const assetsReady = readyTheme === theme;
   const decodeFailed = failedTheme === theme;
   const walkFrames = previewWalkFrames(theme);
+  const walkSpeedPxPerSecond = DARU_GROUNDED_ROAMING_CONFIG.stridePx / (cycleMs / 1000);
+  const travelDurationMs = (travelDistancePx / walkSpeedPxPerSecond) * 1000;
+
+  useEffect(() => {
+    const track = trackRef.current;
+    const stage = stageRef.current;
+    if (!track || !stage) return;
+    const syncDistance = () => setTravelDistancePx(Math.max(0, Math.min(MAX_TRAVEL_DISTANCE_PX, track.clientWidth - stage.offsetWidth)));
+    syncDistance();
+    const observer = new ResizeObserver(syncDistance);
+    observer.observe(track);
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -89,8 +105,8 @@ export function DaruWalkPreview() {
     const runLeg = () => {
       if (cancelled) return;
       const direction = directionRef.current;
-      const from = direction === "right" ? 0 : TRAVEL_DISTANCE_PX;
-      const to = direction === "right" ? TRAVEL_DISTANCE_PX : 0;
+      const from = direction === "right" ? 0 : travelDistancePx;
+      const to = direction === "right" ? travelDistancePx : 0;
       setPosition(from);
       setFacing(direction);
       setLocomotion("start_walk");
@@ -100,7 +116,7 @@ export function DaruWalkPreview() {
         setLocomotion("walk");
         const move = (now: number) => {
           if (cancelled) return;
-          const progress = movementProgress(now - startedAt);
+          const progress = movementProgress(now - startedAt, travelDurationMs);
           setPosition(from + (to - from) * progress);
           if (progress < 1) {
             animationFrame = requestAnimationFrame(move);
@@ -138,7 +154,7 @@ export function DaruWalkPreview() {
       cancelAnimationFrame(animationFrame);
       timers.forEach(window.clearTimeout);
     };
-  }, [assetsReady, playing, transitionCheck]);
+  }, [assetsReady, playing, transitionCheck, travelDistancePx, travelDurationMs]);
 
   const state = useMemo<DaruRendererState>(() => ({
     locomotion,
@@ -159,7 +175,7 @@ export function DaruWalkPreview() {
     setLocomotion("idle");
     directionRef.current = nextFacing;
     setFacing(nextFacing);
-    stageRef.current?.style.setProperty("--preview-x", `${nextFacing === "right" ? 0 : TRAVEL_DISTANCE_PX}px`);
+    stageRef.current?.style.setProperty("--preview-x", `${nextFacing === "right" ? 0 : travelDistancePx}px`);
     window.setTimeout(() => setPlaying(true), 50);
   };
   const applyCandidatePreset = (aligned: boolean) => {
@@ -185,7 +201,7 @@ export function DaruWalkPreview() {
       <header>
         <p>개발 전용 프리뷰</p>
         <h1>다루 WALK 프레임 비교</h1>
-        <span>{WALK_SPEED_PX_PER_SECOND.toFixed(3)}px/s · {WALK_CYCLE_MS}ms/cycle · {TRAVEL_DURATION_MS.toFixed(0)}ms / {TRAVEL_DISTANCE_PX}px · stride {DARU_SPRITE_CONFIG.stridePx}px</span>
+        <span>{walkSpeedPxPerSecond.toFixed(3)}px/s · {cycleMs}ms/cycle · {travelDurationMs.toFixed(0)}ms / {travelDistancePx}px · stride {DARU_GROUNDED_ROAMING_CONFIG.stridePx}px</span>
       </header>
 
       <section className={styles.modeBar} aria-label="프레임 모드와 테마 선택">
@@ -197,7 +213,7 @@ export function DaruWalkPreview() {
         </select>
       </section>
 
-      <section className={styles.track} aria-label="다루 걷기 미리보기">
+      <section ref={trackRef} className={styles.track} aria-label="다루 걷기 미리보기">
         <div ref={stageRef} className={styles.stage} data-daru-stage="true" data-walking={walking || undefined} data-locomotion={locomotion}>
           <span className={styles.layeredCalibration} style={{ opacity: layeredOpacity }}><LayeredDaruRenderer state={state} theme={theme} phaseOverride={phaseOverride ?? undefined} onGaitSnapshot={setGaitSnapshot} /></span>
           <span className={styles.spriteOverlay} style={{ opacity: referenceOpacity, backgroundImage: `url(${DARU_SPRITE_CONFIG[theme].walkFrames[0]})` }} />
@@ -211,6 +227,10 @@ export function DaruWalkPreview() {
           <strong>GAIT PHASE INSPECTOR · DEV ONLY</strong>
           <div>{[0, 0.25, 0.5, 0.75].map((phase) => <button type="button" key={phase} data-active={phaseOverride === phase || undefined} onClick={() => { setPlaying(false); setLocomotion("walk"); setPhaseOverride(phase); }}>{Math.round(phase * 100)}%</button>)}<button type="button" data-active={phaseOverride === null || undefined} onClick={() => { setPhaseOverride(null); setLocomotion("idle"); setPlaying(true); }}>LIVE</button></div>
           <span>phase {((gaitSnapshot?.phase ?? 0) * 100).toFixed(1)}% · near {gaitSnapshot?.nearStage ?? "neutral"} · far {gaitSnapshot?.farStage ?? "neutral"}</span>
+          <span>stage actual X {(gaitSnapshot?.stageActualX ?? 0).toFixed(2)}px · stance {gaitSnapshot?.stanceFoot ?? "-"} · local X {(gaitSnapshot?.stanceFootLocalX ?? 0).toFixed(2)}px · expected world X {(gaitSnapshot?.stanceFootWorldX ?? 0).toFixed(2)}px</span>
+        </div>
+        <div className={styles.cadenceControls} aria-label="WALK cycle 후보 비교">
+          {WALK_CYCLE_CANDIDATES.map((candidate) => <button type="button" key={candidate} data-active={cycleMs === candidate || undefined} onClick={() => setCycleMs(candidate)}>{candidate}ms</button>)}
         </div>
         <div className={styles.neutralCalibration}>
           <strong>NEUTRAL SILHOUETTE OVERLAY · DEV ONLY</strong>
@@ -268,9 +288,9 @@ export function DaruWalkPreview() {
         <strong>Original 8 진단 조건</strong>
         <ul>
           <li>Original 8: 약 12.9 pose fps</li>
-          <li>cycle: 모두 620ms</li>
+          <li>cycle: runtime {DARU_GROUNDED_ROAMING_CONFIG.normalCycleMs}ms · preview {cycleMs}ms</li>
           <li>stride: 모두 42px</li>
-          <li>travel: 모두 420px / 6200ms</li>
+          <li>travel: {travelDistancePx}px / {travelDurationMs.toFixed(0)}ms</li>
           <li>위치 갱신: requestAnimationFrame</li>
           <li>프레임 진행: 실제 이동거리 기반</li>
           <li>재생 전: 8장 decode 완료 대기</li>

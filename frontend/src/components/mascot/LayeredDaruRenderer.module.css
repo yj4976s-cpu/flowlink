@@ -1,5 +1,10 @@
 .renderer { position: relative; width: 100%; height: 100%; display: block; transform-origin: 50% 87.72%; opacity: 0; transition: opacity 120ms ease; }
 .renderer[data-ready] { opacity: 1; }
+.characterStack, .fallbackSlot, .layeredSlot { position: absolute; inset: 0; display: block; }
+.fallbackSlot { opacity: 1; transition: opacity 120ms ease; }
+.layeredSlot { opacity: 0; transition: opacity 120ms ease; }
+.characterStack[data-ready] .fallbackSlot { opacity: 0; }
+.characterStack[data-ready] .layeredSlot { opacity: 1; }
 .motionRoot, .facing { position: absolute; inset: 0; transform-origin: 50% 50%; }
 .renderer[data-facing="left"] .facing { transform: scaleX(-1); }
 .layer { position: absolute; display: block; pointer-events: none; }
@@ -11,4 +16,18 @@
 .legNear { z-index: 4; }
 .armNear { z-index: 5; }
 .scarf { z-index: 6; }
+.renderer[data-behavior="look"] .motionRoot { transform: translateX(1.5px) rotate(1deg); }
+.renderer[data-behavior="sniff"] .motionRoot { animation: layeredSniff 900ms ease-in-out infinite; }
+.renderer[data-behavior="groom"] .armNear { animation: layeredGroom 700ms ease-in-out infinite alternate; }
+.renderer[data-behavior="alert"] .motionRoot, .renderer[data-behavior="scan"] .motionRoot { transform: translateY(-1px) scale(1.01); }
+.renderer[data-behavior="happy"] .motionRoot, .renderer[data-behavior="match"] .motionRoot { animation: layeredHappy 720ms ease-in-out infinite; }
+.renderer[data-behavior="rest"] .motionRoot { animation: layeredRest 4.8s ease-in-out infinite; }
+.renderer[data-interaction="hover"] .motionRoot { animation: layeredHover 480ms cubic-bezier(.2,.72,.18,1) 1; }
+.renderer[data-interaction="click"] .motionRoot { animation: layeredClick 520ms cubic-bezier(.18,.76,.2,1) 1; }
+@keyframes layeredSniff { 50% { transform: translateY(1px) rotate(-.6deg); } }
+@keyframes layeredGroom { to { rotate: -8deg; } }
+@keyframes layeredHappy { 50% { transform: translateY(-2px) scale(1.008); } }
+@keyframes layeredRest { 50% { transform: translateY(1px) scale(.997, 1.006); } }
+@keyframes layeredHover { 45% { transform: translateY(-1px) rotate(-.25deg); } }
+@keyframes layeredClick { 42% { transform: translateY(-2px) scale(1.008); } 72% { transform: translateY(-1px) scale(1.003); } }
 @media (prefers-reduced-motion: reduce) { .facing { transform: none !important; } }

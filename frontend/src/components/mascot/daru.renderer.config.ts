@@ -16,7 +16,7 @@ export const DARU_RIVE_CONFIG = {
 // Screen-space movement values stay independent from the renderer so a future
 // Rive WALK cycle can derive its playback rate from speed / stridePx.
 const DARU_WALK_STRIDE_PX = 42;
-const DARU_NORMAL_WALK_CYCLE_MS = 620;
+const DARU_NORMAL_WALK_CYCLE_MS = 780;
 const DARU_MOBILE_SPEED_RATIO = 58 / 78;
 const DARU_NORMAL_WALK_SPEED = DARU_WALK_STRIDE_PX / (DARU_NORMAL_WALK_CYCLE_MS / 1000);
 
