@@ -2,10 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DaruSpriteRenderer } from "./DaruSpriteRenderer";
+import { DaruSmoothSpritePreviewRenderer } from "./DaruSmoothSpritePreviewRenderer";
 import type { DaruRendererState } from "./daru.animation.adapter";
 import { DARU_GROUNDED_ROAMING_CONFIG, type DaruFacing } from "./daru.renderer.config";
 import { DARU_SPRITE_CONFIG } from "./daru.sprite.config";
 import type { DaruRhythm } from "./types";
+import { DaruPoseAudit } from "./DaruPoseAudit";
+import { DaruWalkCandidateComparison } from "./DaruWalkCandidateComparison";
 import styles from "./DaruWalkPreview.module.css";
 
 type IdleSource = "original" | "walk-type" | "front";
@@ -22,6 +25,14 @@ const TRAVEL_DISTANCE_PX = DARU_SPRITE_CONFIG.stridePx * 10;
 const TRAVEL_DURATION_MS = (TRAVEL_DISTANCE_PX / WALK_SPEED_PX_PER_SECOND) * 1000;
 const IDLE_HOLD_MS = 350;
 const ACCELERATION_RATIO = 0.04;
+const DAY_DEV_WALK_FRAMES = Array.from(
+  { length: 16 },
+  (_, index) => `/mascot/sprites/day/walk/walk-${String(index + 1).padStart(2, "0")}.png`,
+);
+
+function previewWalkFrames(theme: DaruRhythm) {
+  return theme === "day" ? DAY_DEV_WALK_FRAMES : DARU_SPRITE_CONFIG[theme].walkFrames;
+}
 
 function waitForImage(image: HTMLImageElement) {
   if (image.complete && image.naturalWidth > 0) return Promise.resolve();
@@ -74,10 +85,11 @@ export function DaruWalkPreview() {
   const [failedTheme, setFailedTheme] = useState<DaruRhythm | null>(null);
   const decodedFrames = decodeResult?.theme === theme ? decodeResult.frames : null;
   const decodeFailed = failedTheme === theme;
+  const walkFrames = previewWalkFrames(theme);
 
   useEffect(() => {
     let active = true;
-    Promise.all(DARU_SPRITE_CONFIG[theme].walkFrames.map(loadDecodedFrame))
+    Promise.all(previewWalkFrames(theme).map(loadDecodedFrame))
       .then((frames) => {
         if (!active) return;
         setFailedTheme(null);
@@ -199,7 +211,7 @@ export function DaruWalkPreview() {
   const idleSrc = idleSource === "front"
     ? FRONT_IDLE_IMAGES[theme]
     : idleSource === "walk-type"
-      ? DARU_SPRITE_CONFIG[theme].walkFrames[walkPoseIdleFrame]
+      ? walkFrames[walkPoseIdleFrame] ?? walkFrames[0]
       : "/mascot/daru-idle-transparent.png";
   const idleStyle = idleSource === "front"
     ? { backgroundImage: `url(${idleSrc})`, transform: `translate(${candidateOffsetX}px, ${candidateOffsetY}px) scale(${candidateScale})` }
@@ -214,7 +226,7 @@ export function DaruWalkPreview() {
       </header>
 
       <section className={styles.modeBar} aria-label="프레임 모드와 테마 선택">
-        <strong>Original 8</strong>
+        <strong>{theme === "day" ? "DAY DEV · 16-frame WALK" : "Original 8"}</strong>
         <select value={theme} onChange={(event) => setTheme(event.target.value as DaruRhythm)} aria-label="테마">
           <option value="dawn">DAWN</option>
           <option value="day">DAY</option>
@@ -227,7 +239,11 @@ export function DaruWalkPreview() {
           {!decodedFrames || locomotion === "idle" ? (
             <span className={styles.idle} style={idleStyle} />
           ) : (
-            <DaruSpriteRenderer state={state} theme={theme} />
+            theme === "day" ? (
+              <DaruSmoothSpritePreviewRenderer state={state} frames={decodedFrames} />
+            ) : (
+              <DaruSpriteRenderer state={state} theme={theme} />
+            )
           )}
         </div>
         <span className={styles.ground} />
@@ -245,7 +261,7 @@ export function DaruWalkPreview() {
           <span>{idleSource === "original" ? "기존 원래 정면 IDLE" : idleSource === "walk-type" ? "현재 3/4 WALK형 IDLE" : `정면 IDLE · ${theme.toUpperCase()}`}</span>
         </div>
         <div className={styles.thumbnailGrid} aria-label="Walk Pose Idle 프레임 선택">
-          {DARU_SPRITE_CONFIG[theme].walkFrames.map((src, index) => (
+          {walkFrames.map((src, index) => (
             <button
               type="button"
               key={src}
@@ -296,6 +312,8 @@ export function DaruWalkPreview() {
           <li>Candidate: 테마별 원본 + DEV 정렬만</li>
         </ul>
       </section>
+      <DaruWalkCandidateComparison />
+      <DaruPoseAudit theme={theme} frames={walkFrames} />
     </main>
   );
 }

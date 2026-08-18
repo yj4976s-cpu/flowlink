@@ -46,26 +46,20 @@ export function DaruSmoothSpritePreviewRenderer({
     const sample = () => {
       const canvas = canvasRef.current;
       const stage = rendererRef.current?.closest<HTMLElement>("[data-daru-stage]");
-      if (!canvas || !stage || frames.length !== 8) return;
+      if (!canvas || !stage || frames.length === 0) return;
 
       const x = translatedX(stage);
       if (lastXRef.current !== null) travelledRef.current += Math.abs(x - lastXRef.current);
       lastXRef.current = x;
 
       const cycleProgress = (travelledRef.current % DARU_SPRITE_CONFIG.stridePx) / DARU_SPRITE_CONFIG.stridePx;
-      const nextFrame = Math.floor(cycleProgress * 16);
+      const nextFrame = Math.floor(cycleProgress * frames.length);
       if (nextFrame !== frameRef.current) {
         const context = canvas.getContext("2d");
         if (context) {
-          const sourceIndex = Math.floor(nextFrame / 2);
           context.clearRect(0, 0, canvas.width, canvas.height);
           context.globalAlpha = 1;
-          context.drawImage(frames[sourceIndex], 0, 0);
-          if (nextFrame % 2 === 1) {
-            context.globalAlpha = 0.5;
-            context.drawImage(frames[(sourceIndex + 1) % frames.length], 0, 0);
-            context.globalAlpha = 1;
-          }
+          context.drawImage(frames[nextFrame], 0, 0);
         }
         frameRef.current = nextFrame;
       }
