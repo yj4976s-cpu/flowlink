@@ -636,6 +636,11 @@
   list-style: none;
 }
 
+.resultListWrap {
+  display: grid;
+  gap: 12px;
+}
+
 .resultList li {
   padding: 14px;
   border: 1px solid var(--color-border);
@@ -670,6 +675,46 @@
 .resultList em {
   color: var(--color-primary);
   white-space: nowrap;
+}
+
+.inlinePager {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+  justify-self: end;
+}
+
+.inlinePager span {
+  min-width: 42px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.inlinePager button {
+  width: 32px;
+  min-height: 32px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface-soft);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.inlinePager button:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+
+.inlinePager button:disabled {
+  cursor: not-allowed;
+  opacity: .52;
 }
 
 .notice {
@@ -744,6 +789,8 @@
 
 .ctaFooter {
   margin-top: 12px;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .reportModalBackdrop {
@@ -804,7 +851,7 @@
   margin-bottom: 18px;
 }
 
-.reportPreviewGrid img,
+.reportPreviewFrame,
 .reportPreviewEmpty,
 .reportCandidateMeta {
   border: 1px solid var(--color-border);
@@ -812,10 +859,17 @@
   background: var(--color-surface-soft);
 }
 
-.reportPreviewGrid img {
-  width: 100%;
+.reportPreviewFrame {
+  position: relative;
   min-height: 220px;
-  max-height: 340px;
+  height: min(34vh, 340px);
+  overflow: hidden;
+}
+
+.reportPreviewFrame img {
+  display: block;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
 }
 
