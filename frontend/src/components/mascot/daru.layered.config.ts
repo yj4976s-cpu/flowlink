@@ -1,59 +1,23 @@
-import { DARU_GROUNDED_ROAMING_CONFIG, type DaruFacing } from "./daru.renderer.config";
 import type { DaruRhythm } from "./types";
 
-export type DaruLayerName =
-  | "tail"
-  | "backLegFar"
-  | "backLegNear"
-  | "body"
-  | "frontLegFar"
-  | "frontLegNear"
-  | "scarf"
-  | "head";
-
-export interface DaruLayerLayout {
-  src: string;
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-  origin: string;
-}
+export const DARU_RIG_SPACE = { width: 1254, height: 1254, groundY: 1100 } as const;
+export type DaruLayerName = "armFar" | "legFar" | "body" | "legNear" | "armNear" | "scarf";
+export interface DaruRigLayer { src: string; sourceWidth: number; sourceHeight: number; x: number; y: number; scale: number; pivotX?: number; pivotY?: number; alphaBounds: readonly [number, number, number, number]; }
 
 export const DARU_LAYERED_SCARF: Record<DaruRhythm, string> = {
-  dawn: "/mascot/layered/scarf-dawn.png",
-  day: "/mascot/layered/scarf-day.png",
-  night: "/mascot/layered/scarf-night.png",
+  dawn: "/mascot/layered/scarf-dawn.png", day: "/mascot/layered/scarf-day.png", night: "/mascot/layered/scarf-night.png",
 };
 
-export const DARU_LAYERED_LAYOUT: Record<DaruLayerName, DaruLayerLayout> = {
-  tail: { src: "/mascot/layered/tail.png", left: -14, top: 48, width: 61, height: 39, origin: "82% 48%" },
-  backLegFar: { src: "/mascot/layered/back-leg-far.png", left: 51, top: 53, width: 29, height: 49, origin: "52% 14%" },
-  backLegNear: { src: "/mascot/layered/back-leg-near.png", left: 18, top: 53, width: 31, height: 49, origin: "50% 14%" },
-  body: { src: "/mascot/layered/body-torso-only.png", left: 17, top: 27, width: 67, height: 70, origin: "50% 72%" },
-  frontLegFar: { src: "/mascot/layered/front-leg-far.png", left: 59, top: 35, width: 25, height: 48, origin: "50% 12%" },
-  frontLegNear: { src: "/mascot/layered/front-leg-near.png", left: 14, top: 35, width: 27, height: 49, origin: "50% 12%" },
-  scarf: { src: DARU_LAYERED_SCARF.day, left: 12, top: 29, width: 77, height: 39, origin: "50% 20%" },
-  head: { src: "/mascot/layered/head-walk-3q.png", left: 4, top: -1, width: 92, height: 64, origin: "50% 78%" },
+// All registration values use the shared 1254 x 1254 rig coordinate system.
+// Limb pivots are source-image pixel coordinates; x/y place the source image in neutral pose.
+export const DARU_LAYERED_LAYOUT: Record<DaruLayerName, DaruRigLayer> = {
+  armFar: { src: "/mascot/layered/daru-arm-far.png", sourceWidth: 1254, sourceHeight: 1254, x: 470, y: 420, scale: 0.31, pivotX: 190, pivotY: 235, alphaBounds: [96, 21, 1196, 1212] },
+  legFar: { src: "/mascot/layered/daru-leg-far.png", sourceWidth: 1254, sourceHeight: 1254, x: 220, y: 699, scale: 0.32, pivotX: 640, pivotY: 110, alphaBounds: [96, 21, 1210, 1254] },
+  body: { src: "/mascot/layered/daru-body-base.png", sourceWidth: 1388, sourceHeight: 1133, x: 58, y: 54, scale: 0.82, alphaBounds: [51, 11, 1326, 1133] },
+  legNear: { src: "/mascot/layered/daru-leg-near.png", sourceWidth: 1254, sourceHeight: 1254, x: 800, y: 724, scale: 0.3, pivotX: 570, pivotY: 110, alphaBounds: [0, 17, 1230, 1254] },
+  armNear: { src: "/mascot/layered/daru-arm-near.png", sourceWidth: 1254, sourceHeight: 1254, x: 800, y: 400, scale: 0.36, pivotX: 225, pivotY: 230, alphaBounds: [0, 21, 1242, 1214] },
+  scarf: { src: DARU_LAYERED_SCARF.day, sourceWidth: 1448, sourceHeight: 1086, x: 620, y: 410, scale: 0.32, alphaBounds: [39, 7, 1438, 1029] },
 };
 
-export const DARU_LAYERED_MOTION = {
-  stridePx: DARU_GROUNDED_ROAMING_CONFIG.stridePx,
-  frontSwingDeg: 11,
-  backSwingDeg: 13,
-  footLiftPct: 2.2,
-  stanceCounterPct: 1.4,
-  bodyBobPct: 1.25,
-  bodyRotateDeg: 0.8,
-  headDelay: 0.055,
-  headRotateDeg: 0.55,
-  tailDelay: 0.13,
-  tailSwingDeg: 7,
-  tailSmoothing: 0.13,
-  scarfDelay: 0.08,
-  scarfRotateDeg: 0.7,
-} as const;
-
-export function facingSign(facing: DaruFacing) {
-  return facing === "left" ? -1 : 1;
-}
+export const DARU_LAYER_ORDER: readonly DaruLayerName[] = ["armFar", "legFar", "body", "legNear", "armNear", "scarf"];
+export const DARU_LAYERED_ASSETS = [...Object.values(DARU_LAYERED_LAYOUT).map((layer) => layer.src), ...Object.values(DARU_LAYERED_SCARF)] as const;

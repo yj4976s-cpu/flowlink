@@ -1,121 +1,68 @@
 "use client";
+/* eslint-disable @next/next/no-img-element -- transparent rig layers must preserve their exact source geometry */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
 import type { DaruRendererState } from "./daru.animation.adapter";
-import {
-  DARU_LAYERED_LAYOUT,
-  DARU_LAYERED_MOTION,
-  DARU_LAYERED_SCARF,
-  type DaruLayerName,
-} from "./daru.layered.config";
+import { DARU_LAYERED_ASSETS, DARU_LAYERED_LAYOUT, DARU_LAYERED_SCARF, DARU_LAYER_ORDER, DARU_RIG_SPACE, type DaruLayerName, type DaruRigLayer } from "./daru.layered.config";
 import type { DaruRhythm } from "./types";
 import styles from "./LayeredDaruRenderer.module.css";
 
-const LAYER_ORDER: DaruLayerName[] = ["tail", "backLegFar", "backLegNear", "body", "frontLegFar", "frontLegNear", "scarf", "head"];
-const WALKING = new Set(["start_walk", "walk", "stop_walk"]);
+const preloadCache = new Map<DaruRhythm, Promise<void>>();
 
-function stageX(element: HTMLElement): number {
-  const value = getComputedStyle(element).translate;
-  if (!value || value === "none") return 0;
-  const parsed = Number.parseFloat(value.split(" ")[0]);
-  return Number.isFinite(parsed) ? parsed : 0;
+async function loadImage(src: string) {
+  const image = new Image();
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve();
+    image.onerror = () => reject(new Error(`Failed to load Daru layer: ${src}`));
+    image.src = src;
+  });
+  if (typeof image.decode === "function") await Promise.race([image.decode(), new Promise<void>((resolve) => window.setTimeout(resolve, 1200))]);
 }
 
-function poseTransform(rotation: number, x: number, y: number) {
-  return `translate3d(${x}%, ${y}%, 0) rotate(${rotation}deg)`;
+export function preloadDaruLayeredAssets(theme: DaruRhythm) {
+  const cached = preloadCache.get(theme);
+  if (cached) return cached;
+  const sources = [...new Set([...DARU_LAYERED_ASSETS, DARU_LAYERED_SCARF[theme]])];
+  const promise = Promise.all(sources.map(loadImage)).then(() => undefined);
+  preloadCache.set(theme, promise);
+  return promise;
 }
 
-export function LayeredDaruRenderer({ state, theme }: { state: DaruRendererState; theme: DaruRhythm }) {
-  const rootRef = useRef<HTMLSpanElement>(null);
-  const layerRefs = useRef<Partial<Record<DaruLayerName, HTMLSpanElement | null>>>({});
-  const lastXRef = useRef<number | null>(null);
-  const travelledRef = useRef(0);
-  const tailRotationRef = useRef(0);
-  const stopStartedRef = useRef<number | null>(null);
-  const active = !state.reducedMotion && WALKING.has(state.locomotion);
+function percent(value: number, axis: "x" | "y") {
+  return `${(value / (axis === "x" ? DARU_RIG_SPACE.width : DARU_RIG_SPACE.height)) * 100}%`;
+}
 
+function layerSize(layer: DaruRigLayer) {
+  return { width: percent(layer.sourceWidth * layer.scale, "x"), height: percent(layer.sourceHeight * layer.scale, "y") };
+}
+
+function StaticLayer({ name, layer, src }: { name: DaruLayerName; layer: DaruRigLayer; src: string }) {
+  const jointX = layer.pivotX === undefined ? undefined : layer.x + layer.pivotX * layer.scale;
+  const jointY = layer.pivotY === undefined ? undefined : layer.y + layer.pivotY * layer.scale;
+  const transformOrigin = layer.pivotX === undefined ? undefined : `${(layer.pivotX / layer.sourceWidth) * 100}% ${(layer.pivotY! / layer.sourceHeight) * 100}%`;
+  return <span className={`${styles.layer} ${styles[name]}`} data-daru-part={name} data-joint-x={jointX} data-joint-y={jointY}
+    style={{ left: percent(layer.x, "x"), top: percent(layer.y, "y"), transformOrigin, ...layerSize(layer) }}>
+    <img src={src} alt="" draggable={false} />
+  </span>;
+}
+
+export function LayeredDaruRenderer({ state, theme, onAssetError }: { state: DaruRendererState; theme: DaruRhythm; onAssetError?: () => void }) {
+  const [readyTheme, setReadyTheme] = useState<DaruRhythm | null>(null);
+  const [failedTheme, setFailedTheme] = useState<DaruRhythm | null>(null);
   useEffect(() => {
-    if (!active) {
-      lastXRef.current = null;
-      travelledRef.current = 0;
-      stopStartedRef.current = null;
-      return;
-    }
-
-    let frame = 0;
-    const renderPose = (time: number) => {
-      const root = rootRef.current;
-      const stage = root?.closest<HTMLElement>("[data-daru-stage]");
-      if (!root || !stage) return;
-
-      const x = stageX(stage);
-      if (lastXRef.current !== null) travelledRef.current += Math.abs(x - lastXRef.current);
-      lastXRef.current = x;
-      const phase = (travelledRef.current % DARU_LAYERED_MOTION.stridePx) / DARU_LAYERED_MOTION.stridePx;
-      const angle = phase * Math.PI * 2;
-      let gait = Math.sin(angle);
-      let settle = 1;
-      if (state.locomotion === "stop_walk") {
-        stopStartedRef.current ??= time;
-        settle = Math.max(0, 1 - (time - stopStartedRef.current) / 210);
-        gait *= settle;
-      } else {
-        stopStartedRef.current = null;
-      }
-
-      const pairA = gait;
-      const pairB = -gait;
-      const liftA = Math.max(0, Math.sin(angle)) * DARU_LAYERED_MOTION.footLiftPct * settle;
-      const liftB = Math.max(0, -Math.sin(angle)) * DARU_LAYERED_MOTION.footLiftPct * settle;
-      const counterA = -pairA * DARU_LAYERED_MOTION.stanceCounterPct * settle;
-      const counterB = -pairB * DARU_LAYERED_MOTION.stanceCounterPct * settle;
-      const bodyWave = Math.cos(angle * 2) * settle;
-      const headWave = Math.sin((phase - DARU_LAYERED_MOTION.headDelay) * Math.PI * 4) * settle;
-      const tailTarget = Math.sin((phase - DARU_LAYERED_MOTION.tailDelay) * Math.PI * 2) * DARU_LAYERED_MOTION.tailSwingDeg * settle;
-      tailRotationRef.current += (tailTarget - tailRotationRef.current) * DARU_LAYERED_MOTION.tailSmoothing;
-      const scarfWave = Math.sin((phase - DARU_LAYERED_MOTION.scarfDelay) * Math.PI * 2) * settle;
-
-      const set = (name: DaruLayerName, transform: string) => {
-        const layer = layerRefs.current[name];
-        if (layer) layer.style.transform = transform;
-      };
-      set("frontLegNear", poseTransform(pairA * DARU_LAYERED_MOTION.frontSwingDeg, counterA, -liftA));
-      set("frontLegFar", poseTransform(pairB * DARU_LAYERED_MOTION.frontSwingDeg, counterB, -liftB));
-      set("backLegFar", poseTransform(pairA * DARU_LAYERED_MOTION.backSwingDeg, counterA, -liftA));
-      set("backLegNear", poseTransform(pairB * DARU_LAYERED_MOTION.backSwingDeg, counterB, -liftB));
-      set("body", poseTransform(bodyWave * DARU_LAYERED_MOTION.bodyRotateDeg, 0, -Math.abs(bodyWave) * DARU_LAYERED_MOTION.bodyBobPct));
-      set("head", poseTransform(headWave * DARU_LAYERED_MOTION.headRotateDeg, 0, -Math.abs(headWave) * 0.45));
-      set("tail", poseTransform(tailRotationRef.current, 0, Math.abs(bodyWave) * 0.3));
-      set("scarf", poseTransform(scarfWave * DARU_LAYERED_MOTION.scarfRotateDeg, -scarfWave * 0.25, Math.abs(scarfWave) * 0.18));
-
-      frame = requestAnimationFrame(renderPose);
-    };
-    frame = requestAnimationFrame(renderPose);
-    return () => cancelAnimationFrame(frame);
-  }, [active, state.locomotion]);
-
-  return (
-    <span ref={rootRef} className={styles.renderer} data-renderer="layered" data-facing={state.facing} aria-hidden="true">
-      <span className={styles.contactShadow} />
-      <span className={styles.facing}>
-        {LAYER_ORDER.map((name) => {
-          const layout = DARU_LAYERED_LAYOUT[name];
-          const src = name === "scarf" ? DARU_LAYERED_SCARF[theme] : layout.src;
-          return (
-            <span
-              key={name}
-              ref={(element) => { layerRefs.current[name] = element; }}
-              className={`${styles.layer} ${styles[name]}`}
-              data-daru-part={name}
-              style={{ left: `${layout.left}%`, top: `${layout.top}%`, width: `${layout.width}%`, height: `${layout.height}%`, "--layer-origin": layout.origin } as React.CSSProperties}
-            >
-              {/* Layer sources are changed only by theme, while motion is updated imperatively on the wrapper. */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={src} alt="" draggable={false} />
-            </span>
-          );
-        })}
-      </span>
+    let current = true;
+    preloadDaruLayeredAssets(theme).then(() => { if (current) { setReadyTheme(theme); setFailedTheme(null); } }).catch(() => { if (current) { setFailedTheme(theme); onAssetError?.(); } });
+    return () => { current = false; };
+  }, [onAssetError, theme]);
+  if (failedTheme === theme) return null;
+  return <span className={styles.renderer} data-renderer="layered" data-rig-mode="neutral" data-locomotion={state.locomotion} data-facing={state.facing} data-ready={readyTheme === theme || undefined} aria-hidden="true">
+    <span className={styles.contactShadow} />
+    <span className={styles.facing}>
+      {DARU_LAYER_ORDER.map((name) => {
+        const layer = DARU_LAYERED_LAYOUT[name];
+        const src = name === "scarf" ? DARU_LAYERED_SCARF[theme] : layer.src;
+        return <StaticLayer key={name} name={name} layer={layer} src={src} />;
+      })}
     </span>
-  );
+  </span>;
 }

@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { DaruSpriteRenderer } from "./DaruSpriteRenderer";
-import { DaruSmoothSpritePreviewRenderer } from "./DaruSmoothSpritePreviewRenderer";
+import { LayeredDaruRenderer, preloadDaruLayeredAssets } from "./LayeredDaruRenderer";
 import type { DaruRendererState } from "./daru.animation.adapter";
 import { DARU_GROUNDED_ROAMING_CONFIG, type DaruFacing } from "./daru.renderer.config";
 import { DARU_SPRITE_CONFIG } from "./daru.sprite.config";
@@ -13,45 +12,14 @@ import styles from "./DaruWalkPreview.module.css";
 
 type IdleSource = "original" | "walk-type" | "front";
 
-const FRONT_IDLE_IMAGES: Record<DaruRhythm, string> = {
-  day: "/mascot/daru-idle-day.png",
-  dawn: "/mascot/daru-idle-dawn.png",
-  night: "/mascot/daru-idle-night.png",
-};
-
 const WALK_CYCLE_MS = DARU_GROUNDED_ROAMING_CONFIG.normalCycleMs;
 const WALK_SPEED_PX_PER_SECOND = DARU_SPRITE_CONFIG.stridePx / (WALK_CYCLE_MS / 1000);
 const TRAVEL_DISTANCE_PX = DARU_SPRITE_CONFIG.stridePx * 10;
 const TRAVEL_DURATION_MS = (TRAVEL_DISTANCE_PX / WALK_SPEED_PX_PER_SECOND) * 1000;
 const IDLE_HOLD_MS = 350;
 const ACCELERATION_RATIO = 0.04;
-const DAY_DEV_WALK_FRAMES = Array.from(
-  { length: 16 },
-  (_, index) => `/mascot/sprites/day/walk/walk-${String(index + 1).padStart(2, "0")}.png`,
-);
-
 function previewWalkFrames(theme: DaruRhythm) {
-  return theme === "day" ? DAY_DEV_WALK_FRAMES : DARU_SPRITE_CONFIG[theme].walkFrames;
-}
-
-function waitForImage(image: HTMLImageElement) {
-  if (image.complete && image.naturalWidth > 0) return Promise.resolve();
-  return new Promise<void>((resolve, reject) => {
-    image.addEventListener("load", () => resolve(), { once: true });
-    image.addEventListener("error", () => reject(new Error(`Failed to load ${image.src}`)), { once: true });
-  });
-}
-
-async function loadDecodedFrame(src: string) {
-  const image = new Image();
-  image.src = src;
-  try {
-    if (typeof image.decode === "function") await image.decode();
-    else await waitForImage(image);
-  } catch {
-    await waitForImage(image);
-  }
-  return image;
+  return DARU_SPRITE_CONFIG[theme].walkFrames;
 }
 
 function movementProgress(elapsedMs: number) {
@@ -81,19 +49,21 @@ export function DaruWalkPreview() {
   const [transitionCheck, setTransitionCheck] = useState(false);
   const [transitionPass, setTransitionPass] = useState(0);
   const [theme, setTheme] = useState<DaruRhythm>("day");
-  const [decodeResult, setDecodeResult] = useState<{ theme: DaruRhythm; frames: readonly HTMLImageElement[] } | null>(null);
+  const [layeredOpacity, setLayeredOpacity] = useState(1);
+  const [referenceOpacity, setReferenceOpacity] = useState(0);
+  const [readyTheme, setReadyTheme] = useState<DaruRhythm | null>(null);
   const [failedTheme, setFailedTheme] = useState<DaruRhythm | null>(null);
-  const decodedFrames = decodeResult?.theme === theme ? decodeResult.frames : null;
+  const assetsReady = readyTheme === theme;
   const decodeFailed = failedTheme === theme;
   const walkFrames = previewWalkFrames(theme);
 
   useEffect(() => {
     let active = true;
-    Promise.all(previewWalkFrames(theme).map(loadDecodedFrame))
-      .then((frames) => {
+    preloadDaruLayeredAssets(theme)
+      .then(() => {
         if (!active) return;
         setFailedTheme(null);
-        setDecodeResult({ theme, frames });
+        setReadyTheme(theme);
       })
       .catch(() => { if (active) setFailedTheme(theme); });
     return () => { active = false; };
@@ -101,7 +71,7 @@ export function DaruWalkPreview() {
 
   useEffect(() => {
     const stage = stageRef.current;
-    if (!playing || !decodedFrames || !stage) return;
+    if (!playing || !assetsReady || !stage) return;
 
     let cancelled = false;
     let animationFrame = 0;
@@ -166,7 +136,7 @@ export function DaruWalkPreview() {
       cancelAnimationFrame(animationFrame);
       timers.forEach(window.clearTimeout);
     };
-  }, [decodedFrames, playing, transitionCheck]);
+  }, [assetsReady, playing, transitionCheck]);
 
   const state = useMemo<DaruRendererState>(() => ({
     locomotion,
@@ -208,15 +178,6 @@ export function DaruWalkPreview() {
     }, 50);
   };
   const walking = locomotion === "walk" || locomotion === "start_walk";
-  const idleSrc = idleSource === "front"
-    ? FRONT_IDLE_IMAGES[theme]
-    : idleSource === "walk-type"
-      ? walkFrames[walkPoseIdleFrame] ?? walkFrames[0]
-      : "/mascot/daru-idle-transparent.png";
-  const idleStyle = idleSource === "front"
-    ? { backgroundImage: `url(${idleSrc})`, transform: `translate(${candidateOffsetX}px, ${candidateOffsetY}px) scale(${candidateScale})` }
-    : { backgroundImage: `url(${idleSrc})` };
-
   return (
     <main className={styles.page}>
       <header>
@@ -226,7 +187,7 @@ export function DaruWalkPreview() {
       </header>
 
       <section className={styles.modeBar} aria-label="프레임 모드와 테마 선택">
-        <strong>{theme === "day" ? "DAY DEV · 16-frame WALK" : "Original 8"}</strong>
+        <strong>Layered WALK · runtime renderer</strong>
         <select value={theme} onChange={(event) => setTheme(event.target.value as DaruRhythm)} aria-label="테마">
           <option value="dawn">DAWN</option>
           <option value="day">DAY</option>
@@ -236,21 +197,19 @@ export function DaruWalkPreview() {
 
       <section className={styles.track} aria-label="다루 걷기 미리보기">
         <div ref={stageRef} className={styles.stage} data-daru-stage="true" data-walking={walking || undefined} data-locomotion={locomotion}>
-          {!decodedFrames || locomotion === "idle" ? (
-            <span className={styles.idle} style={idleStyle} />
-          ) : (
-            theme === "day" ? (
-              <DaruSmoothSpritePreviewRenderer state={state} frames={decodedFrames} />
-            ) : (
-              <DaruSpriteRenderer state={state} theme={theme} />
-            )
-          )}
+          <span className={styles.layeredCalibration} style={{ opacity: layeredOpacity }}><LayeredDaruRenderer state={state} theme={theme} /></span>
+          <span className={styles.spriteOverlay} style={{ opacity: referenceOpacity, backgroundImage: `url(${DARU_SPRITE_CONFIG[theme].walkFrames[0]})` }} />
         </div>
         <span className={styles.ground} />
-        {!decodedFrames && <span className={styles.decodeStatus}>{decodeFailed ? "프레임 decode 실패 — idle fallback" : "WALK 8프레임 decode 중…"}</span>}
+        {!assetsReady && <span className={styles.decodeStatus}>{decodeFailed ? "layer asset decode 실패" : "layer asset decode 중…"}</span>}
       </section>
 
       <section className={styles.controls} aria-label="걷기 조절">
+        <div className={styles.neutralCalibration}>
+          <strong>NEUTRAL SILHOUETTE OVERLAY · DEV ONLY</strong>
+          <label>Layered opacity <span>{Math.round(layeredOpacity * 100)}%</span><input type="range" min="0" max="1" step="0.05" value={layeredOpacity} onChange={(event) => setLayeredOpacity(Number(event.target.value))} /></label>
+          <label>Sprite reference opacity <span>{Math.round(referenceOpacity * 100)}%</span><input type="range" min="0" max="1" step="0.05" value={referenceOpacity} onChange={(event) => setReferenceOpacity(Number(event.target.value))} /></label>
+        </div>
         <div className={styles.idleControls}>
           <strong>IDLE SOURCE</strong>
           <div>
