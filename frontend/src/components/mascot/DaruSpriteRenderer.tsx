@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import type { DaruRendererState } from "./daru.animation.adapter";
 import { DARU_SPRITE_CONFIG } from "./daru.sprite.config";
 import type { DaruRhythm } from "./types";
@@ -46,7 +46,7 @@ export function DaruSpriteRenderer({ state, theme = "day" }: { state: DaruRender
   const lastXRef = useRef<number | null>(null);
   const frameRef = useRef(-1);
   const themedFramesRef = useRef<readonly string[]>(DARU_SPRITE_CONFIG[theme].walkFrames);
-  const [initialFrameSrc] = useState(() => DARU_SPRITE_CONFIG[theme].walkFrames[0]);
+  const initialFrameSrc = DARU_SPRITE_CONFIG[theme].walkFrames[0];
   const walking = !state.reducedMotion && (state.locomotion === "start_walk" || state.locomotion === "walk");
 
   useEffect(() => {
@@ -105,7 +105,7 @@ export function DaruSpriteRenderer({ state, theme = "day" }: { state: DaruRender
       <span className={styles.contactShadow} />
       {/* The frame source is updated imperatively to avoid a React render on every step. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img ref={imageRef} className={styles.spriteImage} src={initialFrameSrc} alt="" draggable={false} />
+      <img key={theme} ref={imageRef} className={styles.spriteImage} src={initialFrameSrc} alt="" draggable={false} />
     </span>
   );
 }
