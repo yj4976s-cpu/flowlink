@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { DaruSpriteRenderer } from "./DaruSpriteRenderer";
 import { DaruSmoothSpritePreviewRenderer } from "./DaruSmoothSpritePreviewRenderer";
 import type { DaruRendererState } from "./daru.animation.adapter";
 import { DARU_GROUNDED_ROAMING_CONFIG, type DaruFacing } from "./daru.renderer.config";
@@ -13,6 +14,7 @@ import { useTheme } from "../theme/ThemeProvider";
 import styles from "./DaruWalkPreview.module.css";
 
 type IdleSource = "original" | "walk-type" | "front";
+type PreviewRenderer = "runtime" | "smooth";
 
 const FRONT_IDLE_IMAGES: Record<DaruRhythm, string> = {
   day: "/mascot/daru-idle-day.png",
@@ -74,6 +76,7 @@ export function DaruWalkPreview() {
   const [candidateOffsetY, setCandidateOffsetY] = useState(5);
   const [transitionCheck, setTransitionCheck] = useState(false);
   const [transitionPass, setTransitionPass] = useState(0);
+  const [previewRenderer, setPreviewRenderer] = useState<PreviewRenderer>("runtime");
   const { theme, setTheme } = useTheme();
   const [themedIdle, setThemedIdle] = useState<{ key: string; src: string } | null>(null);
   const [decodeResult, setDecodeResult] = useState<{ theme: DaruRhythm; frames: readonly HTMLImageElement[] } | null>(null);
@@ -96,7 +99,8 @@ export function DaruWalkPreview() {
 
   useEffect(() => {
     const stage = stageRef.current;
-    if (!playing || !decodedFrames || !stage) return;
+    const rendererReady = previewRenderer === "runtime" || decodedFrames !== null;
+    if (!playing || !rendererReady || !stage) return;
 
     let cancelled = false;
     let animationFrame = 0;
@@ -161,7 +165,7 @@ export function DaruWalkPreview() {
       cancelAnimationFrame(animationFrame);
       timers.forEach(window.clearTimeout);
     };
-  }, [decodedFrames, playing, transitionCheck]);
+  }, [decodedFrames, playing, previewRenderer, transitionCheck]);
 
   const state = useMemo<DaruRendererState>(() => ({
     locomotion,
@@ -232,23 +236,31 @@ export function DaruWalkPreview() {
 
       <section className={styles.modeBar} aria-label="프레임 모드와 테마 선택">
         <strong>{theme.toUpperCase()} · runtime 8-frame WALK</strong>
-        <select value={theme} onChange={(event) => setTheme(event.target.value as DaruRhythm)} aria-label="테마">
-          <option value="dawn">DAWN</option>
-          <option value="day">DAY</option>
-          <option value="night">NIGHT</option>
-        </select>
+        <div>
+          <button type="button" data-active={previewRenderer === "runtime" || undefined} onClick={() => setPreviewRenderer("runtime")}>Runtime Sprite</button>
+          <button type="button" data-active={previewRenderer === "smooth" || undefined} onClick={() => setPreviewRenderer("smooth")}>Smooth Preview</button>
+          <select value={theme} onChange={(event) => setTheme(event.target.value as DaruRhythm)} aria-label="테마">
+            <option value="dawn">DAWN</option>
+            <option value="day">DAY</option>
+            <option value="night">NIGHT</option>
+          </select>
+        </div>
       </section>
 
       <section className={styles.track} aria-label="다루 걷기 미리보기">
         <div ref={stageRef} className={styles.stage} data-daru-stage="true" data-walking={walking || undefined} data-locomotion={locomotion}>
-          {!decodedFrames || locomotion === "idle" ? (
+          {locomotion === "idle" ? (
             <span className={styles.idle} style={idleStyle} />
-          ) : (
+          ) : previewRenderer === "runtime" ? (
+            <DaruSpriteRenderer state={state} theme={theme} />
+          ) : decodedFrames ? (
             <DaruSmoothSpritePreviewRenderer state={state} frames={decodedFrames} />
+          ) : (
+            <span className={styles.idle} style={idleStyle} />
           )}
         </div>
         <span className={styles.ground} />
-        {!decodedFrames && <span className={styles.decodeStatus}>{decodeFailed ? "프레임 decode 실패 — idle fallback" : "WALK 8프레임 decode 중…"}</span>}
+        {previewRenderer === "smooth" && !decodedFrames && <span className={styles.decodeStatus}>{decodeFailed ? "프레임 decode 실패 — idle fallback" : "WALK 8프레임 decode 중…"}</span>}
       </section>
 
       <section className={styles.controls} aria-label="걷기 조절">
