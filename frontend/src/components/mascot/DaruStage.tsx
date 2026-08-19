@@ -121,9 +121,9 @@ export function DaruStage() {
       .filter((element) => !stage.contains(element) && element.offsetParent !== null)
       .map((element) => element.getBoundingClientRect());
     const overlaps = (left: number, top: number) => blockers.some((item) => left < item.right + 14 && left + rect.width > item.left - 14 && top < item.bottom + 14 && top + rect.height > item.top - 14);
-    const horizontalRange = DARU_GROUNDED_ROAMING_CONFIG.mobileRange;
-    const minLeft = mobile ? Math.max(12, rect.left - horizontalRange / 2) : 16;
-    const maxLeft = mobile ? Math.min(window.innerWidth - rect.width - 12, rect.left + horizontalRange / 2) : window.innerWidth - rect.width - 16;
+    const horizontalRange = mobile ? DARU_GROUNDED_ROAMING_CONFIG.mobileRange : DARU_GROUNDED_ROAMING_CONFIG.desktopRange;
+    const minLeft = Math.max(mobile ? 12 : 16, rect.left - horizontalRange / 2);
+    const maxLeft = Math.min(window.innerWidth - rect.width - (mobile ? 12 : 16), rect.left + horizontalRange / 2);
     const groundInset = mobile ? DARU_GROUNDED_ROAMING_CONFIG.mobileGroundInset : DARU_GROUNDED_ROAMING_CONFIG.desktopGroundInset;
     const groundTop = Math.max(88, window.innerHeight - rect.height - groundInset);
     for (let attempt = 0; attempt < 28; attempt += 1) {
@@ -151,23 +151,15 @@ export function DaruStage() {
   }, [roaming]);
 
   const handlePointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
-    if (
-      mode === "hidden" ||
-      window.matchMedia("(max-width: 600px)").matches
-    ) return;
-    event.preventDefault();
+    if (mode === "hidden") return;
     let dragOrigin = { x: position.x, y: position.y };
     const translated = stageRef.current ? getComputedStyle(stageRef.current).translate.split(" ") : [];
     const translatedX = Number.parseFloat(translated[0]);
     const translatedY = Number.parseFloat(translated[1] ?? "0");
     if (Number.isFinite(translatedX) && Number.isFinite(translatedY)) dragOrigin = { x: translatedX, y: translatedY };
-    freezeRoaming();
     event.currentTarget.setPointerCapture(event.pointerId);
     dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, originX: dragOrigin.x, originY: dragOrigin.y, moved: false };
-    setInteraction("none");
-    setDragging(true);
-    setLocomotion("drag");
-  }, [freezeRoaming, mode, position.x, position.y]);
+  }, [mode, position.x, position.y]);
 
   const handlePointerMove = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
     const drag = dragRef.current;
@@ -176,10 +168,16 @@ export function DaruStage() {
     const dy = event.clientY - drag.startY;
     if (!drag.moved && Math.hypot(dx, dy) > 5) {
       drag.moved = true;
+      freezeRoaming();
+      setInteraction("none");
+      setDragging(true);
+      setLocomotion("drag");
       setGuideOpen(false);
     }
+    if (!drag.moved) return;
+    event.preventDefault();
     setPosition(clampPosition(drag.originX + dx, drag.originY + dy));
-  }, [clampPosition]);
+  }, [clampPosition, freezeRoaming]);
 
   const handlePointerUp = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
     const drag = dragRef.current;
@@ -187,6 +185,7 @@ export function DaruStage() {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     suppressClickRef.current = drag.moved;
     dragRef.current = null;
+    if (!drag.moved) return;
     setDragging(false);
     setLocomotion("land");
     if (locomotionTimerRef.current !== null) window.clearTimeout(locomotionTimerRef.current);
@@ -199,10 +198,12 @@ export function DaruStage() {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     suppressClickRef.current = false;
     dragRef.current = null;
-    setDragging(false);
-    if (locomotionTimerRef.current !== null) window.clearTimeout(locomotionTimerRef.current);
-    locomotionTimerRef.current = null;
-    setLocomotion("idle");
+    if (drag.moved) {
+      setDragging(false);
+      if (locomotionTimerRef.current !== null) window.clearTimeout(locomotionTimerRef.current);
+      locomotionTimerRef.current = null;
+      setLocomotion("idle");
+    }
   }, []);
 
   useEffect(() => {
@@ -230,7 +231,7 @@ export function DaruStage() {
       if (distance < 28) { setRoamRetry((current) => current + 1); return; }
       const mobile = window.matchMedia("(max-width: 600px)").matches;
       const speed = mobile ? DARU_GROUNDED_ROAMING_CONFIG.mobileSpeed : DARU_GROUNDED_ROAMING_CONFIG.desktopSpeed;
-      const duration = Math.min(mobile ? 2800 : 4600, Math.max(mobile ? 1100 : 1500, distance / speed * 1000));
+      const duration = Math.min(mobile ? 5200 : 12000, Math.max(mobile ? 1600 : 2600, distance / speed * 1000));
       const nextFacing = target.x < position.x ? "left" : "right";
       const normalizedSpeed = normalizedMovementSpeed(distance / (duration / 1000), speed) * DARU_PERSONALITY.walkEnergy;
       const startMovement = () => {
