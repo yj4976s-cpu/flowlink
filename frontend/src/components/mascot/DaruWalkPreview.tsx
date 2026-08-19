@@ -26,8 +26,11 @@ const TRAVEL_DISTANCE_PX = DARU_SPRITE_CONFIG.stridePx * 10;
 const IDLE_HOLD_MS = 350;
 const ACCELERATION_RATIO = 0.04;
 const RIG_NATURAL_SIZE = "1254 x 1254";
-const NATURAL_PREBLEND_START = 0.72;
-const NATURAL_PREBLEND_MAX_OPACITY = 0.18;
+const NATURAL_WALK_PLAYBACK_RATE = 0.86;
+const NATURAL_START_PLAYBACK_RATE = 0.72;
+const NATURAL_STOP_PLAYBACK_RATE = 0.54;
+const NATURAL_PREBLEND_START = 0.58;
+const NATURAL_PREBLEND_MAX_OPACITY = 0.24;
 const NATURAL_WALK_FRAMES = Array.from(
   { length: 8 },
   (_, index) => `/mascot/sprites/day/walk-natural-v4/walk-natural-v4-${String(index + 1).padStart(2, "0")}.png`,
@@ -197,7 +200,11 @@ export function DaruWalkPreview() {
     const tick = (now: number) => {
       const delta = now - previousTime;
       previousTime = now;
-      const speedScale = locomotion === "walk" ? 1 : locomotion === "start_walk" ? 0.82 : 0.62;
+      const speedScale = locomotion === "walk"
+        ? NATURAL_WALK_PLAYBACK_RATE
+        : locomotion === "start_walk"
+          ? NATURAL_START_PLAYBACK_RATE
+          : NATURAL_STOP_PLAYBACK_RATE;
       setNaturalPlaybackPhase((value) => (value + (delta / cycleMs) * speedScale) % 1);
       frame = requestAnimationFrame(tick);
     };
@@ -357,7 +364,7 @@ export function DaruWalkPreview() {
             {PHASE_CANDIDATES.map((phase) => <button type="button" key={phase} data-active={phaseOverride === phase || undefined} onClick={() => inspectPhase(phase)}>{Math.round(phase * 100)}%</button>)}
             <button type="button" data-active={phaseOverride === null || undefined} onClick={resumeLive}>LIVE</button>
           </div>
-          <span>natural frame {Math.floor(naturalPhase * NATURAL_WALK_FRAMES.length) + 1} / {NATURAL_WALK_FRAMES.length} · phase {Math.round(naturalPhase * 100)}%</span>
+          <span>natural frame {Math.floor(naturalPhase * NATURAL_WALK_FRAMES.length) + 1} / {NATURAL_WALK_FRAMES.length} · phase {Math.round(naturalPhase * 100)}% · playback {Math.round(NATURAL_WALK_PLAYBACK_RATE * 100)}%</span>
           <span>complete-frame playback only; no separated limb transforms in the primary candidate</span>
         </div>
         <div className={styles.quickControls}>
