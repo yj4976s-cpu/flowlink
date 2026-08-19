@@ -23,6 +23,7 @@ const actionLabel: Record<string, string> = {
   FOUND_ITEM_UPDATED: "공식 발견물 수정",
   CITIZEN_REPORT_REVIEWED: "발견 제보 검토",
   CITIZEN_REPORT_LINKED: "발견 제보 연결",
+  WASTE_COLLECTION_COMPLETED: "폐기물 수거 완료",
 };
 const entityLabel: Record<string, string> = {
   OWNERSHIP_CLAIM: "소유권 요청", DETECTED_OBJECT: "탐지 객체", FOUND_ITEM: "발견물",
@@ -97,11 +98,13 @@ export function AdminDashboardClient() {
   };
 
   const operationDetectionPending = current?.metrics.operation_detection_pending ?? 0;
+  const wasteCollectionPending = current?.metrics.waste_collection_pending ?? 0;
   const citizenReviewPending = current?.metrics.citizen_review_pending ?? 0;
   const ownershipClaimPending = current?.metrics.ownership_claim_pending ?? 0;
-  const waiting = operationDetectionPending + citizenReviewPending + ownershipClaimPending;
+  const waiting = operationDetectionPending + wasteCollectionPending + citizenReviewPending + ownershipClaimPending;
   const workQueues = [
     { key: "operation-detection", tone: "attention", label: "AI 탐지 검토", count: operationDetectionPending, pending: "관리자 확인이 필요한 운영 탐지입니다.", empty: "현재 확인할 탐지 결과가 없어요.", href: "/admin/detections", action: "검토하러 가기" },
+    { key: "waste-collection", tone: "waste", label: "폐기물 수거 대기", count: wasteCollectionPending, pending: "검토가 끝나 실제 수거 완료 확인을 기다리는 폐기물입니다.", empty: "현재 수거를 기다리는 폐기물이 없어요.", href: "/admin/detections?purpose=OPERATION&followUp=WASTE_PENDING", action: "수거 처리하기" },
     { key: "citizen-report", tone: "citizen", label: "시민 발견 신고", count: citizenReviewPending, pending: "새로 접수되어 검토를 기다리는 신고입니다.", empty: "현재 검토를 기다리는 신고가 없어요.", href: "/admin/citizen-reports", action: "신고 확인하기" },
     { key: "ownership-claim", tone: "claim", label: "소유권 요청", count: ownershipClaimPending, pending: "승인 또는 거절이 필요한 요청입니다.", empty: "현재 처리할 소유권 요청이 없어요.", href: "/admin/ownership-claims", action: "요청 처리하기" },
   ] as const;

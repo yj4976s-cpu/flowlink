@@ -74,7 +74,8 @@ def seed_waste_detection(db: Session, *, object_id: int = 30, event_id: int = 40
     now = datetime(2026, 1, 2, tzinfo=UTC)
     if db.get(Camera, 1) is None:
         db.add(Camera(id=1, code="CAM-1", name="테스트 카메라", area_name="잠실", is_active=True, created_at=now, updated_at=now))
-    db.add(ObjectClass(id=2, code="TRASH", name_ko="폐기물", group_code="WASTE", display_order=2, is_active=True, created_at=now, updated_at=now))
+    if db.get(ObjectClass, 2) is None:
+        db.add(ObjectClass(id=2, code="TRASH", name_ko="폐기물", group_code="WASTE", display_order=2, is_active=True, created_at=now, updated_at=now))
     db.add(DetectionEvent(id=event_id, camera_id=1, source_type="IMAGE", original_media_url="/uploads/waste.jpg", status="COMPLETED", captured_at=now, created_at=now, updated_at=now))
     db.add(DetectedObject(id=object_id, detection_event_id=event_id, object_class_id=2, processing_status=processing_status, confidence=Decimal("0.9"), bbox_x=Decimal("1"), bbox_y=Decimal("2"), bbox_width=Decimal("30"), bbox_height=Decimal("40"), cropped_image_url="/uploads/waste-crop.jpg", appearance_count=1, detected_at=now, created_at=now))
     db.commit()
@@ -902,6 +903,88 @@ def test_dashboard_operation_pending_counts_only_operation_pending_objects(clien
 
     assert response.status_code == 200
     assert response.json()["metrics"]["operation_detection_pending"] == 1
+
+
+def test_dashboard_waste_pending_counts_confirmed_operation_waste_without_collection_history(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_admin(db)
+    fixed_now = datetime(2026, 1, 2, 3, tzinfo=UTC)
+    seed_waste_detection(db, object_id=30, event_id=40, processing_status="PENDING")
+    seed_waste_detection(db, object_id=31, event_id=41, processing_status="CONFIRMED")
+    monkeypatch.setattr(admin_api, "utc_now", lambda: fixed_now)
+    login(client)
+
+    response = client.get("/api/admin/dashboard", params={"period": "today"})
+
+    assert response.status_code == 200
+    metrics = response.json()["metrics"]
+    assert metrics["operation_detection_pending"] == 1
+    assert metrics["waste_collection_pending"] == 1
+
+
+def test_dashboard_waste_collection_history_excludes_object_from_pending_metric(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_admin(db)
+    fixed_now = datetime(2026, 1, 2, 3, tzinfo=UTC)
+    seed_waste_detection(db, object_id=30, event_id=40, processing_status="CONFIRMED")
+    db.add(ProcessingHistory(actor_user_id=1, entity_type="DETECTED_OBJECT", entity_id=30, action_type="WASTE_COLLECTION_COMPLETED", previous_status="CONFIRMED", new_status="CONFIRMED", created_at=fixed_now))
+    db.commit()
+    monkeypatch.setattr(admin_api, "utc_now", lambda: fixed_now)
+    login(client)
+
+    response = client.get("/api/admin/dashboard", params={"period": "today"})
+
+    assert response.status_code == 200
+    assert response.json()["metrics"]["waste_collection_pending"] == 0
+
+
+def test_dashboard_waste_pending_excludes_user_analysis_personal_and_natural_objects(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_admin(db)
+    fixed_now = datetime(2026, 1, 2, 3, tzinfo=UTC)
+    seed_waste_detection(db, object_id=30, event_id=40, processing_status="CONFIRMED")
+    db.get(DetectionEvent, 40).purpose = "USER_ANALYSIS"
+    seed_detection(db, object_id=31, event_id=41, detected_at=fixed_now, purpose="OPERATION", processing_status="CONFIRMED")
+    db.add(ObjectClass(id=3, code="BRANCH", name_ko="나뭇가지", group_code="NATURAL", display_order=3, is_active=True, created_at=fixed_now, updated_at=fixed_now))
+    db.add(DetectionEvent(id=42, camera_id=1, purpose="OPERATION", source_type="IMAGE", original_media_url="/uploads/natural.jpg", status="COMPLETED", captured_at=fixed_now, created_at=fixed_now, updated_at=fixed_now))
+    db.add(DetectedObject(id=32, detection_event_id=42, object_class_id=3, processing_status="CONFIRMED", confidence=Decimal("0.9"), bbox_x=Decimal("1"), bbox_y=Decimal("2"), bbox_width=Decimal("30"), bbox_height=Decimal("40"), cropped_image_url=None, appearance_count=1, detected_at=fixed_now, created_at=fixed_now))
+    db.commit()
+    monkeypatch.setattr(admin_api, "utc_now", lambda: fixed_now)
+    login(client)
+
+    response = client.get("/api/admin/dashboard", params={"period": "today"})
+
+    assert response.status_code == 200
+    assert response.json()["metrics"]["waste_collection_pending"] == 0
+
+
+def test_dashboard_waste_pending_uses_final_classification_group(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_admin(db)
+    fixed_now = datetime(2026, 1, 2, 3, tzinfo=UTC)
+    seed_detection(db, object_id=10, event_id=20, detected_at=fixed_now, purpose="OPERATION", processing_status="CONFIRMED")
+    db.add(ObjectClass(id=2, code="TRASH", name_ko="쓰레기", group_code="WASTE", display_order=2, is_active=True, created_at=fixed_now, updated_at=fixed_now))
+    db.get(DetectedObject, 10).final_class_code = "TRASH"
+    db.commit()
+    monkeypatch.setattr(admin_api, "utc_now", lambda: fixed_now)
+    login(client)
+
+    response = client.get("/api/admin/dashboard", params={"period": "today"})
+
+    assert response.status_code == 200
+    assert response.json()["metrics"]["waste_collection_pending"] == 1
+
+
+def test_dashboard_waste_pending_excludes_object_reclassified_to_personal_item(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_admin(db)
+    fixed_now = datetime(2026, 1, 2, 3, tzinfo=UTC)
+    seed_waste_detection(db, object_id=30, event_id=40, processing_status="CONFIRMED")
+    db.add(ObjectClass(id=1, code="BAG", name_ko="가방", group_code="PERSONAL_ITEM", display_order=1, is_active=True, created_at=fixed_now, updated_at=fixed_now))
+    db.get(DetectedObject, 30).final_class_code = "BAG"
+    db.commit()
+    monkeypatch.setattr(admin_api, "utc_now", lambda: fixed_now)
+    login(client)
+
+    response = client.get("/api/admin/dashboard", params={"period": "today"})
+
+    assert response.status_code == 200
+    assert response.json()["metrics"]["waste_collection_pending"] == 0
 
 
 def test_dashboard_supports_seven_days_and_all(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:

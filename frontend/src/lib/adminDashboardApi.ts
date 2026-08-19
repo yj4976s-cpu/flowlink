@@ -16,6 +16,7 @@ export type AdminDashboardData = {
     citizen_reports: number;
     citizen_pending: number;
     operation_detection_pending: number;
+    waste_collection_pending: number;
     citizen_review_pending: number;
     ownership_claim_pending: number;
     ownership_return_pending: number;

@@ -32,6 +32,7 @@ MATCHABLE_FOUND_ITEM_STATUSES = ("AVAILABLE",)
 FOUND_ITEM_LIFECYCLE_STATUSES = ("DETECTED", "RECOVERED", "AVAILABLE", "CLAIM_PENDING", "RETURNED", "DISPOSED")
 ACTIVE_OWNERSHIP_CLAIM_STATUSES = ("PENDING", "APPROVED")
 PERSONAL_ITEM_GROUP = "PERSONAL_ITEM"
+WASTE_GROUP = "WASTE"
 
 
 def get_admin_ai_report_data(db: Session) -> dict:
@@ -667,12 +668,42 @@ def get_admin_dashboard_data(db: Session, *, since, period: str = "today", now=N
     personal_items = FoundItem.object_class_id.in_(
         select(ObjectClass.id).where(ObjectClass.group_code == PERSONAL_ITEM_GROUP)
     )
+    original_class = aliased(ObjectClass)
+    final_class = aliased(ObjectClass)
+    waste_collection_completed = (
+        select(ProcessingHistory.id)
+        .where(
+            ProcessingHistory.entity_type == "DETECTED_OBJECT",
+            ProcessingHistory.entity_id == DetectedObject.id,
+            ProcessingHistory.action_type == "WASTE_COLLECTION_COMPLETED",
+        )
+        .exists()
+    )
+    effective_waste_class = or_(
+        and_(DetectedObject.final_class_code.is_not(None), final_class.group_code == WASTE_GROUP),
+        and_(DetectedObject.final_class_code.is_(None), original_class.group_code == WASTE_GROUP),
+    )
 
     def count(model, *conditions) -> int:
         return int(db.scalar(select(func.count(model.id)).where(*conditions)) or 0)
 
     def period_condition(column):
         return column >= since if since is not None else True
+
+    def waste_collection_pending_count() -> int:
+        statement = (
+            select(func.count(DetectedObject.id))
+            .join(DetectionEvent, DetectedObject.detection_event_id == DetectionEvent.id)
+            .join(original_class, DetectedObject.object_class_id == original_class.id)
+            .outerjoin(final_class, DetectedObject.final_class_code == final_class.code)
+            .where(
+                DetectionEvent.purpose == "OPERATION",
+                DetectedObject.processing_status == "CONFIRMED",
+                effective_waste_class,
+                ~waste_collection_completed,
+            )
+        )
+        return int(db.scalar(statement) or 0)
 
     found_items = db.scalars(
         select(FoundItem)
@@ -801,6 +832,7 @@ def get_admin_dashboard_data(db: Session, *, since, period: str = "today", now=N
             "citizen_reports": count(CitizenReport, period_condition(CitizenReport.created_at)),
             "citizen_pending": count(CitizenReport, CitizenReport.status.in_(("PENDING", "UNDER_REVIEW"))),
             "operation_detection_pending": count(DetectedObject, DetectedObject.processing_status == "PENDING", DetectedObject.detection_event.has(DetectionEvent.purpose == "OPERATION")),
+            "waste_collection_pending": waste_collection_pending_count(),
             "citizen_review_pending": count(CitizenReport, CitizenReport.status == "PENDING"),
             "ownership_claim_pending": count(OwnershipClaim, OwnershipClaim.status == "PENDING"),
             "ownership_return_pending": count(OwnershipClaim, OwnershipClaim.status == "APPROVED"),
