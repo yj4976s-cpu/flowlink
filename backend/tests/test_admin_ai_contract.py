@@ -866,12 +866,33 @@ def test_user_analysis_has_no_follow_up_and_is_blocked_by_services(client: TestC
     db.get(DetectionEvent, 40).purpose = "USER_ANALYSIS"
     db.commit(); login(client)
     events = client.get("/api/admin/detections").json()
-    assert {event["purpose"] for event in events} == {"USER_ANALYSIS"}
-    assert all(item["follow_up_kind"] == "NONE" for event in events for item in event["detected_objects"])
+    assert events == []
+    assert client.patch("/api/admin/detected-objects/10", json={"processing_status": "CONFIRMED"}).status_code == 404
     assert client.post("/api/admin/detected-objects/10/found-item").status_code == 409
     assert client.post("/api/admin/detected-objects/30/collect").status_code == 409
     assert db.query(FoundItem).count() == 0
     assert db.query(ProcessingHistory).filter_by(action_type="WASTE_COLLECTION_COMPLETED").count() == 0
+
+
+def test_admin_detection_list_excludes_user_analysis_media_urls(client: TestClient, db: Session) -> None:
+    seed_admin(db)
+    now = datetime(2026, 1, 2, tzinfo=UTC)
+    seed_detection(db, object_id=10, event_id=20, detected_at=now, purpose="OPERATION")
+    seed_detection(db, object_id=11, event_id=21, detected_at=now, purpose="USER_ANALYSIS")
+    db.get(DetectionEvent, 21).original_media_url = "/uploads/user-analysis-original.jpg"
+    db.get(DetectionEvent, 21).result_media_url = "/uploads/user-analysis-result.jpg"
+    db.get(DetectedObject, 11).cropped_image_url = "/uploads/user-analysis-crop.jpg"
+    db.commit(); login(client)
+
+    response = client.get("/api/admin/detections")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [event["purpose"] for event in body] == ["OPERATION"]
+    payload = str(body)
+    assert "user-analysis-original" not in payload
+    assert "user-analysis-result" not in payload
+    assert "user-analysis-crop" not in payload
 
 
 def test_dashboard_uses_kst_today_boundary_and_ai_categories(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1031,3 +1052,17 @@ def test_dashboard_recent_detection_uses_only_renderable_image_media(
 
     assert response.status_code == 200
     assert response.json()["recent_detections"][0]["image_url"] == expected_image_url
+
+
+def test_dashboard_recent_detections_exclude_user_analysis(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_admin(db)
+    fixed_now = datetime(2026, 1, 2, 3, tzinfo=UTC)
+    seed_detection(db, object_id=10, event_id=20, detected_at=fixed_now, purpose="OPERATION")
+    seed_detection(db, object_id=11, event_id=21, detected_at=fixed_now + timedelta(minutes=1), purpose="USER_ANALYSIS")
+    monkeypatch.setattr(admin_api, "utc_now", lambda: fixed_now)
+    login(client)
+
+    response = client.get("/api/admin/dashboard", params={"period": "today"})
+
+    assert response.status_code == 200
+    assert [item["detection_event_id"] for item in response.json()["recent_detections"]] == [20]
