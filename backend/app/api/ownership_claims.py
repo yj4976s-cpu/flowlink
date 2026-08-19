@@ -1,15 +1,25 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import PositiveInt
 from sqlalchemy.orm import Session
 
 from app.core.auth import require_user
 from app.db.session import get_db
 from app.models import User
 from app.schemas.ownership_claim import OwnershipClaimCreateRequest, OwnershipClaimResponse
-from app.services.ownership import create_claim_for_user, list_claims_for_user
+from app.services.ownership import create_claim_for_user, list_claim_progress_for_user, list_claims_for_user
 
 router = APIRouter(prefix="/api/ownership-claims", tags=["ownership-claims"])
+
+
+@router.get("/me/progress", response_model=list[OwnershipClaimResponse], summary="신고별 대표 소유권 요청 일괄 조회")
+def list_my_ownership_claim_progress(
+    current_user: Annotated[User, Depends(require_user)],
+    db: Annotated[Session, Depends(get_db)],
+    lost_report_ids: Annotated[list[PositiveInt], Query(min_length=1, max_length=20)],
+) -> list[OwnershipClaimResponse]:
+    return list_claim_progress_for_user(db, current_user=current_user, lost_report_ids=lost_report_ids)
 
 
 @router.get("/me", response_model=list[OwnershipClaimResponse], summary="내 소유권 확인 요청 목록 조회")

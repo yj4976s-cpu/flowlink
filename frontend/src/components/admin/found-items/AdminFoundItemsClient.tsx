@@ -311,11 +311,12 @@ export function AdminFoundItemsClient() {
         if (!Number.isFinite(parsedLongitude)) throw new AdminFoundItemsApiError("경도는 숫자로 입력해 주세요.");
         update.longitude = parsedLongitude;
       }
-      if (storage.trim()) update.storage_location = storage.trim();
+      const nextStorage = storage.trim();
+      if (nextStorage !== (selected.storage_location ?? "")) update.storage_location = nextStorage;
       if (memo.trim()) update.admin_memo = memo.trim();
       await updateAdminFoundItem(selected.id, update);
       setPageMessage(`발견물 #${selected.id}의 관리 정보를 저장했습니다.`);
-      setStorage(storage.trim());
+      setStorage(nextStorage);
       setMemo("");
       setLatitude("");
       setLongitude("");
@@ -323,7 +324,7 @@ export function AdminFoundItemsClient() {
       const updatedStatus = status;
       const updatedArea = area.trim();
       setSelected((current) => current
-        ? { ...current, status: updatedStatus, area_name: updatedArea || current.area_name, storage_location: storage.trim() || current.storage_location }
+        ? { ...current, status: updatedStatus, area_name: updatedArea || current.area_name, storage_location: nextStorage || null }
         : current);
       await load();
       if (statusFilter && updatedStatus !== statusFilter) applyClose();

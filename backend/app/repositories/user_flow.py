@@ -405,6 +405,42 @@ def list_matches_for_user(
     return db.scalars(statement).all()
 
 
+def list_matches_for_user_reports(
+    db: Session,
+    user_id: int,
+    lost_report_ids: Sequence[int],
+) -> Sequence[MatchCandidate]:
+    if not lost_report_ids:
+        return []
+    statement = (
+        select(MatchCandidate)
+        .join(MatchCandidate.lost_report)
+        .join(MatchCandidate.found_item)
+        .options(
+            joinedload(MatchCandidate.lost_report).joinedload(LostReport.object_class),
+            joinedload(MatchCandidate.found_item).joinedload(FoundItem.object_class),
+            joinedload(MatchCandidate.found_item).joinedload(FoundItem.detected_object).joinedload(DetectedObject.detection_event),
+            joinedload(MatchCandidate.found_item).selectinload(FoundItem.citizen_reports),
+        )
+        .where(
+            LostReport.user_id == user_id,
+            MatchCandidate.lost_report_id.in_(lost_report_ids),
+            MatchCandidate.status != "DISMISSED",
+            or_(
+                MatchCandidate.status == "CLAIMED",
+                FoundItem.status.in_(MATCHABLE_FOUND_ITEM_STATUSES),
+            ),
+        )
+        .order_by(
+            MatchCandidate.lost_report_id,
+            MatchCandidate.total_score.desc(),
+            MatchCandidate.created_at.desc(),
+            MatchCandidate.id.desc(),
+        )
+    )
+    return db.scalars(statement).all()
+
+
 def add_notification(db: Session, notification: Notification) -> Notification:
     db.add(notification)
     db.flush()
@@ -524,6 +560,45 @@ def list_ownership_claims_for_user(
         .order_by(OwnershipClaim.created_at.desc(), OwnershipClaim.id.desc())
         .offset(skip)
         .limit(limit)
+    )
+    return db.scalars(statement).all()
+
+
+def list_representative_ownership_claims_for_user_reports(
+    db: Session,
+    user_id: int,
+    lost_report_ids: Sequence[int],
+) -> Sequence[OwnershipClaim]:
+    if not lost_report_ids:
+        return []
+    priority = case(
+        (OwnershipClaim.status == "RETURNED", 3),
+        (OwnershipClaim.status == "APPROVED", 2),
+        (OwnershipClaim.status == "PENDING", 1),
+        (OwnershipClaim.status == "REJECTED", 0),
+        else_=-1,
+    )
+    ranked = (
+        select(
+            OwnershipClaim.id.label("claim_id"),
+            func.row_number().over(
+                partition_by=OwnershipClaim.lost_report_id,
+                order_by=(priority.desc(), OwnershipClaim.created_at.desc(), OwnershipClaim.id.desc()),
+            ).label("claim_rank"),
+        )
+        .join(LostReport, LostReport.id == OwnershipClaim.lost_report_id)
+        .where(
+            OwnershipClaim.user_id == user_id,
+            LostReport.user_id == user_id,
+            OwnershipClaim.lost_report_id.in_(lost_report_ids),
+        )
+        .subquery()
+    )
+    statement = (
+        select(OwnershipClaim)
+        .join(ranked, ranked.c.claim_id == OwnershipClaim.id)
+        .where(ranked.c.claim_rank == 1)
+        .order_by(OwnershipClaim.lost_report_id, OwnershipClaim.id)
     )
     return db.scalars(statement).all()
 

@@ -63,6 +63,12 @@ function formatNotificationMessage(notification: NotificationResponse) {
 }
 
 function getNotificationAction(notification: NotificationResponse) {
+  if (notification.notification_type === "MATCH_FOUND" && notification.related_type === "LOST_REPORT" && notification.related_id !== null) {
+    return {
+      href: `/matches?reportId=${notification.related_id}`,
+      label: "매칭 후보 확인하기",
+    };
+  }
   if (notification.notification_type === "MATCH_FOUND" && notification.related_type === "MATCH_CANDIDATE") {
     return {
       href: "/matches",

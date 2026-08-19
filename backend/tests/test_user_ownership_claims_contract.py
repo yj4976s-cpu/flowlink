@@ -176,6 +176,46 @@ def test_my_ownership_claims_support_pagination(client: TestClient, db: Session)
     assert client.get("/api/ownership-claims/me", params={"limit": 101}).status_code == 422
 
 
+def test_claim_progress_batch_returns_one_ranked_claim_per_owned_visible_report(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    seed_user(db, 1); seed_user(db, 2); seed_catalog(db, range(10, 120))
+    db.add_all([
+        LostReport(id=50, user_id=1, object_class_id=1, colors=[], description="visible", area_name="서울", lost_from=now, status="CLAIM_PENDING", created_at=now, updated_at=now),
+        LostReport(id=60, user_id=1, object_class_id=1, colors=[], description="history", area_name="서울", lost_from=now, status="MATCHED", created_at=now, updated_at=now),
+        LostReport(id=70, user_id=2, object_class_id=1, colors=[], description="foreign", area_name="서울", lost_from=now, status="CLAIM_PENDING", created_at=now, updated_at=now),
+    ])
+    statuses = ["REJECTED", "PENDING", "APPROVED", "RETURNED"]
+    for index, status in enumerate(statuses):
+        db.add(OwnershipClaim(id=300 + index, user_id=1, found_item_id=10 + index, lost_report_id=50, verification_details=status, status=status, created_at=now + timedelta(minutes=index), updated_at=now))
+    for index in range(101):
+        db.add(OwnershipClaim(id=1000 + index, user_id=1, found_item_id=14 + index, lost_report_id=60, verification_details="history", status="REJECTED", created_at=now + timedelta(hours=index), updated_at=now))
+    db.add(OwnershipClaim(id=500, user_id=2, found_item_id=119, lost_report_id=70, verification_details="foreign", status="RETURNED", created_at=now, updated_at=now))
+    db.commit(); login(client, 1)
+
+    response = client.get("/api/ownership-claims/me/progress", params=[("lost_report_ids", 50), ("lost_report_ids", 60), ("lost_report_ids", 70)])
+
+    assert response.status_code == 200
+    assert [(claim["lost_report_id"], claim["status"], claim["id"]) for claim in response.json()] == [(50, "RETURNED", 303), (60, "REJECTED", 1100)]
+    assert all(claim["user_id"] == 1 for claim in response.json())
+
+
+def test_claim_progress_batch_uses_created_at_then_id_as_tie_break(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    seed_user(db, 1); seed_catalog(db, range(10, 13))
+    db.add(LostReport(id=50, user_id=1, object_class_id=1, colors=[], description="visible", area_name="서울", lost_from=now, status="CLAIM_PENDING", created_at=now, updated_at=now))
+    db.add_all([
+        OwnershipClaim(id=300, user_id=1, found_item_id=10, lost_report_id=50, verification_details="older", status="PENDING", created_at=now - timedelta(minutes=1), updated_at=now),
+        OwnershipClaim(id=301, user_id=1, found_item_id=11, lost_report_id=50, verification_details="same time lower id", status="PENDING", created_at=now, updated_at=now),
+        OwnershipClaim(id=302, user_id=1, found_item_id=12, lost_report_id=50, verification_details="same time higher id", status="PENDING", created_at=now, updated_at=now),
+    ])
+    db.commit(); login(client, 1)
+
+    response = client.get("/api/ownership-claims/me/progress", params={"lost_report_ids": 50})
+
+    assert response.status_code == 200
+    assert [(claim["status"], claim["id"]) for claim in response.json()] == [("PENDING", 302)]
+
+
 def test_create_ownership_claim_still_works(client: TestClient, db: Session) -> None:
     seed_user(db, 1)
     seed_catalog(db, range(10, 11))

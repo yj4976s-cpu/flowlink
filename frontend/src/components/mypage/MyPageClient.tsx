@@ -6,10 +6,10 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Icon, type IconName } from "@/components/common/Icon";
 import { AuthApiError, AuthUser, changePassword, deleteAccount, getCurrentUser, updateNickname } from "@/lib/authApi";
 import { listMyLostReports, LostReportResponse } from "@/lib/lostReportsApi";
-import { listMyMatches, MatchCandidate, resolveMatchImageUrl } from "@/lib/matchesApi";
+import { listMyProgressMatches, MatchCandidate, resolveMatchImageUrl } from "@/lib/matchesApi";
 import { listNotifications, NotificationResponse } from "@/lib/notificationsApi";
 import { listMyCitizenReports } from "@/lib/citizenReportsApi";
-import { listMyOwnershipClaims, type OwnershipClaimResponse } from "@/lib/ownershipClaimsApi";
+import { listMyOwnershipClaimProgress, type OwnershipClaimResponse } from "@/lib/ownershipClaimsApi";
 import type { CitizenReport } from "@/types/discoveryNetwork";
 import { getItemTypeMeta } from "@/lib/itemTypeMeta";
 import { deriveLostReportProgress, LostReportProgress, type LostReportProgressModel } from "./LostReportProgress";
@@ -141,9 +141,19 @@ export function MyPageClient() {
   useEffect(() => {
     const controller = new AbortController();
     getCurrentUser().then(async (user) => {
-      const [reportsResult, matchesResult, claimsResult, notificationsResult, citizenResult] = await Promise.allSettled([
-        listMyLostReports(controller.signal), listMyMatches(controller.signal), listMyOwnershipClaims(controller.signal), listNotifications("all", controller.signal), listMyCitizenReports(controller.signal),
+      const [reportsResult, notificationsResult, citizenResult] = await Promise.allSettled([
+        listMyLostReports(controller.signal), listNotifications("all", controller.signal), listMyCitizenReports(controller.signal),
       ]);
+      if (controller.signal.aborted) return;
+      const visibleReportIds = reportsResult.status === "fulfilled" ? reportsResult.value.map((report) => report.id) : [];
+      let matchesResult: PromiseSettledResult<MatchCandidate[]> = { status: "fulfilled", value: [] };
+      let claimsResult: PromiseSettledResult<OwnershipClaimResponse[]> = { status: "fulfilled", value: [] };
+      if (visibleReportIds.length) {
+        [matchesResult, claimsResult] = await Promise.allSettled([
+          listMyProgressMatches(visibleReportIds, controller.signal),
+          listMyOwnershipClaimProgress(visibleReportIds, controller.signal),
+        ]);
+      }
       if (controller.signal.aborted) return;
       const failed: string[] = [];
       if (reportsResult.status === "rejected") failed.push("reports");

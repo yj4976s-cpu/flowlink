@@ -13,6 +13,9 @@ const TOAST_VISIBLE_MS = 10000;
 const TOAST_LIMIT = 3;
 
 function toastMeta(notification: NotificationResponse): { label: string; icon: IconName; href: string; action: string } | null {
+  if (notification.notification_type === "MATCH_FOUND" && notification.related_type === "LOST_REPORT" && notification.related_id !== null) {
+    return { label: "매칭", icon: "match", href: `/matches?reportId=${notification.related_id}`, action: "매칭 후보 확인하기" };
+  }
   if (notification.notification_type === "MATCH_FOUND" && notification.related_type === "MATCH_CANDIDATE") {
     return { label: "매칭", icon: "match", href: "/matches", action: "매칭 후보 확인하기" };
   }

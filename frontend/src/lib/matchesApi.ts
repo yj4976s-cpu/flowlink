@@ -83,6 +83,12 @@ export function listMyMatchesForReport(lostReportId: number, signal?: AbortSigna
   );
 }
 
+export function listMyProgressMatches(lostReportIds: number[], signal?: AbortSignal) {
+  const url = new URL(`${getApiBaseUrl()}/api/matches/me/progress`);
+  lostReportIds.forEach((id) => url.searchParams.append("lost_report_ids", String(id)));
+  return requestJson<MatchCandidate[]>(url.toString(), signal);
+}
+
 export function resolveMatchImageUrl(value: string | null) {
   if (!value) return null;
   try {

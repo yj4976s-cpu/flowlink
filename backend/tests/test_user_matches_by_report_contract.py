@@ -161,6 +161,32 @@ def test_foreign_report_id_does_not_leak_candidates(client: TestClient, db: Sess
     assert response.json() == []
 
 
+def test_progress_batch_is_report_scoped_beyond_global_limit_and_blocks_foreign_reports(client: TestClient, db: Session) -> None:
+    seed_data(db)
+    now = utc_now()
+    for index in range(101):
+        item_id = 2000 + index
+        db.add(FoundItem(id=item_id, object_class_id=1, source_type="ADMIN", area_name="서울", found_at=now, status="AVAILABLE", is_public=True, created_at=now, updated_at=now))
+        db.add(MatchCandidate(id=item_id, lost_report_id=10, found_item_id=item_id, total_score=1000 - index, type_score=40, area_score=25, time_score=20, keyword_score=15, status="NOTIFIED", created_at=now, updated_at=now))
+    db.commit()
+    login(client)
+
+    global_matches = client.get("/api/matches/me", params={"limit": 100}).json()
+    response = client.get("/api/matches/me/progress", params=[("lost_report_ids", 20), ("lost_report_ids", 30)])
+
+    assert all(match["lost_report"]["id"] != 20 for match in global_matches)
+    assert response.status_code == 200
+    assert [match["id"] for match in response.json()] == [127, 126, 125]
+    assert {match["lost_report"]["id"] for match in response.json()} == {20}
+
+
+def test_progress_batch_rejects_empty_oversized_and_invalid_report_lists(client: TestClient, db: Session) -> None:
+    seed_data(db); login(client)
+    assert client.get("/api/matches/me/progress").status_code == 422
+    assert client.get("/api/matches/me/progress", params={"lost_report_ids": 0}).status_code == 422
+    assert client.get("/api/matches/me/progress", params=[("lost_report_ids", value) for value in range(1, 22)]).status_code == 422
+
+
 def test_stale_candidate_for_unmatchable_item_is_hidden_but_claimed_candidate_remains_visible(
     client: TestClient,
     db: Session,

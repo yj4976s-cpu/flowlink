@@ -496,6 +496,20 @@ def test_non_matching_or_unchanged_patch_skips_reconciliation(client: TestClient
     assert candidate is not None and (candidate.status, candidate.total_score, candidate.area_score) == ("NOTIFIED", 85, 25)
 
 
+def test_admin_can_clear_found_item_storage_location(client: TestClient, db: Session) -> None:
+    seed_admin(db)
+    item = seed_admin_found_item(db)
+    item.storage_location = "보관함 B"
+    db.commit()
+    login(client)
+
+    response = client.patch("/api/admin/found-items/3", json={"storage_location": ""})
+
+    assert response.status_code == 200
+    db.expire_all()
+    assert db.get(FoundItem, 3).storage_location is None
+
+
 def test_coordinate_change_runs_reconciliation(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
     seed_admin(db)
     seed_found_item_match(db, days_after_loss=1)
