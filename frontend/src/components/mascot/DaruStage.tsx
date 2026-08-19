@@ -149,7 +149,7 @@ export function DaruStage() {
   }, [roaming]);
 
   const handlePointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
-    if (mode === "hidden" || window.matchMedia("(max-width: 600px)").matches) return;
+    if (mode === "hidden") return;
     event.preventDefault();
     let dragOrigin = { x: position.x, y: position.y };
     const translated = stageRef.current ? getComputedStyle(stageRef.current).translate.split(" ") : [];
@@ -157,7 +157,6 @@ export function DaruStage() {
     const translatedY = Number.parseFloat(translated[1] ?? "0");
     if (Number.isFinite(translatedX) && Number.isFinite(translatedY)) dragOrigin = { x: translatedX, y: translatedY };
     freezeRoaming();
-    setGuideOpen(false);
     event.currentTarget.setPointerCapture(event.pointerId);
     dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, originX: dragOrigin.x, originY: dragOrigin.y, moved: false };
     setInteraction("none");
@@ -170,7 +169,10 @@ export function DaruStage() {
     if (!drag || drag.pointerId !== event.pointerId) return;
     const dx = event.clientX - drag.startX;
     const dy = event.clientY - drag.startY;
-    if (Math.hypot(dx, dy) > 5) drag.moved = true;
+    if (!drag.moved && Math.hypot(dx, dy) > 5) {
+      drag.moved = true;
+      setGuideOpen(false);
+    }
     setPosition(clampPosition(drag.originX + dx, drag.originY + dy));
   }, [clampPosition]);
 
