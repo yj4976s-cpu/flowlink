@@ -93,3 +93,16 @@ export async function createOwnershipClaim(request: OwnershipClaimCreateRequest)
 
   return response.json() as Promise<OwnershipClaimResponse>;
 }
+
+export async function listMyOwnershipClaims(signal?: AbortSignal) {
+  const response = await fetch(`${buildApiUrl("/api/ownership-claims/me")}?skip=0&limit=100`, {
+    credentials: "include",
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new OwnershipClaimsApiError(await readErrorMessage(response), response.status);
+  }
+
+  return response.json() as Promise<OwnershipClaimResponse[]>;
+}

@@ -237,7 +237,7 @@ function RecommendationCard({ match }: { match: MatchCandidate }) {
     <ItemVisual item={match.found_item} />
     <div><span className={styles.similarity}>{match.total_score}점 · 일치 가능성 높음</span><h3>{match.found_item.public_description || match.found_item.item_category_name}</h3>
       <p>{match.found_item.area_name}</p><p>{format(match.found_item.found_at)} · AI 탐지</p>
-      <Link className="button button-secondary" href={`/matches?matchId=${match.id}`}>비교하기</Link></div>
+      <Link className="button button-secondary" href={`/matches?reportId=${match.lost_report.id}&matchId=${match.id}`}>비교하기</Link></div>
   </article>;
 }
 

@@ -10,42 +10,40 @@ import { NotificationToastHost } from "@/components/notifications/NotificationTo
 import { DaruSettings } from "@/components/mascot";
 import { AuthUser, getCurrentUser, logout as logoutRequest } from "@/lib/authApi";
 
-const userNavigation = [
-  { label: "AI 탐지", href: "/detect" },
-  {
-    label: "발견물 센터",
-    href: "/found-items",
-    children: [
-      { label: "발견물 목록", href: "/found-items" },
-      { label: "발견물 지도", href: "/map" },
-    ],
-  },
-  { label: "커뮤니티", href: "/community" },
-  { label: "서비스 소개", href: "/about" },
-  { label: "이용 안내", href: "/guide" },
-] as const;
+type NavigationItem = {
+  label: string;
+  href: string;
+  children?: readonly { label: string; href: string }[];
+  activePaths?: readonly string[];
+};
 
-const adminNavigation = [
-  { label: "대시보드", href: "/admin" },
+const userNavigation: readonly NavigationItem[] = [
+  { label: "물건을 잃어버렸어요", href: "/lost-reports/new" },
+  { label: "발견물 찾아보기", href: "/found-items" },
+  { label: "물건을 발견했어요", href: "/detect" },
+  { label: "내 진행 상황", href: "/mypage" },
+];
+
+const adminNavigation: readonly NavigationItem[] = [
   {
-    label: "검토 업무",
-    href: "/admin/detections",
-    children: [
-      { label: "AI 탐지 관리", href: "/admin/detections" },
-      { label: "제보 관리", href: "/admin/citizen-reports" },
-      { label: "소유권 요청", href: "/admin/ownership-claims" },
-    ],
+    label: "업무 처리",
+    href: "/admin",
+    activePaths: ["/admin", "/admin/detections", "/admin/citizen-reports", "/admin/ownership-claims"],
   },
-  { label: "발견물 관리", href: "/admin/found-items" },
   {
-    label: "운영 도구",
-    href: "/admin/map",
-    children: [
-      { label: "운영 지도", href: "/admin/map" },
-      { label: "AI 탐지 리포트", href: "/admin/ai-report" },
-    ],
+    label: "발견물 대장",
+    href: "/admin/found-items",
+    activePaths: ["/admin/found-items", "/admin/map"],
   },
-] as const;
+  { label: "AI 성능 분석", href: "/admin/ai-report", activePaths: ["/admin/ai-report"] },
+];
+
+function isNavigationItemCurrent(item: NavigationItem, pathname: string) {
+  if (item.activePaths) {
+    return item.activePaths.some((path) => pathname === path || (path !== "/admin" && pathname.startsWith(`${path}/`)));
+  }
+  return pathname === item.href || pathname.startsWith(`${item.href}/`);
+}
 
 function LogoutConfirmDialog({ user, pending, error, onCancel, onConfirm }: { user: AuthUser; pending: boolean; error: string; onCancel: () => void; onConfirm: () => void }) {
   const dialogRef = useRef<HTMLElement>(null);
@@ -183,9 +181,9 @@ export function Header() {
   const requestLogout = () => { setLogoutError(""); setLogoutConfirm(true); };
   const continueSession = () => { if (!logoutPending) { setLogoutConfirm(false); setLogoutError(""); window.setTimeout(() => logoutTriggerRef.current?.focus()); } };
   const renderDesktopNavItem = (item: (typeof navigation)[number]) => {
-    const isCurrent = pathname === item.href;
-    const isGroupCurrent = "children" in item && item.children.some((child) => pathname === child.href || pathname.startsWith(`${child.href}/`));
-    if ("children" in item) {
+    const isCurrent = isNavigationItemCurrent(item, pathname);
+    const isGroupCurrent = item.children?.some((child) => pathname === child.href || pathname.startsWith(`${child.href}/`)) ?? false;
+    if (item.children?.length) {
       const expanded = openNavGroup === item.label;
       return (
         <div
@@ -238,7 +236,7 @@ export function Header() {
                   <span>{currentUser.email}</span>
                 </div>
                 <div className="profile-dropdown-links">
-                  <Link href={isAdmin ? "/admin" : "/mypage"} role="menuitem" onClick={() => setProfileOpen(false)}><Icon name="user" size={18} />{isAdmin ? "관리자 정보" : "마이페이지"}</Link>
+                  <Link href={isAdmin ? "/admin" : "/mypage"} role="menuitem" onClick={() => setProfileOpen(false)}><Icon name="user" size={18} />{isAdmin ? "관리자 정보" : "내 진행 상황"}</Link>
                   {!isAdmin && <Link href="/notifications" role="menuitem" onClick={() => setProfileOpen(false)}><Icon name="bell" size={18} />알림</Link>}
                 </div>
                 <button ref={logoutTriggerRef} type="button" role="menuitem" onClick={requestLogout}><Icon name="logout" size={18} />로그아웃</button>
@@ -266,14 +264,14 @@ export function Header() {
         <div ref={menuRef} id="mobile-menu" className="mobile-menu is-open">
           <nav aria-label="모바일 메뉴">
             {authResolved && navigation.map((item) => {
-              const isCurrent = pathname === item.href;
-              const groupCurrent = "children" in item && item.children.some((child) => pathname === child.href || pathname.startsWith(`${child.href}/`));
+              const isCurrent = isNavigationItemCurrent(item, pathname);
+              const groupCurrent = item.children?.some((child) => pathname === child.href || pathname.startsWith(`${child.href}/`)) ?? false;
               return (
                 <Fragment key={item.label}>
                   <Link href={item.href} onClick={closeMenu} aria-current={isCurrent ? "page" : undefined} data-active={groupCurrent || isCurrent}>
                     {item.label}
                   </Link>
-                  {"children" in item && item.children.map((child) => {
+                  {item.children?.map((child) => {
                     const childCurrent = pathname === child.href || pathname.startsWith(`${child.href}/`);
                     return <Link className="mobile-sub-link" key={child.href} href={child.href} onClick={closeMenu} aria-current={childCurrent ? "page" : undefined}>{child.label}</Link>;
                   })}
@@ -282,7 +280,7 @@ export function Header() {
             })}
             {currentUser ? (
               <>
-                <Link href={isAdmin ? "/admin" : "/mypage"} onClick={closeMenu}>{isAdmin ? "관리자 정보" : "마이페이지"}</Link>
+                {isAdmin && <Link href="/admin" onClick={closeMenu}>관리자 정보</Link>}
                 {!isAdmin && <Link href="/notifications" onClick={closeMenu}>알림</Link>}
                 <button className="mobile-auth-button" type="button" onClick={requestLogout}>로그아웃</button>
               </>
