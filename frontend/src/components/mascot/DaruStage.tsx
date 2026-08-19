@@ -87,7 +87,7 @@ export function DaruStage() {
 
   const closeGuide = useCallback(() => {
     setGuideOpen(false);
-    window.setTimeout(() => stageRef.current?.querySelector<HTMLButtonElement>(`.${styles.character}`)?.focus());
+    window.setTimeout(() => stageRef.current?.querySelector<HTMLButtonElement>(`.${styles.guideTrigger}`)?.focus());
   }, []);
 
   useEffect(() => {
@@ -261,11 +261,18 @@ export function DaruStage() {
   }, []);
 
   if (mode === "hidden") return null;
-  const toggleGuide = () => {
+  const handleGuideToggle = () => {
     const rect = stageRef.current?.getBoundingClientRect();
     if (rect) { setPanelSide(rect.left < 330 ? "left" : "right"); setPanelVertical(rect.top < 430 ? "below" : "above"); }
     if (!guideOpen) freezeRoaming();
     setGuideOpen((open) => !open);
+  };
+
+  const handleCharacterClick = () => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
     playOneShot("CLICK", 520);
   };
 
@@ -299,7 +306,7 @@ export function DaruStage() {
   return (
     <aside ref={stageRef} className={styles.stage} data-daru-stage="true" data-dragging={dragging || undefined} data-guide-open={guideOpen || undefined} data-roaming={roaming || undefined} data-panel-side={panelSide} data-panel-vertical={panelVertical} data-occluded={occluded || undefined} style={{ "--daru-x": `${position.x}px`, "--daru-y": `${position.y}px`, "--daru-roam-duration": `${roamDuration}ms` } as React.CSSProperties} aria-label="FlowLink 마스코트 다루">
       {guideOpen && <DaruGuidePanel role={guideRole} userPaused={userPaused} reducedMotion={reducedMotion} onClose={closeGuide} onToggleRoaming={toggleUserPaused} />}
-      <DaruMascot action={action} mode={mode} message={message} reducedMotion={reducedMotion} dragging={dragging} guideOpen={guideOpen} rendererState={rendererState} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onHover={() => { if (!roaming) playOneShot("HOVER", 480); }} onInteract={() => { if (suppressClickRef.current) { suppressClickRef.current = false; return; } toggleGuide(); }} onGuide={toggleGuide} />
+      <DaruMascot action={action} mode={mode} message={message} reducedMotion={reducedMotion} dragging={dragging} guideOpen={guideOpen} rendererState={rendererState} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onHover={() => { if (!roaming) playOneShot("HOVER", 480); }} onInteract={handleCharacterClick} onGuide={handleGuideToggle} />
     </aside>
   );
 }
