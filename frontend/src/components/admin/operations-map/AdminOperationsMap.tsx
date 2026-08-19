@@ -202,7 +202,7 @@ export function AdminOperationsMap() {
   const workspace = <div className={styles.workspace}><MapCanvas {...workspaceProps} /><OperationsPanel marker={selected} onCameraOnly={(id) => { setCameraOnly(id); setFilter("detection"); setSelectedId(null); }} /></div>;
 
   return <main className={styles.page}>
-    <header className={styles.intro}><div><p>ADMIN · FOUND ITEM MAP</p><h1>발견물 대장 · 지도 보기</h1><span>발견물과 관련 운영 정보의 위치를 공간 기준으로 확인합니다.</span></div><nav className={styles.viewSwitch} aria-label="발견물 대장 보기 방식"><Link href="/admin/found-items"><Icon name="archive" size={15} />목록 보기</Link><Link href="/admin/map" aria-current="page"><Icon name="location" size={15} />지도 보기</Link></nav></header>
+    <header className={styles.intro}><div><p>ADMIN · FOUND ITEM MAP</p><h1>발견물 관리 · 지도</h1><span>발견물과 관련 운영 정보의 위치를 공간 기준으로 확인합니다.</span></div><nav className={styles.viewSwitch} aria-label="발견물 관리 보기 방식"><Link href="/admin/found-items"><Icon name="archive" size={15} />목록</Link><Link href="/admin/map" aria-current="page"><Icon name="location" size={15} />지도</Link></nav></header>
     <section className={styles.mapCard} aria-label="관리자 운영 지도" aria-hidden={focusOpen || undefined}><div className={styles.cardHeading}><div><span>실시간 운영 현황</span><small>Mock data · 마지막 갱신 10:48</small></div><button ref={focusTrigger} type="button" onClick={() => setFocusOpen(true)}><Icon name="maximize" size={17} />크게 보기</button></div>{toolbar("base-map")}{workspace}</section>
     {focusOpen && <FocusModal onClose={closeFocus}><div className={styles.focusContent}>{toolbar("focus-map")}{workspace}</div></FocusModal>}
   </main>;

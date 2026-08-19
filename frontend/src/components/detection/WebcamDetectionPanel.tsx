@@ -365,7 +365,7 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
         }
       } catch (caught) {
         if (isAbortError(caught) || !mountedRef.current || generation !== loopGenerationRef.current) return;
-        const message = caught instanceof DetectionApiError ? caught.message : "실시간 웹캠 탐지를 처리하지 못했습니다.";
+        const message = caught instanceof DetectionApiError ? caught.message : "카메라로 물건을 확인하지 못했습니다.";
         setError(message);
         setCameraStatus("error");
         return;
@@ -510,9 +510,9 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
       <div className={styles.panelHeading}>
         <div>
           <p className={styles.eyebrow}>LIVE WEBCAM</p>
-          <h2 id="webcam-title">실시간 웹캠 탐지</h2>
+          <h2 id="webcam-title">카메라로 물건 확인</h2>
         </div>
-        <span>{cameraStatus === "running" ? "분석 중" : cameraActive ? "카메라 준비" : "대기"}</span>
+        <span>{cameraStatus === "running" ? "확인 중" : cameraActive ? "카메라 준비" : "대기"}</span>
       </div>
 
       <div className={`${styles.webcamStage} ${expanded ? styles.webcamStageExpanded : ""}`} ref={previewRef}>
@@ -520,8 +520,8 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
         {!cameraActive && (
           <div className={styles.webcamEmpty}>
             <Icon name="scanLine" size={32} />
-            <strong>카메라를 켜고 실시간 탐지를 시작해보세요.</strong>
-            <span>브라우저 권한을 허용하면 현재 화면의 프레임만 서버로 전송해 분석합니다.</span>
+            <strong>카메라를 켜고 물건 확인을 시작해보세요.</strong>
+            <span>브라우저 권한을 허용하면 현재 화면의 프레임만 서버로 전송해 확인합니다.</span>
           </div>
         )}
         {cameraStatus === "running" && <span className={styles.liveBadge}>LIVE</span>}
@@ -565,11 +565,11 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
         ) : (
           <>
             <button className="button button-primary" type="button" onClick={startDetection} disabled={cameraStatus === "running"}>
-              실시간 탐지 시작
+              물건 확인 시작
               <Icon name="scanLine" size={18} />
             </button>
             <button className="button button-secondary" type="button" onClick={cameraStatus === "running" ? stopDetection : stopCamera}>
-              {cameraStatus === "running" ? "탐지 일시정지" : "카메라 끄기"}
+              {cameraStatus === "running" ? "확인 일시정지" : "카메라 끄기"}
             </button>
           </>
         )}
@@ -579,13 +579,13 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
         <div className={styles.webcamReportPanel}>
           <div>
             <strong>발견 제보로 연결할 수 있는 후보가 있어요.</strong>
-            <span>AI가 실제 탐지한 프레임을 8초 동안 안전하게 보관합니다.</span>
+            <span>발견 제보 선택을 위해 확인 화면을 브라우저에서 최대 8초간 임시 보관합니다.</span>
           </div>
           <div className={styles.webcamReportActions}>
             {candidates.map((candidate) => <article key={candidate.object.class_code} className={styles.webcamCandidateCard}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={candidate.previewUrl} alt={`${getDisplayLabel(candidate.object)} 탐지 프레임`} />
-              <div><strong>{getDisplayLabel(candidate.object)} 후보를 발견했어요</strong><span>AI 탐지 신뢰도 {formatConfidence(candidate.object.confidence)}</span></div>
+              <img src={candidate.previewUrl} alt={`${getDisplayLabel(candidate.object)} 확인 화면`} />
+              <div><strong>{getDisplayLabel(candidate.object)} 후보를 발견했어요</strong><span>인식 신뢰도 {formatConfidence(candidate.object.confidence)}</span></div>
               <button type="button" onClick={() => openReport(candidate)}>발견 제보하기</button>
               <button type="button" className={styles.webcamCandidateClose} aria-label={`${getDisplayLabel(candidate.object)} 후보 닫기`} onClick={() => dismissCandidate(candidate.object.class_code)}><Icon name="close" size={15} /></button>
             </article>)}
@@ -594,7 +594,7 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
       )}
 
       <p className={styles.webcamNotice}>
-        웹캠 프레임은 저장하지 않고 실시간 탐지 요청에만 사용합니다. 정확한 판단이 필요한 경우 관리자 확인이 필요합니다.
+        카메라 화면은 물건 확인을 위해 서버로 전송되지만 탐지 기록으로 저장하지 않습니다. 발견 제보를 선택한 경우에만 해당 화면을 첨부합니다.
       </p>
     </section>
   );
