@@ -167,6 +167,7 @@ class AdminDashboardMetrics(BaseModel):
     citizen_reports: int
     citizen_pending: int
     operation_detection_pending: int
+    waste_collection_pending: int
     citizen_review_pending: int
     ownership_claim_pending: int
     ownership_return_pending: int
