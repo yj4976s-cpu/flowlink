@@ -9,7 +9,7 @@ import styles from "./DaruSettings.module.css";
 const options: Array<{ value: DaruMode; label: string; description: string }> = [
   { value: "active", label: "함께하기", description: "서비스 상황에 맞춰 다루가 반응해요." },
   { value: "quiet", label: "조용히 있기", description: "말풍선 없이 필요한 움직임만 보여요." },
-  { value: "hidden", label: "숨기기", description: "다루를 화면에서 숨겨요." },
+  { value: "hidden", label: "퇴근하기", description: "다루를 화면에서 숨겨요." },
 ];
 
 export function DaruSettings() {
