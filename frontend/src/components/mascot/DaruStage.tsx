@@ -85,15 +85,17 @@ export function DaruStage() {
     animationTimerRef.current = window.setTimeout(() => { setInteraction("none"); animationTimerRef.current = null; }, duration);
   }, [reducedMotion]);
 
-  const closeGuide = useCallback(() => {
+  const closeGuide = useCallback(({ restoreFocus = false }: { restoreFocus?: boolean } = {}) => {
     setGuideOpen(false);
-    window.setTimeout(() => stageRef.current?.querySelector<HTMLButtonElement>(`.${styles.guideTrigger}`)?.focus());
+    if (restoreFocus) {
+      window.setTimeout(() => stageRef.current?.querySelector<HTMLButtonElement>(`.${styles.guideTrigger}`)?.focus());
+    }
   }, []);
 
   useEffect(() => {
     if (!guideOpen) return;
-    const closeOnOutside = (event: PointerEvent) => { if (!stageRef.current?.contains(event.target as Node)) closeGuide(); };
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); closeGuide(); } };
+    const closeOnOutside = (event: PointerEvent) => { if (!stageRef.current?.contains(event.target as Node)) setGuideOpen(false); };
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); closeGuide({ restoreFocus: true }); } };
     document.addEventListener("pointerdown", closeOnOutside);
     window.addEventListener("keydown", closeOnEscape);
     stageRef.current?.querySelector<HTMLElement>(`.${styles.guidePanel} a, .${styles.guidePanel} button`)?.focus();
@@ -149,7 +151,10 @@ export function DaruStage() {
   }, [roaming]);
 
   const handlePointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
-    if (mode === "hidden") return;
+    if (
+      mode === "hidden" ||
+      window.matchMedia("(max-width: 600px)").matches
+    ) return;
     event.preventDefault();
     let dragOrigin = { x: position.x, y: position.y };
     const translated = stageRef.current ? getComputedStyle(stageRef.current).translate.split(" ") : [];
@@ -186,6 +191,18 @@ export function DaruStage() {
     setLocomotion("land");
     if (locomotionTimerRef.current !== null) window.clearTimeout(locomotionTimerRef.current);
     locomotionTimerRef.current = window.setTimeout(() => { setLocomotion("idle"); locomotionTimerRef.current = null; }, DARU_GROUNDED_ROAMING_CONFIG.stopWalkMs);
+  }, []);
+
+  const handlePointerCancel = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    suppressClickRef.current = false;
+    dragRef.current = null;
+    setDragging(false);
+    if (locomotionTimerRef.current !== null) window.clearTimeout(locomotionTimerRef.current);
+    locomotionTimerRef.current = null;
+    setLocomotion("idle");
   }, []);
 
   useEffect(() => {
@@ -308,7 +325,7 @@ export function DaruStage() {
   return (
     <aside ref={stageRef} className={styles.stage} data-daru-stage="true" data-dragging={dragging || undefined} data-guide-open={guideOpen || undefined} data-roaming={roaming || undefined} data-panel-side={panelSide} data-panel-vertical={panelVertical} data-occluded={occluded || undefined} style={{ "--daru-x": `${position.x}px`, "--daru-y": `${position.y}px`, "--daru-roam-duration": `${roamDuration}ms` } as React.CSSProperties} aria-label="FlowLink 마스코트 다루">
       {guideOpen && <DaruGuidePanel role={guideRole} userPaused={userPaused} reducedMotion={reducedMotion} onClose={closeGuide} onToggleRoaming={toggleUserPaused} />}
-      <DaruMascot action={action} mode={mode} message={message} reducedMotion={reducedMotion} dragging={dragging} guideOpen={guideOpen} rendererState={rendererState} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onHover={() => { if (!roaming) playOneShot("HOVER", 480); }} onInteract={handleCharacterClick} onGuide={handleGuideToggle} />
+      <DaruMascot action={action} mode={mode} message={message} reducedMotion={reducedMotion} dragging={dragging} guideOpen={guideOpen} rendererState={rendererState} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerCancel} onHover={() => { if (!roaming) playOneShot("HOVER", 480); }} onInteract={handleCharacterClick} onGuide={handleGuideToggle} />
     </aside>
   );
 }
