@@ -193,7 +193,7 @@ def update_detected_object(
     request: DetectedObjectUpdateRequest,
 ) -> MessageResponse:
     item = get_detected_object_by_id(db, id)
-    if item is None:
+    if item is None or item.detection_event.purpose != "OPERATION":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Detected object not found")
     previous_status = item.processing_status
     follow_up_completed = item.found_item is not None or item.id in waste_collection_completed_ids(db, [item.id])

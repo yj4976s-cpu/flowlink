@@ -490,6 +490,7 @@ def list_detection_events(db: Session, *, skip: int, limit: int) -> Sequence[Det
             selectinload(DetectionEvent.detected_objects).joinedload(DetectedObject.final_class),
             selectinload(DetectionEvent.detected_objects).joinedload(DetectedObject.found_item),
         )
+        .where(DetectionEvent.purpose == "OPERATION")
         .order_by(DetectionEvent.captured_at.desc(), DetectionEvent.id.desc())
         .offset(skip)
         .limit(limit)
@@ -722,15 +723,20 @@ def get_admin_dashboard_data(db: Session, *, since, period: str = "today", now=N
             joinedload(DetectedObject.object_class),
             joinedload(DetectedObject.detection_event),
         )
-        .where(period_condition(DetectedObject.detected_at))
+        .where(
+            period_condition(DetectedObject.detected_at),
+            DetectedObject.detection_event.has(DetectionEvent.purpose == "OPERATION"),
+        )
         .order_by(DetectedObject.detected_at.desc(), DetectedObject.id.desc())
         .limit(4)
     ).all()
     category_rows = db.execute(
         select(ObjectClass.code, ObjectClass.name_ko, func.count(DetectedObject.id))
         .join(DetectedObject, DetectedObject.object_class_id == ObjectClass.id)
+        .join(DetectionEvent, DetectedObject.detection_event_id == DetectionEvent.id)
         .where(
             period_condition(DetectedObject.detected_at),
+            DetectionEvent.purpose == "OPERATION",
             ObjectClass.group_code == PERSONAL_ITEM_GROUP,
         )
         .group_by(ObjectClass.code, ObjectClass.name_ko)
@@ -773,7 +779,10 @@ def get_admin_dashboard_data(db: Session, *, since, period: str = "today", now=N
         return result
     found_group, match_group, return_group = grouped(found_dates), grouped(match_dates), grouped(return_dates)
     average_confidence = db.scalar(
-        select(func.avg(DetectedObject.confidence)).where(period_condition(DetectedObject.detected_at))
+        select(func.avg(DetectedObject.confidence)).where(
+            period_condition(DetectedObject.detected_at),
+            DetectedObject.detection_event.has(DetectionEvent.purpose == "OPERATION"),
+        )
     )
     latest_match = db.scalar(
         select(MatchCandidate)
@@ -820,7 +829,7 @@ def get_admin_dashboard_data(db: Session, *, since, period: str = "today", now=N
         "period": period,
         "metrics": {
             "discovered": count(FoundItem, period_condition(FoundItem.created_at), personal_items),
-            "ai_detections": count(DetectedObject, period_condition(DetectedObject.detected_at)),
+            "ai_detections": count(DetectedObject, period_condition(DetectedObject.detected_at), DetectedObject.detection_event.has(DetectionEvent.purpose == "OPERATION")),
             "official_found_items": count(FoundItem, period_condition(FoundItem.created_at), personal_items),
             "confirmed": count(FoundItem, period_condition(FoundItem.created_at), personal_items, FoundItem.status.in_(("AVAILABLE", "RECOVERED", "CLAIM_PENDING", "RETURNED"))),
             "matched": count(MatchCandidate, period_condition(MatchCandidate.created_at)),
