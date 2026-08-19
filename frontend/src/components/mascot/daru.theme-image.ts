@@ -21,11 +21,6 @@ function rgbToHsl(red: number, green: number, blue: number) {
   return [(hue / 6) * 360, saturation, lightness] as const;
 }
 
-function isPreGeneratedThemeAsset(src: string, theme: DaruRhythm) {
-  return src.startsWith(`/mascot/sprites/${theme}/`)
-    || src === `/mascot/daru-idle-${theme}.png`;
-}
-
 function isScarfBlue(
   red: number,
   green: number,
@@ -60,7 +55,7 @@ function waitForImage(image: HTMLImageElement) {
 }
 
 export async function loadThemedDaruImageSrc(src: string, theme: DaruRhythm) {
-  if (theme !== "night" || isPreGeneratedThemeAsset(src, theme)) return src;
+  if (theme !== "night") return src;
   const key = `${theme}:${src}`;
   const cached = themedImageCache.get(key);
   if (cached) return cached;
