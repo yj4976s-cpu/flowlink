@@ -1,15 +1,84 @@
-.renderer { position: relative; width: 100%; height: 100%; display: block; transform-origin: 50% 82%; }
-.facing { position: absolute; inset: 0; transform-origin: 50% 78%; }
-.renderer[data-facing="left"] .facing { transform: scaleX(-1); }
-.layer { position: absolute; display: block; transform-origin: var(--layer-origin); will-change: transform; pointer-events: none; }
-.layer img { display: block; width: 100%; height: 100%; object-fit: contain; object-position: center; user-select: none; pointer-events: none; }
-.contactShadow { position: absolute; z-index: 0; left: 24%; bottom: 1.5%; width: 52%; height: 7%; border-radius: 50%; background: color-mix(in srgb, var(--color-text) 13%, transparent); filter: blur(3px); opacity: .62; transform: scaleY(.55); pointer-events: none; }
-.tail { z-index: 1; }
-.backLegFar { z-index: 2; filter: brightness(.94) saturate(.96); }
-.backLegNear { z-index: 3; }
-.body { z-index: 4; }
-.frontLegFar { z-index: 5; filter: brightness(.95) saturate(.97); }
-.frontLegNear { z-index: 6; }
-.scarf { z-index: 7; }
-.head { z-index: 8; }
-@media (prefers-reduced-motion: reduce) { .layer, .facing { transform: none !important; } }
+.renderer {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-origin: 50% 82%;
+}
+
+.facing {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 78%;
+}
+
+.renderer[data-facing="left"] .facing {
+  transform: scaleX(-1);
+}
+
+.layer {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-origin: var(--layer-origin);
+  will-change: transform;
+  pointer-events: none;
+}
+
+.layer img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  user-select: none;
+  pointer-events: none;
+}
+
+.contactShadow {
+  position: absolute;
+  z-index: 0;
+  left: 25%;
+  bottom: 1%;
+  width: 50%;
+  height: 7%;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-text) 13%, transparent);
+  filter: blur(3px);
+  opacity: .62;
+  transform: scaleY(.55);
+  pointer-events: none;
+}
+
+.tail {
+  z-index: 1;
+}
+
+.armFar {
+  z-index: 2;
+}
+
+.legFar {
+  z-index: 3;
+}
+
+.base {
+  z-index: 4;
+}
+
+.legNear {
+  z-index: 5;
+}
+
+.armNear {
+  z-index: 6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .layer,
+  .facing {
+    transform: none !important;
+  }
+}
