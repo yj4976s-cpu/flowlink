@@ -19,6 +19,7 @@ def list_my_matches(
     db: Annotated[Session, Depends(get_db)],
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    lost_report_id: Annotated[int | None, Query(ge=1)] = None,
 ) -> list[MatchCandidateResponse]:
-    matches = list_matches_for_user(db, current_user.id, skip=skip, limit=limit)
+    matches = list_matches_for_user(db, current_user.id, lost_report_id=lost_report_id, skip=skip, limit=limit)
     return [match_candidate_response(match) for match in matches]

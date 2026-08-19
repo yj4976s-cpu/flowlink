@@ -5,8 +5,8 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Select, func, or_, select
-from sqlalchemy.orm import Session, joinedload, selectinload
+from sqlalchemy import Select, String, and_, case, cast, func, or_, select
+from sqlalchemy.orm import Session, aliased, joinedload, selectinload
 
 from app.services.found_item_images import representative_found_item_image_url
 
@@ -29,8 +29,90 @@ KST = ZoneInfo("Asia/Seoul")
 
 PUBLIC_FOUND_ITEM_STATUSES = ("RECOVERED", "AVAILABLE")
 MATCHABLE_FOUND_ITEM_STATUSES = ("AVAILABLE",)
+FOUND_ITEM_LIFECYCLE_STATUSES = ("DETECTED", "RECOVERED", "AVAILABLE", "CLAIM_PENDING", "RETURNED", "DISPOSED")
 ACTIVE_OWNERSHIP_CLAIM_STATUSES = ("PENDING", "APPROVED")
 PERSONAL_ITEM_GROUP = "PERSONAL_ITEM"
+
+
+def get_admin_ai_report_data(db: Session) -> dict:
+    reviewed = DetectedObject.processing_status.in_(("CONFIRMED", "REJECTED"))
+    corrected = and_(
+        DetectedObject.processing_status == "CONFIRMED",
+        DetectedObject.final_class_code.is_not(None),
+        DetectedObject.final_class_code != ObjectClass.code,
+    )
+    operational = DetectionEvent.purpose == "OPERATION"
+    base_join = (
+        DetectedObject.__table__
+        .join(DetectionEvent.__table__, DetectedObject.detection_event_id == DetectionEvent.id)
+        .join(ObjectClass.__table__, DetectedObject.object_class_id == ObjectClass.id)
+    )
+
+    summary = db.execute(
+        select(
+            func.count(DetectedObject.id),
+            func.avg(DetectedObject.confidence),
+            func.sum(case((reviewed, 1), else_=0)),
+            func.sum(case((corrected, 1), else_=0)),
+        ).select_from(base_join).where(operational)
+    ).one()
+
+    class_rows = db.execute(
+        select(
+            ObjectClass.code,
+            ObjectClass.name_ko,
+            func.count(DetectedObject.id).label("detection_count"),
+            func.avg(DetectedObject.confidence).label("average_confidence"),
+            func.sum(case((reviewed, 1), else_=0)).label("reviewed_count"),
+            func.sum(case((corrected, 1), else_=0)).label("corrected_count"),
+        )
+        .select_from(base_join)
+        .where(operational)
+        .group_by(ObjectClass.code, ObjectClass.name_ko)
+        .order_by(func.count(DetectedObject.id).desc(), ObjectClass.code)
+    ).all()
+
+    bucket = case(
+        (DetectedObject.confidence < Decimal("0.5"), "under_05"),
+        (DetectedObject.confidence < Decimal("0.6"), "05_06"),
+        (DetectedObject.confidence < Decimal("0.7"), "06_07"),
+        (DetectedObject.confidence < Decimal("0.8"), "07_08"),
+        (DetectedObject.confidence < Decimal("0.9"), "08_09"),
+        else_="09_10",
+    )
+    bucket_counts = dict(db.execute(
+        select(bucket, func.count(DetectedObject.id))
+        .select_from(DetectedObject.__table__.join(DetectionEvent.__table__))
+        .where(operational)
+        .group_by(bucket)
+    ).all())
+    bucket_labels = (
+        ("under_05", "0.0 이상 0.5 미만"), ("05_06", "0.5 이상 0.6 미만"),
+        ("06_07", "0.6 이상 0.7 미만"), ("07_08", "0.7 이상 0.8 미만"),
+        ("08_09", "0.8 이상 0.9 미만"), ("09_10", "0.9 이상 1.0 이하"),
+    )
+
+    final_class = aliased(ObjectClass)
+    correction_rows = db.execute(
+        select(
+            ObjectClass.code, ObjectClass.name_ko,
+            final_class.code, final_class.name_ko,
+            func.count(DetectedObject.id).label("count"),
+        )
+        .join(DetectedObject, DetectedObject.object_class_id == ObjectClass.id)
+        .join(DetectionEvent, DetectedObject.detection_event_id == DetectionEvent.id)
+        .join(final_class, DetectedObject.final_class_code == final_class.code)
+        .where(operational, corrected)
+        .group_by(ObjectClass.code, ObjectClass.name_ko, final_class.code, final_class.name_ko)
+        .order_by(func.count(DetectedObject.id).desc(), ObjectClass.code, final_class.code)
+    ).all()
+
+    return {
+        "summary": {"total": summary[0], "average_confidence": summary[1], "reviewed": summary[2] or 0, "corrected": summary[3] or 0},
+        "class_metrics": [{"code": row[0], "name": row[1], "count": row[2], "average_confidence": row[3], "reviewed": row[4] or 0, "corrected": row[5] or 0} for row in class_rows],
+        "confidence_distribution": [{"key": key, "label": label, "count": bucket_counts.get(key, 0)} for key, label in bucket_labels],
+        "correction_patterns": [{"predicted_code": row[0], "predicted_name": row[1], "final_code": row[2], "final_name": row[3], "count": row[4]} for row in correction_rows],
+    }
 
 
 def normalize_object_code(value: str) -> str:
@@ -138,25 +220,86 @@ def get_public_found_item_by_id(db: Session, found_item_id: int) -> FoundItem | 
     return db.scalar(statement)
 
 
-def get_found_item_by_id(db: Session, found_item_id: int) -> FoundItem | None:
-    statement = (
-        select(FoundItem)
-        .options(joinedload(FoundItem.object_class), joinedload(FoundItem.detected_object).joinedload(DetectedObject.detection_event), selectinload(FoundItem.citizen_reports))
-        .where(FoundItem.id == found_item_id)
-    )
+def get_found_item_by_id(
+    db: Session,
+    found_item_id: int,
+    *,
+    for_update: bool = False,
+) -> FoundItem | None:
+    statement = select(FoundItem).where(FoundItem.id == found_item_id)
+    if for_update:
+        statement = statement.with_for_update(of=FoundItem)
+    else:
+        statement = statement.options(
+            joinedload(FoundItem.object_class),
+            joinedload(FoundItem.detected_object).joinedload(DetectedObject.detection_event),
+            selectinload(FoundItem.citizen_reports),
+        )
     return db.scalar(statement)
 
 
-def get_claimable_found_item_by_id(db: Session, found_item_id: int) -> FoundItem | None:
+def list_admin_found_items(
+    db: Session,
+    *,
+    skip: int,
+    limit: int,
+    status: str | None = None,
+    item_category: str | None = None,
+    q: str | None = None,
+    found_date: datetime | None = None,
+) -> tuple[Sequence[FoundItem], int, dict[str, int]]:
+    conditions = []
+    if item_category:
+        category = item_category.strip()
+        conditions.append(or_(ObjectClass.code == normalize_object_code(category), func.lower(ObjectClass.name_ko) == category.lower()))
+    if q:
+        normalized = q.strip()
+        pattern = f"%{normalized}%"
+        id_condition = cast(FoundItem.id, String).ilike(pattern) if normalized else False
+        conditions.append(or_(id_condition, ObjectClass.code.ilike(pattern), ObjectClass.name_ko.ilike(pattern), FoundItem.area_name.ilike(pattern), FoundItem.storage_location.ilike(pattern)))
+    if found_date:
+        start = found_date.replace(tzinfo=KST).astimezone(UTC)
+        end = (found_date + timedelta(days=1)).replace(tzinfo=KST).astimezone(UTC)
+        conditions.extend((FoundItem.found_at >= start, FoundItem.found_at < end))
+
+    filtered_conditions = [*conditions]
+    if status:
+        filtered_conditions.append(FoundItem.status == status)
+    total = int(db.scalar(select(func.count(FoundItem.id)).join(FoundItem.object_class).where(*filtered_conditions)) or 0)
+    rows = db.scalars(
+        select(FoundItem)
+        .join(FoundItem.object_class)
+        .options(joinedload(FoundItem.object_class), joinedload(FoundItem.detected_object).joinedload(DetectedObject.detection_event), selectinload(FoundItem.citizen_reports))
+        .where(*filtered_conditions)
+        .order_by(FoundItem.updated_at.desc(), FoundItem.id.desc())
+        .offset(skip)
+        .limit(limit)
+    ).all()
+    grouped = dict(db.execute(
+        select(FoundItem.status, func.count(FoundItem.id))
+        .join(FoundItem.object_class)
+        .where(*conditions, FoundItem.status.in_(FOUND_ITEM_LIFECYCLE_STATUSES))
+        .group_by(FoundItem.status)
+    ).all())
+    return rows, total, {value: int(grouped.get(value, 0)) for value in FOUND_ITEM_LIFECYCLE_STATUSES}
+
+
+def get_claimable_found_item_by_id(
+    db: Session,
+    found_item_id: int,
+    *,
+    for_update: bool = False,
+) -> FoundItem | None:
     statement = (
         select(FoundItem)
-        .options(joinedload(FoundItem.object_class))
         .where(
             FoundItem.id == found_item_id,
             FoundItem.is_public.is_(True),
             FoundItem.status == "AVAILABLE",
         )
     )
+    if for_update:
+        statement = statement.with_for_update(of=FoundItem)
     return db.scalar(statement)
 
 
@@ -225,21 +368,40 @@ def add_match_candidate(db: Session, candidate: MatchCandidate) -> MatchCandidat
     return candidate
 
 
-def list_matches_for_user(db: Session, user_id: int, *, skip: int, limit: int) -> Sequence[MatchCandidate]:
+def list_matches_for_user(
+    db: Session,
+    user_id: int,
+    *,
+    lost_report_id: int | None = None,
+    skip: int,
+    limit: int,
+) -> Sequence[MatchCandidate]:
     statement = (
         select(MatchCandidate)
         .join(MatchCandidate.lost_report)
+        .join(MatchCandidate.found_item)
         .options(
             joinedload(MatchCandidate.lost_report).joinedload(LostReport.object_class),
             joinedload(MatchCandidate.found_item).joinedload(FoundItem.object_class),
             joinedload(MatchCandidate.found_item).joinedload(FoundItem.detected_object).joinedload(DetectedObject.detection_event),
             joinedload(MatchCandidate.found_item).selectinload(FoundItem.citizen_reports),
         )
-        .where(LostReport.user_id == user_id, MatchCandidate.status != "DISMISSED")
-        .order_by(MatchCandidate.total_score.desc(), MatchCandidate.created_at.desc())
-        .offset(skip)
-        .limit(limit)
+        .where(
+            LostReport.user_id == user_id,
+            MatchCandidate.status != "DISMISSED",
+            or_(
+                MatchCandidate.status == "CLAIMED",
+                FoundItem.status.in_(MATCHABLE_FOUND_ITEM_STATUSES),
+            ),
+        )
     )
+    if lost_report_id is not None:
+        statement = statement.where(MatchCandidate.lost_report_id == lost_report_id)
+    statement = statement.order_by(
+        MatchCandidate.total_score.desc(),
+        MatchCandidate.created_at.desc(),
+        MatchCandidate.id.desc(),
+    ).offset(skip).limit(limit)
     return db.scalars(statement).all()
 
 
@@ -343,6 +505,23 @@ def list_ownership_claims(db: Session, *, skip: int, limit: int) -> Sequence[Own
             joinedload(OwnershipClaim.found_item).joinedload(FoundItem.object_class),
         )
         .order_by(OwnershipClaim.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    return db.scalars(statement).all()
+
+
+def list_ownership_claims_for_user(
+    db: Session,
+    user_id: int,
+    *,
+    skip: int,
+    limit: int,
+) -> Sequence[OwnershipClaim]:
+    statement = (
+        select(OwnershipClaim)
+        .where(OwnershipClaim.user_id == user_id)
+        .order_by(OwnershipClaim.created_at.desc(), OwnershipClaim.id.desc())
         .offset(skip)
         .limit(limit)
     )
