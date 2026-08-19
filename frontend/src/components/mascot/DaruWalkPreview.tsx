@@ -2,39 +2,19 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DaruSpriteRenderer } from "./DaruSpriteRenderer";
-import { LayeredDaruRenderer } from "./LayeredDaruRenderer";
+import { DaruSmoothSpritePreviewRenderer } from "./DaruSmoothSpritePreviewRenderer";
 import type { DaruRendererState } from "./daru.animation.adapter";
-import {
-  DARU_LAYERED_LAYOUT,
-  DARU_LAYERED_MOTION,
-  DARU_RIG_CANVAS_SIZE,
-  DARU_RIG_SOURCE_IMAGE,
-  type DaruLayerName,
-} from "./daru.layered.config";
 import { DARU_GROUNDED_ROAMING_CONFIG, type DaruFacing } from "./daru.renderer.config";
 import { DARU_SPRITE_CONFIG } from "./daru.sprite.config";
 import type { DaruRhythm } from "./types";
 import { DaruPoseAudit } from "./DaruPoseAudit";
 import { DaruWalkCandidateComparison } from "./DaruWalkCandidateComparison";
+import { loadThemedDaruImageSrc } from "./daru.theme-image";
 import { useTheme } from "../theme/ThemeProvider";
 import styles from "./DaruWalkPreview.module.css";
 
-const CYCLE_CANDIDATES = [620, 720, 780, 840] as const;
-const PHASE_CANDIDATES = [0, 0.25, 0.5, 0.75] as const;
-const PREVIEW_SIZES = [148, 112, 88] as const;
-const TRAVEL_DISTANCE_PX = DARU_SPRITE_CONFIG.stridePx * 10;
-const IDLE_HOLD_MS = 350;
-const ACCELERATION_RATIO = 0.04;
-const RIG_NATURAL_SIZE = "1254 x 1254";
-const NATURAL_WALK_PLAYBACK_RATE = 0.86;
-const NATURAL_START_PLAYBACK_RATE = 0.72;
-const NATURAL_STOP_PLAYBACK_RATE = 0.54;
-const NATURAL_PREBLEND_START = 0.58;
-const NATURAL_PREBLEND_MAX_OPACITY = 0.24;
-const NATURAL_WALK_FRAMES = Array.from(
-  { length: 8 },
-  (_, index) => `/mascot/sprites/day/walk-natural-v4/walk-natural-v4-${String(index + 1).padStart(2, "0")}.png`,
-);
+type IdleSource = "original" | "walk-type" | "front";
+type PreviewRenderer = "runtime" | "smooth";
 
 const FRONT_IDLE_IMAGES: Record<DaruRhythm, string> = {
   day: "/mascot/daru-idle-day.png",
@@ -42,10 +22,36 @@ const FRONT_IDLE_IMAGES: Record<DaruRhythm, string> = {
   night: "/mascot/daru-idle-night.png",
 };
 
-type NeutralCompareView = "side" | "overlay" | "blink";
+const WALK_CYCLE_MS = DARU_GROUNDED_ROAMING_CONFIG.normalCycleMs;
+const WALK_SPEED_PX_PER_SECOND = DARU_SPRITE_CONFIG.stridePx / (WALK_CYCLE_MS / 1000);
+const TRAVEL_DISTANCE_PX = DARU_SPRITE_CONFIG.stridePx * 10;
+const TRAVEL_DURATION_MS = (TRAVEL_DISTANCE_PX / WALK_SPEED_PX_PER_SECOND) * 1000;
+const IDLE_HOLD_MS = 350;
+const ACCELERATION_RATIO = 0.04;
 
-function movementProgress(elapsedMs: number, durationMs: number) {
-  const time = Math.min(1, Math.max(0, elapsedMs / durationMs));
+function waitForImage(image: HTMLImageElement) {
+  if (image.complete && image.naturalWidth > 0) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    image.addEventListener("load", () => resolve(), { once: true });
+    image.addEventListener("error", () => reject(new Error(`Failed to load ${image.src}`)), { once: true });
+  });
+}
+
+async function loadDecodedFrame(src: string, theme: DaruRhythm) {
+  const themedSrc = await loadThemedDaruImageSrc(src, theme);
+  const image = new Image();
+  image.src = themedSrc;
+  try {
+    if (typeof image.decode === "function") await image.decode();
+    else await waitForImage(image);
+  } catch {
+    await waitForImage(image);
+  }
+  return image;
+}
+
+function movementProgress(elapsedMs: number) {
+  const time = Math.min(1, Math.max(0, elapsedMs / TRAVEL_DURATION_MS));
   const ramp = ACCELERATION_RATIO;
   const normalization = 1 - ramp;
   if (time < ramp) return (time * time) / (2 * ramp * normalization);
@@ -56,78 +62,55 @@ function movementProgress(elapsedMs: number, durationMs: number) {
   return (time - ramp / 2) / normalization;
 }
 
-function SpritePreview({ state, theme, phaseOverride }: { state: DaruRendererState; theme: DaruRhythm; phaseOverride: number | null }) {
-  const walkFrames = DARU_SPRITE_CONFIG[theme].walkFrames;
-  if (phaseOverride !== null) {
-    const frameIndex = Math.floor(phaseOverride * walkFrames.length) % walkFrames.length;
-    return <span className={styles.spritePhaseFrame} style={{ backgroundImage: `url(${walkFrames[frameIndex]})` }} />;
-  }
-  if (state.locomotion === "idle" || state.locomotion === "stop_walk") {
-    return <span className={styles.spritePhaseFrame} style={{ backgroundImage: `url(${FRONT_IDLE_IMAGES[theme]})` }} />;
-  }
-  return <DaruSpriteRenderer state={state} theme={theme} />;
-}
-
-function NaturalFullBodyPreview({ facing, phase }: { facing: DaruFacing; phase: number }) {
-  const normalizedPhase = (phase + 1) % 1;
-  const frameProgress = normalizedPhase * NATURAL_WALK_FRAMES.length;
-  const frameBase = Math.floor(frameProgress);
-  const frameIndex = frameBase % NATURAL_WALK_FRAMES.length;
-  const nextFrameIndex = (frameIndex + 1) % NATURAL_WALK_FRAMES.length;
-  const frameLocalProgress = frameProgress - frameBase;
-  const preblendProgress = Math.max(0, (frameLocalProgress - NATURAL_PREBLEND_START) / (1 - NATURAL_PREBLEND_START));
-  const nextFrameOpacity = preblendProgress * NATURAL_PREBLEND_MAX_OPACITY;
-  return (
-    <span className={styles.naturalFrame} data-facing={facing}>
-      {NATURAL_WALK_FRAMES.map((src, index) => {
-        const opacity = index === frameIndex ? 1 : index === nextFrameIndex ? nextFrameOpacity : 0;
-        return (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img key={src} src={src} alt="" draggable={false} style={{ opacity }} />
-        );
-      })}
-    </span>
-  );
-}
-
-function formatLayout(part: DaruLayerName) {
-  const layer = DARU_LAYERED_LAYOUT[part];
-  return `left ${layer.left}% / top ${layer.top}% / width ${layer.width}% / height ${layer.height}%`;
-}
-
-function formatPivot(part: DaruLayerName) {
-  const layer = DARU_LAYERED_LAYOUT[part];
-  return `${layer.pivot.x}, ${layer.pivot.y}`;
-}
-
 export function DaruWalkPreview() {
+  const stageRef = useRef<HTMLDivElement>(null);
   const directionRef = useRef<DaruFacing>("right");
-  const runCountRef = useRef(0);
-  const { theme, setTheme } = useTheme();
+  const transitionRunRef = useRef(0);
   const [playing, setPlaying] = useState(true);
   const [facing, setFacing] = useState<DaruFacing>("right");
   const [locomotion, setLocomotion] = useState<DaruRendererState["locomotion"]>("idle");
-  const [position, setPosition] = useState(0);
-  const [cycleMs, setCycleMs] = useState<number>(DARU_LAYERED_MOTION.cycleMs);
-  const [previewSize, setPreviewSize] = useState<148 | 112 | 88>(148);
-  const [phaseOverride, setPhaseOverride] = useState<number | null>(null);
-  const [repeatTarget, setRepeatTarget] = useState<number | null>(null);
-  const [neutralView, setNeutralView] = useState<NeutralCompareView>("side");
-  const [showNeutralRig, setShowNeutralRig] = useState(true);
-  const [naturalPlaybackPhase, setNaturalPlaybackPhase] = useState(0);
-  const walkSpeedPxPerSecond = DARU_SPRITE_CONFIG.stridePx / (cycleMs / 1000);
-  const travelDurationMs = (TRAVEL_DISTANCE_PX / walkSpeedPxPerSecond) * 1000;
+  const [idleSource, setIdleSource] = useState<IdleSource>("front");
+  const [walkPoseIdleFrame, setWalkPoseIdleFrame] = useState(0);
+  const [candidateScale, setCandidateScale] = useState(1.06);
+  const [candidateOffsetX, setCandidateOffsetX] = useState(0);
+  const [candidateOffsetY, setCandidateOffsetY] = useState(5);
+  const [transitionCheck, setTransitionCheck] = useState(false);
+  const [transitionPass, setTransitionPass] = useState(0);
+  const [previewRenderer, setPreviewRenderer] = useState<PreviewRenderer>("runtime");
+  const { theme, setTheme } = useTheme();
+  const [themedIdle, setThemedIdle] = useState<{ key: string; src: string } | null>(null);
+  const [decodeResult, setDecodeResult] = useState<{ theme: DaruRhythm; frames: readonly HTMLImageElement[] } | null>(null);
+  const [failedTheme, setFailedTheme] = useState<DaruRhythm | null>(null);
+  const decodedFrames = decodeResult?.theme === theme ? decodeResult.frames : null;
+  const decodeFailed = failedTheme === theme;
   const walkFrames = DARU_SPRITE_CONFIG[theme].walkFrames;
-  const naturalPhase = phaseOverride ?? naturalPlaybackPhase;
 
   useEffect(() => {
-    if (!playing || phaseOverride !== null) return;
+    let active = true;
+    Promise.all(DARU_SPRITE_CONFIG[theme].walkFrames.map((src) => loadDecodedFrame(src, theme)))
+      .then((frames) => {
+        if (!active) return;
+        setFailedTheme(null);
+        setDecodeResult({ theme, frames });
+      })
+      .catch(() => { if (active) setFailedTheme(theme); });
+    return () => { active = false; };
+  }, [theme]);
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    const rendererReady = previewRenderer === "runtime" || decodedFrames !== null;
+    if (!playing || !rendererReady || !stage) return;
+
     let cancelled = false;
     let animationFrame = 0;
     const timers: number[] = [];
     const schedule = (callback: () => void, delay: number) => {
       const timer = window.setTimeout(() => { if (!cancelled) callback(); }, delay);
       timers.push(timer);
+    };
+    const setPosition = (position: number) => {
+      stage.style.setProperty("--preview-x", `${position}px`);
     };
 
     const runLeg = () => {
@@ -138,27 +121,32 @@ export function DaruWalkPreview() {
       setPosition(from);
       setFacing(direction);
       setLocomotion("start_walk");
+
       schedule(() => {
         const startedAt = performance.now();
         setLocomotion("walk");
         const move = (now: number) => {
           if (cancelled) return;
-          const progress = movementProgress(now - startedAt, travelDurationMs);
+          const progress = movementProgress(now - startedAt);
           setPosition(from + (to - from) * progress);
           if (progress < 1) {
             animationFrame = requestAnimationFrame(move);
             return;
           }
+
           setPosition(to);
           setLocomotion("stop_walk");
           schedule(() => {
             setLocomotion("idle");
             schedule(() => {
-              runCountRef.current += 1;
-              if (repeatTarget !== null && runCountRef.current >= repeatTarget) {
-                setRepeatTarget(null);
-                setPlaying(false);
-                return;
+              if (transitionCheck) {
+                transitionRunRef.current += 1;
+                setTransitionPass(transitionRunRef.current);
+                if (transitionRunRef.current >= 3) {
+                  setTransitionCheck(false);
+                  setPlaying(false);
+                  return;
+                }
               }
               const nextDirection = direction === "right" ? "left" : "right";
               directionRef.current = nextDirection;
@@ -171,46 +159,13 @@ export function DaruWalkPreview() {
       }, DARU_GROUNDED_ROAMING_CONFIG.startWalkMs);
     };
 
-    runCountRef.current = 0;
     runLeg();
     return () => {
       cancelled = true;
       cancelAnimationFrame(animationFrame);
       timers.forEach(window.clearTimeout);
     };
-  }, [cycleMs, phaseOverride, playing, repeatTarget, travelDurationMs]);
-
-  useEffect(() => {
-    if (neutralView !== "blink") return;
-    const timer = window.setInterval(() => setShowNeutralRig((value) => !value), 500);
-    return () => window.clearInterval(timer);
-  }, [neutralView]);
-
-  useEffect(() => {
-    NATURAL_WALK_FRAMES.forEach((src) => {
-      const image = new Image();
-      image.src = src;
-    });
-  }, []);
-
-  useEffect(() => {
-    if (phaseOverride !== null || !playing || locomotion === "idle") return;
-    let frame = 0;
-    let previousTime = performance.now();
-    const tick = (now: number) => {
-      const delta = now - previousTime;
-      previousTime = now;
-      const speedScale = locomotion === "walk"
-        ? NATURAL_WALK_PLAYBACK_RATE
-        : locomotion === "start_walk"
-          ? NATURAL_START_PLAYBACK_RATE
-          : NATURAL_STOP_PLAYBACK_RATE;
-      setNaturalPlaybackPhase((value) => (value + (delta / cycleMs) * speedScale) % 1);
-      frame = requestAnimationFrame(tick);
-    };
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, [cycleMs, locomotion, phaseOverride, playing]);
+  }, [decodedFrames, playing, previewRenderer, transitionCheck]);
 
   const state = useMemo<DaruRendererState>(() => ({
     locomotion,
@@ -226,184 +181,150 @@ export function DaruWalkPreview() {
   }), [facing, locomotion]);
 
   const restartFacing = (nextFacing: DaruFacing) => {
-    setPhaseOverride(null);
-    setRepeatTarget(null);
+    setTransitionCheck(false);
     setPlaying(false);
     setLocomotion("idle");
     directionRef.current = nextFacing;
     setFacing(nextFacing);
-    setPosition(nextFacing === "right" ? 0 : TRAVEL_DISTANCE_PX);
+    stageRef.current?.style.setProperty("--preview-x", `${nextFacing === "right" ? 0 : TRAVEL_DISTANCE_PX}px`);
     window.setTimeout(() => setPlaying(true), 50);
   };
-
-  const inspectPhase = (phase: number) => {
+  const applyCandidatePreset = (aligned: boolean) => {
+    setIdleSource("front");
+    setCandidateScale(aligned ? 1.06 : 1);
+    setCandidateOffsetX(0);
+    setCandidateOffsetY(aligned ? 5 : 0);
+  };
+  const startTransitionCheck = () => {
     setPlaying(false);
-    setRepeatTarget(null);
-    setPhaseOverride(phase);
-    setLocomotion("walk");
-    setPosition(facing === "right" ? TRAVEL_DISTANCE_PX * phase : TRAVEL_DISTANCE_PX * (1 - phase));
+    setLocomotion("idle");
+    setIdleSource("front");
+    transitionRunRef.current = 0;
+    setTransitionPass(0);
+    window.setTimeout(() => {
+      setTransitionCheck(true);
+      setPlaying(true);
+    }, 50);
   };
-
-  const resumeLive = () => {
-    setPhaseOverride(null);
-    setPlaying(true);
-  };
-
-  const runThreePasses = () => {
-    runCountRef.current = 0;
-    setPhaseOverride(null);
-    setRepeatTarget(3);
-    setPlaying(false);
-    window.setTimeout(() => setPlaying(true), 50);
-  };
-
-  const stageStyle = { "--preview-x": `${position}px`, "--preview-size": `${previewSize}px` } as React.CSSProperties;
-  const assetRows = (["tail", "armFar", "legFar", "base", "legNear", "armNear"] as const).map((part) => {
-    const layer = DARU_LAYERED_LAYOUT[part];
-    return { part, layer };
-  });
+  const walking = locomotion === "walk" || locomotion === "start_walk";
+  const idleSrc = idleSource === "front"
+    ? FRONT_IDLE_IMAGES[theme]
+    : idleSource === "walk-type"
+      ? walkFrames[walkPoseIdleFrame] ?? walkFrames[0]
+      : "/mascot/daru-idle-transparent.png";
+  useEffect(() => {
+    let active = true;
+    loadDecodedFrame(idleSrc, theme).then((image) => {
+      if (active) setThemedIdle({ key: `${theme}:${idleSrc}`, src: image.src });
+    }).catch(() => {
+      if (active) setThemedIdle({ key: `${theme}:${idleSrc}`, src: idleSrc });
+    });
+    return () => { active = false; };
+  }, [idleSrc, theme]);
+  const themedIdleSrc = themedIdle?.key === `${theme}:${idleSrc}` ? themedIdle.src : idleSrc;
+  const idleStyle = idleSource === "front"
+    ? { backgroundImage: `url(${themedIdleSrc})`, transform: `translate(${candidateOffsetX}px, ${candidateOffsetY}px) scale(${candidateScale})` }
+    : { backgroundImage: `url(${themedIdleSrc})` };
 
   return (
     <main className={styles.page}>
       <header>
-        <p>DEV ONLY</p>
-        <h1>Daru WALK A/B Preview</h1>
-        <span>{walkSpeedPxPerSecond.toFixed(3)}px/s · {cycleMs}ms/cycle · {travelDurationMs.toFixed(0)}ms / {TRAVEL_DISTANCE_PX}px · stride {DARU_SPRITE_CONFIG.stridePx}px</span>
+        <p>개발 전용 프리뷰</p>
+        <h1>다루 WALK 프레임 비교</h1>
+        <span>{WALK_SPEED_PX_PER_SECOND.toFixed(3)}px/s · {WALK_CYCLE_MS}ms/cycle · {TRAVEL_DURATION_MS.toFixed(0)}ms / {TRAVEL_DISTANCE_PX}px · stride {DARU_SPRITE_CONFIG.stridePx}px</span>
       </header>
 
-      <section className={styles.modeBar} aria-label="WALK preview controls">
-        <strong>{theme.toUpperCase()} · {facing.toUpperCase()} · {previewSize}px · {phaseOverride === null ? "LIVE" : `${Math.round(phaseOverride * 100)}% phase`}</strong>
+      <section className={styles.modeBar} aria-label="프레임 모드와 테마 선택">
+        <strong>{theme.toUpperCase()} · runtime 8-frame WALK</strong>
         <div>
-          <select value={theme} onChange={(event) => setTheme(event.target.value as DaruRhythm)} aria-label="Theme">
-            <option value="day">DAY</option>
+          <button type="button" data-active={previewRenderer === "runtime" || undefined} onClick={() => setPreviewRenderer("runtime")}>Runtime Sprite</button>
+          <button type="button" data-active={previewRenderer === "smooth" || undefined} onClick={() => setPreviewRenderer("smooth")}>Smooth Preview</button>
+          <select value={theme} onChange={(event) => setTheme(event.target.value as DaruRhythm)} aria-label="테마">
             <option value="dawn">DAWN</option>
+            <option value="day">DAY</option>
             <option value="night">NIGHT</option>
           </select>
-          <button type="button" data-active={facing === "left" || undefined} onClick={() => restartFacing("left")}>LEFT</button>
-          <button type="button" data-active={facing === "right" || undefined} onClick={() => restartFacing("right")}>RIGHT</button>
         </div>
       </section>
 
-      <section className={styles.previewGrid} aria-label="Current Sprite 8 and Natural Full-body 8 comparison">
-        <article className={styles.previewPane}>
-          <div><strong>Current Sprite 8</strong><span>production fallback reference</span></div>
-          <section className={styles.track} aria-label="Current Sprite 8">
-            <div className={styles.stage} data-daru-stage="true" data-walking={locomotion !== "idle" || undefined} data-locomotion={locomotion} style={stageStyle}>
-              <SpritePreview state={state} theme={theme} phaseOverride={phaseOverride} />
-            </div>
-            <span className={styles.ground} />
-          </section>
-        </article>
-
-        <article className={styles.previewPane}>
-          <div><strong>Natural Full-body 8</strong><span>new complete-frame candidate; production not connected</span></div>
-          <section className={styles.track} aria-label="Natural Full-body 8">
-            <div className={styles.stage} data-daru-stage="true" data-walking={locomotion !== "idle" || undefined} data-locomotion={locomotion} style={stageStyle}>
-              <NaturalFullBodyPreview facing={facing} phase={naturalPhase} />
-            </div>
-            <span className={styles.ground} />
-          </section>
-        </article>
+      <section className={styles.track} aria-label="다루 걷기 미리보기">
+        <div ref={stageRef} className={styles.stage} data-daru-stage="true" data-walking={walking || undefined} data-locomotion={locomotion}>
+          {locomotion === "idle" ? (
+            <span className={styles.idle} style={idleStyle} />
+          ) : previewRenderer === "runtime" ? (
+            <DaruSpriteRenderer state={state} theme={theme} />
+          ) : decodedFrames ? (
+            <DaruSmoothSpritePreviewRenderer state={state} frames={decodedFrames} />
+          ) : (
+            <span className={styles.idle} style={idleStyle} />
+          )}
+        </div>
+        <span className={styles.ground} />
+        {previewRenderer === "smooth" && !decodedFrames && <span className={styles.decodeStatus}>{decodeFailed ? "프레임 decode 실패 — idle fallback" : "WALK 8프레임 decode 중…"}</span>}
       </section>
 
-      <section className={styles.neutralCompare} aria-label="Registered rig neutral composite comparison">
-        <header>
+      <section className={styles.controls} aria-label="걷기 조절">
+        <div className={styles.idleControls}>
+          <strong>IDLE SOURCE</strong>
           <div>
-            <p>NEUTRAL ACCEPTANCE GATE</p>
-            <h2>walk-01 source vs Registered Rig Neutral Composite</h2>
+            <button type="button" data-active={idleSource === "original" || undefined} onClick={() => setIdleSource("original")}>A · Original Idle</button>
+            <button type="button" data-active={idleSource === "walk-type" || undefined} onClick={() => setIdleSource("walk-type")}>B · 3/4 Walk-type Idle</button>
+            <button type="button" data-active={idleSource === "front" || undefined} onClick={() => setIdleSource("front")}>C · Front Idle</button>
           </div>
-          <div className={styles.cadenceControls}>
-            {(["side", "overlay", "blink"] as const).map((item) => (
-              <button type="button" key={item} data-active={neutralView === item || undefined} onClick={() => setNeutralView(item)}>
-                {item === "side" ? "Original / Composite" : item === "overlay" ? "50% Overlay" : "Blink 500ms"}
-              </button>
-            ))}
-          </div>
-        </header>
-        {neutralView === "side" ? (
-          <div className={styles.neutralSide}>
-            <figure>
-              <figcaption>Original walk-01</figcaption>
-              <div>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={DARU_RIG_SOURCE_IMAGE} alt="Original walk-01" />
-              </div>
-            </figure>
-            <figure>
-              <figcaption>Registered Rig Neutral Composite</figcaption>
-              <div data-daru-stage="true">
-                <LayeredDaruRenderer state={{ ...state, locomotion: "idle" }} theme="day" cycleMs={cycleMs} />
-              </div>
-            </figure>
-          </div>
-        ) : (
-          <figure className={styles.neutralOverlay}>
-            <figcaption>{neutralView === "overlay" ? "50% overlay" : "500ms blink"} · source and registered composite</figcaption>
-            <div data-daru-stage="true">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={DARU_RIG_SOURCE_IMAGE} alt="Original walk-01" />
-              <span style={{ opacity: neutralView === "overlay" ? 0.5 : neutralView === "blink" && !showNeutralRig ? 0 : 1 }}>
-                <LayeredDaruRenderer state={{ ...state, locomotion: "idle" }} theme="day" cycleMs={cycleMs} />
-              </span>
-            </div>
-          </figure>
-        )}
-        <p>Pixel diff for the generated neutral composite is 0. All six rig-v2 layers are 1254x1254 and share the original walk-01 coordinate system.</p>
-      </section>
-
-      <section className={styles.controls} aria-label="Walk controls">
-        <div className={styles.cadenceControls} aria-label="WALK cycle candidates">
-          {CYCLE_CANDIDATES.map((candidate) => <button type="button" key={candidate} data-active={cycleMs === candidate || undefined} onClick={() => setCycleMs(candidate)}>{candidate}ms</button>)}
+          <span>{idleSource === "original" ? "기존 원래 정면 IDLE" : idleSource === "walk-type" ? "현재 3/4 WALK형 IDLE" : `정면 IDLE · ${theme.toUpperCase()}`}</span>
         </div>
-        <div className={styles.cadenceControls} aria-label="Renderer size candidates">
-          {PREVIEW_SIZES.map((size) => <button type="button" key={size} data-active={previewSize === size || undefined} onClick={() => setPreviewSize(size)}>{size}px</button>)}
-        </div>
-        <div className={styles.phaseInspector}>
-          <strong>GAIT PHASE INSPECTOR</strong>
-          <div>
-            {PHASE_CANDIDATES.map((phase) => <button type="button" key={phase} data-active={phaseOverride === phase || undefined} onClick={() => inspectPhase(phase)}>{Math.round(phase * 100)}%</button>)}
-            <button type="button" data-active={phaseOverride === null || undefined} onClick={resumeLive}>LIVE</button>
-          </div>
-          <span>natural frame {Math.floor(naturalPhase * NATURAL_WALK_FRAMES.length) + 1} / {NATURAL_WALK_FRAMES.length} · phase {Math.round(naturalPhase * 100)}% · playback {Math.round(NATURAL_WALK_PLAYBACK_RATE * 100)}%</span>
-          <span>complete-frame playback only; no separated limb transforms in the primary candidate</span>
-        </div>
-        <div className={styles.quickControls}>
-          <button type="button" onClick={() => setPlaying((value) => !value)}>{playing ? "Pause" : "Play"}</button>
-          <button type="button" onClick={runThreePasses}>start → walk → stop → idle x3</button>
-        </div>
-        <p className={styles.notice}>Registered Rig v2 uses DAY walk-01-derived 1254px assets below. Production DaruCharacter still uses the existing Sprite renderer.</p>
-      </section>
-
-      <section className={styles.assetNotice} aria-label="Registered Rig v2 asset values">
-        <strong>Registered Rig v2 asset values in use</strong>
-        <div className={styles.assetGrid}>
-          {assetRows.map(({ part, layer }) => (
-            <dl key={part}>
-              <dt>{part}</dt>
-              <dd>src: <code>{layer.src}</code></dd>
-              <dd>natural: {RIG_NATURAL_SIZE}</dd>
-              <dd>layout: {formatLayout(part)}</dd>
-              <dd>pivot px: {formatPivot(part)}</dd>
-              <dd>origin: {layer.origin}</dd>
-            </dl>
+        <div className={styles.thumbnailGrid} aria-label="Walk Pose Idle 프레임 선택">
+          {walkFrames.map((src, index) => (
+            <button
+              type="button"
+              key={src}
+              data-active={idleSource === "walk-type" && walkPoseIdleFrame === index || undefined}
+              aria-label={`walk frame ${String(index + 1).padStart(2, "0")}를 idle로 선택`}
+              onClick={() => {
+                setWalkPoseIdleFrame(index);
+                setIdleSource("walk-type");
+              }}
+            >
+              <span style={{ backgroundImage: `url(${src})` }} />
+              <small>{String(index + 1).padStart(2, "0")}</small>
+            </button>
           ))}
         </div>
-        <p>source: <code>{DARU_RIG_SOURCE_IMAGE}</code> · canvas: <code>{DARU_RIG_CANVAS_SIZE}px</code> · cycle: <code>{DARU_LAYERED_MOTION.cycleMs}ms</code> · stride: <code>{DARU_LAYERED_MOTION.stridePx}px</code></p>
-        <p>legRotation: <code>±{DARU_LAYERED_MOTION.legRotationDeg}deg</code> · footLift: <code>{DARU_LAYERED_MOTION.footLiftPx}px canvas</code> · armSwing: <code>±{DARU_LAYERED_MOTION.armSwingDeg}deg</code> · bodyBob: <code>{DARU_LAYERED_MOTION.bodyBobPx}px canvas</code> · tailSwing: <code>±{DARU_LAYERED_MOTION.tailSwingDeg}deg</code></p>
+        <div className={styles.candidateTuning} aria-label="New Candidate DEV 정렬 조절">
+          <strong>Candidate DEV alignment</strong>
+          <div className={styles.candidatePresets}>
+            <button type="button" data-active={candidateScale === 1 && candidateOffsetX === 0 && candidateOffsetY === 0 || undefined} onClick={() => applyCandidatePreset(false)}>A · Original</button>
+            <button type="button" data-active={candidateScale === 1.06 && candidateOffsetX === 0 && candidateOffsetY === 5 || undefined} onClick={() => applyCandidatePreset(true)}>권장 · 1.06 / 0 / +5</button>
+          </div>
+          <label>Scale <span>{candidateScale.toFixed(2)}</span><input type="range" min="0.9" max="1.12" step="0.01" value={candidateScale} onChange={(event) => setCandidateScale(Number(event.target.value))} /></label>
+          <label>X <span>{candidateOffsetX}px</span><input type="range" min="-20" max="20" step="1" value={candidateOffsetX} onChange={(event) => setCandidateOffsetX(Number(event.target.value))} /></label>
+          <label>Y <span>{candidateOffsetY}px</span><input type="range" min="-16" max="16" step="1" value={candidateOffsetY} onChange={(event) => setCandidateOffsetY(Number(event.target.value))} /></label>
+          <button type="button" onClick={() => { setCandidateScale(1); setCandidateOffsetX(0); setCandidateOffsetY(0); }}>Reset</button>
+          <button type="button" onClick={startTransitionCheck}>Transition Check · 3회</button>
+        </div>
+        <div className={styles.quickControls}>
+          <button type="button" onClick={() => { setTransitionCheck(false); if (playing) setLocomotion("idle"); setPlaying((value) => !value); }}>{playing ? "정지" : "재생"}</button>
+          <button type="button" onClick={() => restartFacing("left")}>왼쪽</button>
+          <button type="button" onClick={() => restartFacing("right")}>오른쪽</button>
+        </div>
+        <p>방향: {facing === "right" ? "오른쪽" : "왼쪽"} · mode: Original 8 · 상태: {locomotion} · theme: {theme}{transitionCheck ? ` · transition check ${transitionPass + 1}/3` : ""}</p>
+        <p className={styles.notice}>production과 동일한 Original 8 진단 모드입니다. 왼쪽 이동은 방향 전용 에셋 전까지 임시 mirror 상태입니다.</p>
       </section>
 
-      <section className={styles.checklist} aria-label="Registered Rig v2 checklist">
-        <strong>Registered Rig v2 checklist</strong>
+      <section className={styles.checklist} aria-label="프리뷰 확인 항목">
+        <strong>Original 8 진단 조건</strong>
         <ul>
-          <li>0% / 50%: opposite leg pose check</li>
-          <li>25% / 75%: passing pose check</li>
-          <li>All moving parts share the original 1254px registered canvas</li>
-          <li>stop_walk settles within 170-220ms</li>
-          <li>DAY rig only; DAWN/NIGHT production handling is untouched</li>
-          <li>Current Sprite 8 remains the production fallback reference</li>
+          <li>Original 8: 약 12.9 pose fps</li>
+          <li>cycle: 모두 620ms</li>
+          <li>stride: 모두 42px</li>
+          <li>travel: 모두 420px / 6200ms</li>
+          <li>위치 갱신: requestAnimationFrame</li>
+          <li>프레임 진행: 실제 이동거리 기반</li>
+          <li>재생 전: 8장 decode 완료 대기</li>
+          <li>IDLE 비교: Current / Walk Pose</li>
+          <li>Candidate: 테마별 원본 + DEV 정렬만</li>
         </ul>
       </section>
-
       <DaruWalkCandidateComparison />
       <DaruPoseAudit theme={theme} frames={walkFrames} />
     </main>

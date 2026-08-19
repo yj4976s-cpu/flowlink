@@ -1,58 +1,47 @@
 .page { min-height: 100vh; padding: 48px clamp(20px, 6vw, 88px); background: var(--color-background); color: var(--color-text); }
-.page header { display: grid; gap: 6px; max-width: 980px; margin: 0 auto 28px; }
+.page header { display: grid; gap: 6px; max-width: 760px; margin: 0 auto 32px; }
 .page header p, .page header h1 { margin: 0; }
-.page header p { color: var(--color-primary); font-size: 12px; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
+.page header p { color: var(--color-primary); font-size: 12px; font-weight: 800; text-transform: uppercase; }
 .page header span { color: var(--color-text-muted); font-size: 13px; }
-.modeBar { width: min(100%, 1040px); margin: 0 auto 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.modeBar div { display: flex; flex-wrap: wrap; gap: 6px; }
-.modeBar button, .modeBar select, .controls button { min-height: 34px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-surface-elevated); color: var(--color-text-muted); font: inherit; font-size: 12px; font-weight: 800; cursor: pointer; }
-.modeBar button[data-active], .cadenceControls button[data-active], .phaseInspector button[data-active] { border-color: var(--color-primary); background: var(--color-primary-soft); color: var(--color-primary); box-shadow: inset 0 0 0 1px var(--color-primary); }
-.previewGrid { width: min(100%, 1040px); margin: 0 auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.previewPane { display: grid; gap: 8px; }
-.previewPane > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.previewPane strong { font-size: 16px; }
-.previewPane span { color: var(--color-text-muted); font-size: 12px; }
-.track { position: relative; height: 230px; overflow: hidden; border: 1px solid var(--color-border); border-radius: 24px; background: color-mix(in srgb, var(--color-surface-elevated) 88%, var(--color-primary-soft)); }
-.stage { position: absolute; z-index: 2; left: 0; bottom: 24px; width: var(--preview-size, 148px); height: var(--preview-size, 148px); translate: var(--preview-x, 0) 0; }
+.modeBar { width: min(100%, 568px); margin: 0 auto 14px; display: flex; justify-content: space-between; gap: 12px; }
+.modeBar div { display: flex; gap: 6px; }
+.modeBar button, .modeBar select { min-height: 34px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-surface-elevated); color: var(--color-text-muted); font: inherit; font-size: 12px; font-weight: 800; cursor: pointer; }
+.modeBar button[data-active] { border-color: var(--color-primary); background: var(--color-primary-soft); color: var(--color-primary); }
+.track { position: relative; width: min(100%, 568px); height: 230px; margin: 0 auto; overflow: hidden; border: 1px solid var(--color-border); border-radius: 24px; background: color-mix(in srgb, var(--color-surface-elevated) 88%, var(--color-primary-soft)); }
+.stage { position: absolute; z-index: 2; left: 0; bottom: 24px; width: 148px; height: 148px; translate: var(--preview-x) 0; }
 .stage[data-walking] { will-change: translate; }
-.spritePhaseFrame { display: block; width: 100%; height: 100%; background: transparent center bottom / contain no-repeat; }
-.naturalFrame { position: relative; display: block; width: 100%; height: 100%; transform-origin: 50% 82%; }
-.naturalFrame[data-facing="left"] { transform: scaleX(-1); }
-.naturalFrame img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; object-position: center bottom; pointer-events: none; user-select: none; }
+.idle { display: block; width: 100%; height: 100%; transform-origin: center bottom; background: transparent url("/mascot/daru-idle-day.png") center bottom / contain no-repeat; }
 .ground { position: absolute; right: 24px; bottom: 22px; left: 24px; height: 1px; background: color-mix(in srgb, var(--color-text) 14%, transparent); }
-.controls { width: min(100%, 1040px); margin: 20px auto 0; display: grid; gap: 14px; }
-.cadenceControls, .quickControls, .phaseInspector div { display: flex; flex-wrap: wrap; gap: 6px; }
-.phaseInspector, .assetNotice, .checklist, .neutralCompare { padding: 16px; border: 1px solid var(--color-border); border-radius: 16px; background: var(--color-surface-elevated); }
-.phaseInspector { display: grid; gap: 8px; }
-.phaseInspector strong, .assetNotice strong, .checklist strong { font-size: 13px; }
-.phaseInspector span, .assetNotice p, .controls p, .neutralCompare p { margin: 0; color: var(--color-text-muted); font-size: 12px; line-height: 1.55; }
-.notice { padding: 10px 12px; border-radius: 10px; background: var(--color-primary-soft); color: var(--color-text); line-height: 1.5; }
-.checklist, .assetNotice, .neutralCompare { width: min(100%, 1040px); margin: 20px auto 0; }
-.checklist ul { margin: 10px 0 0; padding-left: 18px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 18px; color: var(--color-text-muted); font-size: 11px; }
-.assetGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 12px 0; }
-.assetGrid dl { margin: 0; padding: 12px; border-radius: 12px; background: color-mix(in srgb, var(--color-background) 72%, transparent); }
-.assetGrid dt { margin-bottom: 6px; font-size: 12px; font-weight: 900; color: var(--color-text); }
-.assetGrid dd { margin: 0; color: var(--color-text-muted); font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
-.assetNotice code { color: var(--color-primary); font-weight: 800; }
-.neutralCompare { display: grid; gap: 14px; }
-.neutralCompare header { max-width: none; margin: 0; display: flex; align-items: end; justify-content: space-between; gap: 12px; }
-.neutralCompare header p, .neutralCompare header h2 { margin: 0; }
-.neutralCompare header p { color: var(--color-primary); font-size: 11px; font-weight: 850; letter-spacing: .08em; }
-.neutralCompare header h2 { font-size: 18px; }
-.neutralSide { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-.neutralSide figure, .neutralOverlay { margin: 0; display: grid; gap: 7px; }
-.neutralSide figcaption, .neutralOverlay figcaption { font-size: 12px; font-weight: 850; }
-.neutralSide figure > div, .neutralOverlay > div { position: relative; aspect-ratio: 1; overflow: hidden; border: 1px solid var(--color-border); border-radius: 16px; background: color-mix(in srgb, var(--color-background) 78%, transparent); }
-.neutralSide img, .neutralOverlay img { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
-.neutralOverlay { width: min(100%, 520px); margin-inline: auto; }
-.neutralOverlay > div > img, .neutralOverlay > div > span { position: absolute; inset: 0; transition: opacity 80ms linear; }
-.neutralOverlay > div > span { display: block; }
-@media (max-width: 760px) {
-  .modeBar { align-items: flex-start; flex-direction: column; }
-  .previewGrid { grid-template-columns: 1fr; }
-  .track { height: 190px; }
-  .stage { bottom: 20px; }
-  .checklist ul { grid-template-columns: 1fr; }
-  .assetGrid { grid-template-columns: 1fr; }
-  .neutralCompare header, .neutralSide { grid-template-columns: 1fr; display: grid; }
-}
+.decodeStatus { position: absolute; right: 16px; bottom: 10px; z-index: 3; color: var(--color-text-muted); font-size: 11px; }
+.controls { width: min(100%, 568px); margin: 20px auto 0; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 14px 20px; }
+.controls button { min-height: 38px; padding: 0 16px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface-elevated); color: var(--color-primary); font-weight: 800; cursor: pointer; }
+.idleControls { grid-column: 1 / -1; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px 14px; }
+.idleControls strong { color: var(--color-text-muted); font-size: 11px; letter-spacing: .06em; }
+.idleControls div { display: flex; gap: 6px; }
+.idleControls button { min-height: 34px; padding: 0 12px; font-size: 12px; }
+.idleControls button[data-active] { border-color: var(--color-primary); background: var(--color-primary-soft); box-shadow: inset 0 0 0 1px var(--color-primary); }
+.idleControls span { grid-column: 2; color: var(--color-text-muted); font-size: 11px; }
+.thumbnailGrid { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+.thumbnailGrid button { position: relative; min-width: 0; min-height: 64px; padding: 3px; overflow: hidden; }
+.thumbnailGrid button[data-active] { border-color: var(--color-primary); background: var(--color-primary-soft); box-shadow: inset 0 0 0 1px var(--color-primary); }
+.thumbnailGrid button > span { display: block; height: 46px; background: transparent center bottom / contain no-repeat; }
+.thumbnailGrid small { position: absolute; right: 4px; bottom: 2px; color: var(--color-text-muted); font-size: 9px; }
+.candidateTuning { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, 1fr); align-items: end; gap: 8px; padding: 12px; border: 1px dashed var(--color-border); border-radius: 12px; }
+.candidateTuning > strong { grid-column: 1 / -1; color: var(--color-text-muted); font-size: 11px; }
+.candidatePresets { grid-column: 1 / -1; display: flex; gap: 6px; }
+.candidatePresets button[data-active] { border-color: var(--color-primary); background: var(--color-primary-soft); box-shadow: inset 0 0 0 1px var(--color-primary); }
+.candidateTuning label { display: grid; grid-template-columns: auto auto; justify-content: space-between; gap: 4px; color: var(--color-text-muted); font-size: 10px; }
+.candidateTuning input { grid-column: 1 / -1; width: 100%; accent-color: var(--color-primary); }
+.candidateTuning button { min-height: 32px; padding: 0 10px; font-size: 10px; }
+.cadenceControls { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.cadenceControls button[data-active] { border-color: var(--color-primary); background: var(--color-primary-soft); box-shadow: inset 0 0 0 1px var(--color-primary); }
+.quickControls { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+.quickControls button { min-height: 32px; padding: 0 10px; font-size: 11px; }
+.controls label { display: grid; grid-template-columns: auto auto; justify-content: space-between; gap: 8px; color: var(--color-text-muted); font-size: 12px; }
+.controls input { grid-column: 1 / -1; width: 100%; accent-color: var(--color-primary); }
+.controls p { grid-column: 1 / -1; margin: 0; color: var(--color-text-muted); font-size: 12px; }
+.controls .notice { padding: 10px 12px; border-radius: 10px; background: var(--color-primary-soft); color: var(--color-text); line-height: 1.5; }
+.checklist { width: min(100%, 568px); margin: 20px auto 0; padding: 16px; border: 1px solid var(--color-border); border-radius: 16px; background: var(--color-surface-elevated); }
+.checklist strong { font-size: 13px; }
+.checklist ul { margin: 10px 0 0; padding-left: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 5px 18px; color: var(--color-text-muted); font-size: 11px; }
+@media (max-width: 640px) { .track { height: 190px; }.stage { bottom: 20px; width: 108px; height: 108px; }.controls { grid-template-columns: 1fr; }.controls label, .controls p { grid-column: 1; }.thumbnailGrid { grid-template-columns: repeat(4, 1fr); }.idleControls { grid-template-columns: 1fr; }.idleControls span { grid-column: 1; }.candidateTuning { grid-template-columns: 1fr; }.candidateTuning > strong { grid-column: 1; } }
