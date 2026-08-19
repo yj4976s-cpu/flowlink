@@ -46,18 +46,31 @@ def soft_delete_comment_thread(db: Session, comment: CommunityComment) -> None:
         reply.updated_at = deleted_at
 
 
-def list_feed(db: Session, *, category: str | None, query: str | None, place: str | None, sort: str, skip: int, limit: int) -> CommunityFeedResponse:
-    comment_count = select(func.count(CommunityComment.id)).where(CommunityComment.post_id == CommunityPost.id, CommunityComment.deleted_at.is_(None)).correlate(CommunityPost).scalar_subquery()
-    statement = select(CommunityPost).options(joinedload(CommunityPost.user), selectinload(CommunityPost.comments).joinedload(CommunityComment.user)).where(CommunityPost.deleted_at.is_(None))
-    if category: statement = statement.where(CommunityPost.category == category)
+def _filtered_posts_statement(*, category: str | None, query: str | None, place: str | None):
+    statement = select(CommunityPost).where(CommunityPost.deleted_at.is_(None))
+    if category:
+        statement = statement.where(CommunityPost.category == category)
     if query:
         pattern = f"%{query.strip()}%"
         statement = statement.where(or_(CommunityPost.title.ilike(pattern), CommunityPost.content.ilike(pattern), CommunityPost.place_name.ilike(pattern)))
-    if place: statement = statement.where(or_(CommunityPost.place_name.ilike(f"%{place.strip()}%"), CommunityPost.address.ilike(f"%{place.strip()}%")))
-    order = (CommunityPost.is_notice.desc(), comment_count.desc(), CommunityPost.created_at.desc()) if sort == "comments" else (CommunityPost.is_notice.desc(), CommunityPost.created_at.desc())
-    rows = list(db.scalars(statement.order_by(*order).offset(skip).limit(limit + 1)).unique().all())
-    has_more = len(rows) > limit
-    posts = rows[:limit]
+    if place:
+        pattern = f"%{place.strip()}%"
+        statement = statement.where(or_(CommunityPost.place_name.ilike(pattern), CommunityPost.address.ilike(pattern)))
+    return statement
+
+
+def list_feed(db: Session, *, category: str | None, query: str | None, place: str | None, sort: str, skip: int, limit: int) -> CommunityFeedResponse:
+    comment_count = select(func.count(CommunityComment.id)).where(CommunityComment.post_id == CommunityPost.id, CommunityComment.deleted_at.is_(None)).correlate(CommunityPost).scalar_subquery()
+    statement = _filtered_posts_statement(category=category, query=query, place=place)
+    total = int(db.scalar(select(func.count()).select_from(statement.where(CommunityPost.is_notice.is_(False)).subquery())) or 0)
+    regular_statement = statement.options(joinedload(CommunityPost.user), selectinload(CommunityPost.comments).joinedload(CommunityComment.user)).where(CommunityPost.is_notice.is_(False))
+    regular_order = (comment_count.desc(), CommunityPost.created_at.desc()) if sort == "comments" else (CommunityPost.created_at.desc(),)
+    posts = list(db.scalars(regular_statement.order_by(*regular_order).offset(skip).limit(limit)).unique().all())
+    notices = []
+    if skip == 0:
+        notice_statement = statement.options(joinedload(CommunityPost.user), selectinload(CommunityPost.comments).joinedload(CommunityComment.user)).where(CommunityPost.is_notice.is_(True))
+        notices = list(db.scalars(notice_statement.order_by(CommunityPost.created_at.desc()).limit(5)).unique().all())
+    has_more = skip + len(posts) < total
 
     now = utc_now()
     today = now.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -68,7 +81,7 @@ def list_feed(db: Session, *, category: str | None, query: str | None, place: st
     today_posts = int(db.scalar(select(func.count(CommunityPost.id)).where(CommunityPost.deleted_at.is_(None), CommunityPost.created_at >= today, CommunityPost.place_name.ilike(f"%{place.strip()}%") if place else True)) or 0)
     found_count = sum(1 for item in found_items if item.created_at >= today and item.status != "RETURNED")
     return_count = sum(1 for item in found_items if item.updated_at >= today and item.status == "RETURNED")
-    return CommunityFeedResponse(posts=[post_response(item) for item in posts], system_updates=updates, context=CommunityContextResponse(found_items=found_count, new_stories=today_posts, returns=return_count), has_more=has_more)
+    return CommunityFeedResponse(notices=[post_response(item) for item in notices], posts=[post_response(item) for item in posts], system_updates=updates, context=CommunityContextResponse(found_items=found_count, new_stories=today_posts, returns=return_count), total=total, has_more=has_more)
 
 
 def can_edit_post(user: User, post: CommunityPost) -> bool:

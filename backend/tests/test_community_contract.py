@@ -255,6 +255,91 @@ def test_user_cannot_create_notice_but_admin_can(client: TestClient, db: Session
     assert response.status_code == 201 and response.json()["is_notice"] is True
 
 
+def test_feed_total_counts_regular_posts_only(client: TestClient, db: Session) -> None:
+    as_user(user(db, 1))
+    for index in range(3):
+        assert post(client, title=f"일반 글 {index}").status_code == 201
+    as_user(user(db, 2, "ADMIN"))
+    assert post(client, title="공지 글", is_notice="true").status_code == 201
+
+    response = client.get("/api/community/posts", params={"limit": 10})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 3
+    assert payload["has_more"] is False
+    assert len(payload["notices"]) == 1
+    assert all(not item["is_notice"] for item in payload["posts"])
+
+
+def test_feed_total_uses_category_query_and_place_filters(client: TestClient, db: Session) -> None:
+    as_user(user(db, 1))
+    assert post(client, category="OPINION", title="노란 우산 이야기", place_name="서울역").status_code == 201
+    assert post(client, category="OPINION", title="검정 지갑 이야기", place_name="부산역").status_code == 201
+    assert post(client, category="QUESTION", title="노란 우산 도움 요청", place_name="서울역").status_code == 201
+
+    category = client.get("/api/community/posts", params={"category": "OPINION", "limit": 10}).json()
+    query = client.get("/api/community/posts", params={"query": "노란", "limit": 10}).json()
+    place = client.get("/api/community/posts", params={"place": "서울", "limit": 10}).json()
+    combined = client.get("/api/community/posts", params={"category": "OPINION", "query": "노란", "place": "서울", "limit": 10}).json()
+
+    assert category["total"] == 2
+    assert query["total"] == 2
+    assert place["total"] == 2
+    assert combined["total"] == 1
+
+
+def test_feed_numbered_pagination_boundaries(client: TestClient, db: Session) -> None:
+    as_user(user(db, 1))
+    for index in range(21):
+        assert post(client, title=f"페이지 글 {index:02d}").status_code == 201
+
+    page1 = client.get("/api/community/posts", params={"skip": 0, "limit": 10}).json()
+    page2 = client.get("/api/community/posts", params={"skip": 10, "limit": 10}).json()
+    page3 = client.get("/api/community/posts", params={"skip": 20, "limit": 10}).json()
+
+    assert page1["total"] == 21
+    assert len(page1["posts"]) == 10
+    assert page1["has_more"] is True
+    assert len(page2["posts"]) == 10
+    assert page2["has_more"] is True
+    assert len(page3["posts"]) == 1
+    assert page3["has_more"] is False
+
+
+def test_feed_total_excludes_deleted_posts(client: TestClient, db: Session) -> None:
+    owner = user(db, 1)
+    as_user(owner)
+    kept = post(client, title="남는 글").json()
+    deleted = post(client, title="삭제될 글").json()
+    assert client.delete(f"/api/community/posts/{deleted['id']}").status_code == 204
+
+    response = client.get("/api/community/posts", params={"limit": 10})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert [item["id"] for item in payload["posts"]] == [kept["id"]]
+
+
+def test_feed_notices_only_on_first_page_and_not_regular_duplicates(client: TestClient, db: Session) -> None:
+    as_user(user(db, 1))
+    for index in range(12):
+        assert post(client, title=f"일반 공지 분리 글 {index:02d}").status_code == 201
+    as_user(user(db, 2, "ADMIN"))
+    notice = post(client, title="중요 공지", is_notice="true").json()
+
+    page1 = client.get("/api/community/posts", params={"skip": 0, "limit": 10}).json()
+    page2 = client.get("/api/community/posts", params={"skip": 10, "limit": 10}).json()
+
+    assert page1["total"] == 12
+    assert page1["notices"][0]["id"] == notice["id"]
+    assert page1["notices"][0]["is_notice"] is True
+    assert notice["id"] not in [item["id"] for item in page1["posts"]]
+    assert page2["notices"] == []
+    assert len(page2["posts"]) == 2
+    assert all(not item["is_notice"] for item in page2["posts"])
+    assert notice["id"] not in [item["id"] for item in page2["posts"]]
+
+
 def test_post_and_comment_owner_permissions(client: TestClient, db: Session) -> None:
     owner = user(db, 1); other = user(db, 2); admin = user(db, 3, "ADMIN")
     as_user(owner); created = post(client).json(); post_id = created["id"]

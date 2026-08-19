@@ -66,7 +66,9 @@ class CommunityContextResponse(BaseModel):
 
 
 class CommunityFeedResponse(BaseModel):
+    notices: list[CommunityPostResponse]
     posts: list[CommunityPostResponse]
     system_updates: list[CommunitySystemUpdate]
     context: CommunityContextResponse
+    total: int
     has_more: bool
