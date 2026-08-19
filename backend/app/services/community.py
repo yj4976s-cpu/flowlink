@@ -1,15 +1,30 @@
 from __future__ import annotations
 
-from datetime import UTC
+from datetime import UTC, datetime
+from typing import Literal, NamedTuple
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.core.security import utc_now
-from app.models import CommunityComment, CommunityPost, FoundItem, User
+from app.models import CommunityComment, CommunityPost, DetectedObject, FoundItem, User
 from app.schemas.community import CommunityCommentResponse, CommunityContextResponse, CommunityFeedResponse, CommunityPostResponse, CommunitySystemUpdate
+from app.services.found_item_images import representative_found_item_image_url
 
 CATEGORIES = {"FIELD_STORY", "QUESTION", "EXPERIENCE", "OPINION"}
+
+
+class FeedEntry(NamedTuple):
+    kind: Literal["post", "system"]
+    timestamp: datetime
+    id: int
+    item: CommunityPost | FoundItem
+
+
+def _timeline_timestamp(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(UTC).replace(tzinfo=None)
 
 
 def post_response(post: CommunityPost) -> CommunityPostResponse:
@@ -60,27 +75,35 @@ def _filtered_posts_statement(*, category: str | None, query: str | None, place:
 
 
 def list_feed(db: Session, *, category: str | None, query: str | None, place: str | None, sort: str, skip: int, limit: int) -> CommunityFeedResponse:
-    comment_count = select(func.count(CommunityComment.id)).where(CommunityComment.post_id == CommunityPost.id, CommunityComment.deleted_at.is_(None)).correlate(CommunityPost).scalar_subquery()
     statement = _filtered_posts_statement(category=category, query=query, place=place)
-    total = int(db.scalar(select(func.count()).select_from(statement.where(CommunityPost.is_notice.is_(False)).subquery())) or 0)
     regular_statement = statement.options(joinedload(CommunityPost.user), selectinload(CommunityPost.comments).joinedload(CommunityComment.user)).where(CommunityPost.is_notice.is_(False))
-    regular_order = (comment_count.desc(), CommunityPost.created_at.desc()) if sort == "comments" else (CommunityPost.created_at.desc(),)
-    posts = list(db.scalars(regular_statement.order_by(*regular_order).offset(skip).limit(limit)).unique().all())
+    regular_posts = list(db.scalars(regular_statement.order_by(CommunityPost.created_at.desc())).unique().all())
     notices = []
     if skip == 0:
         notice_statement = statement.options(joinedload(CommunityPost.user), selectinload(CommunityPost.comments).joinedload(CommunityComment.user)).where(CommunityPost.is_notice.is_(True))
         notices = list(db.scalars(notice_statement.order_by(CommunityPost.created_at.desc()).limit(5)).unique().all())
-    has_more = skip + len(posts) < total
 
     now = utc_now()
-    today = now.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-    item_statement = select(FoundItem).options(joinedload(FoundItem.object_class)).where(FoundItem.is_public.is_(True), FoundItem.status.in_(("AVAILABLE", "RECOVERED", "RETURNED")))
-    if place: item_statement = item_statement.where(FoundItem.area_name.ilike(f"%{place.strip()}%"))
-    found_items = list(db.scalars(item_statement.order_by(FoundItem.updated_at.desc()).limit(30)).all())
-    updates = [CommunitySystemUpdate(type="RETURN_UPDATE" if item.status == "RETURNED" else "FOUND_ITEM_UPDATE", id=item.id, title=f"발견된 {item.object_class.name_ko}이(가) 주인에게 반환됐어요" if item.status == "RETURNED" else f"{item.object_class.name_ko} 발견물이 새로 등록됐어요", place_name=item.area_name, latitude=float(item.latitude) if item.latitude is not None else None, longitude=float(item.longitude) if item.longitude is not None else None, timestamp=item.updated_at if item.status == "RETURNED" else item.created_at, href=f"/found-items/{item.id}" if item.status != "RETURNED" else None) for item in found_items]
+    today = _timeline_timestamp(now.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0))
+    found_items: list[FoundItem] = []
+    if category is None:
+        item_statement = select(FoundItem).options(joinedload(FoundItem.object_class), joinedload(FoundItem.detected_object).joinedload(DetectedObject.detection_event), selectinload(FoundItem.citizen_reports)).where(FoundItem.is_public.is_(True), FoundItem.status.in_(("AVAILABLE", "RECOVERED", "RETURNED")))
+        if place: item_statement = item_statement.where(FoundItem.area_name.ilike(f"%{place.strip()}%"))
+        found_items = list(db.scalars(item_statement.order_by(FoundItem.updated_at.desc())).all())
+    entries = [
+        *[FeedEntry("post", _timeline_timestamp(item.created_at), item.id, item) for item in regular_posts],
+        *[FeedEntry("system", _timeline_timestamp(item.updated_at if item.status == "RETURNED" else item.created_at), item.id, item) for item in found_items],
+    ]
+    entries.sort(key=lambda entry: (entry.timestamp, entry.id), reverse=True)
+    total = len(entries)
+    page_entries = entries[skip:skip + limit]
+    posts = [entry.item for entry in page_entries if entry.kind == "post" and isinstance(entry.item, CommunityPost)]
+    page_found_items = [entry.item for entry in page_entries if entry.kind == "system" and isinstance(entry.item, FoundItem)]
+    has_more = skip + len(page_entries) < total
+    updates = [CommunitySystemUpdate(type="RETURN_UPDATE" if item.status == "RETURNED" else "FOUND_ITEM_UPDATE", id=item.id, title=f"발견된 {item.object_class.name_ko}이(가) 주인에게 반환됐어요" if item.status == "RETURNED" else f"{item.object_class.name_ko} 발견물이 새로 등록됐어요", place_name=item.area_name, latitude=float(item.latitude) if item.latitude is not None else None, longitude=float(item.longitude) if item.longitude is not None else None, image_url=representative_found_item_image_url(item), timestamp=item.updated_at if item.status == "RETURNED" else item.created_at, href=f"/found-items/{item.id}" if item.status != "RETURNED" else None) for item in page_found_items]
     today_posts = int(db.scalar(select(func.count(CommunityPost.id)).where(CommunityPost.deleted_at.is_(None), CommunityPost.created_at >= today, CommunityPost.place_name.ilike(f"%{place.strip()}%") if place else True)) or 0)
-    found_count = sum(1 for item in found_items if item.created_at >= today and item.status != "RETURNED")
-    return_count = sum(1 for item in found_items if item.updated_at >= today and item.status == "RETURNED")
+    found_count = sum(1 for item in found_items if _timeline_timestamp(item.created_at) >= today and item.status != "RETURNED")
+    return_count = sum(1 for item in found_items if _timeline_timestamp(item.updated_at) >= today and item.status == "RETURNED")
     return CommunityFeedResponse(notices=[post_response(item) for item in notices], posts=[post_response(item) for item in posts], system_updates=updates, context=CommunityContextResponse(found_items=found_count, new_stories=today_posts, returns=return_count), total=total, has_more=has_more)
 
 

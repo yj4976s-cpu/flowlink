@@ -1,7 +1,7 @@
 export type CommunityCategory = "FIELD_STORY" | "QUESTION" | "EXPERIENCE" | "OPINION";
 export type CommunityPost = { id: number; user_id: number; nickname: string; category: CommunityCategory; title: string; content: string; place_name: string | null; address: string | null; latitude: number | null; longitude: number | null; image_url: string | null; is_notice: boolean; comment_count: number; created_at: string; updated_at: string };
 export type CommunityComment = { id: number; parent_comment_id: number | null; user_id: number; nickname: string; content: string; created_at: string };
-export type CommunitySystemUpdate = { type: "FOUND_ITEM_UPDATE" | "RETURN_UPDATE"; id: number; title: string; place_name: string; latitude: number | null; longitude: number | null; timestamp: string; href: string | null };
+export type CommunitySystemUpdate = { type: "FOUND_ITEM_UPDATE" | "RETURN_UPDATE"; id: number; title: string; place_name: string; latitude: number | null; longitude: number | null; image_url: string | null; timestamp: string; href: string | null };
 export type CommunityFeed = { notices: CommunityPost[]; posts: CommunityPost[]; system_updates: CommunitySystemUpdate[]; context: { found_items: number; new_stories: number; returns: number }; total: number; has_more: boolean };
 export type CommunityPostPayload = { category: CommunityCategory; title: string; content: string; place_name?: string; address?: string; latitude?: number; longitude?: number; is_notice?: boolean; image?: File; remove_image?: boolean };
 

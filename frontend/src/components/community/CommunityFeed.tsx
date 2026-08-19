@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/common/Icon";
 import {
   getCommunityFeed,
@@ -9,6 +9,7 @@ import {
   type CommunityCategory,
   type CommunityFeed as FeedData,
   type CommunityPost,
+  type CommunitySystemUpdate,
 } from "@/lib/communityApi";
 import { CommunityMap } from "./CommunityMap";
 import { CommunityPlaceSearch, type CommunityPlace } from "./CommunityPlaceSearch";
@@ -16,6 +17,10 @@ import styles from "./Community.module.css";
 
 const PAGE_SIZE = 10;
 const MAP_LIMIT = 30;
+
+type FeedItem =
+  | { type: "USER_POST"; timestamp: string; post: CommunityPost }
+  | { type: "FOUND_ITEM_UPDATE" | "RETURN_UPDATE"; timestamp: string; update: CommunitySystemUpdate };
 
 const categoryLabel: Record<CommunityCategory, string> = {
   FIELD_STORY: "목격 제보",
@@ -34,8 +39,19 @@ const elapsed = (value: string) => {
 
 const clock = (value: string) => new Date(value).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
 
+const defaultUrlState = () => ({
+  category: "",
+  query: "",
+  placeName: "",
+  latitude: null as number | null,
+  longitude: null as number | null,
+  sort: "latest",
+  view: "feed" as "feed" | "map",
+  page: 1,
+});
+
 const readUrlState = () => {
-  if (typeof window === "undefined") return { category: "", query: "", placeName: "", latitude: null as number | null, longitude: null as number | null, sort: "latest", view: "feed" as "feed" | "map", page: 1 };
+  if (typeof window === "undefined") return defaultUrlState();
   const params = new URLSearchParams(window.location.search);
   const latitudeParam = params.get("lat");
   const longitudeParam = params.get("lng");
@@ -73,24 +89,25 @@ const buildSearch = (values: { category: string; query: string; place: Community
   return params.toString();
 };
 
-function FeedThumbnail({ post }: { post: CommunityPost }) {
+function FeedThumbnail({ imageUrl, fallback }: { imageUrl: string | null; fallback: "post" | "question" | "found" | "return" }) {
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
-  const imageSrc = resolveCommunityImageUrl(post.image_url);
+  const imageSrc = resolveCommunityImageUrl(imageUrl);
   const src = imageSrc && failedSrc !== imageSrc ? imageSrc : null;
+  const iconName = fallback === "question" ? "info" : fallback === "found" || fallback === "return" ? "location" : "document";
 
   return (
     <div className={styles.feedImage} data-fallback={!src}>
       {src ? (
-        <img src={src} alt="게시글 첨부 이미지" loading="lazy" onError={() => setFailedSrc(src)} />
+        <img src={src} alt="" loading="lazy" onError={() => setFailedSrc(src)} />
       ) : (
-        <span aria-hidden="true"><Icon name={post.category === "QUESTION" ? "info" : "document"} size={24} /></span>
+        <span aria-hidden="true"><Icon name={iconName} size={22} /></span>
       )}
     </div>
   );
 }
 
 export function CommunityFeed() {
-  const initial = readUrlState();
+  const initial = defaultUrlState();
   const [data, setData] = useState<FeedData | null>(null);
   const [mapData, setMapData] = useState<FeedData | null>(null);
   const [category, setCategory] = useState(initial.category);
@@ -103,6 +120,7 @@ export function CommunityFeed() {
   const [sortOpen, setSortOpen] = useState(false);
   const [view, setView] = useState<"feed" | "map">(initial.view);
   const [page, setPage] = useState(initial.page);
+  const [urlReady, setUrlReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [mapLoading, setMapLoading] = useState(false);
   const [error, setError] = useState(false);
@@ -110,18 +128,25 @@ export function CommunityFeed() {
   const sortRef = useRef<HTMLDivElement>(null);
   const placeRef = useRef<HTMLDivElement>(null);
   const feedHeadingRef = useRef<HTMLDivElement>(null);
+  const skipNextInputSyncRef = useRef(false);
 
   useEffect(() => {
+    if (!urlReady) return;
+    if (skipNextInputSyncRef.current) {
+      skipNextInputSyncRef.current = false;
+      return;
+    }
     const timer = window.setTimeout(() => {
       setPage(1);
       setQuery(input.trim());
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [input]);
+  }, [input, urlReady]);
 
   useEffect(() => {
     const apply = () => {
       const next = readUrlState();
+      skipNextInputSyncRef.current = true;
       setCategory(next.category);
       setInput(next.query);
       setQuery(next.query);
@@ -130,23 +155,25 @@ export function CommunityFeed() {
       setSort(next.sort);
       setView(next.view);
       setPage(next.page);
+      setUrlReady(true);
     };
-    const timer = window.setTimeout(apply);
+    apply();
     window.addEventListener("popstate", apply);
     return () => {
-      window.clearTimeout(timer);
       window.removeEventListener("popstate", apply);
     };
   }, []);
 
   useEffect(() => {
+    if (!urlReady) return;
     const search = buildSearch({ category, query, place, sort, view, page });
     const nextUrl = `${window.location.pathname}${search ? `?${search}` : ""}`;
     const currentUrl = `${window.location.pathname}${window.location.search}`;
     if (nextUrl !== currentUrl) window.history.replaceState(null, "", nextUrl);
-  }, [category, page, place, query, sort, view]);
+  }, [category, page, place, query, sort, urlReady, view]);
 
   useEffect(() => {
+    if (!urlReady) return;
     const controller = new AbortController();
     void Promise.resolve()
       .then(() => {
@@ -162,10 +189,10 @@ export function CommunityFeed() {
       .catch(() => !controller.signal.aborted && setError(true))
       .finally(() => !controller.signal.aborted && setLoading(false));
     return () => controller.abort();
-  }, [category, page, place?.placeName, query, reload, sort]);
+  }, [category, page, place?.placeName, query, reload, sort, urlReady]);
 
   useEffect(() => {
-    if (view !== "map") return;
+    if (!urlReady || view !== "map") return;
     const controller = new AbortController();
     void Promise.resolve()
       .then(() => {
@@ -176,7 +203,7 @@ export function CommunityFeed() {
       .catch(() => !controller.signal.aborted && setMapData(null))
       .finally(() => !controller.signal.aborted && setMapLoading(false));
     return () => controller.abort();
-  }, [category, place?.placeName, query, reload, sort, view]);
+  }, [category, place?.placeName, query, reload, sort, urlReady, view]);
 
   useEffect(() => {
     if (!sortOpen && !placeOpen) return;
@@ -199,8 +226,13 @@ export function CommunityFeed() {
   }, [placeOpen, sortOpen]);
 
   const notices = data?.notices ?? [];
-  const posts = data?.posts ?? [];
-  const recentUpdates = (data?.system_updates ?? []).slice(0, 3);
+  const items = useMemo<FeedItem[]>(() => {
+    if (!data) return [];
+    return [
+      ...data.posts.map((post): FeedItem => ({ type: "USER_POST", timestamp: post.created_at, post })),
+      ...data.system_updates.map((update): FeedItem => ({ type: update.type, timestamp: update.timestamp, update })),
+    ].sort((a, b) => +new Date(b.timestamp) - +new Date(a.timestamp));
+  }, [data]);
   const mapPosts = [...(mapData?.notices ?? []), ...(mapData?.posts ?? [])];
   const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -304,16 +336,9 @@ export function CommunityFeed() {
         </div>
       </section>
 
-      {!loading && !error && recentUpdates.length > 0 && (
-        <section className={styles.localSignals} aria-labelledby="local-signals-title">
-          <div><span>CONNECTION NEWS</span><h2 id="local-signals-title">최근 연결 소식</h2></div>
-          <div className={styles.signalGrid}>{recentUpdates.map((update) => <Link href={update.href || "/found-items"} key={`signal-${update.type}-${update.id}`}><em>{update.type === "RETURN_UPDATE" ? "반환 소식" : "발견물 소식"}</em><strong>{update.title}</strong><span>{update.place_name} · {elapsed(update.timestamp)}</span></Link>)}</div>
-        </section>
-      )}
-
       <div className={styles.communityGrid}>
         <section id="community-view-panel" className={styles.feedColumn} role="tabpanel" aria-labelledby={view === "map" ? "community-map-tab" : "community-feed-tab"} aria-live="polite">
-          {view === "feed" && !loading && !error && (notices.length > 0 || posts.length > 0) && <div ref={feedHeadingRef} className={styles.flowHeading}><span>COMMUNITY POSTS</span><strong>{place?.placeName || "전체 지역"} · 게시글 {data?.total ?? 0}건</strong></div>}
+          {view === "feed" && !loading && !error && (notices.length > 0 || items.length > 0) && <div ref={feedHeadingRef} className={styles.flowHeading}><span>COMMUNITY FLOW</span><strong>{place?.placeName || "전체 지역"} · {data?.total ?? 0}개 흐름</strong></div>}
           {view === "map" ? (
             <>
               {mapLoading && <div className={styles.mapDataLoading}><Icon name="refresh" size={18} /><span>지도 데이터를 불러오고 있어요.</span></div>}
@@ -323,11 +348,10 @@ export function CommunityFeed() {
             <div className={styles.flowSkeleton} aria-label="이야기를 불러오는 중">{[1, 2, 3].map((item) => <div key={item}><i /><article><span /><b /><em /></article></div>)}</div>
           ) : error ? (
             <div className={styles.errorState} role="alert"><Icon name="info" size={22} /><div><h2>게시글을 불러오지 못했어요.</h2><p>잠시 후 다시 시도해주세요.</p></div><button type="button" onClick={() => setReload((value) => value + 1)}>다시 불러오기</button></div>
-          ) : notices.length > 0 || posts.length > 0 ? (
+          ) : notices.length > 0 || items.length > 0 ? (
             <>
               {notices.length > 0 && (
                 <section className={styles.noticeStack} aria-label="커뮤니티 공지">
-                  <strong>공지</strong>
                   {notices.map((notice) => (
                     <Link href={`/community/${notice.id}`} className={styles.noticeCard} key={`notice-${notice.id}`}>
                       <span>공지</span>
@@ -337,26 +361,40 @@ export function CommunityFeed() {
                   ))}
                 </section>
               )}
-              {posts.length > 0 && <div className={styles.flowStream}>
-                {posts.map((post) => {
-                  const source = categoryLabel[post.category];
-                  const placeName = post.place_name;
-                  return (
-                    <div className={styles.flowItem} data-source="USER_POST" key={`post-${post.id}`}>
-                      <time>{clock(post.created_at)}</time><i aria-hidden="true" />
-                      <Link href={`/community/${post.id}`} className={styles.feedCard}>
-                        <div className={styles.feedText}>
-                          <header><span>{source}</span>{placeName && <small><Icon name="location" size={14} />{placeName}</small>}</header>
-                          <h2>{post.title}</h2>
-                          <p>{post.content}</p>
-                          <footer><span>{post.nickname} · {elapsed(post.created_at)}</span><b>댓글 {post.comment_count}</b></footer>
-                        </div>
-                        <FeedThumbnail post={post} />
-                      </Link>
-                    </div>
+              <div className={styles.flowStream}>
+                {items.map((item) => {
+                  const isPost = "post" in item;
+                  const source = isPost ? categoryLabel[item.post.category] : item.type === "RETURN_UPDATE" ? "반환 소식" : "발견물 소식";
+                  const placeName = isPost ? item.post.place_name : item.update.place_name;
+                  const timestamp = item.timestamp;
+                  const thumbnail = isPost ? (
+                    <FeedThumbnail imageUrl={item.post.image_url} fallback={item.post.category === "QUESTION" ? "question" : "post"} />
+                  ) : (
+                    <FeedThumbnail imageUrl={item.update.image_url} fallback={item.type === "RETURN_UPDATE" ? "return" : "found"} />
                   );
+                  const content = isPost ? (
+                    <Link href={`/community/${item.post.id}`} className={styles.feedCard}>
+                      <div className={styles.feedText}>
+                        <header><span>{source}</span>{placeName && <small><Icon name="location" size={14} />{placeName}</small>}</header>
+                        <h2>{item.post.title}</h2>
+                        <p>{item.post.content}</p>
+                        <footer><span>{item.post.nickname} · {elapsed(timestamp)}</span><b>댓글 {item.post.comment_count}</b></footer>
+                      </div>
+                      {thumbnail}
+                    </Link>
+                  ) : (
+                    <article className={styles.feedCard}>
+                      <div className={styles.feedText}>
+                        <header><span>{source}</span><small><Icon name="location" size={14} />{placeName}</small></header>
+                        <h2>{item.update.title}</h2>
+                        <footer><span>{elapsed(timestamp)} · 발견물 센터</span>{item.update.href && <Link href={item.update.href}>발견물 확인하기 <Icon name="arrow" size={14} /></Link>}</footer>
+                      </div>
+                      {thumbnail}
+                    </article>
+                  );
+                  return <div className={styles.flowItem} data-source={item.type} key={isPost ? `post-${item.post.id}` : `${item.type}-${item.update.id}`}><time>{clock(timestamp)}</time><i aria-hidden="true" />{content}</div>;
                 })}
-              </div>}
+              </div>
               {totalPages > 1 && (
                 <nav className={styles.pagination} aria-label="커뮤니티 페이지">
                   <button type="button" disabled={currentPage <= 1} onClick={() => syncPage(currentPage - 1)}>이전</button>

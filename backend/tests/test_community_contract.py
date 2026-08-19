@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,7 +12,7 @@ from app.core.auth import get_current_user
 from app.core.security import utc_now
 from app.db.session import Base, get_db
 from app.main import app
-from app.models import User
+from app.models import CitizenReport, FoundItem, ObjectClass, User
 
 
 @compiles(BigInteger, "sqlite")
@@ -30,6 +31,77 @@ def db() -> Iterator[Session]:
 
 def user(db: Session, user_id: int, role: str = "USER") -> User:
     now = utc_now(); item = User(id=user_id, email=f"community{user_id}@example.com", password_hash="unused", nickname=f"작성자{user_id}", role=role, active=True, terms_agreed_at=now, privacy_agreed_at=now, created_at=now, updated_at=now); db.add(item); db.commit(); return item
+
+
+def object_class(db: Session, class_id: int = 1) -> ObjectClass:
+    now = utc_now()
+    item = ObjectClass(
+        id=class_id,
+        code=f"TEST_{class_id}",
+        name_ko=f"테스트 물품 {class_id}",
+        group_code="TEST",
+        display_order=class_id,
+        is_active=True,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(item)
+    db.commit()
+    return item
+
+
+def found_item(
+    db: Session,
+    object_class_item: ObjectClass,
+    *,
+    status: str = "AVAILABLE",
+    is_public: bool = True,
+    area_name: str = "서울역",
+    created_offset_minutes: int = 0,
+    image_url: str | None = None,
+) -> FoundItem:
+    now = utc_now() + timedelta(minutes=created_offset_minutes)
+    item = FoundItem(
+        object_class_id=object_class_item.id,
+        source_type="CITIZEN" if image_url else "ADMIN",
+        color=None,
+        public_description="커뮤니티 테스트 발견물",
+        private_features=None,
+        area_name=area_name,
+        latitude=None,
+        longitude=None,
+        found_at=now,
+        status=status,
+        storage_location=None,
+        admin_memo=None,
+        is_public=is_public,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(item)
+    db.commit()
+    if image_url:
+        reporter = user(db, 9000 + item.id)
+        report = CitizenReport(
+            user_id=reporter.id,
+            object_class_id=object_class_item.id,
+            color=None,
+            description="커뮤니티 테스트 제보",
+            image_url=image_url,
+            area_name=area_name,
+            latitude=None,
+            longitude=None,
+            found_at=now,
+            status="LINKED",
+            linked_found_item_id=item.id,
+            linked_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(report)
+        db.commit()
+        db.refresh(item)
+    return item
 
 
 @pytest.fixture
@@ -304,6 +376,81 @@ def test_feed_numbered_pagination_boundaries(client: TestClient, db: Session) ->
     assert page2["has_more"] is True
     assert len(page3["posts"]) == 1
     assert page3["has_more"] is False
+
+
+def test_feed_paginates_mixed_posts_and_system_updates_without_duplicates(client: TestClient, db: Session) -> None:
+    item_class = object_class(db)
+    as_user(user(db, 1))
+    for index in range(2):
+        assert post(client, title=f"mixed post {index:02d}").status_code == 201
+    for index in range(30):
+        found_item(db, item_class, created_offset_minutes=index + 1)
+
+    pages = [
+        client.get("/api/community/posts", params={"skip": skip, "limit": 10}).json()
+        for skip in (0, 10, 20, 30)
+    ]
+
+    assert [page["total"] for page in pages] == [32, 32, 32, 32]
+    assert [len(page["posts"]) + len(page["system_updates"]) for page in pages] == [10, 10, 10, 2]
+    assert [page["has_more"] for page in pages] == [True, True, True, False]
+
+    seen: set[tuple[str, int]] = set()
+    previous_page_oldest: str | None = None
+    for page in pages:
+        timestamps = [item["created_at"] for item in page["posts"]] + [item["timestamp"] for item in page["system_updates"]]
+        ordered_timestamps = sorted(timestamps, reverse=True)
+        if previous_page_oldest is not None and ordered_timestamps:
+            assert previous_page_oldest >= ordered_timestamps[0]
+        if ordered_timestamps:
+            previous_page_oldest = ordered_timestamps[-1]
+        keys = [("post", item["id"]) for item in page["posts"]] + [(item["type"], item["id"]) for item in page["system_updates"]]
+        assert seen.isdisjoint(keys)
+        seen.update(keys)
+    assert len(seen) == 32
+
+
+def test_feed_system_updates_include_representative_image_or_null(client: TestClient, db: Session) -> None:
+    item_class = object_class(db)
+    with_image = found_item(db, item_class, image_url="/uploads/citizen/test.jpg", created_offset_minutes=2)
+    without_image = found_item(db, item_class, created_offset_minutes=1)
+
+    payload = client.get("/api/community/posts", params={"limit": 10}).json()
+    updates = {item["id"]: item for item in payload["system_updates"]}
+
+    assert updates[with_image.id]["image_url"] == "/uploads/citizen/test.jpg"
+    assert updates[without_image.id]["image_url"] is None
+
+
+def test_feed_place_filter_applies_to_posts_and_public_system_updates(client: TestClient, db: Session) -> None:
+    item_class = object_class(db)
+    as_user(user(db, 1))
+    assert post(client, title="seoul post", place_name="서울역").status_code == 201
+    assert post(client, title="busan post", place_name="부산역").status_code == 201
+    seoul_item = found_item(db, item_class, area_name="서울역", created_offset_minutes=2)
+    found_item(db, item_class, area_name="서울역", is_public=False, created_offset_minutes=3)
+    found_item(db, item_class, area_name="부산역", created_offset_minutes=4)
+
+    payload = client.get("/api/community/posts", params={"place": "서울", "limit": 10}).json()
+
+    assert payload["total"] == 2
+    assert [item["title"] for item in payload["posts"]] == ["seoul post"]
+    assert [item["id"] for item in payload["system_updates"]] == [seoul_item.id]
+    assert payload["system_updates"][0]["place_name"] == "서울역"
+
+
+def test_feed_category_filter_returns_only_matching_posts(client: TestClient, db: Session) -> None:
+    item_class = object_class(db)
+    as_user(user(db, 1))
+    assert post(client, category="OPINION", title="opinion post").status_code == 201
+    assert post(client, category="QUESTION", title="question post").status_code == 201
+    found_item(db, item_class, created_offset_minutes=1)
+
+    payload = client.get("/api/community/posts", params={"category": "OPINION", "limit": 10}).json()
+
+    assert payload["total"] == 1
+    assert [item["title"] for item in payload["posts"]] == ["opinion post"]
+    assert payload["system_updates"] == []
 
 
 def test_feed_total_excludes_deleted_posts(client: TestClient, db: Session) -> None:

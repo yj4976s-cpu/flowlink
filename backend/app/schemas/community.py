@@ -55,6 +55,7 @@ class CommunitySystemUpdate(BaseModel):
     place_name: str
     latitude: float | None
     longitude: float | None
+    image_url: str | None = None
     timestamp: datetime
     href: str | None
 
