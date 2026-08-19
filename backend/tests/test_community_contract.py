@@ -33,12 +33,12 @@ def user(db: Session, user_id: int, role: str = "USER") -> User:
     now = utc_now(); item = User(id=user_id, email=f"community{user_id}@example.com", password_hash="unused", nickname=f"작성자{user_id}", role=role, active=True, terms_agreed_at=now, privacy_agreed_at=now, created_at=now, updated_at=now); db.add(item); db.commit(); return item
 
 
-def object_class(db: Session, class_id: int = 1) -> ObjectClass:
+def object_class(db: Session, class_id: int = 1, name_ko: str | None = None) -> ObjectClass:
     now = utc_now()
     item = ObjectClass(
         id=class_id,
         code=f"TEST_{class_id}",
-        name_ko=f"테스트 물품 {class_id}",
+        name_ko=name_ko or f"테스트 물품 {class_id}",
         group_code="TEST",
         display_order=class_id,
         is_active=True,
@@ -57,6 +57,8 @@ def found_item(
     status: str = "AVAILABLE",
     is_public: bool = True,
     area_name: str = "서울역",
+    color: str | None = None,
+    public_description: str | None = "커뮤니티 테스트 발견물",
     created_offset_minutes: int = 0,
     image_url: str | None = None,
 ) -> FoundItem:
@@ -64,8 +66,8 @@ def found_item(
     item = FoundItem(
         object_class_id=object_class_item.id,
         source_type="CITIZEN" if image_url else "ADMIN",
-        color=None,
-        public_description="커뮤니티 테스트 발견물",
+        color=color,
+        public_description=public_description,
         private_features=None,
         area_name=area_name,
         latitude=None,
@@ -451,6 +453,91 @@ def test_feed_category_filter_returns_only_matching_posts(client: TestClient, db
     assert payload["total"] == 1
     assert [item["title"] for item in payload["posts"]] == ["opinion post"]
     assert payload["system_updates"] == []
+
+
+def test_feed_comments_sort_orders_posts_by_visible_comment_count(client: TestClient, db: Session) -> None:
+    item_class = object_class(db)
+    as_user(user(db, 1))
+    zero = post(client, title="comments zero").json()
+    two = post(client, title="comments two").json()
+    one = post(client, title="comments one").json()
+    found_item(db, item_class, created_offset_minutes=10)
+
+    for index in range(2):
+        assert client.post(f"/api/community/posts/{two['id']}/comments", data={"content": f"two {index}"}).status_code == 201
+    assert client.post(f"/api/community/posts/{one['id']}/comments", data={"content": "one"}).status_code == 201
+
+    payload = client.get("/api/community/posts", params={"sort": "comments", "limit": 10}).json()
+
+    assert [item["title"] for item in payload["posts"]] == ["comments two", "comments one", "comments zero"]
+    assert [item["comment_count"] for item in payload["posts"]] == [2, 1, 0]
+    assert len(payload["system_updates"]) == 1
+    assert payload["total"] == 4
+
+
+def test_feed_comments_sort_paginates_before_system_updates(client: TestClient, db: Session) -> None:
+    item_class = object_class(db)
+    as_user(user(db, 1))
+    created_posts = []
+    for count in range(12):
+        created = post(client, title=f"comment boundary {count:02d}").json()
+        created_posts.append(created)
+        for index in range(count):
+            assert client.post(f"/api/community/posts/{created['id']}/comments", data={"content": f"comment {count}-{index}"}).status_code == 201
+    found_item(db, item_class, created_offset_minutes=30)
+
+    page1 = client.get("/api/community/posts", params={"sort": "comments", "skip": 0, "limit": 10}).json()
+    page2 = client.get("/api/community/posts", params={"sort": "comments", "skip": 10, "limit": 10}).json()
+
+    assert page1["total"] == 13
+    assert [item["comment_count"] for item in page1["posts"]] == list(range(11, 1, -1))
+    assert page1["system_updates"] == []
+    assert [item["comment_count"] for item in page2["posts"]] == [1, 0]
+    assert len(page2["system_updates"]) == 1
+    assert page2["has_more"] is False
+
+
+def test_feed_query_filters_system_updates_by_object_class(client: TestClient, db: Session) -> None:
+    ball_class = object_class(db, 1, "공")
+    shoe_class = object_class(db, 2, "신발")
+    ball = found_item(db, ball_class, area_name="서울역", created_offset_minutes=2)
+    found_item(db, shoe_class, area_name="서울역", created_offset_minutes=3)
+
+    payload = client.get("/api/community/posts", params={"query": "공", "limit": 10}).json()
+
+    assert payload["total"] == 1
+    assert payload["posts"] == []
+    assert [item["id"] for item in payload["system_updates"]] == [ball.id]
+
+
+def test_feed_query_filters_system_updates_by_area_and_excludes_unrelated(client: TestClient, db: Session) -> None:
+    ball_class = object_class(db, 1, "공")
+    bag_class = object_class(db, 2, "가방")
+    as_user(user(db, 1))
+    assert post(client, title="서울 목격담", place_name="서울역").status_code == 201
+    seoul_item = found_item(db, ball_class, area_name="서울역", created_offset_minutes=2)
+    found_item(db, bag_class, area_name="부산역", created_offset_minutes=3)
+
+    payload = client.get("/api/community/posts", params={"query": "서울", "limit": 10}).json()
+
+    assert payload["total"] == 2
+    assert [item["title"] for item in payload["posts"]] == ["서울 목격담"]
+    assert [item["id"] for item in payload["system_updates"]] == [seoul_item.id]
+
+
+def test_feed_query_filters_system_updates_by_description_and_color(client: TestClient, db: Session) -> None:
+    ball_class = object_class(db, 1, "공")
+    matching_color = found_item(db, ball_class, color="노랑", public_description="체육관 앞", created_offset_minutes=3)
+    matching_description = found_item(db, ball_class, color="파랑", public_description="특별한 별무늬", created_offset_minutes=2)
+    found_item(db, ball_class, color="검정", public_description="평범한 물품", created_offset_minutes=1)
+
+    color_payload = client.get("/api/community/posts", params={"query": "노랑", "limit": 10}).json()
+    description_payload = client.get("/api/community/posts", params={"query": "별무늬", "limit": 10}).json()
+
+    assert color_payload["total"] == 1
+    assert [item["id"] for item in color_payload["system_updates"]] == [matching_color.id]
+    assert description_payload["total"] == 1
+    assert [item["id"] for item in description_payload["system_updates"]] == [matching_description.id]
 
 
 def test_feed_total_excludes_deleted_posts(client: TestClient, db: Session) -> None:

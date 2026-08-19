@@ -7,7 +7,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.core.security import utc_now
-from app.models import CommunityComment, CommunityPost, DetectedObject, FoundItem, User
+from app.models import CommunityComment, CommunityPost, DetectedObject, FoundItem, ObjectClass, User
 from app.schemas.community import CommunityCommentResponse, CommunityContextResponse, CommunityFeedResponse, CommunityPostResponse, CommunitySystemUpdate
 from app.services.found_item_images import representative_found_item_image_url
 
@@ -19,6 +19,7 @@ class FeedEntry(NamedTuple):
     timestamp: datetime
     id: int
     item: CommunityPost | FoundItem
+    comment_count: int = 0
 
 
 def _timeline_timestamp(value: datetime) -> datetime:
@@ -27,8 +28,12 @@ def _timeline_timestamp(value: datetime) -> datetime:
     return value.astimezone(UTC).replace(tzinfo=None)
 
 
+def _visible_comment_count(post: CommunityPost) -> int:
+    return sum(1 for item in post.comments if item.deleted_at is None)
+
+
 def post_response(post: CommunityPost) -> CommunityPostResponse:
-    count = sum(1 for item in post.comments if item.deleted_at is None)
+    count = _visible_comment_count(post)
     return CommunityPostResponse(id=post.id, user_id=post.user_id, nickname=post.user.nickname, category=post.category, title=post.title, content=post.content, place_name=post.place_name, address=post.address, latitude=float(post.latitude) if post.latitude is not None else None, longitude=float(post.longitude) if post.longitude is not None else None, image_url=post.image_url, is_notice=post.is_notice, comment_count=count, created_at=post.created_at, updated_at=post.updated_at)
 
 
@@ -87,14 +92,20 @@ def list_feed(db: Session, *, category: str | None, query: str | None, place: st
     today = _timeline_timestamp(now.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0))
     found_items: list[FoundItem] = []
     if category is None:
-        item_statement = select(FoundItem).options(joinedload(FoundItem.object_class), joinedload(FoundItem.detected_object).joinedload(DetectedObject.detection_event), selectinload(FoundItem.citizen_reports)).where(FoundItem.is_public.is_(True), FoundItem.status.in_(("AVAILABLE", "RECOVERED", "RETURNED")))
+        item_statement = select(FoundItem).join(FoundItem.object_class).options(joinedload(FoundItem.object_class), joinedload(FoundItem.detected_object).joinedload(DetectedObject.detection_event), selectinload(FoundItem.citizen_reports)).where(FoundItem.is_public.is_(True), FoundItem.status.in_(("AVAILABLE", "RECOVERED", "RETURNED")))
+        if query:
+            pattern = f"%{query.strip()}%"
+            item_statement = item_statement.where(or_(ObjectClass.name_ko.ilike(pattern), FoundItem.area_name.ilike(pattern), FoundItem.public_description.ilike(pattern), FoundItem.color.ilike(pattern)))
         if place: item_statement = item_statement.where(FoundItem.area_name.ilike(f"%{place.strip()}%"))
         found_items = list(db.scalars(item_statement.order_by(FoundItem.updated_at.desc())).all())
     entries = [
-        *[FeedEntry("post", _timeline_timestamp(item.created_at), item.id, item) for item in regular_posts],
+        *[FeedEntry("post", _timeline_timestamp(item.created_at), item.id, item, _visible_comment_count(item)) for item in regular_posts],
         *[FeedEntry("system", _timeline_timestamp(item.updated_at if item.status == "RETURNED" else item.created_at), item.id, item) for item in found_items],
     ]
-    entries.sort(key=lambda entry: (entry.timestamp, entry.id), reverse=True)
+    if sort == "comments":
+        entries.sort(key=lambda entry: (1 if entry.kind == "post" else 0, entry.comment_count, entry.timestamp, entry.id), reverse=True)
+    else:
+        entries.sort(key=lambda entry: (entry.timestamp, entry.id), reverse=True)
     total = len(entries)
     page_entries = entries[skip:skip + limit]
     posts = [entry.item for entry in page_entries if entry.kind == "post" and isinstance(entry.item, CommunityPost)]

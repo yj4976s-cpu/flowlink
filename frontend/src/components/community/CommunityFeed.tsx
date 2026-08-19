@@ -228,11 +228,13 @@ export function CommunityFeed() {
   const notices = data?.notices ?? [];
   const items = useMemo<FeedItem[]>(() => {
     if (!data) return [];
-    return [
+    const mixedItems = [
       ...data.posts.map((post): FeedItem => ({ type: "USER_POST", timestamp: post.created_at, post })),
       ...data.system_updates.map((update): FeedItem => ({ type: update.type, timestamp: update.timestamp, update })),
-    ].sort((a, b) => +new Date(b.timestamp) - +new Date(a.timestamp));
-  }, [data]);
+    ];
+    if (sort === "comments") return mixedItems;
+    return mixedItems.sort((a, b) => +new Date(b.timestamp) - +new Date(a.timestamp));
+  }, [data, sort]);
   const mapPosts = [...(mapData?.notices ?? []), ...(mapData?.posts ?? [])];
   const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
