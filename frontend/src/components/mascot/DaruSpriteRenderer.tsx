@@ -36,7 +36,7 @@ function translatedX(element: HTMLElement): number {
 
 function frameIndexForDistance(travelledPx: number, frameCount: number) {
   const cycleProgress = (travelledPx % DARU_SPRITE_CONFIG.stridePx) / DARU_SPRITE_CONFIG.stridePx;
-  return Math.floor(cycleProgress * frameCount);
+  return Math.floor(cycleProgress * frameCount) % frameCount;
 }
 
 export function DaruSpriteRenderer({ state, theme = "day" }: { state: DaruRendererState; theme?: DaruRhythm }) {
@@ -81,7 +81,10 @@ export function DaruSpriteRenderer({ state, theme = "day" }: { state: DaruRender
     const sample = () => {
       const image = imageRef.current;
       const stage = rendererRef.current?.closest<HTMLElement>("[data-daru-stage]");
-      if (!image || !stage) return;
+      if (!image || !stage) {
+        animationFrame = requestAnimationFrame(sample);
+        return;
+      }
 
       const x = translatedX(stage);
       if (lastXRef.current !== null) travelledRef.current += Math.abs(x - lastXRef.current);

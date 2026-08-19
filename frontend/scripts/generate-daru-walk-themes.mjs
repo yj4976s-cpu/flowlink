@@ -5,8 +5,8 @@ import sharp from "sharp";
 const ROOT = path.resolve("public/mascot/sprites");
 const FRAME_NAMES = Array.from({ length: 8 }, (_, index) => `walk-${String(index + 1).padStart(2, "0")}.png`);
 const THEMES = {
-  dawn: "#FF7A45",
-  night: "#8B7CFF",
+  dawn: { color: "#FF7A45", lightnessBias: 0 },
+  night: { color: "#6D28D9", lightnessBias: -0.07 },
 };
 const DAY_SCARF_HSL = hexToHsl("#2F61F5");
 
@@ -72,9 +72,9 @@ for (const frameName of FRAME_NAMES) {
   const sourcePath = path.join(ROOT, "day", "walk", frameName);
   const source = await loadRgba(sourcePath);
 
-  for (const [theme, targetHex] of Object.entries(THEMES)) {
+  for (const [theme, themeConfig] of Object.entries(THEMES)) {
     const output = Buffer.from(source.data);
-    const [targetHue, targetSaturation, targetLightness] = hexToHsl(targetHex);
+    const [targetHue, targetSaturation, targetLightness] = hexToHsl(themeConfig.color);
     let changedPixels = 0;
 
     for (let y = 0; y < source.info.height; y += 1) {
@@ -87,7 +87,7 @@ for (const frameName of FRAME_NAMES) {
         if (!isScarfBlue(red, green, blue, alpha, x, y, source.info.width, source.info.height)) continue;
         const [, sourceSaturation, sourceLightness] = rgbToHsl(red, green, blue);
         const saturation = Math.min(1, targetSaturation * (sourceSaturation / DAY_SCARF_HSL[1]));
-        const lightness = Math.min(1, Math.max(0, targetLightness + sourceLightness - DAY_SCARF_HSL[2]));
+        const lightness = Math.min(1, Math.max(0, targetLightness + sourceLightness - DAY_SCARF_HSL[2] + themeConfig.lightnessBias));
         const [nextRed, nextGreen, nextBlue] = hslToRgb(targetHue, saturation, lightness);
         output[offset] = nextRed;
         output[offset + 1] = nextGreen;
