@@ -526,6 +526,14 @@ html[data-theme="night"] .auth-register-copy-card { background: linear-gradient(
 .auth-page-login .auth-form { max-width: 450px; }
 .auth-page-login .auth-submit { box-shadow: 0 6px 14px color-mix(in srgb, var(--color-primary) 15%, transparent), inset 0 1px 0 rgba(255,255,255,.28); }
 .auth-page-login, .auth-page-login .auth-form-panel, .auth-page-login .auth-field > input, .auth-page-login .auth-input-wrap, .auth-page-login .auth-submit, .auth-page-login .auth-form-eyebrow, .auth-page-login .password-toggle, .auth-page-login .auth-detection-card, .auth-page-login .auth-detection-leader, .auth-page-login .auth-login-flow i, .auth-page-login .auth-login-flow span::after { transition: color .3s ease, background-color .3s ease, border-color .3s ease, box-shadow .3s ease; }
+@media (min-width: 1025px) {
+  .auth-page-login .auth-header {
+    width: 100%;
+    max-width: none;
+    padding-left: clamp(34px, 4vw, 68px);
+    padding-right: clamp(36px, 8.5vw, 170px);
+  }
+}
 .auth-login-visual { min-height: calc(100dvh - 78px); background-image: none !important; border-radius: 0; }
 .auth-login-visual::before { z-index: 1; background: linear-gradient(180deg, rgba(7,14,29,.03), rgba(7,14,29,.38)), linear-gradient(90deg, rgba(7,14,29,.14), transparent 62%); }
 .auth-login-visual::after { width: 24%; background: linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--color-background) 16%, transparent) 28%, var(--color-background) 100%); }
