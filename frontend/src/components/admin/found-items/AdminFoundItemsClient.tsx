@@ -351,8 +351,8 @@ export function AdminFoundItemsClient() {
   return (
     <main className={styles.page}>
       <header className={styles.pageHeader}>
-        <div><p>ADMIN · FOUND ITEM REGISTER</p><h1>발견물 대장</h1><span>등록된 발견물의 현재 상태와 전체 처리 이력을 확인하세요.</span></div>
-        <nav className={styles.viewSwitch} aria-label="발견물 대장 보기 방식"><Link href="/admin/found-items" aria-current="page"><Icon name="archive" size={15} />목록 보기</Link><Link href="/admin/map"><Icon name="location" size={15} />지도 보기</Link></nav>
+        <div><p>ADMIN · FOUND ITEM MANAGEMENT</p><h1>발견물 관리</h1><span>등록된 발견물의 현재 상태와 전체 처리 이력을 확인하세요.</span></div>
+        <nav className={styles.viewSwitch} aria-label="발견물 관리 보기 방식"><Link href="/admin/found-items" aria-current="page"><Icon name="archive" size={15} />목록</Link><Link href="/admin/map"><Icon name="location" size={15} />지도</Link></nav>
       </header>
 
       <section className={styles.statusSummary} aria-label="발견물 상태별 전체 건수" aria-busy={loading}>

@@ -18,9 +18,17 @@ type NavigationItem = {
 };
 
 const userNavigation: readonly NavigationItem[] = [
-  { label: "물건을 잃어버렸어요", href: "/lost-reports/new" },
-  { label: "발견물 찾아보기", href: "/found-items" },
-  { label: "물건을 발견했어요", href: "/detect" },
+  { label: "분실 신고", href: "/lost-reports/new" },
+  {
+    label: "발견물 센터",
+    href: "/found-items",
+    children: [
+      { label: "발견물 목록", href: "/found-items" },
+      { label: "발견물 지도", href: "/map" },
+    ],
+  },
+  { label: "물건 확인", href: "/detect" },
+  { label: "커뮤니티", href: "/community" },
   { label: "내 진행 상황", href: "/mypage" },
 ];
 
@@ -31,11 +39,11 @@ const adminNavigation: readonly NavigationItem[] = [
     activePaths: ["/admin", "/admin/detections", "/admin/citizen-reports", "/admin/ownership-claims"],
   },
   {
-    label: "발견물 대장",
+    label: "발견물 관리",
     href: "/admin/found-items",
     activePaths: ["/admin/found-items", "/admin/map"],
   },
-  { label: "AI 성능 분석", href: "/admin/ai-report", activePaths: ["/admin/ai-report"] },
+  { label: "AI 운영 분석", href: "/admin/ai-report", activePaths: ["/admin/ai-report"] },
 ];
 
 function isNavigationItemCurrent(item: NavigationItem, pathname: string) {
@@ -236,7 +244,7 @@ export function Header() {
                   <span>{currentUser.email}</span>
                 </div>
                 <div className="profile-dropdown-links">
-                  <Link href={isAdmin ? "/admin" : "/mypage"} role="menuitem" onClick={() => setProfileOpen(false)}><Icon name="user" size={18} />{isAdmin ? "관리자 정보" : "내 진행 상황"}</Link>
+                  <Link href={isAdmin ? "/admin" : "/mypage"} role="menuitem" onClick={() => setProfileOpen(false)}><Icon name="user" size={18} />{isAdmin ? "관리자 정보" : "마이페이지"}</Link>
                   {!isAdmin && <Link href="/notifications" role="menuitem" onClick={() => setProfileOpen(false)}><Icon name="bell" size={18} />알림</Link>}
                 </div>
                 <button ref={logoutTriggerRef} type="button" role="menuitem" onClick={requestLogout}><Icon name="logout" size={18} />로그아웃</button>
