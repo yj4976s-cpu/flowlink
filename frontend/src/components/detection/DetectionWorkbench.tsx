@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ChangeEvent, DragEvent, FormEvent, type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/common/Icon";
 import { useDaru } from "@/components/mascot";
 import { createCitizenReport } from "@/lib/citizenReportsApi";
@@ -21,6 +21,7 @@ import {
 import type { CitizenReport } from "@/types/discoveryNetwork";
 import { WebcamDetectionPanel } from "./WebcamDetectionPanel";
 import type { WebcamPanelStatus, WebcamReportCandidate } from "./WebcamDetectionPanel";
+import { getContainedMediaRect, getContainedMediaRectStyle, getOverlayPercentageStyle, normalizeBBoxForDisplayMedia } from "./detectionOverlayGeometry";
 import styles from "./DetectionWorkbench.module.css";
 
 type DetectionTab = "image" | "video" | "webcam";
@@ -305,29 +306,6 @@ function validateFile(file: File, tab: DetectionTab) {
   return "";
 }
 
-function getContainedMediaMetrics(container: Size, media: Size) {
-  if (!container.width || !container.height || !media.width || !media.height) return null;
-  const scale = Math.min(container.width / media.width, container.height / media.height);
-  const renderedWidth = media.width * scale;
-  const renderedHeight = media.height * scale;
-  return {
-    scale,
-    renderedWidth,
-    renderedHeight,
-    offsetX: (container.width - renderedWidth) / 2,
-    offsetY: (container.height - renderedHeight) / 2,
-  };
-}
-
-function overlayStyleFor(bbox: DetectionBBox, metrics: NonNullable<ReturnType<typeof getContainedMediaMetrics>>): CSSProperties {
-  return {
-    left: metrics.offsetX + bbox.x * metrics.scale,
-    top: metrics.offsetY + bbox.y * metrics.scale,
-    width: bbox.width * metrics.scale,
-    height: bbox.height * metrics.scale,
-  };
-}
-
 function detectionObjectToOverlayItem(object: DetectionObject): OverlayItem {
   return {
     key: String(object.id),
@@ -351,25 +329,36 @@ function BboxOverlay({
   items,
   mediaWidth,
   mediaHeight,
-  containerSize,
+  mediaRect,
+  displayMediaSize,
 }: {
   items: OverlayItem[];
   mediaWidth: number | null | undefined;
   mediaHeight: number | null | undefined;
-  containerSize: Size;
+  mediaRect: NonNullable<ReturnType<typeof getContainedMediaRect>>;
+  displayMediaSize: Size;
 }) {
-  const metrics = mediaWidth && mediaHeight
-    ? getContainedMediaMetrics(containerSize, { width: mediaWidth, height: mediaHeight })
-    : null;
-  if (!metrics || items.length === 0) return null;
+  if (items.length === 0) return null;
 
   return (
-    <div className={styles.overlay} aria-hidden="true">
-      {items.map((item) => (
-        <span key={item.key} className={styles.overlayBox} style={overlayStyleFor(item.bbox, metrics)}>
-          <b>{item.label} {formatConfidence(item.confidence)}</b>
-        </span>
-      ))}
+    <div className={styles.mediaLayer} style={getContainedMediaRectStyle(mediaRect)} aria-hidden="true">
+      <div className={styles.overlay}>
+        {items.map((item) => {
+          const normalized = mediaWidth && mediaHeight
+            ? normalizeBBoxForDisplayMedia(
+                item.bbox,
+                { width: mediaWidth, height: mediaHeight },
+                displayMediaSize,
+              )
+            : null;
+          if (!normalized) return null;
+          return (
+            <span key={item.key} className={styles.overlayBox} style={getOverlayPercentageStyle(normalized)}>
+              <b>{item.label} {formatConfidence(item.confidence)}</b>
+            </span>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -390,7 +379,12 @@ function PreviewImageWithOverlay({
   overlayItems: OverlayItem[];
 }) {
   const frameRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
   const [containerSize, setContainerSize] = useState<Size>({ width: 0, height: 0 });
+  const [loadedImage, setLoadedImage] = useState<{ url: string; size: Size }>({
+    url: "",
+    size: { width: 0, height: 0 },
+  });
 
   const updateSize = useCallback(() => {
     const rect = frameRef.current?.getBoundingClientRect();
@@ -405,16 +399,34 @@ function PreviewImageWithOverlay({
     return () => observer.disconnect();
   }, [updateSize, previewUrl]);
 
+  const handleImageLoad = useCallback(() => {
+    const image = imgRef.current;
+    updateSize();
+    setLoadedImage({
+      url: previewUrl,
+      size: {
+        width: image?.naturalWidth ?? 0,
+        height: image?.naturalHeight ?? 0,
+      },
+    });
+  }, [previewUrl, updateSize]);
+
+  const activeNaturalSize = loadedImage.url === previewUrl ? loadedImage.size : { width: 0, height: 0 };
+  const mediaRect = getContainedMediaRect(containerSize, activeNaturalSize);
+
   return (
     <div ref={frameRef} className={className}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={previewUrl} alt={alt} onLoad={updateSize} />
-      <BboxOverlay
-        items={overlayItems}
-        mediaWidth={mediaWidth}
-        mediaHeight={mediaHeight}
-        containerSize={containerSize}
-      />
+      <img ref={imgRef} src={previewUrl} alt={alt} onLoad={handleImageLoad} />
+      {mediaRect && mediaWidth && mediaHeight && (
+        <BboxOverlay
+          items={overlayItems}
+          mediaWidth={mediaWidth}
+          mediaHeight={mediaHeight}
+          mediaRect={mediaRect}
+          displayMediaSize={activeNaturalSize}
+        />
+      )}
     </div>
   );
 }

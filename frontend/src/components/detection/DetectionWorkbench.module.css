@@ -498,6 +498,11 @@
   display: none;
 }
 
+.mediaLayer {
+  position: absolute;
+  pointer-events: none;
+}
+
 .overlay {
   position: absolute;
   inset: 0;
