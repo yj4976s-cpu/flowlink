@@ -83,6 +83,12 @@ const webcamStatusLabels: Record<WebcamPanelStatus, string> = {
   error: "확인 필요",
 };
 
+const sourceTypeLabels: Record<string, string> = {
+  IMAGE: "사진",
+  VIDEO: "영상",
+  WEBCAM: "카메라",
+};
+
 const groupLabels: Record<string, string> = {
   WASTE: "폐기물",
   NATURAL: "자연물",
@@ -644,7 +650,7 @@ function WebcamReportModal({
                 </div>
               )}
               <div className={styles.reportCandidateMeta}>
-                <span>AI 예상 후보</span>
+                <span>물건 종류 후보</span>
                 <strong>{label}</strong>
                 <em>인식 신뢰도 {formatConfidence(candidate.confidence)}</em>
                 <p>물품 종류는 참고값입니다. 실제 제보 내용에 맞게 수정할 수 있어요.</p>
@@ -1171,6 +1177,7 @@ export function DetectionWorkbench() {
     ? webcamFrame?.detected_objects.length ?? 0
     : currentEvent?.detected_objects.length ?? 0;
   const displayedSourceType = tab === "webcam" ? "WEBCAM" : currentEvent?.source_type ?? (tab === "image" ? "IMAGE" : "VIDEO");
+  const displayedSourceTypeLabel = sourceTypeLabels[displayedSourceType] ?? displayedSourceType;
 
   return (
     <main className={styles.page}>
@@ -1285,7 +1292,7 @@ export function DetectionWorkbench() {
               </div>
               <div>
                 <span>확인 방법</span>
-                <strong>{displayedSourceType}</strong>
+                <strong>{displayedSourceTypeLabel}</strong>
               </div>
             </div>
 
@@ -1295,7 +1302,7 @@ export function DetectionWorkbench() {
 
             {personalItemObjects.length > 0 && tab !== "webcam" && (
               <div className={styles.ctaBox}>
-                <strong>물건 종류 후보를 어떻게 처리할까요?</strong>
+                <strong>확인된 물건을 어떻게 처리할까요?</strong>
                 <p>AI가 실제 소유자를 확정하지는 않습니다. 상황에 맞는 다음 행동을 선택해주세요.</p>
                 <div className={styles.ctaObjectList}>
                   {pagedPersonalItemObjects.map((object) => (
@@ -1389,7 +1396,7 @@ export function DetectionWorkbench() {
         {!historyLoading && !historyError && history.length === 0 && (
           <div className={styles.stateCard}>
             <Icon name="document" size={22} />
-            <span>아직 저장된 사용자 분석 기록이 없습니다.</span>
+            <span>아직 저장된 물건 확인 기록이 없습니다.</span>
           </div>
         )}
         {!historyLoading && !historyError && history.length > 0 && (

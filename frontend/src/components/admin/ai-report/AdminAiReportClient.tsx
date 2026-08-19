@@ -17,7 +17,7 @@ export function AdminAiReportClient() {
   const retry = () => { setLoading(true); setError(""); void applyRequest(); };
   useEffect(() => { const controller = new AbortController(); void getAdminAiReport(controller.signal).then(setReport).catch((reason: unknown) => { if (!isAbortError(reason)) setError("AI 운영 분석 데이터를 불러오지 못했습니다."); }).finally(() => { if (!controller.signal.aborted) setLoading(false); }); return () => controller.abort(); }, []);
   return <main className={styles.page}>
-    <header className={styles.intro}><div><p>ADMIN · AI OPERATIONS</p><h1>AI 운영 분석</h1><span>AI 탐지 confidence와 관리자 검토 데이터를 기반으로 운영 현황과 취약 클래스를 확인하세요.</span></div><small>전체 운영 탐지 데이터 기준</small></header>
+    <header className={styles.intro}><div><p>ADMIN · AI OPERATIONS</p><h1>AI 운영 분석</h1><span>AI 탐지 신뢰도와 관리자 검토 데이터를 기반으로 운영 현황과 취약 클래스를 확인하세요.</span></div><small>전체 운영 탐지 데이터 기준</small></header>
     {loading ? <ReportState loading /> : error ? <ReportState error={error} retry={retry} /> : !report || report.summary.total === 0 ? <EmptyReport /> : <Report report={report} />}
   </main>;
 }

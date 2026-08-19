@@ -365,7 +365,7 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
         }
       } catch (caught) {
         if (isAbortError(caught) || !mountedRef.current || generation !== loopGenerationRef.current) return;
-        const message = caught instanceof DetectionApiError ? caught.message : "카메라 물건 확인을 처리하지 못했습니다.";
+        const message = caught instanceof DetectionApiError ? caught.message : "카메라로 물건을 확인하지 못했습니다.";
         setError(message);
         setCameraStatus("error");
         return;
@@ -579,7 +579,7 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
         <div className={styles.webcamReportPanel}>
           <div>
             <strong>발견 제보로 연결할 수 있는 후보가 있어요.</strong>
-            <span>자동 확인에 사용된 화면을 8초 동안 안전하게 보관합니다.</span>
+            <span>발견 제보 선택을 위해 확인 화면을 브라우저에서 최대 8초간 임시 보관합니다.</span>
           </div>
           <div className={styles.webcamReportActions}>
             {candidates.map((candidate) => <article key={candidate.object.class_code} className={styles.webcamCandidateCard}>
@@ -594,7 +594,7 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
       )}
 
       <p className={styles.webcamNotice}>
-        카메라 화면은 발견 제보를 확정하기 전까지 저장하지 않고 물건 확인 요청에만 사용합니다. 정확한 판단이 필요한 경우 관리자 확인이 필요합니다.
+        카메라 화면은 물건 확인을 위해 서버로 전송되지만 탐지 기록으로 저장하지 않습니다. 발견 제보를 선택한 경우에만 해당 화면을 첨부합니다.
       </p>
     </section>
   );
