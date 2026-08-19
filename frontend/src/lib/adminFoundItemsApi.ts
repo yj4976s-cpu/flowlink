@@ -7,6 +7,28 @@ export type AdminFoundItemUpdate = {
   admin_memo?: string;
 };
 
+export type AdminFoundItem = {
+  id: number;
+  item_category: string;
+  item_category_name: string;
+  color: string | null;
+  public_description: string | null;
+  area_name: string;
+  found_at: string;
+  status: string;
+  source_type: "AI" | "CITIZEN" | "ADMIN";
+  storage_location: string | null;
+  image_url: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AdminFoundItemList = {
+  items: AdminFoundItem[];
+  total: number;
+  status_counts: Array<{ status: string; count: number }>;
+};
+
 export class AdminFoundItemsApiError extends Error {
   constructor(message: string, readonly status?: number) {
     super(message);
@@ -18,6 +40,17 @@ function apiBaseUrl() {
   const value = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
   if (!value) throw new AdminFoundItemsApiError("API 서버 주소가 설정되지 않았습니다.");
   return value.replace(/\/+$/, "");
+}
+
+export async function listAdminFoundItems(filters: { skip: number; limit: number; status?: string; item_category?: string; q?: string; found_date?: string }, signal?: AbortSignal) {
+  const url = new URL(`${apiBaseUrl()}/api/admin/found-items`);
+  Object.entries(filters).forEach(([key, value]) => {
+    const normalized = key === "found_date" && value ? `${value}T00:00:00` : String(value ?? "").trim();
+    if (normalized) url.searchParams.set(key, normalized);
+  });
+  const response = await fetch(url, { credentials: "include", signal });
+  if (!response.ok) throw new AdminFoundItemsApiError(response.status === 403 ? "관리자 권한이 필요합니다." : "발견물 정보를 불러오지 못했습니다.", response.status);
+  return response.json() as Promise<AdminFoundItemList>;
 }
 
 export async function updateAdminFoundItem(id: number, update: AdminFoundItemUpdate) {
