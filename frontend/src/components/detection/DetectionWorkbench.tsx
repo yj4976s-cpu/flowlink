@@ -1164,8 +1164,8 @@ export function DetectionWorkbench() {
     <main className={styles.page}>
       <section className={styles.hero} aria-labelledby="detect-title">
         <p className={styles.eyebrow}>AI DETECTION</p>
-        <h1 id="detect-title">AI 수면 객체 탐지</h1>
-        <p>사진·영상·웹캠으로 수면 위 객체 후보를 빠르게 확인합니다. 결과는 참고용이며 관리자 확인 전 실제 객체와 다를 수 있습니다.</p>
+        <h1 id="detect-title">물건을 발견했어요</h1>
+        <p>수면에서 발견한 물건을 촬영하거나 이미지를 등록해 빠르게 확인해 보세요. 결과는 참고용이며 관리자 확인 전 실제 물건과 다를 수 있습니다.</p>
       </section>
 
       <section className={styles.workbench} aria-labelledby="workbench-title">

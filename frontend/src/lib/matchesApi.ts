@@ -71,9 +71,22 @@ function getFallbackMessage(status: number) {
 
 export function listMyMatches(signal?: AbortSignal) {
   return requestJson<MatchCandidate[]>(
-    buildApiUrl("/api/matches/me", { skip: 0, limit: 20 }),
+    buildApiUrl("/api/matches/me", { skip: 0, limit: 100 }),
     signal,
   );
+}
+
+export function listMyMatchesForReport(lostReportId: number, signal?: AbortSignal) {
+  return requestJson<MatchCandidate[]>(
+    buildApiUrl("/api/matches/me", { lost_report_id: lostReportId, skip: 0, limit: 100 }),
+    signal,
+  );
+}
+
+export function listMyProgressMatches(lostReportIds: number[], signal?: AbortSignal) {
+  const url = new URL(`${getApiBaseUrl()}/api/matches/me/progress`);
+  lostReportIds.forEach((id) => url.searchParams.append("lost_report_ids", String(id)));
+  return requestJson<MatchCandidate[]>(url.toString(), signal);
 }
 
 export function resolveMatchImageUrl(value: string | null) {

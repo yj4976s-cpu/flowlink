@@ -1,4 +1,4 @@
-from datetime import UTC, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
@@ -14,15 +14,18 @@ from app.models import Camera, FoundItem, ProcessingHistory, User
 from app.repositories.user_flow import (
     clean_optional_text,
     get_admin_dashboard_data,
+    get_admin_ai_report_data,
     get_detected_object_by_id,
     get_found_item_by_id,
+    has_other_active_ownership_claim,
     get_object_class_by_code,
     get_ownership_claim_by_id,
     list_detection_events,
+    list_admin_found_items,
     list_ownership_claims,
     waste_collection_completed_ids,
 )
-from app.schemas.admin import AdminCameraResponse, AdminDashboardResponse, AdminDetectedObjectCollectionResponse, AdminDetectedObjectFoundItemResponse, AdminDetectionEventResponse, AdminOwnershipClaimResponse, DetectedObjectUpdateRequest
+from app.schemas.admin import AdminAiReportResponse, AdminCameraResponse, AdminDashboardResponse, AdminDetectedObjectCollectionResponse, AdminDetectedObjectFoundItemResponse, AdminDetectionEventResponse, AdminFoundItemListResponse, AdminOwnershipClaimResponse, DetectedObjectUpdateRequest
 from app.schemas.citizen_report import AdminCitizenReportResponse, AdminCitizenReportUpdateRequest, ResolveCitizenReportRequest
 from app.schemas.common import MessageResponse
 from app.schemas.found_item import FoundItemUpdateRequest
@@ -36,11 +39,20 @@ from app.services.detections import DetectionModelUnavailableError, create_opera
 from app.services.color_estimation import normalize_item_color
 from app.services.matching import reconcile_match_candidates_for_found_item
 from app.services.geocoding import GeocodingError, geocode_location
+from app.services.found_item_images import representative_found_item_image_url
 from app.api.detections import IMAGE_CONTENT_TYPES, IMAGE_MAX_BYTES, save_upload_file
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 KST = ZoneInfo("Asia/Seoul")
 FOUND_ITEM_STATUSES = {"DETECTED", "RECOVERED", "AVAILABLE", "CLAIM_PENDING", "RETURNED", "DISPOSED"}
+
+
+@router.get("/ai-report", response_model=AdminAiReportResponse, summary="AI 운영 탐지 품질 집계")
+def get_admin_ai_report(
+    current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+) -> AdminAiReportResponse:
+    return AdminAiReportResponse.model_validate(get_admin_ai_report_data(db))
 
 
 def detected_object_payload(item, *, collected_ids: set[int] | None = None, operational: bool = True) -> dict:
@@ -214,6 +226,34 @@ def update_detected_object(
     return MessageResponse(message="Detected object updated")
 
 
+@router.get("/found-items", response_model=AdminFoundItemListResponse, summary="관리자 발견물 대장 조회")
+def list_found_items_admin(
+    current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    item_status: Annotated[str | None, Query(alias="status")] = None,
+    item_category: Annotated[str | None, Query()] = None,
+    q: Annotated[str | None, Query(max_length=100)] = None,
+    found_date: Annotated[datetime | None, Query()] = None,
+) -> AdminFoundItemListResponse:
+    normalized_status = item_status.strip().upper() if item_status else None
+    if normalized_status and normalized_status not in FOUND_ITEM_STATUSES:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid found item status")
+    items, total, status_counts = list_admin_found_items(db, skip=skip, limit=limit, status=normalized_status, item_category=item_category, q=q, found_date=found_date)
+    return AdminFoundItemListResponse.model_validate({
+        "items": [{
+            "id": item.id, "item_category": item.object_class.code, "item_category_name": item.object_class.name_ko,
+            "color": item.color, "public_description": item.public_description, "area_name": item.area_name,
+            "found_at": item.found_at, "status": item.status, "source_type": item.source_type,
+            "storage_location": item.storage_location, "image_url": representative_found_item_image_url(item),
+            "created_at": item.created_at, "updated_at": item.updated_at,
+        } for item in items],
+        "total": total,
+        "status_counts": [{"status": value, "count": count} for value, count in status_counts.items()],
+    })
+
+
 @router.patch("/found-items/{id}", response_model=MessageResponse, summary="발견물 수정")
 def update_found_item(
     current_admin: Annotated[User, Depends(require_admin)],
@@ -221,7 +261,7 @@ def update_found_item(
     id: Annotated[int, Path(ge=1)],
     request: FoundItemUpdateRequest,
 ) -> MessageResponse:
-    item = get_found_item_by_id(db, id)
+    item = get_found_item_by_id(db, id, for_update=True)
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Found item not found")
     previous_status = item.status
@@ -269,6 +309,21 @@ def update_found_item(
             )
         next_latitude = Decimal(str(coordinates.latitude))
         next_longitude = Decimal(str(coordinates.longitude))
+    if next_status != item.status and has_other_active_ownership_claim(
+        db,
+        found_item_id=item.id,
+        claim_id=0,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Active ownership claim must be handled through the ownership claim workflow",
+        )
+    matching_relevant_changed = (
+        next_status != item.status
+        or next_area_name != item.area_name
+        or next_latitude != item.latitude
+        or next_longitude != item.longitude
+    )
     item.status = next_status
     item.area_name = next_area_name
     item.latitude = next_latitude
@@ -276,6 +331,8 @@ def update_found_item(
     item.storage_location = next_storage_location
     item.admin_memo = next_admin_memo
     item.updated_at = utc_now()
+    if matching_relevant_changed:
+        reconcile_match_candidates_for_found_item(db, item)
     db.add(ProcessingHistory(actor_user_id=current_admin.id, entity_type="FOUND_ITEM", entity_id=item.id, action_type="FOUND_ITEM_UPDATED", previous_status=previous_status, new_status=item.status, note=item.admin_memo, created_at=item.updated_at))
     db.commit()
     return MessageResponse(message="Found item updated")

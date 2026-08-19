@@ -133,6 +133,73 @@ def test_ai_orm_models_and_found_item_detection_fk_match_database_contract() -> 
     assert foreign_key.ondelete == "SET NULL"
 
 
+def test_admin_ai_report_aggregates_only_operational_objects(client: TestClient, db: Session) -> None:
+    seed_admin(db)
+    now = datetime(2026, 1, 2, tzinfo=UTC)
+    seed_detection(db, object_id=10, event_id=20, detected_at=now, confidence="0.5500", processing_status="PENDING")
+    seed_detection(db, object_id=11, event_id=21, detected_at=now, confidence="0.6500", processing_status="CONFIRMED")
+    seed_detection(db, object_id=12, event_id=22, detected_at=now, confidence="0.7500", processing_status="REJECTED")
+    seed_detection(db, object_id=13, event_id=23, detected_at=now, confidence="0.8500", processing_status="PENDING")
+    seed_detection(db, object_id=14, event_id=24, detected_at=now, confidence="0.9500", processing_status="CONFIRMED")
+    seed_detection(db, object_id=15, event_id=25, detected_at=now, confidence="0.1000", purpose="USER_ANALYSIS")
+    db.add(ObjectClass(id=2, code="FOOTWEAR", name_ko="신발", group_code="PERSONAL_ITEM", display_order=2, is_active=True, created_at=now, updated_at=now))
+    corrected = db.get(DetectedObject, 14)
+    corrected.final_class_code = "FOOTWEAR"
+    db.commit(); login(client)
+
+    response = client.get("/api/admin/ai-report")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["summary"] == {"total": 5, "average_confidence": "0.75", "reviewed": 3, "corrected": 1}
+    assert body["class_metrics"] == [{"code": "BAG", "name": db.get(ObjectClass, 1).name_ko, "count": 5, "average_confidence": "0.75", "reviewed": 3, "corrected": 1}]
+    assert [item["count"] for item in body["confidence_distribution"]] == [0, 1, 1, 1, 1, 1]
+    assert body["correction_patterns"] == [{"predicted_code": "BAG", "predicted_name": db.get(ObjectClass, 1).name_ko, "final_code": "FOOTWEAR", "final_name": "신발", "count": 1}]
+
+
+def test_admin_ai_report_handles_empty_data_and_requires_admin(client: TestClient, db: Session) -> None:
+    seed_user(db); login_user(client)
+    assert client.get("/api/admin/ai-report").status_code == 403
+    client.post("/api/auth/logout")
+    seed_admin(db); login(client)
+    body = client.get("/api/admin/ai-report").json()
+    assert body["summary"] == {"total": 0, "average_confidence": None, "reviewed": 0, "corrected": 0}
+    assert body["class_metrics"] == [] and body["correction_patterns"] == []
+    assert len(body["confidence_distribution"]) == 6
+
+
+def test_admin_found_item_register_supports_full_lifecycle_counts_filters_and_pagination(client: TestClient, db: Session) -> None:
+    seed_admin(db)
+    now = datetime(2026, 1, 2, tzinfo=UTC)
+    if db.get(ObjectClass, 1) is None:
+        db.add(ObjectClass(id=1, code="BAG", name_ko="가방", group_code="PERSONAL_ITEM", display_order=1, is_active=True, created_at=now, updated_at=now))
+    statuses = ("DETECTED", "RECOVERED", "AVAILABLE", "CLAIM_PENDING", "RETURNED", "DISPOSED")
+    counts = (1, 2, 3, 4, 5, 6)
+    item_id = 1
+    for item_status, count in zip(statuses, counts, strict=True):
+        for index in range(count):
+            db.add(FoundItem(id=item_id, object_class_id=1, registered_by=1, source_type="ADMIN", area_name=f"장소 {item_id}", storage_location=f"보관함 {index}", found_at=now, status=item_status, is_public=item_status in {"RECOVERED", "AVAILABLE"}, created_at=now, updated_at=now + timedelta(minutes=item_id)))
+            item_id += 1
+    db.commit(); login(client)
+
+    first_page = client.get("/api/admin/found-items", params={"skip": 0, "limit": 5})
+    assert first_page.status_code == 200
+    body = first_page.json()
+    assert len(body["items"]) == 5
+    assert body["total"] == 21
+    assert {entry["status"]: entry["count"] for entry in body["status_counts"]} == dict(zip(statuses, counts, strict=True))
+    assert {entry["status"] for entry in body["items"]}.issubset(set(statuses))
+    assert all("storage_location" in entry and "updated_at" in entry for entry in body["items"])
+
+    returned = client.get("/api/admin/found-items", params={"status": "RETURNED", "skip": 0, "limit": 2}).json()
+    assert returned["total"] == 5
+    assert len(returned["items"]) == 2
+    assert {entry["status"] for entry in returned["items"]} == {"RETURNED"}
+    assert sum(entry["count"] for entry in returned["status_counts"]) == 21
+    assert client.get("/api/admin/found-items", params={"q": "보관함 0"}).json()["total"] == 6
+    assert client.get("/api/admin/found-items", params={"status": "ARCHIVED"}).status_code == 422
+
+
 def test_recovered_found_item_is_automatically_geocoded_for_map(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
     seed_admin(db)
     seed_admin_found_item(db)
@@ -311,6 +378,243 @@ def test_found_item_manual_coordinates_skip_geocoding(
     assert item.longitude == Decimal("127.654321")
 
 
+def seed_found_item_match(
+    db: Session,
+    *,
+    candidate: bool = True,
+    report_status: str = "MATCHED",
+    days_after_loss: int = 10,
+    found_area: str = "잠실",
+    report_area: str = "잠실",
+) -> tuple[FoundItem, LostReport, MatchCandidate | None]:
+    now = datetime(2026, 1, 20, tzinfo=UTC)
+    seed_user(db)
+    item = seed_admin_found_item(db, area_name=found_area)
+    item.found_at = now
+    report = LostReport(id=20, user_id=2, object_class_id=1, colors=[], description="plain", area_name=report_area, lost_from=now - timedelta(days=days_after_loss), status=report_status, created_at=now, updated_at=now)
+    db.add(report)
+    match = None
+    if candidate:
+        time_score = 20 if days_after_loss <= 7 else 10
+        area_score = 25 if found_area == report_area else 0
+        match = MatchCandidate(id=50, lost_report_id=20, found_item_id=3, total_score=40 + area_score + time_score, type_score=40, area_score=area_score, time_score=time_score, keyword_score=0, status="NOTIFIED", created_at=now, updated_at=now)
+        db.add(match)
+    db.commit()
+    return item, report, match
+
+
+def test_admin_area_change_dismisses_candidate_below_threshold(client: TestClient, db: Session) -> None:
+    seed_admin(db)
+    _, report, candidate = seed_found_item_match(db, days_after_loss=10)
+    login(client)
+
+    response = client.patch("/api/admin/found-items/3", json={"area_name": "부산"})
+
+    assert response.status_code == 200
+    assert candidate is not None and candidate.status == "DISMISSED"
+    assert candidate.total_score == 50 and candidate.area_score == 0
+    assert report.status == "OPEN"
+
+
+def test_admin_area_change_dismisses_type_and_time_only_candidate(client: TestClient, db: Session) -> None:
+    seed_admin(db)
+    _, report, candidate = seed_found_item_match(db, days_after_loss=1)
+    login(client)
+
+    response = client.patch("/api/admin/found-items/3", json={"area_name": "부산"})
+
+    assert response.status_code == 200
+    assert candidate is not None and candidate.status == "DISMISSED"
+    assert candidate.total_score == 60 and candidate.area_score == 0
+    assert report.status == "OPEN"
+
+
+def test_admin_area_change_creates_new_candidate(client: TestClient, db: Session) -> None:
+    seed_admin(db)
+    _, report, _ = seed_found_item_match(db, candidate=False, report_status="OPEN", days_after_loss=10, found_area="부산", report_area="잠실")
+    login(client)
+
+    response = client.patch("/api/admin/found-items/3", json={"area_name": "잠실"})
+
+    assert response.status_code == 200
+    candidates = db.query(MatchCandidate).filter_by(lost_report_id=20, found_item_id=3).all()
+    assert len(candidates) == 1
+    assert candidates[0].status == "NOTIFIED" and candidates[0].total_score == 75
+    assert report.status == "MATCHED"
+
+
+def test_admin_disposed_and_available_transitions_reconcile_existing_candidate(client: TestClient, db: Session) -> None:
+    seed_admin(db)
+    item, report, candidate = seed_found_item_match(db, days_after_loss=1)
+    login(client)
+
+    disposed = client.patch("/api/admin/found-items/3", json={"status": "DISPOSED"})
+    assert disposed.status_code == 200
+    assert candidate is not None and candidate.status == "DISMISSED"
+    assert report.status == "OPEN"
+    available = client.patch("/api/admin/found-items/3", json={"status": "AVAILABLE"})
+
+    assert available.status_code == 200
+    assert item.status == "AVAILABLE"
+    assert candidate.status == "NOTIFIED"
+    assert report.status == "MATCHED"
+    assert db.query(MatchCandidate).filter_by(lost_report_id=20, found_item_id=3).count() == 1
+
+
+def test_admin_disposed_keeps_report_matched_when_other_candidate_remains(client: TestClient, db: Session) -> None:
+    seed_admin(db)
+    _, report, candidate = seed_found_item_match(db, days_after_loss=1)
+    other = FoundItem(id=4, object_class_id=1, source_type="ADMIN", area_name="잠실", found_at=datetime(2026, 1, 20, tzinfo=UTC), status="AVAILABLE", is_public=True, created_at=datetime(2026, 1, 20, tzinfo=UTC), updated_at=datetime(2026, 1, 20, tzinfo=UTC))
+    db.add_all([other, MatchCandidate(id=51, lost_report_id=20, found_item_id=4, total_score=85, type_score=40, area_score=25, time_score=20, keyword_score=0, status="NOTIFIED", created_at=other.created_at, updated_at=other.updated_at)])
+    db.commit()
+    login(client)
+
+    response = client.patch("/api/admin/found-items/3", json={"status": "DISPOSED"})
+
+    assert response.status_code == 200
+    assert candidate is not None and candidate.status == "DISMISSED"
+    assert report.status == "MATCHED"
+
+
+@pytest.mark.parametrize("payload", [{"storage_location": "보관함 B"}, {"admin_memo": "상태 확인"}, {"area_name": "잠실"}])
+def test_non_matching_or_unchanged_patch_skips_reconciliation(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch, payload: dict[str, str]) -> None:
+    seed_admin(db)
+    _, _, candidate = seed_found_item_match(db, days_after_loss=1)
+    login(client)
+    calls = 0
+
+    def reconcile_spy(session: Session, item: FoundItem) -> None:
+        nonlocal calls
+        calls += 1
+
+    monkeypatch.setattr(admin_api, "reconcile_match_candidates_for_found_item", reconcile_spy)
+
+    response = client.patch("/api/admin/found-items/3", json=payload)
+
+    assert response.status_code == 200
+    assert calls == 0
+    assert candidate is not None and (candidate.status, candidate.total_score, candidate.area_score) == ("NOTIFIED", 85, 25)
+
+
+def test_admin_can_clear_found_item_storage_location(client: TestClient, db: Session) -> None:
+    seed_admin(db)
+    item = seed_admin_found_item(db)
+    item.storage_location = "보관함 B"
+    db.commit()
+    login(client)
+
+    response = client.patch("/api/admin/found-items/3", json={"storage_location": ""})
+
+    assert response.status_code == 200
+    db.expire_all()
+    assert db.get(FoundItem, 3).storage_location is None
+
+
+def test_coordinate_change_runs_reconciliation(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_admin(db)
+    seed_found_item_match(db, days_after_loss=1)
+    login(client)
+    calls = 0
+
+    def reconcile_spy(session: Session, item: FoundItem) -> None:
+        nonlocal calls
+        calls += 1
+
+    monkeypatch.setattr(admin_api, "reconcile_match_candidates_for_found_item", reconcile_spy)
+
+    response = client.patch("/api/admin/found-items/3", json={"latitude": 37.1, "longitude": 127.1})
+
+    assert response.status_code == 200
+    assert calls == 1
+
+
+def test_admin_coordinate_change_dismisses_far_candidate_and_restores_when_near(client: TestClient, db: Session) -> None:
+    seed_admin(db)
+    item, report, candidate = seed_found_item_match(db, days_after_loss=1)
+    report.latitude = Decimal("37.0000")
+    report.longitude = Decimal("127.0000")
+    item.latitude = Decimal("37.0010")
+    item.longitude = Decimal("127.0010")
+    db.commit()
+    login(client)
+
+    far_response = client.patch("/api/admin/found-items/3", json={"latitude": 35.1796, "longitude": 129.0756})
+
+    assert far_response.status_code == 200
+    assert candidate is not None and candidate.status == "DISMISSED"
+    assert report.status == "OPEN"
+    near_response = client.patch("/api/admin/found-items/3", json={"latitude": 37.02, "longitude": 127.0})
+
+    assert near_response.status_code == 200
+    assert candidate.status == "NOTIFIED"
+    assert candidate.area_score == 15 and candidate.total_score == 75
+    assert report.status == "MATCHED"
+    assert db.query(MatchCandidate).filter_by(lost_report_id=20, found_item_id=3).count() == 1
+
+
+@pytest.mark.parametrize("claim_status", ["PENDING", "APPROVED"])
+def test_active_claim_blocks_general_found_item_status_change(client: TestClient, db: Session, claim_status: str) -> None:
+    seed_admin(db)
+    item, _, candidate = seed_found_item_match(db, days_after_loss=1)
+    item.status = "CLAIM_PENDING"
+    assert candidate is not None
+    candidate.status = "CLAIMED"
+    db.add(OwnershipClaim(id=30, user_id=2, found_item_id=3, lost_report_id=20, verification_details="details", status=claim_status, created_at=item.created_at, updated_at=item.updated_at))
+    db.commit()
+    login(client)
+
+    response = client.patch("/api/admin/found-items/3", json={"status": "AVAILABLE"})
+
+    assert response.status_code == 409
+    db.refresh(item); db.refresh(candidate)
+    assert item.status == "CLAIM_PENDING"
+    assert candidate.status == "CLAIMED"
+    assert db.get(OwnershipClaim, 30).status == claim_status
+
+
+def test_active_claim_allows_location_edit_without_restoring_other_candidate(client: TestClient, db: Session) -> None:
+    seed_admin(db)
+    item, _, claimant = seed_found_item_match(db, days_after_loss=1)
+    seed_user_two = User(id=3, email="other@example.com", password_hash="unused", nickname="other", role="USER", active=True, terms_agreed_at=item.created_at, privacy_agreed_at=item.created_at, created_at=item.created_at, updated_at=item.updated_at)
+    other_report = LostReport(id=21, user_id=3, object_class_id=1, colors=[], description="plain", area_name="부산", lost_from=item.found_at - timedelta(days=1), status="OPEN", created_at=item.created_at, updated_at=item.updated_at)
+    other_candidate = MatchCandidate(id=51, lost_report_id=21, found_item_id=3, total_score=60, type_score=40, area_score=0, time_score=20, keyword_score=0, status="DISMISSED", created_at=item.created_at, updated_at=item.updated_at)
+    item.status = "CLAIM_PENDING"
+    assert claimant is not None
+    claimant.status = "CLAIMED"
+    db.add_all([seed_user_two, other_report, other_candidate, OwnershipClaim(id=30, user_id=2, found_item_id=3, lost_report_id=20, verification_details="details", status="PENDING", created_at=item.created_at, updated_at=item.updated_at)])
+    db.commit()
+    login(client)
+
+    response = client.patch("/api/admin/found-items/3", json={"area_name": "부산", "latitude": 35.1, "longitude": 129.1})
+
+    assert response.status_code == 200
+    assert item.status == "CLAIM_PENDING"
+    assert claimant.status == "CLAIMED"
+    assert other_candidate.status == "DISMISSED"
+
+
+def test_admin_reconciliation_never_reactivates_rejected_pair_but_restores_other_user(client: TestClient, db: Session) -> None:
+    seed_admin(db)
+    item, report_a, candidate_a = seed_found_item_match(db, days_after_loss=10, found_area="부산", report_area="잠실")
+    now = item.created_at
+    user_b = User(id=3, email="other@example.com", password_hash="unused", nickname="other", role="USER", active=True, terms_agreed_at=now, privacy_agreed_at=now, created_at=now, updated_at=now)
+    report_b = LostReport(id=21, user_id=3, object_class_id=1, colors=[], description="plain", area_name="잠실", lost_from=item.found_at - timedelta(days=10), status="OPEN", created_at=now, updated_at=now)
+    assert candidate_a is not None
+    candidate_a.status = "DISMISSED"
+    db.add_all([user_b, report_b, OwnershipClaim(id=30, user_id=2, found_item_id=3, lost_report_id=20, verification_details="details", status="REJECTED", created_at=now, updated_at=now)])
+    db.commit()
+    login(client)
+
+    response = client.patch("/api/admin/found-items/3", json={"area_name": "잠실"})
+
+    assert response.status_code == 200
+    assert candidate_a.status == "DISMISSED" and candidate_a.total_score == 75
+    assert report_a.status == "OPEN"
+    candidate_b = db.query(MatchCandidate).filter_by(lost_report_id=21, found_item_id=3).one()
+    assert candidate_b.status == "NOTIFIED" and candidate_b.total_score == 75
+    assert report_b.status == "MATCHED"
+
+
 def test_detection_list_empty(client: TestClient, db: Session) -> None:
     seed_admin(db); login(client)
     response = client.get("/api/admin/detections")
@@ -357,7 +661,7 @@ def test_admin_confirmed_color_persists_and_updates_existing_found_item(client: 
     db.add(LostReport(id=50, user_id=1, object_class_id=1, color="남색", colors=["남색"], description="특징 없음", area_name="잠실", lost_from=now - timedelta(hours=1), status="OPEN", created_at=now, updated_at=now))
     db.commit(); login(client)
 
-    saved = client.patch("/api/admin/detected-objects/10", json={"confirmed_color": "남색"})
+    saved = client.patch("/api/admin/detected-objects/10", json={"confirmed_color": "네이비"})
     assert saved.status_code == 200
     refreshed = client.get("/api/admin/detections").json()[0]["detected_objects"][0]
     assert refreshed["ai_color"] == "검정"
@@ -394,14 +698,14 @@ def test_reconcile_creates_updates_and_dismisses_candidates_without_duplicate_no
     db.commit()
     promoted_candidate = db.query(MatchCandidate).filter_by(lost_report_id=81, found_item_id=80).one()
     assert promoted_candidate.total_score == 60 and promoted_candidate.status == "NOTIFIED"
-    assert db.query(Notification).filter_by(related_type="MATCH_CANDIDATE", related_id=promoted_candidate.id).count() == 1
+    assert db.query(Notification).filter_by(related_type="LOST_REPORT", related_id=promoted.id).count() == 1
     assert retained_candidate.total_score == 50 and retained_candidate.status == "DISMISSED"
     assert claimed_candidate.total_score == 50 and claimed_candidate.status == "CLAIMED"
 
     reconcile_match_candidates_for_found_item(db, found)
     db.commit()
     assert db.query(MatchCandidate).filter_by(lost_report_id=81, found_item_id=80).count() == 1
-    assert db.query(Notification).filter_by(related_type="MATCH_CANDIDATE", related_id=promoted_candidate.id).count() == 1
+    assert db.query(Notification).filter_by(related_type="LOST_REPORT", related_id=promoted.id).count() == 1
 
 
 def test_reconcile_updates_existing_qualified_candidate_score(db: Session) -> None:

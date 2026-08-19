@@ -21,4 +21,10 @@ def test_color_estimation_failure_and_standard_contract(tmp_path) -> None:
     assert estimate_standard_color(broken, bbox_x=0, bbox_y=0, bbox_width=10, bbox_height=10) is None
     assert normalize_item_color(" 남색 ") == "남색"
     assert normalize_item_color("청록") is None
+
+
+def test_common_color_synonyms_use_standard_canonical_colors() -> None:
+    assert {normalize_item_color(value) for value in ("검정", "검정색", "검은색", "흑색", "블랙", "BLACK")} == {"검정"}
+    assert {normalize_item_color(value) for value in ("남색", "네이비", "navy")} == {"남색"}
+    assert {normalize_item_color(value) for value in ("빨강", "빨간색", "레드", "red")} == {"빨강"}
     assert {"검정", "흰색", "회색", "베이지", "갈색", "빨강", "주황", "노랑", "초록", "파랑", "보라", "분홍"}.issubset(STANDARD_ITEM_COLORS)

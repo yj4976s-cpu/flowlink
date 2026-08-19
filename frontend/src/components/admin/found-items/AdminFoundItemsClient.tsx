@@ -5,26 +5,24 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Icon } from "@/components/common/Icon";
-import { AdminFoundItemsApiError, updateAdminFoundItem, type AdminFoundItemUpdate } from "@/lib/adminFoundItemsApi";
-import {
-  getFoundItem,
-  listFoundItems,
-  resolveFoundItemImageUrl,
-  type FoundItemDetail,
-  type FoundItemListItem,
-} from "@/lib/foundItemsApi";
+import { AdminFoundItemsApiError, listAdminFoundItems, updateAdminFoundItem, type AdminFoundItem, type AdminFoundItemUpdate } from "@/lib/adminFoundItemsApi";
+import { resolveFoundItemImageUrl } from "@/lib/foundItemsApi";
 import styles from "./AdminFoundItemsClient.module.css";
 
-const statuses = [
-  { value: "RECOVERED", label: "회수 확인" },
+const lifecycleStatuses = [
+  { value: "DETECTED", label: "탐지됨" },
+  { value: "RECOVERED", label: "회수됨" },
   { value: "AVAILABLE", label: "보관 중" },
-  { value: "DISPOSED", label: "비공개 처리" },
+  { value: "CLAIM_PENDING", label: "소유권 확인 중" },
+  { value: "RETURNED", label: "반환 완료" },
+  { value: "DISPOSED", label: "폐기됨" },
 ] as const;
 
-const publicStatusFilters = [
+const editableStatuses = lifecycleStatuses.filter((item) => ["RECOVERED", "AVAILABLE", "DISPOSED"].includes(item.value));
+
+const statusFilters = [
   { value: "", label: "전체" },
-  { value: "RECOVERED", label: "회수 확인" },
-  { value: "AVAILABLE", label: "보관 중" },
+  ...lifecycleStatuses,
 ] as const;
 
 const pageSizeOptions = [
@@ -40,23 +38,23 @@ const categoryOptions = [
   { value: "FOOTWEAR", label: "신발·슬리퍼류" },
 ] as const;
 
-const statusLabels = Object.fromEntries(statuses.map((item) => [item.value, item.label]));
-const sourceLabels: Record<FoundItemListItem["source_type"], string> = {
+const statusLabels = Object.fromEntries(lifecycleStatuses.map((item) => [item.value, item.label]));
+const sourceLabels: Record<AdminFoundItem["source_type"], string> = {
   AI: "AI 탐지",
-  CITIZEN: "발견 제보",
+  CITIZEN: "시민 신고",
   ADMIN: "관리자 등록",
 };
 const formatter = new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" });
 
 type Option = { value: string; label: string };
-type PendingNavigation = { type: "select"; item: FoundItemListItem } | { type: "close" } | null;
+type PendingNavigation = { type: "select"; item: AdminFoundItem } | { type: "close" } | null;
 
 function formatDate(value: string) {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? "일시 확인 중" : formatter.format(parsed);
 }
 
-function ItemImage({ item, compact = false }: { item: FoundItemListItem; compact?: boolean }) {
+function ItemImage({ item, compact = false }: { item: AdminFoundItem; compact?: boolean }) {
   const originalUrl = resolveFoundItemImageUrl(item.image_url);
   const [failedUrl, setFailedImageUrl] = useState<string | null>(null);
   const resolved = originalUrl && failedUrl !== originalUrl ? originalUrl : null;
@@ -177,8 +175,10 @@ function ConfirmDialog({ onCancel, onDiscard }: { onCancel: () => void; onDiscar
 }
 
 export function AdminFoundItemsClient() {
-  const [items, setItems] = useState<FoundItemListItem[]>([]);
-  const [selected, setSelected] = useState<FoundItemDetail | null>(null);
+  const [items, setItems] = useState<AdminFoundItem[]>([]);
+  const [selected, setSelected] = useState<AdminFoundItem | null>(null);
+  const [total, setTotal] = useState(0);
+  const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -205,28 +205,34 @@ export function AdminFoundItemsClient() {
   const locationDirty = Boolean(
     selected && (area.trim() !== selected.area_name || latitude.trim() || longitude.trim()),
   );
-  const dirty = Boolean(selected && (status !== selected.status || locationDirty || storage.trim() || memo.trim()));
-  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const dirty = Boolean(selected && (status !== selected.status || locationDirty || storage.trim() !== (selected.storage_location ?? "") || memo.trim()));
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const safePage = Math.min(page, totalPages);
-  const visibleItems = items.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const lifecycleTotal = lifecycleStatuses.reduce((sum, item) => sum + (statusCounts[item.value] ?? 0), 0);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setError("");
     try {
-      const data = await listFoundItems({
+      const data = await listAdminFoundItems({
+        skip: (page - 1) * pageSize,
+        limit: pageSize,
         q: query,
         item_category: categoryFilter,
         status: statusFilter,
         found_date: dateFilter,
       }, signal);
-      setItems(data);
+      setItems(data.items);
+      setTotal(data.total);
+      setStatusCounts(Object.fromEntries(data.status_counts.map((item) => [item.status, item.count])));
+      const lastPage = Math.max(1, Math.ceil(data.total / pageSize));
+      if (page > lastPage) setPage(lastPage);
     } catch (reason) {
       if (!(reason instanceof DOMException && reason.name === "AbortError")) setError("발견물 목록을 불러오지 못했습니다.");
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
-  }, [categoryFilter, dateFilter, query, statusFilter]);
+  }, [categoryFilter, dateFilter, page, pageSize, query, statusFilter]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -234,31 +240,21 @@ export function AdminFoundItemsClient() {
     return () => { window.clearTimeout(timer); controller.abort(); };
   }, [load, query]);
 
-  const applySelection = useCallback(async (item: FoundItemListItem) => {
+  const applySelection = useCallback(async (item: AdminFoundItem) => {
     setDetailLoading(true);
     setMessage("");
     setSaveError("");
-    setStorage("");
+    setStorage(item.storage_location ?? "");
     setMemo("");
     setStatus(item.status);
     setArea(item.area_name);
     setLatitude("");
     setLongitude("");
-    setSelected({ ...item, created_at: item.found_at });
-    try {
-      const detail = await getFoundItem(String(item.id));
-      setSelected(detail);
-      setStatus(detail.status);
-      setArea(detail.area_name);
-    } catch {
-      setSelected({ ...item, created_at: item.found_at });
-      setSaveError("상세 정보를 다시 불러오지 못해 목록의 최신 정보로 표시합니다.");
-    } finally {
-      setDetailLoading(false);
-    }
+    setSelected(item);
+    setDetailLoading(false);
   }, []);
 
-  const requestSelection = (item: FoundItemListItem) => {
+  const requestSelection = (item: AdminFoundItem) => {
     if (selected?.id === item.id) return;
     if (dirty) setPendingNavigation({ type: "select", item });
     else void applySelection(item);
@@ -315,11 +311,12 @@ export function AdminFoundItemsClient() {
         if (!Number.isFinite(parsedLongitude)) throw new AdminFoundItemsApiError("경도는 숫자로 입력해 주세요.");
         update.longitude = parsedLongitude;
       }
-      if (storage.trim()) update.storage_location = storage.trim();
+      const nextStorage = storage.trim();
+      if (nextStorage !== (selected.storage_location ?? "")) update.storage_location = nextStorage;
       if (memo.trim()) update.admin_memo = memo.trim();
       await updateAdminFoundItem(selected.id, update);
       setPageMessage(`발견물 #${selected.id}의 관리 정보를 저장했습니다.`);
-      setStorage("");
+      setStorage(nextStorage);
       setMemo("");
       setLatitude("");
       setLongitude("");
@@ -327,10 +324,10 @@ export function AdminFoundItemsClient() {
       const updatedStatus = status;
       const updatedArea = area.trim();
       setSelected((current) => current
-        ? { ...current, status: updatedStatus, area_name: updatedArea || current.area_name }
+        ? { ...current, status: updatedStatus, area_name: updatedArea || current.area_name, storage_location: nextStorage || null }
         : current);
       await load();
-      if (updatedStatus !== "RECOVERED" && updatedStatus !== "AVAILABLE") applyClose();
+      if (statusFilter && updatedStatus !== statusFilter) applyClose();
     } catch (reason) {
       setSaveError(reason instanceof AdminFoundItemsApiError ? reason.message : "관리 정보를 저장하지 못했습니다.");
     } finally {
@@ -354,52 +351,57 @@ export function AdminFoundItemsClient() {
   return (
     <main className={styles.page}>
       <header className={styles.pageHeader}>
-        <div><p>ADMIN · FOUND ITEMS</p><h1>발견물 관리</h1><span>등록된 발견물의 보관 상태와 처리 정보를 확인하고 관리합니다.</span></div>
-        <Link href="/admin"><Icon name="arrow" size={15} />대시보드로</Link>
+        <div><p>ADMIN · FOUND ITEM REGISTER</p><h1>발견물 대장</h1><span>등록된 발견물의 현재 상태와 전체 처리 이력을 확인하세요.</span></div>
+        <nav className={styles.viewSwitch} aria-label="발견물 대장 보기 방식"><Link href="/admin/found-items" aria-current="page"><Icon name="archive" size={15} />목록 보기</Link><Link href="/admin/map"><Icon name="location" size={15} />지도 보기</Link></nav>
       </header>
 
+      <section className={styles.statusSummary} aria-label="발견물 상태별 전체 건수" aria-busy={loading}>
+        <button type="button" aria-pressed={!statusFilter} onClick={() => { setStatusFilter(""); setPage(1); }}><span>전체</span><strong>{loading ? "–" : lifecycleTotal}</strong></button>
+        {lifecycleStatuses.map((item) => <button type="button" aria-pressed={statusFilter === item.value} key={item.value} onClick={() => { setStatusFilter(item.value); setPage(1); }}><span>{item.label}</span><strong>{loading ? "–" : statusCounts[item.value] ?? 0}</strong></button>)}
+      </section>
+
       <section className={styles.toolbar} aria-label="발견물 검색 및 필터">
-        <label className={styles.searchField}><Icon name="search" size={18} /><span className="sr-only">발견물 검색</span><input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="물품명, 특징, 지역 검색" /></label>
+        <label className={styles.searchField}><Icon name="search" size={18} /><span className="sr-only">발견물 검색</span><input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="발견물 ID, 물품 종류, 장소, 보관 위치 검색" /></label>
         <CustomSelect label="물품 종류 필터" value={categoryFilter} options={categoryOptions} onChange={(value) => { setCategoryFilter(value); setPage(1); }} />
-        <CustomSelect label="상태 필터" value={statusFilter} options={publicStatusFilters} onChange={(value) => { setStatusFilter(value); setPage(1); }} />
+        <CustomSelect label="상태 필터" value={statusFilter} options={statusFilters} onChange={(value) => { setStatusFilter(value); setPage(1); }} />
         <DateFilter value={dateFilter} onChange={(value) => { setDateFilter(value); setPage(1); }} />
         <button type="button" className={styles.resetButton} disabled={!filtersActive} onClick={resetFilters}>초기화</button>
       </section>
 
       <div className={styles.businessFilters} role="group" aria-label="발견물 업무 상태">
         <span>업무 상태</span>
-        {publicStatusFilters.map((option) => <button type="button" key={option.value || "all"} aria-pressed={statusFilter === option.value} onClick={() => { setStatusFilter(option.value); setPage(1); }}>{option.label}</button>)}
+        {statusFilters.map((option) => <button type="button" key={option.value || "all"} aria-pressed={statusFilter === option.value} onClick={() => { setStatusFilter(option.value); setPage(1); }}>{option.label}</button>)}
       </div>
 
       {pageMessage && <p className={styles.pageFeedback} role="status">{pageMessage}</p>}
 
       <section className={styles.listSection} aria-labelledby="found-item-list-title" aria-busy={loading}>
-        <div className={styles.listHeading}><div><p>OPERATIONS LIST</p><h2 id="found-item-list-title">발견물 업무 목록</h2><span>공식 발견물의 공개 상태와 기본 정보를 빠르게 비교합니다.</span></div></div>
+        <div className={styles.listHeading}><div><p>OFFICIAL REGISTER</p><h2 id="found-item-list-title">전체 발견물 기록</h2><span>초기 탐지부터 반환·폐기까지 공식 발견물의 lifecycle을 확인합니다.</span></div>{!loading && !error && <strong>필터 결과 {total}건</strong>}</div>
 
         {loading ? (
           <div className={styles.state} role="status"><i /><i /><i /><span>발견물 목록을 불러오는 중입니다.</span></div>
         ) : error ? (
           <div className={`${styles.state} ${styles.error}`} role="alert"><Icon name="info" size={27} /><strong>발견물 목록을 불러오지 못했습니다.</strong><span>{error}</span><button type="button" onClick={() => void load()}>다시 불러오기</button></div>
         ) : !items.length ? (
-          <div className={styles.state}><Icon name="archive" size={32} /><strong>{filtersActive ? "조건에 맞는 발견물이 없습니다" : "등록된 발견물이 없습니다"}</strong><span>{filtersActive ? "검색어나 필터를 변경해보세요." : "AI 탐지 또는 발견 제보가 공식 발견물로 등록되면 이곳에서 관리할 수 있습니다."}</span>{filtersActive && <button type="button" onClick={resetFilters}>필터 초기화</button>}</div>
+          <div className={styles.state}><Icon name="archive" size={32} /><strong>{query ? "검색 조건에 맞는 발견물이 없어요" : statusFilter ? `${statusLabels[statusFilter]} 상태의 발견물이 없어요` : filtersActive ? "조건에 맞는 발견물이 없어요" : "등록된 발견물이 아직 없어요"}</strong><span>{filtersActive ? "검색어나 필터를 변경해보세요." : "AI 탐지 또는 시민 신고가 공식 발견물로 등록되면 이곳에서 관리할 수 있습니다."}</span>{filtersActive && <button type="button" onClick={resetFilters}>필터 초기화</button>}</div>
         ) : (
-          <div className={styles.itemList} role="list">
-            <div className={styles.tableHead} aria-hidden="true"><span>발견물</span><span>발견 위치</span><span>발견 시각</span><span>출처</span><span>현재 상태</span></div>
-            {visibleItems.map((item) => (
-              <button type="button" role="listitem" aria-label={`${item.item_category_name} 발견물 관리 열기`} aria-current={selected?.id === item.id ? "true" : undefined} onClick={() => requestSelection(item)} key={item.id}>
-                <span className={styles.itemIdentity}><ItemImage item={item} compact /><span><b>{item.color ? `${item.color} ` : ""}{item.item_category_name}</b><small>발견물 #{item.id}</small></span></span>
-                <span data-label="발견 위치">{item.area_name}</span>
-                <time data-label="발견 시각" dateTime={item.found_at}>{formatDate(item.found_at)}</time>
-                <span data-label="출처" className={styles.source}>{sourceLabels[item.source_type]}</span>
-                <span data-label="현재 상태" className={`${styles.statusBadge} ${styles[`status${item.status}`] ?? ""}`}>{statusLabels[item.status] ?? item.status}</span>
-              </button>
-            ))}
-          </div>
+          <div className={styles.tableWrap}><table className={styles.itemTable}><thead><tr><th>발견물</th><th>발견 위치</th><th>발견 시각</th><th>현재 상태</th><th>출처</th><th>보관 위치</th><th>최근 업데이트</th><th>작업</th></tr></thead><tbody>{items.map((item) => (
+            <tr key={item.id} data-selected={selected?.id === item.id || undefined}>
+              <td data-label="발견물"><span className={styles.itemIdentity}><ItemImage item={item} compact /><span><b>{item.color ? `${item.color} ` : ""}{item.item_category_name}</b><small>발견물 #{item.id}</small></span></span></td>
+              <td data-label="발견 위치" title={item.area_name}>{item.area_name || "위치 정보 없음"}</td>
+              <td data-label="발견 시각"><time dateTime={item.found_at}>{formatDate(item.found_at)}</time></td>
+              <td data-label="현재 상태"><span className={`${styles.statusBadge} ${styles[`status${item.status}`] ?? ""}`}>{statusLabels[item.status] ?? item.status}</span></td>
+              <td data-label="출처"><span className={styles.source}>{sourceLabels[item.source_type]}</span></td>
+              <td data-label="보관 위치" title={item.storage_location ?? undefined}>{item.storage_location || "미지정"}</td>
+              <td data-label="최근 업데이트"><time dateTime={item.updated_at}>{formatDate(item.updated_at)}</time></td>
+              <td data-label="작업"><button type="button" aria-label={`${item.item_category_name} 발견물 관리 열기`} onClick={() => requestSelection(item)}>관리</button></td>
+            </tr>
+          ))}</tbody></table></div>
         )}
         {!loading && !error && items.length > 0 && <footer className={styles.paginationFooter}>
           <div className={styles.pageSizeControl}><span>페이지당</span><CustomSelect label="페이지당 표시 개수" value={String(pageSize)} options={pageSizeOptions} onChange={changePageSize} /></div>
           <nav className={styles.pagination} aria-label="발견물 목록 페이지"><button type="button" aria-label="이전 페이지" disabled={safePage === 1} onClick={() => setPage(Math.max(1, safePage - 1))}><Icon name="chevronLeft" size={16} /></button><span aria-live="polite"><strong>{safePage}</strong><span> / {totalPages}</span></span><button type="button" aria-label="다음 페이지" disabled={safePage === totalPages} onClick={() => setPage(Math.min(totalPages, safePage + 1))}><Icon name="chevronRight" size={16} /></button></nav>
-          <strong className={styles.totalCount}>총 {items.length}건</strong>
+          <strong className={styles.totalCount}>총 {total}건</strong>
         </footer>}
       </section>
 
@@ -429,7 +431,7 @@ export function AdminFoundItemsClient() {
 
               <section className={styles.editSection} aria-labelledby="found-edit-title">
                 <div className={styles.sectionTitle}><span>B</span><div><h3 id="found-edit-title">관리 정보</h3><p>회수 상태와 지도 표시 위치를 함께 보정합니다.</p></div></div>
-                <label><span>상태</span><CustomSelect label="발견물 상태" value={status} options={statuses} onChange={setStatus} disabled={saving} /></label>
+                {editableStatuses.some((item) => item.value === selected.status) ? <label><span>상태</span><CustomSelect label="발견물 상태" value={status} options={editableStatuses} onChange={setStatus} disabled={saving} /></label> : <div className={styles.readonlyStatus}><span>상태</span><strong>{statusLabels[selected.status] ?? selected.status}</strong><small>이 상태는 담당 업무 처리 화면에서 변경합니다.</small>{selected.status === "CLAIM_PENDING" && <Link href="/admin/ownership-claims">소유권 요청 처리로 이동</Link>}</div>}
                 <label><span>발견 지역</span><input value={area} onChange={(event) => { setArea(event.target.value); setSaveError(""); }} maxLength={100} disabled={saving} placeholder="예: 수원역 4번 출구" /></label>
                 <div className={styles.coordinateGrid}>
                   <label><span>위도 <i>선택</i></span><input value={latitude} onChange={(event) => { setLatitude(event.target.value); setSaveError(""); }} inputMode="decimal" disabled={saving} placeholder="예: 37.2656" /></label>
@@ -449,7 +451,6 @@ export function AdminFoundItemsClient() {
       )}
 
       {pendingNavigation && <ConfirmDialog onCancel={() => setPendingNavigation(null)} onDiscard={discardAndNavigate} />}
-      <p className={styles.scopeNote}>현재 목록은 기존 공개 발견물 API 계약에 따라 `RECOVERED`, `AVAILABLE` 상태의 공개 발견물만 조회합니다.</p>
     </main>
   );
 }

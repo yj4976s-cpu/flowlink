@@ -93,3 +93,32 @@ export async function createOwnershipClaim(request: OwnershipClaimCreateRequest)
 
   return response.json() as Promise<OwnershipClaimResponse>;
 }
+
+export async function listMyOwnershipClaims(signal?: AbortSignal) {
+  const response = await fetch(`${buildApiUrl("/api/ownership-claims/me")}?skip=0&limit=100`, {
+    credentials: "include",
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new OwnershipClaimsApiError(await readErrorMessage(response), response.status);
+  }
+
+  return response.json() as Promise<OwnershipClaimResponse[]>;
+}
+
+export async function listMyOwnershipClaimProgress(lostReportIds: number[], signal?: AbortSignal) {
+  const url = new URL(buildApiUrl("/api/ownership-claims/me/progress"));
+  lostReportIds.forEach((id) => url.searchParams.append("lost_report_ids", String(id)));
+  const response = await fetch(url, { credentials: "include", signal });
+  if (!response.ok) throw new OwnershipClaimsApiError(await readErrorMessage(response), response.status);
+  return response.json() as Promise<OwnershipClaimResponse[]>;
+}
+
+export async function listMyOwnershipClaimActivity(lostReportIds: number[], signal?: AbortSignal) {
+  const url = new URL(buildApiUrl("/api/ownership-claims/me/activity"));
+  lostReportIds.forEach((id) => url.searchParams.append("lost_report_ids", String(id)));
+  const response = await fetch(url, { credentials: "include", signal });
+  if (!response.ok) throw new OwnershipClaimsApiError(await readErrorMessage(response), response.status);
+  return response.json() as Promise<OwnershipClaimResponse[]>;
+}
