@@ -89,7 +89,10 @@ export async function loadThemedDaruImageSrc(src: string, theme: DaruRhythm) {
     }
     context.putImageData(pixels, 0, 0);
     return canvas.toDataURL("image/png");
-  })();
+  })().catch((error) => {
+    themedImageCache.delete(key);
+    throw error;
+  });
   themedImageCache.set(key, promise);
   return promise;
 }
