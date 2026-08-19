@@ -18,6 +18,7 @@ from app.repositories.user_flow import (
     get_ownership_claim_by_id,
     has_other_active_ownership_claim,
     list_ownership_claims_for_user,
+    list_ownership_claims_for_user_reports,
     list_representative_ownership_claims_for_user_reports,
 )
 from app.schemas.ownership_claim import OwnershipClaimCreateRequest, OwnershipClaimResponse, OwnershipClaimUpdateRequest
@@ -57,6 +58,16 @@ def list_claim_progress_for_user(
     lost_report_ids: list[int],
 ) -> list[OwnershipClaimResponse]:
     claims = list_representative_ownership_claims_for_user_reports(db, current_user.id, lost_report_ids)
+    return [ownership_claim_response(claim) for claim in claims]
+
+
+def list_claim_activity_for_user(
+    db: Session,
+    *,
+    current_user: User,
+    lost_report_ids: list[int],
+) -> list[OwnershipClaimResponse]:
+    claims = list_ownership_claims_for_user_reports(db, current_user.id, lost_report_ids)
     return [ownership_claim_response(claim) for claim in claims]
 
 

@@ -9,13 +9,13 @@ import { listMyLostReports, LostReportResponse } from "@/lib/lostReportsApi";
 import { listMyProgressMatches, MatchCandidate, resolveMatchImageUrl } from "@/lib/matchesApi";
 import { listNotifications, NotificationResponse } from "@/lib/notificationsApi";
 import { listMyCitizenReports } from "@/lib/citizenReportsApi";
-import { listMyOwnershipClaimProgress, type OwnershipClaimResponse } from "@/lib/ownershipClaimsApi";
+import { listMyOwnershipClaimActivity, listMyOwnershipClaimProgress, type OwnershipClaimResponse } from "@/lib/ownershipClaimsApi";
 import type { CitizenReport } from "@/types/discoveryNetwork";
 import { getItemTypeMeta } from "@/lib/itemTypeMeta";
 import { deriveLostReportProgress, LostReportProgress, type LostReportProgressModel } from "./LostReportProgress";
 import styles from "./MyPageClient.module.css";
 
-type LoadState = { user: AuthUser; reports: LostReportResponse[]; matches: MatchCandidate[]; ownershipClaims: OwnershipClaimResponse[]; notifications: NotificationResponse[]; citizenReports: CitizenReport[] };
+type LoadState = { user: AuthUser; reports: LostReportResponse[]; matches: MatchCandidate[]; progressClaims: OwnershipClaimResponse[]; claimActivity: OwnershipClaimResponse[]; notifications: NotificationResponse[]; citizenReports: CitizenReport[] };
 type ActivityTab = "reports" | "matches" | "claims" | "citizen";
 type FlowNav = "overview" | ActivityTab;
 type LostReportCardModel = {
@@ -147,18 +147,21 @@ export function MyPageClient() {
       if (controller.signal.aborted) return;
       const visibleReportIds = reportsResult.status === "fulfilled" ? reportsResult.value.map((report) => report.id) : [];
       let matchesResult: PromiseSettledResult<MatchCandidate[]> = { status: "fulfilled", value: [] };
-      let claimsResult: PromiseSettledResult<OwnershipClaimResponse[]> = { status: "fulfilled", value: [] };
+      let progressClaimsResult: PromiseSettledResult<OwnershipClaimResponse[]> = { status: "fulfilled", value: [] };
+      let claimActivityResult: PromiseSettledResult<OwnershipClaimResponse[]> = { status: "fulfilled", value: [] };
       if (visibleReportIds.length) {
-        [matchesResult, claimsResult] = await Promise.allSettled([
+        [matchesResult, progressClaimsResult, claimActivityResult] = await Promise.allSettled([
           listMyProgressMatches(visibleReportIds, controller.signal),
           listMyOwnershipClaimProgress(visibleReportIds, controller.signal),
+          listMyOwnershipClaimActivity(visibleReportIds, controller.signal),
         ]);
       }
       if (controller.signal.aborted) return;
       const failed: string[] = [];
       if (reportsResult.status === "rejected") failed.push("reports");
       if (matchesResult.status === "rejected") failed.push("matches");
-      if (claimsResult.status === "rejected") failed.push("claims");
+      if (progressClaimsResult.status === "rejected") failed.push("claimProgress");
+      if (claimActivityResult.status === "rejected") failed.push("claimActivity");
       if (notificationsResult.status === "rejected") failed.push("notifications");
       if (citizenResult.status === "rejected") failed.push("citizen");
       setFailedSections(failed);
@@ -166,7 +169,8 @@ export function MyPageClient() {
         user,
         reports: reportsResult.status === "fulfilled" ? reportsResult.value : [],
         matches: matchesResult.status === "fulfilled" ? matchesResult.value : [],
-        ownershipClaims: claimsResult.status === "fulfilled" ? claimsResult.value : [],
+        progressClaims: progressClaimsResult.status === "fulfilled" ? progressClaimsResult.value : [],
+        claimActivity: claimActivityResult.status === "fulfilled" ? claimActivityResult.value : [],
         notifications: notificationsResult.status === "fulfilled" ? notificationsResult.value : [],
         citizenReports: citizenResult.status === "fulfilled" ? citizenResult.value : [],
       });
@@ -198,10 +202,10 @@ export function MyPageClient() {
   const activity = useMemo(() => data ? [
     { label: "등록한 신고", value: data.reports.length, href: "#my-activity", description: data.reports.length ? "신고 내역 확인" : "등록된 신고 없음", icon: "document" as const, tone: "primary" },
     { label: "매칭 결과", value: data.matches.length, href: "/matches", description: data.matches.length ? "유사 후보 확인" : "확인할 후보 없음", icon: "match" as const, tone: "accent" },
-    { label: "소유권 확인 요청", value: data.ownershipClaims.length, href: "#my-activity", description: "요청 진행 상태", icon: "check" as const, tone: "support" },
+    { label: "소유권 확인 요청", value: data.claimActivity.length, href: "#my-activity", description: "요청 진행 상태", icon: "check" as const, tone: "support" },
     { label: "내 발견 제보", value: data.citizenReports.length, href: "/found-items#citizen", description: data.citizenReports.length ? "등록한 제보 확인" : "등록된 제보 없음", icon: "location" as const, tone: "secondary" },
   ] : [], [data]);
-  const reportCards = useMemo(() => data ? buildLostReportCardModels(data.reports, data.matches, data.ownershipClaims) : [], [data]);
+  const reportCards = useMemo(() => data ? buildLostReportCardModels(data.reports, data.matches, data.progressClaims) : [], [data]);
 
   useEffect(() => {
     if (!Number.isSafeInteger(requestedReportId) || lastScrolledReportId.current === requestedReportId) return;
@@ -267,7 +271,7 @@ export function MyPageClient() {
     </section>
 
     <section id="recent-flow" className={`${styles.section} ${styles.reveal}`}><div className={styles.sectionTitle}><div><p>MY LOST REPORTS</p><h2>신고별 진행 상황</h2></div></div>
-      {failedSections.some((section) => section === "reports" || section === "matches" || section === "claims") ? <div className={styles.empty}>신고별 진행 상황을 불러오지 못했습니다.<button onClick={() => location.reload()}>다시 시도</button></div> : reportCards.length ? <div className={styles.reportCardList}>{reportCards.map((model) => <LostReportCard key={model.report.id} model={model} selected={model.report.id === selectedReportId} />)}</div> : <div className={styles.empty}>아직 등록한 분실 신고가 없어요. 물건을 잃어버렸다면 먼저 신고해 주세요.<Link href="/lost-reports/new">분실 신고하기</Link></div>}
+      {failedSections.some((section) => section === "reports" || section === "matches" || section === "claimProgress") ? <div className={styles.empty}>신고별 진행 상황을 불러오지 못했습니다.<button onClick={() => location.reload()}>다시 시도</button></div> : reportCards.length ? <div className={styles.reportCardList}>{reportCards.map((model) => <LostReportCard key={model.report.id} model={model} selected={model.report.id === selectedReportId} />)}</div> : <div className={styles.empty}>아직 등록한 분실 신고가 없어요. 물건을 잃어버렸다면 먼저 신고해 주세요.<Link href="/lost-reports/new">분실 신고하기</Link></div>}
     </section>
 
     <section className={`${styles.section} ${styles.reveal}`}><div className={styles.sectionTitle}><div><p>NOTIFICATIONS</p><h2>최근 알림</h2></div><Link href="/notifications">전체보기 <Icon name="arrow" size={16} /></Link></div>
@@ -281,9 +285,9 @@ export function MyPageClient() {
       <div id="activity-panel" className={styles.activityList} role="tabpanel">
         {activityTab === "reports" && (failedSections.includes("reports") ? <ActivityEmpty text="분실 신고 내역을 불러오지 못했습니다." /> : data.reports.length ? data.reports.map((report) => <ActivityRow key={report.id} icon={getItemTypeMeta(report.item_category, report.item_category_name).icon} imageUrl={report.image_url} title={`${report.color ? `${report.color} ` : ""}${report.item_category_name}`} meta={`${new Date(report.lost_from).toLocaleDateString("ko-KR")} · ${report.area_name}`} status={reportStatus[report.status] ?? report.status} detail={`유사 발견물 ${data.matches.filter((match) => match.lost_report.id === report.id).length}건`} href={`/matches?reportId=${report.id}`} />) : <ActivityEmpty text="아직 등록한 분실 신고가 없습니다." href="/lost-reports/new" action="분실 신고 시작하기" />)}
         {activityTab === "matches" && (failedSections.includes("matches") ? <ActivityEmpty text="매칭 결과를 불러오지 못했습니다." /> : data.matches.length ? data.matches.map((match) => <ActivityRow key={match.id} icon="match" title={match.found_item.public_description || match.found_item.item_category_name} meta={`${new Date(match.found_item.found_at).toLocaleDateString("ko-KR")} · ${match.found_item.area_name}`} status={`${match.total_score}% 유사`} detail="AI 탐지" href="/matches" tone="accent" />) : <ActivityEmpty text="아직 비슷한 발견물을 찾지 못했어요." />)}
-        {activityTab === "claims" && (failedSections.includes("claims") ? <ActivityEmpty text="소유권 확인 요청을 불러오지 못했습니다." /> : data.ownershipClaims.length ? data.ownershipClaims.map((claim) => {
+        {activityTab === "claims" && (failedSections.includes("claimActivity") ? <ActivityEmpty text="소유권 확인 요청을 불러오지 못했습니다." /> : data.claimActivity.length ? data.claimActivity.map((claim) => {
           const match = data.matches.find((candidate) => candidate.found_item.id === claim.found_item_id && candidate.lost_report.id === claim.lost_report_id);
-          return <ActivityRow key={claim.id} icon="check" title={match?.found_item.public_description || match?.found_item.item_category_name || `발견물 #${claim.found_item_id}`} meta={`요청일 ${new Date(claim.created_at).toLocaleDateString("ko-KR")}`} status={claimStatus[claim.status] ?? claim.status} detail="관리자 확인 절차가 진행됩니다." href="/matches" tone="support" />;
+          return <ActivityRow key={claim.id} icon="check" title={match?.found_item.public_description || match?.found_item.item_category_name || `발견물 #${claim.found_item_id}`} meta={`요청일 ${new Date(claim.created_at).toLocaleDateString("ko-KR")}`} status={claimStatus[claim.status] ?? claim.status} detail="관리자 확인 절차가 진행됩니다." href={claim.lost_report_id === null ? "/matches" : `/matches?reportId=${claim.lost_report_id}`} tone="support" />;
         }) : <ActivityEmpty text="소유권 확인 요청 내역이 없습니다." />)}
         {activityTab === "citizen" && (failedSections.includes("citizen") ? <ActivityEmpty text="발견 제보를 불러오지 못했습니다." /> : data.citizenReports.length ? data.citizenReports.map((report) => <ActivityRow key={report.id} icon="location" imageUrl={report.imageUrl} title={report.title} meta={`${new Date(report.foundAt).toLocaleDateString("ko-KR")} · ${report.areaName}`} status={report.status} detail={`추가 목격 ${Math.max(0, report.history.length - 1)}건`} href="/found-items#citizen" tone="secondary" />) : <ActivityEmpty text="아직 작성한 발견 제보가 없습니다." href="/found-items#citizen" action="발견물 센터에서 물품 제보하기" />)}
       </div>

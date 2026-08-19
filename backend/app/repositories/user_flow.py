@@ -603,6 +603,26 @@ def list_representative_ownership_claims_for_user_reports(
     return db.scalars(statement).all()
 
 
+def list_ownership_claims_for_user_reports(
+    db: Session,
+    user_id: int,
+    lost_report_ids: Sequence[int],
+) -> Sequence[OwnershipClaim]:
+    if not lost_report_ids:
+        return []
+    statement = (
+        select(OwnershipClaim)
+        .join(LostReport, LostReport.id == OwnershipClaim.lost_report_id)
+        .where(
+            OwnershipClaim.user_id == user_id,
+            LostReport.user_id == user_id,
+            OwnershipClaim.lost_report_id.in_(lost_report_ids),
+        )
+        .order_by(OwnershipClaim.created_at.desc(), OwnershipClaim.id.desc())
+    )
+    return db.scalars(statement).all()
+
+
 def get_ownership_claim_by_id(db: Session, claim_id: int) -> OwnershipClaim | None:
     statement = (
         select(OwnershipClaim)
