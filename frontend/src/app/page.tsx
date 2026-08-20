@@ -4,16 +4,18 @@ import { HeroSection } from "@/components/home/HeroSection";
 import { ProcessFlow } from "@/components/home/ProcessFlow";
 import { RecentItems } from "@/components/home/RecentItems";
 import { StatsStrip } from "@/components/home/StatsStrip";
+import { emptyHomeSummary, getHomeSummary } from "@/lib/homeApi";
 
-export default function Home() {
+export default async function Home() {
+  const summary = await getHomeSummary() ?? emptyHomeSummary;
   return (
     <div className="site-shell">
       <Header />
       <main>
         <HeroSection />
-        <StatsStrip />
+        <StatsStrip stats={summary.stats} />
         <ProcessFlow />
-        <RecentItems />
+        <RecentItems items={summary.recentItems} />
       </main>
       <Footer />
     </div>
