@@ -67,7 +67,7 @@ def patch_report(id: Annotated[int, ApiPath(ge=1)], request: CitizenReportUpdate
 
 @router.delete("/{id}", response_model=CitizenReportResponse)
 def delete_report(id: Annotated[int, ApiPath(ge=1)], current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]):
-    return cancel_report(db, user=current_user, report_id=id)
+    return cancel_report(db, user=current_user, report_id=id, upload_root=upload_root())
 
 
 @router.post("/{id}/sightings", response_model=CitizenReportResponse, status_code=201)

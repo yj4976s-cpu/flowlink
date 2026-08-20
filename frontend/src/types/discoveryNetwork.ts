@@ -1,6 +1,8 @@
 export type DiscoverySource = "AI 탐지" | "발견 제보";
 export type CitizenReportStatus = "검토 대기" | "관리자 확인 중" | "기존 발견물 연결" | "반려" | "취소";
 
+export type CitizenReportStatusCode = "PENDING" | "UNDER_REVIEW" | "LINKED" | "REJECTED" | "CANCELLED";
+
 export type DiscoveryHistory = {
   id: string;
   at: string;
@@ -22,6 +24,7 @@ export type CitizenReport = {
   imageClass: "umbrella" | "backpack" | "ball" | "shoe";
   imageUrl: string | null;
   status: CitizenReportStatus;
+  statusCode: CitizenReportStatusCode;
   history: DiscoveryHistory[];
   mapPosition: { x: number; y: number };
 };

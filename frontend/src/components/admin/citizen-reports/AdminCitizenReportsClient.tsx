@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@/components/common/Icon";
 import {
+  AdminCitizenReportsApiError,
   adminImageUrl,
   createFoundItemFromCitizen,
   getAdminCitizenReport,
@@ -36,6 +37,7 @@ const queueFilters: Array<{ value: QueueFilter; label: string }> = [
   { value: "LINKED", label: "연결 완료" },
 ];
 const date = new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" });
+const activeReports = (items: AdminCitizenReport[]) => items.filter((report) => report.status !== "CANCELLED");
 
 function format(value: string) {
   const parsed = new Date(value);
@@ -84,8 +86,8 @@ export function AdminCitizenReportsClient() {
   const [confirmation, setConfirmation] = useState<Confirmation>(null);
   const [mobileDetail, setMobileDetail] = useState(false);
 
-  const visible = useMemo(() => filter ? reports.filter((report) => report.status === filter) : reports, [filter, reports]);
-  const count = (status: QueueFilter) => status ? reports.filter((report) => report.status === status).length : reports.length;
+  const visible = useMemo(() => filter ? reports.filter((report) => report.status !== "CANCELLED" && report.status === filter) : activeReports(reports), [filter, reports]);
+  const count = (status: QueueFilter) => status ? reports.filter((report) => report.status !== "CANCELLED" && report.status === status).length : activeReports(reports).length;
   const selectFilter = (next: QueueFilter) => {
     setFilter(next);
     if (selected && next && selected.status !== next) {
@@ -98,7 +100,7 @@ export function AdminCitizenReportsClient() {
     setLoading(true);
     setError("");
     try {
-      const data = await listAdminCitizenReports(undefined, signal);
+      const data = activeReports(await listAdminCitizenReports(undefined, signal));
       setReports(data);
       setSelected((current) => current ? data.find((report) => report.id === current.id) ?? null : null);
     } catch (reason) {
@@ -112,7 +114,7 @@ export function AdminCitizenReportsClient() {
     const controller = new AbortController();
     const loadInitial = async () => {
       try {
-        setReports(await listAdminCitizenReports(undefined, controller.signal));
+        setReports(activeReports(await listAdminCitizenReports(undefined, controller.signal)));
       } catch (reason) {
         if (!(reason instanceof DOMException && reason.name === "AbortError")) setError("발견 제보를 불러오지 못했습니다.");
       } finally {
@@ -140,11 +142,23 @@ export function AdminCitizenReportsClient() {
     setDetailLoading(true);
     try {
       const fresh = await getAdminCitizenReport(report.id);
+      if (fresh.status === "CANCELLED") {
+        setSelected(null);
+        setReports((current) => current.filter((item) => item.id !== report.id));
+        setActionError("이미 삭제된 발견 제보입니다.");
+        return;
+      }
       setSelected((current) => current?.id === fresh.id ? fresh : current);
-      setReports((current) => current.map((item) => item.id === fresh.id ? fresh : item));
+      setReports((current) => activeReports(current.map((item) => item.id === fresh.id ? fresh : item)));
       setMemo(fresh.admin_memo ?? "");
-    } catch {
-      setActionError("최신 상세 정보를 불러오지 못해 목록의 정보로 표시합니다.");
+    } catch (reason) {
+      if (reason instanceof AdminCitizenReportsApiError && reason.status === 404) {
+        setReports((current) => current.filter((item) => item.id !== report.id));
+        setSelected((current) => current?.id === report.id ? null : current);
+        setActionError("이미 삭제되었거나 더 이상 표시할 수 없는 발견 제보입니다.");
+      } else {
+        setActionError("최신 상세 정보를 불러오지 못해 목록의 정보로 표시합니다.");
+      }
     } finally {
       setDetailLoading(false);
     }

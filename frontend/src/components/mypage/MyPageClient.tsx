@@ -8,7 +8,7 @@ import { AuthApiError, AuthUser, changePassword, deleteAccount, getCurrentUser, 
 import { listMyLostReports, LostReportResponse } from "@/lib/lostReportsApi";
 import { listMyProgressMatches, MatchCandidate, resolveMatchImageUrl } from "@/lib/matchesApi";
 import { listNotifications, NotificationResponse } from "@/lib/notificationsApi";
-import { listMyCitizenReports } from "@/lib/citizenReportsApi";
+import { CitizenReportsApiError, deleteCitizenReport, listMyCitizenReports } from "@/lib/citizenReportsApi";
 import { listMyOwnershipClaimActivity, listMyOwnershipClaimProgress, type OwnershipClaimResponse } from "@/lib/ownershipClaimsApi";
 import type { CitizenReport } from "@/types/discoveryNetwork";
 import { getItemTypeMeta } from "@/lib/itemTypeMeta";
@@ -107,6 +107,14 @@ function ActivityRow({ icon, imageUrl, title, meta, status, detail, href, tone =
   return <Link className={`${styles.activityRow} ${styles[`activity_${tone}`]}`} href={href}><ActivityVisual icon={icon} imageUrl={imageUrl} label={title} /><div><strong>{title}</strong><span>{meta}</span></div><div className={styles.activityMeta}><b>{status}</b><span>{detail}</span></div><Icon name="arrow" size={17} /></Link>;
 }
 
+function CitizenReportActivityRow({ deleting, onDelete, report }: { deleting: boolean; onDelete: (report: CitizenReport) => void; report: CitizenReport }) {
+  const canDelete = report.statusCode === "PENDING" || report.statusCode === "UNDER_REVIEW";
+  return <article className={`${styles.citizenActivityRow} ${styles.activity_secondary}`}>
+    <Link className={styles.citizenActivityLink} href="/found-items#citizen"><ActivityVisual icon="location" imageUrl={report.imageUrl} label={report.title} /><div><strong>{report.title}</strong><span>{new Date(report.foundAt).toLocaleDateString("ko-KR")} · {report.areaName}</span></div><div className={styles.activityMeta}><b>{report.status}</b><span>추가 목격 {Math.max(0, report.history.length - 1)}건</span></div><Icon name="arrow" size={17} /></Link>
+    {canDelete && <button type="button" className={styles.citizenDeleteButton} disabled={deleting} onClick={() => onDelete(report)}>{deleting ? "삭제 중..." : "제보 삭제"}</button>}
+  </article>;
+}
+
 function ActivityEmpty({ text, href, action }: { text: string; href?: string; action?: string }) {
   return <div className={styles.empty}>{text}{href && action && <Link href={href}>{action}</Link>}</div>;
 }
@@ -128,6 +136,9 @@ export function MyPageClient() {
   const [activityTab, setActivityTab] = useState<ActivityTab>("reports");
   const [flowNav, setFlowNav] = useState<FlowNav>("overview");
   const [flowMenuOpen, setFlowMenuOpen] = useState(false);
+  const [deletingCitizenReportId, setDeletingCitizenReportId] = useState<string | null>(null);
+  const [citizenDeleteMessage, setCitizenDeleteMessage] = useState("");
+  const [citizenDeleteError, setCitizenDeleteError] = useState("");
   const flowMenuRef = useRef<HTMLDivElement>(null);
   const lastScrolledReportId = useRef<number | null>(null);
 
@@ -252,6 +263,23 @@ export function MyPageClient() {
   };
 
   const removeAccount = async () => { await deleteAccount(); router.replace("/"); router.refresh(); };
+  const removeCitizenReport = async (report: CitizenReport) => {
+    const confirmed = window.confirm("내 발견 제보를 삭제할까요?\n\n첨부한 사진과 제보 내용이 사용자·관리자 목록에서 사라집니다.\n이미 공식 발견물로 연결된 제보는 삭제할 수 없습니다.");
+    if (!confirmed) return;
+    setDeletingCitizenReportId(report.id);
+    setCitizenDeleteMessage("");
+    setCitizenDeleteError("");
+    try {
+      await deleteCitizenReport(report.id);
+      setData((value) => value ? { ...value, citizenReports: value.citizenReports.filter((item) => item.id !== report.id) } : value);
+      setCitizenDeleteMessage("발견 제보를 삭제했습니다.");
+    } catch (reason) {
+      if (reason instanceof CitizenReportsApiError && reason.status === 409) setCitizenDeleteError("이미 처리되었거나 공식 발견물로 연결되어 삭제할 수 없습니다.");
+      else setCitizenDeleteError(reason instanceof Error ? reason.message : "발견 제보를 삭제하지 못했습니다.");
+    } finally {
+      setDeletingCitizenReportId(null);
+    }
+  };
 
   return <main className={styles.page} id="mypage-overview">
     <header className={styles.heading}><p>MY FLOW</p><h1>내 진행 상황</h1><span>내 신고와 발견물 연결 현황을 한눈에 확인하세요.</span></header>
@@ -289,7 +317,11 @@ export function MyPageClient() {
           const match = data.matches.find((candidate) => candidate.found_item.id === claim.found_item_id && candidate.lost_report.id === claim.lost_report_id);
           return <ActivityRow key={claim.id} icon="check" title={match?.found_item.public_description || match?.found_item.item_category_name || `발견물 #${claim.found_item_id}`} meta={`요청일 ${new Date(claim.created_at).toLocaleDateString("ko-KR")}`} status={claimStatus[claim.status] ?? claim.status} detail="관리자 확인 절차가 진행됩니다." href={claim.lost_report_id === null ? "/matches" : `/matches?reportId=${claim.lost_report_id}`} tone="support" />;
         }) : <ActivityEmpty text="소유권 확인 요청 내역이 없습니다." />)}
-        {activityTab === "citizen" && (failedSections.includes("citizen") ? <ActivityEmpty text="발견 제보를 불러오지 못했습니다." /> : data.citizenReports.length ? data.citizenReports.map((report) => <ActivityRow key={report.id} icon="location" imageUrl={report.imageUrl} title={report.title} meta={`${new Date(report.foundAt).toLocaleDateString("ko-KR")} · ${report.areaName}`} status={report.status} detail={`추가 목격 ${Math.max(0, report.history.length - 1)}건`} href="/found-items#citizen" tone="secondary" />) : <ActivityEmpty text="아직 작성한 발견 제보가 없습니다." href="/found-items#citizen" action="발견물 센터에서 물품 제보하기" />)}
+        {activityTab === "citizen" && <>
+          {citizenDeleteMessage && <p className={styles.activityStatusMessage} role="status">{citizenDeleteMessage}</p>}
+          {citizenDeleteError && <p className={styles.activityErrorMessage} role="alert">{citizenDeleteError}</p>}
+          {failedSections.includes("citizen") ? <ActivityEmpty text="발견 제보를 불러오지 못했습니다." /> : data.citizenReports.length ? data.citizenReports.map((report) => <CitizenReportActivityRow key={report.id} report={report} deleting={deletingCitizenReportId === report.id} onDelete={removeCitizenReport} />) : <ActivityEmpty text="아직 작성한 발견 제보가 없습니다." href="/found-items#citizen" action="발견물 센터에서 물품 제보하기" />}
+        </>}
       </div>
     </section>
 

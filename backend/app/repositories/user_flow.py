@@ -838,7 +838,7 @@ def get_admin_dashboard_data(db: Session, *, since, period: str = "today", now=N
             "returned": count(OwnershipClaim, period_condition(OwnershipClaim.updated_at), OwnershipClaim.status == "RETURNED"),
             "lost_reports": count(LostReport, period_condition(LostReport.created_at)),
             "match_notifications": count(Notification, period_condition(Notification.created_at), Notification.notification_type == "MATCH_FOUND"),
-            "citizen_reports": count(CitizenReport, period_condition(CitizenReport.created_at)),
+            "citizen_reports": count(CitizenReport, period_condition(CitizenReport.created_at), CitizenReport.status != "CANCELLED"),
             "citizen_pending": count(CitizenReport, CitizenReport.status.in_(("PENDING", "UNDER_REVIEW"))),
             "operation_detection_pending": count(DetectedObject, DetectedObject.processing_status == "PENDING", DetectedObject.detection_event.has(DetectionEvent.purpose == "OPERATION")),
             "waste_collection_pending": waste_collection_pending_count(),
