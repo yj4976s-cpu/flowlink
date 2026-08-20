@@ -66,7 +66,7 @@ cp .env.production.example .env.production
 Required production values:
 
 - `FRONTEND_URL`: public HTTPS origin for the deployed site.
-- `NEXT_PUBLIC_API_BASE_URL`: browser-facing API base. In the Nginx same-origin setup use `/api` so DuckDNS HTTPS and LAN HTTP call the current origin's `/api/...` routes. Set an absolute API origin only for a deliberately split frontend/backend deployment.
+- `NEXT_PUBLIC_API_BASE_URL`: browser-facing API base. In the Nginx same-origin setup use `/api` so DuckDNS HTTPS and LAN HTTP call the current reverse-proxy origin's `/api/...` routes. Set an absolute API origin only for a deliberately split frontend/backend deployment.
 - `DATABASE_URL`: complete Supabase PostgreSQL connection string copied from the Dashboard. The backend accepts `postgresql://` or `postgres://` and selects SQLAlchemy's psycopg 3 dialect automatically; an explicit `postgresql+psycopg://` URL is also accepted. Preserve any query parameters and keep the URI on one line.
 - `JWT_SECRET_KEY`: at least 32 characters.
 - `AI_INTERNAL_API_KEY`: at least 32 characters; must match between backend and backend-ai.
@@ -144,7 +144,7 @@ Do not publish these ports directly:
 - `8001` backend-ai
 - `5432` PostgreSQL
 
-The recommended production/demo URL is `https://flowlink-project.duckdns.org` on port `443`. For academy LAN demonstrations, the same reverse proxy can also serve `http://<LAN-IP>/` on port `80`; browser calls still use the same origin through `/api/...` and `/uploads/...`. LAN HTTP login is intended only for private/internal networks. Before this same-origin LAN support, LAN access should be treated as health-check only.
+The recommended production/demo URL is `https://flowlink-project.duckdns.org` on port `443`. For academy LAN login demonstrations, use the Nginx reverse proxy at `http://<LAN-IP>/` on port `80`; browser calls still use the same origin through `/api/...` and `/uploads/...`. LAN HTTP login is intended only for private/internal networks. Direct frontend access such as `http://<LAN-IP>:3000` is not a supported authentication demo path because it bypasses the production reverse-proxy entrypoint and can lose the trusted forwarded host/proto context needed for cookie decisions. Before this same-origin LAN support, LAN access should be treated as health-check only.
 
 ## HTTPS and certificate renewal
 
@@ -214,7 +214,8 @@ Do not commit generated challenge tokens, certificates, private keys, renewal co
 ## URLs to check
 
 - Production frontend: `https://flowlink-project.duckdns.org/`
-- Academy LAN frontend: `http://<LAN-IP>/`
+- Academy LAN login/demo frontend: `http://<LAN-IP>/`
+- Direct frontend container port, if temporarily exposed: `http://<LAN-IP>:3000/` for development checks only; do not use it for authentication demonstrations.
 - Reverse proxy health: `http://localhost/healthz`
 - Backend health inside Docker network: `http://backend:8000/health`
 - Backend AI health inside Docker network: `http://backend-ai:8001/health`
@@ -236,6 +237,7 @@ The backend API routers already include `/api/...` prefixes, so Nginx forwards `
 - The backend production config requires a valid HTTPS `FRONTEND_URL`. Auth cookies are `Secure` for HTTPS requests. For LAN HTTP demonstrations, the backend only relaxes `Secure` when proxy headers identify an internal host such as `localhost`, `127.0.0.1`, `10.0.0.0/8`, `172.16.0.0/12`, or `192.168.0.0/16`.
 - Nginx overwrites `X-Forwarded-For` with the direct public client address. The backend trusts proxy headers only from Nginx's fixed `172.30.0.10` address on the private Compose network; keep that address aligned with `FORWARDED_ALLOW_IPS` if the network configuration changes.
 - DuckDNS HTTP requests other than `/healthz` and ACME challenges redirect to the production HTTPS origin. LAN HTTP requests are proxied same-origin for internal demonstrations only.
+- Production Compose does not publish the frontend `3000` port. Keep LAN login tests on the reverse-proxy URL `http://<LAN-IP>/`, not a direct frontend port.
 - Supabase PostgreSQL is external. This stack does not run a PostgreSQL container.
 - Choose host CPU, RAM, disk, and GPU/CPU inference capacity after measuring the real video workload and model latency. Tiny instances are unlikely to be a safe default for video inference.
 

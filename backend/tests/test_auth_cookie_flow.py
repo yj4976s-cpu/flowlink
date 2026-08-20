@@ -273,37 +273,41 @@ def test_login_sets_httponly_cookie_without_exposing_access_token(client: TestCl
 @pytest.mark.parametrize(
     ("headers", "expects_secure"),
     [
-        (
+        pytest.param(
             {
                 "host": "flowlink-project.duckdns.org",
                 "x-forwarded-host": "flowlink-project.duckdns.org",
                 "x-forwarded-proto": "https",
             },
             True,
+            id="duckdns-https-secure-cookie",
         ),
-        (
+        pytest.param(
             {
                 "host": "192.168.0.25",
                 "x-forwarded-host": "192.168.0.25",
                 "x-forwarded-proto": "http",
             },
             False,
+            id="lan-nginx-http-insecure-cookie",
         ),
-        (
+        pytest.param(
             {
-                "host": "10.0.1.15:3000",
-                "x-forwarded-host": "10.0.1.15:3000",
+                "host": "10.0.1.15",
+                "x-forwarded-host": "10.0.1.15",
                 "x-forwarded-proto": "http",
             },
             False,
+            id="internal-nginx-http-insecure-cookie",
         ),
-        (
+        pytest.param(
             {
                 "host": "flowlink.example",
                 "x-forwarded-host": "flowlink.example",
                 "x-forwarded-proto": "http",
             },
             True,
+            id="external-http-still-secure-cookie",
         ),
     ],
 )
