@@ -17,6 +17,7 @@ from app.models.entities import (
     OwnershipClaim,
     ProcessingHistory,
     User,
+    UserSocialAccount,
     VideoJob,
 )
 
@@ -39,5 +40,6 @@ __all__ = [
     "OwnershipClaim",
     "ProcessingHistory",
     "User",
+    "UserSocialAccount",
     "VideoJob",
 ]

@@ -1,10 +1,11 @@
 from fastapi import APIRouter
 
-from app.api import admin, auth, citizen_reports, community, copilot, detections, found_items, lost_reports, matches, notifications, ownership_claims, system
+from app.api import admin, auth, citizen_reports, community, copilot, detections, found_items, lost_reports, matches, notifications, oauth, ownership_claims, system
 
 api_router = APIRouter()
 api_router.include_router(system.router)
 api_router.include_router(auth.router)
+api_router.include_router(oauth.router)
 api_router.include_router(copilot.router)
 api_router.include_router(community.router)
 api_router.include_router(detections.router)
