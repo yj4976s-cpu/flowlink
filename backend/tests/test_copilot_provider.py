@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from unittest.mock import Mock
 from datetime import datetime, timezone
@@ -64,6 +65,19 @@ def test_malformed_suggestions_are_ignored() -> None:
     assert response.suggestions == []
     non_object = _safe_response('["unexpected"]', user=None, model="test", provider="gemini")
     assert non_object.suggestions == []
+
+
+def test_json_encoded_response_is_decoded() -> None:
+    payload = '{"message":"ok","cards":[{"type":"MATCH","title":"bag","details":["available"]}],"actions":[],"suggestions":[]}'
+    response = _safe_response(json.dumps(payload), user=Mock(role="USER"), model="test", provider="gemini")
+    assert response.message == "ok"
+    assert [card.title for card in response.cards] == ["bag"]
+
+
+def test_markdown_fenced_response_is_decoded() -> None:
+    raw = '```json\n{"message":"ok","cards":[],"actions":[],"suggestions":[]}\n```'
+    response = _safe_response(raw, user=Mock(role="USER"), model="test", provider="gemini")
+    assert response.message == "ok"
 
 
 def test_evidence_timeline_and_safe_map_actions_are_preserved() -> None:
