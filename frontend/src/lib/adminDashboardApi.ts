@@ -1,3 +1,4 @@
+import { buildApiUrl, getApiMediaBaseUrl } from "@/lib/apiBase";
 import { resolveUploadedMediaUrl } from "@/lib/mediaUrl";
 
 export type AdminDashboardData = {
@@ -38,18 +39,12 @@ export class AdminDashboardApiError extends Error {
   constructor(message: string, readonly status?: number) { super(message); this.name = "AdminDashboardApiError"; }
 }
 
-function getApiBaseUrl() {
-  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (!baseUrl) throw new AdminDashboardApiError("API 서버 주소가 설정되지 않았습니다.");
-  return baseUrl.replace(/\/+$/, "");
-}
-
 export function resolveAdminDashboardImageUrl(value?: string | null) {
-  return resolveUploadedMediaUrl(value, getApiBaseUrl());
+  return resolveUploadedMediaUrl(value, getApiMediaBaseUrl());
 }
 
 export async function getAdminDashboard(period: "today" | "7d" | "all" = "today", signal?: AbortSignal) {
-  const response = await fetch(`${getApiBaseUrl()}/api/admin/dashboard?period=${period}`, { credentials: "include", signal });
+  const response = await fetch(buildApiUrl("/api/admin/dashboard", { period }), { credentials: "include", signal });
   if (!response.ok) throw new AdminDashboardApiError(response.status === 403 ? "관리자 권한이 필요합니다." : "운영 현황을 불러오지 못했습니다.", response.status);
   return response.json() as Promise<AdminDashboardData>;
 }

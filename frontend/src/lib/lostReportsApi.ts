@@ -1,3 +1,5 @@
+import { buildApiUrl } from "@/lib/apiBase";
+
 export type LostReportCreateRequest = {
   item_category: string;
   color: string | null;
@@ -31,18 +33,6 @@ export class LostReportsApiError extends Error {
     super(message);
     this.name = "LostReportsApiError";
   }
-}
-
-function getApiBaseUrl() {
-  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (!baseUrl) {
-    throw new LostReportsApiError("NEXT_PUBLIC_API_BASE_URL 환경 변수가 설정되지 않았습니다.");
-  }
-  return baseUrl.replace(/\/+$/, "");
-}
-
-function buildApiUrl(path: string) {
-  return `${getApiBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 function getFallbackMessage(status: number) {

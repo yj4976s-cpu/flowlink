@@ -28,7 +28,7 @@ Only the reverse proxy should be published to the Internet. The frontend, backen
 
 - `compose.yaml`: base application services, networks, volumes, environment contract, and health checks.
 - `compose.prod.yaml`: production restart policy and Nginx reverse proxy.
-- `nginx/nginx.conf`: redirects HTTP to HTTPS and routes `/`, `/api/*`, and `/uploads/*` over TLS.
+- `nginx/nginx.conf`: routes `/`, `/api/*`, and `/uploads/*` through one origin. DuckDNS HTTP redirects to HTTPS; LAN HTTP proxies through the same paths for internal demonstrations.
 - `certbot/www/.gitkeep`: keeps the host Certbot renewal webroot in Git without committing challenge tokens.
 - `frontend/Dockerfile`: multi-stage Next.js standalone image.
 - `backend/Dockerfile`: FastAPI application image.
@@ -66,7 +66,7 @@ cp .env.production.example .env.production
 Required production values:
 
 - `FRONTEND_URL`: public HTTPS origin for the deployed site.
-- `NEXT_PUBLIC_API_BASE_URL`: public browser-facing API origin. In the Nginx same-origin setup this is usually the same value as `FRONTEND_URL`.
+- `NEXT_PUBLIC_API_BASE_URL`: browser-facing API base. In the Nginx same-origin setup use `/api` so DuckDNS HTTPS and LAN HTTP call the current reverse-proxy origin's `/api/...` routes. Set an absolute API origin only for a deliberately split frontend/backend deployment.
 - `DATABASE_URL`: complete Supabase PostgreSQL connection string copied from the Dashboard. The backend accepts `postgresql://` or `postgres://` and selects SQLAlchemy's psycopg 3 dialect automatically; an explicit `postgresql+psycopg://` URL is also accepted. Preserve any query parameters and keep the URI on one line.
 - `JWT_SECRET_KEY`: at least 32 characters.
 - `AI_INTERNAL_API_KEY`: at least 32 characters; must match between backend and backend-ai.
@@ -144,7 +144,7 @@ Do not publish these ports directly:
 - `8001` backend-ai
 - `5432` PostgreSQL
 
-The production site is served at `https://flowlink-project.duckdns.org` on port `443`. Port `80` remains public for the Nginx health check, ACME HTTP-01 challenges, and redirects all other requests to HTTPS.
+The recommended production/demo URL is `https://flowlink-project.duckdns.org` on port `443`. For academy LAN login demonstrations, use the Nginx reverse proxy at `http://<LAN-IP>/` on port `80`; browser calls still use the same origin through `/api/...` and `/uploads/...`. LAN HTTP login is intended only for private/internal networks. Direct frontend access such as `http://<LAN-IP>:3000` is not a supported authentication demo path because it bypasses the production reverse-proxy entrypoint and can lose the trusted forwarded host/proto context needed for cookie decisions. Before this same-origin LAN support, LAN access should be treated as health-check only.
 
 ## HTTPS and certificate renewal
 
@@ -214,6 +214,8 @@ Do not commit generated challenge tokens, certificates, private keys, renewal co
 ## URLs to check
 
 - Production frontend: `https://flowlink-project.duckdns.org/`
+- Academy LAN login/demo frontend: `http://<LAN-IP>/`
+- Direct frontend container port, if temporarily exposed: `http://<LAN-IP>:3000/` for development checks only; do not use it for authentication demonstrations.
 - Reverse proxy health: `http://localhost/healthz`
 - Backend health inside Docker network: `http://backend:8000/health`
 - Backend AI health inside Docker network: `http://backend-ai:8001/health`
@@ -232,9 +234,10 @@ The backend API routers already include `/api/...` prefixes, so Nginx forwards `
 ## Production notes
 
 - The frontend image bakes `NEXT_PUBLIC_*` variables at build time. Rebuild the frontend image after changing public frontend environment variables.
-- The backend production config requires secure cookie settings and a valid HTTPS `FRONTEND_URL`.
+- The backend production config requires a valid HTTPS `FRONTEND_URL`. Auth cookies are `Secure` for HTTPS requests. For LAN HTTP demonstrations, the backend only relaxes `Secure` when proxy headers identify an internal host such as `localhost`, `127.0.0.1`, `10.0.0.0/8`, `172.16.0.0/12`, or `192.168.0.0/16`.
 - Nginx overwrites `X-Forwarded-For` with the direct public client address. The backend trusts proxy headers only from Nginx's fixed `172.30.0.10` address on the private Compose network; keep that address aligned with `FORWARDED_ALLOW_IPS` if the network configuration changes.
-- HTTP requests other than `/healthz` and ACME challenges redirect to the production HTTPS origin. Production auth cookies require HTTPS.
+- DuckDNS HTTP requests other than `/healthz` and ACME challenges redirect to the production HTTPS origin. LAN HTTP requests are proxied same-origin for internal demonstrations only.
+- Production Compose does not publish the frontend `3000` port. Keep LAN login tests on the reverse-proxy URL `http://<LAN-IP>/`, not a direct frontend port.
 - Supabase PostgreSQL is external. This stack does not run a PostgreSQL container.
 - Choose host CPU, RAM, disk, and GPU/CPU inference capacity after measuring the real video workload and model latency. Tiny instances are unlikely to be a safe default for video inference.
 

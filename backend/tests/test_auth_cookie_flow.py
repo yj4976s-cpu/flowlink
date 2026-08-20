@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import get_settings
+from app.core.config import Settings
 from app.core.security import hash_password, utc_now
 from app.db.session import Base, get_db
 from app.main import app
@@ -77,8 +78,13 @@ def seed_user(
     return user
 
 
-def login(client: TestClient, email: str = "user@example.com", password: str = "password123"):
-    return client.post("/api/auth/login", json={"email": email, "password": password})
+def login(
+    client: TestClient,
+    email: str = "user@example.com",
+    password: str = "password123",
+    headers: dict[str, str] | None = None,
+):
+    return client.post("/api/auth/login", json={"email": email, "password": password}, headers=headers)
 
 
 def register(
@@ -262,6 +268,78 @@ def test_login_sets_httponly_cookie_without_exposing_access_token(client: TestCl
     assert "HttpOnly" in set_cookie
     assert "SameSite=lax" in set_cookie
     assert f"Max-Age={settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60}" in set_cookie
+
+
+@pytest.mark.parametrize(
+    ("headers", "expects_secure"),
+    [
+        pytest.param(
+            {
+                "host": "flowlink-project.duckdns.org",
+                "x-forwarded-host": "flowlink-project.duckdns.org",
+                "x-forwarded-proto": "https",
+            },
+            True,
+            id="duckdns-https-secure-cookie",
+        ),
+        pytest.param(
+            {
+                "host": "192.168.0.25",
+                "x-forwarded-host": "192.168.0.25",
+                "x-forwarded-proto": "http",
+            },
+            False,
+            id="lan-nginx-http-insecure-cookie",
+        ),
+        pytest.param(
+            {
+                "host": "10.0.1.15",
+                "x-forwarded-host": "10.0.1.15",
+                "x-forwarded-proto": "http",
+            },
+            False,
+            id="internal-nginx-http-insecure-cookie",
+        ),
+        pytest.param(
+            {
+                "host": "flowlink.example",
+                "x-forwarded-host": "flowlink.example",
+                "x-forwarded-proto": "http",
+            },
+            True,
+            id="external-http-still-secure-cookie",
+        ),
+    ],
+)
+def test_login_cookie_secure_policy_respects_scheme_and_lan_hosts(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    headers: dict[str, str],
+    expects_secure: bool,
+) -> None:
+    import app.api.auth as auth_api
+
+    monkeypatch.setattr(
+        auth_api,
+        "get_settings",
+        lambda: Settings(
+            _env_file=None,
+            APP_ENV="production",
+            DATABASE_URL="postgresql+psycopg://flowlink_user:strong-password@db.flowlink.example:5432/flowlink",
+            JWT_SECRET_KEY="flowlink-test-secret-with-at-least-32-characters",
+            FRONTEND_URL="https://flowlink.example",
+            AI_INTERNAL_API_KEY="flowlink-test-ai-internal-key-32-chars",
+        ),
+    )
+    seed_user(db)
+
+    response = login(client, headers=headers)
+
+    assert response.status_code == 200
+    set_cookie = response.headers["set-cookie"]
+    assert ("Secure" in set_cookie) is expects_secure
+    assert "Domain=" not in set_cookie
 
 
 def test_login_failure_does_not_set_cookie(client: TestClient, db: Session) -> None:

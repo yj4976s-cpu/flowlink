@@ -1,4 +1,5 @@
 import type { HomeSummary, ObjectKind } from "@/types/home";
+import { buildServerApiUrl, getApiMediaBaseUrl } from "@/lib/apiBase";
 
 type ApiHomeSummary = {
   stats: {
@@ -26,20 +27,16 @@ export const emptyHomeSummary: HomeSummary = {
 
 const objectKinds = new Set<ObjectKind>(["backpack", "umbrella", "branch", "ball", "container"]);
 
-function apiBaseUrl() {
-  return process.env.NEXT_PUBLIC_API_BASE_URL?.trim().replace(/\/+$/, "") || null;
-}
-
 function objectKind(value: string): ObjectKind {
   return objectKinds.has(value as ObjectKind) ? value as ObjectKind : "container";
 }
 
-function mediaUrl(value: string | null, baseUrl: string): string | null {
-  return value ? new URL(value, `${baseUrl}/`).toString() : null;
+function mediaUrl(value: string | null, requestOrigin?: string | null): string | null {
+  const baseUrl = getApiMediaBaseUrl() || requestOrigin || "";
+  return value && baseUrl ? new URL(value, `${baseUrl.replace(/\/+$/, "")}/`).toString() : value;
 }
 
-function mapSummary(summary: ApiHomeSummary): HomeSummary {
-  const baseUrl = apiBaseUrl() ?? "";
+function mapSummary(summary: ApiHomeSummary, requestOrigin?: string | null): HomeSummary {
   return {
     stats: {
       recentFound: summary.stats.recent_found,
@@ -52,7 +49,7 @@ function mapSummary(summary: ApiHomeSummary): HomeSummary {
       category: item.category,
       title: item.title,
       location: item.location,
-      imageUrl: mediaUrl(item.image_url, baseUrl),
+      imageUrl: mediaUrl(item.image_url, requestOrigin),
       confidence: item.confidence,
       foundAt: item.found_at,
       objectKind: objectKind(item.object_kind),
@@ -60,13 +57,13 @@ function mapSummary(summary: ApiHomeSummary): HomeSummary {
   };
 }
 
-export async function getHomeSummary(): Promise<HomeSummary | null> {
-  const baseUrl = apiBaseUrl();
-  if (!baseUrl) return null;
+export async function getHomeSummary(requestOrigin?: string | null): Promise<HomeSummary | null> {
+  const url = buildServerApiUrl("/api/system/home-summary", requestOrigin);
+  if (!url) return null;
   try {
-    const response = await fetch(`${baseUrl}/api/system/home-summary`, { cache: "no-store" });
+    const response = await fetch(url, { cache: "no-store" });
     if (!response.ok) return null;
-    return mapSummary(await response.json() as ApiHomeSummary);
+    return mapSummary(await response.json() as ApiHomeSummary, requestOrigin);
   } catch {
     return null;
   }

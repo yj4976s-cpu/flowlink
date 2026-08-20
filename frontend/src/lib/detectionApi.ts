@@ -1,3 +1,5 @@
+import { buildApiUrl as buildSameOriginApiUrl } from "@/lib/apiBase";
+
 export type DetectionBBox = {
   x: number;
   y: number;
@@ -54,24 +56,6 @@ export class DetectionApiError extends Error {
   }
 }
 
-function getApiBaseUrl() {
-  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (!baseUrl) {
-    throw new DetectionApiError("NEXT_PUBLIC_API_BASE_URL 환경 변수가 설정되지 않았습니다.");
-  }
-  return baseUrl.replace(/\/+$/, "");
-}
-
-function buildApiUrl(path: string, params?: Record<string, string | number | undefined>) {
-  const url = new URL(`${getApiBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`);
-  Object.entries(params ?? {}).forEach(([key, value]) => {
-    if (value === undefined) return;
-    const normalized = String(value).trim();
-    if (normalized) url.searchParams.set(key, normalized);
-  });
-  return url.toString();
-}
-
 function getFallbackMessage(status: number) {
   if (status === 401) return "로그인이 필요하거나 로그인 세션이 만료되었습니다.";
   if (status === 413) return "파일 크기가 너무 큽니다. 안내된 최대 용량을 확인해주세요.";
@@ -110,7 +94,7 @@ async function requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {
 function uploadDetection(path: string, file: File) {
   const formData = new FormData();
   formData.append("file", file);
-  return requestJson<DetectionEvent>(buildApiUrl(path), {
+  return requestJson<DetectionEvent>(buildSameOriginApiUrl(path), {
     method: "POST",
     body: formData,
   });
@@ -127,7 +111,7 @@ export function uploadDetectionVideo(file: File) {
 export function detectWebcamFrame(blob: Blob, signal?: AbortSignal) {
   const formData = new FormData();
   formData.append("file", blob, "webcam-frame.jpg");
-  return requestJson<WebcamDetectionFrame>(buildApiUrl("/api/detections/webcam/frame"), {
+  return requestJson<WebcamDetectionFrame>(buildSameOriginApiUrl("/api/detections/webcam/frame"), {
     method: "POST",
     body: formData,
     signal,
@@ -135,17 +119,17 @@ export function detectWebcamFrame(blob: Blob, signal?: AbortSignal) {
 }
 
 export function listMyDetections(signal?: AbortSignal) {
-  return requestJson<DetectionEvent[]>(buildApiUrl("/api/detections/me", { skip: 0, limit: 20 }), { signal });
+  return requestJson<DetectionEvent[]>(buildSameOriginApiUrl("/api/detections/me", { skip: 0, limit: 20 }), { signal });
 }
 
 export function getMyDetection(id: number, signal?: AbortSignal) {
-  return requestJson<DetectionEvent>(buildApiUrl(`/api/detections/${id}`), { signal });
+  return requestJson<DetectionEvent>(buildSameOriginApiUrl(`/api/detections/${id}`), { signal });
 }
 
 export function deleteMyDetection(id: number) {
-  return requestJson<{ message: string }>(buildApiUrl(`/api/detections/${id}`), { method: "DELETE" });
+  return requestJson<{ message: string }>(buildSameOriginApiUrl(`/api/detections/${id}`), { method: "DELETE" });
 }
 
 export function deleteAllMyDetections() {
-  return requestJson<{ message: string }>(buildApiUrl("/api/detections/me"), { method: "DELETE" });
+  return requestJson<{ message: string }>(buildSameOriginApiUrl("/api/detections/me"), { method: "DELETE" });
 }

@@ -1,3 +1,5 @@
+import { buildApiUrl } from "@/lib/apiBase";
+
 export type NotificationResponse = {
   id: number;
   notification_type: string;
@@ -16,24 +18,6 @@ export class NotificationsApiError extends Error {
     super(message);
     this.name = "NotificationsApiError";
   }
-}
-
-function getApiBaseUrl() {
-  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (!baseUrl) {
-    throw new NotificationsApiError("NEXT_PUBLIC_API_BASE_URL 환경 변수가 설정되지 않았습니다.");
-  }
-  return baseUrl.replace(/\/+$/, "");
-}
-
-function buildApiUrl(path: string, params?: Record<string, string | number | boolean | undefined>) {
-  const url = new URL(`${getApiBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`);
-  Object.entries(params ?? {}).forEach(([key, value]) => {
-    if (value === undefined) return;
-    const normalized = String(value).trim();
-    if (normalized) url.searchParams.set(key, normalized);
-  });
-  return url.toString();
 }
 
 function getListFallbackMessage(status: number) {

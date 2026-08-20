@@ -1,3 +1,5 @@
+import { buildApiUrl } from "@/lib/apiBase";
+
 export type OwnershipClaimCreateRequest = {
   found_item_id: number;
   lost_report_id: number | null;
@@ -22,18 +24,6 @@ export class OwnershipClaimsApiError extends Error {
     super(message);
     this.name = "OwnershipClaimsApiError";
   }
-}
-
-function getApiBaseUrl() {
-  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (!baseUrl) {
-    throw new OwnershipClaimsApiError("NEXT_PUBLIC_API_BASE_URL 환경 변수가 설정되지 않았습니다.");
-  }
-  return baseUrl.replace(/\/+$/, "");
-}
-
-function buildApiUrl(path: string) {
-  return `${getApiBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 function getFallbackMessage(status: number) {
@@ -108,17 +98,19 @@ export async function listMyOwnershipClaims(signal?: AbortSignal) {
 }
 
 export async function listMyOwnershipClaimProgress(lostReportIds: number[], signal?: AbortSignal) {
-  const url = new URL(buildApiUrl("/api/ownership-claims/me/progress"));
-  lostReportIds.forEach((id) => url.searchParams.append("lost_report_ids", String(id)));
-  const response = await fetch(url, { credentials: "include", signal });
+  const response = await fetch(
+    buildApiUrl("/api/ownership-claims/me/progress", { lost_report_ids: lostReportIds }),
+    { credentials: "include", signal },
+  );
   if (!response.ok) throw new OwnershipClaimsApiError(await readErrorMessage(response), response.status);
   return response.json() as Promise<OwnershipClaimResponse[]>;
 }
 
 export async function listMyOwnershipClaimActivity(lostReportIds: number[], signal?: AbortSignal) {
-  const url = new URL(buildApiUrl("/api/ownership-claims/me/activity"));
-  lostReportIds.forEach((id) => url.searchParams.append("lost_report_ids", String(id)));
-  const response = await fetch(url, { credentials: "include", signal });
+  const response = await fetch(
+    buildApiUrl("/api/ownership-claims/me/activity", { lost_report_ids: lostReportIds }),
+    { credentials: "include", signal },
+  );
   if (!response.ok) throw new OwnershipClaimsApiError(await readErrorMessage(response), response.status);
   return response.json() as Promise<OwnershipClaimResponse[]>;
 }

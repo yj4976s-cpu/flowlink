@@ -1,3 +1,4 @@
+import { buildApiUrl, getApiMediaBaseUrl } from "@/lib/apiBase";
 import { resolveUploadedMediaUrl } from "@/lib/mediaUrl";
 
 export type AdminCitizenSighting = {
@@ -42,14 +43,8 @@ export class AdminCitizenReportsApiError extends Error {
   }
 }
 
-function baseUrl() {
-  const value = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (!value) throw new AdminCitizenReportsApiError("API 서버 주소가 설정되지 않았습니다.");
-  return value.replace(/\/+$/, "");
-}
-
 async function request<T>(path: string, init?: RequestInit) {
-  const response = await fetch(`${baseUrl()}${path}`, {
+  const response = await fetch(buildApiUrl(path), {
     ...init,
     credentials: "include",
     headers: { "Content-Type": "application/json", ...init?.headers },
@@ -70,7 +65,7 @@ async function request<T>(path: string, init?: RequestInit) {
 }
 
 export function adminImageUrl(value: string | null) {
-  return resolveUploadedMediaUrl(value, baseUrl());
+  return resolveUploadedMediaUrl(value, getApiMediaBaseUrl());
 }
 
 export function listAdminCitizenReports(status?: string, signal?: AbortSignal) {
