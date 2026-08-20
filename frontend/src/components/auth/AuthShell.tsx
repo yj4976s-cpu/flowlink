@@ -7,11 +7,75 @@ import { FlowLinkLogo } from "@/components/common/FlowLinkLogo";
 import { Icon } from "@/components/common/Icon";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { useTheme } from "@/components/theme/ThemeProvider";
-import { AuthApiError, getCurrentUser, login, register } from "@/lib/authApi";
+import { AuthApiError, getCurrentUser, getOAuthStartUrl, login, register, SocialAuthProvider } from "@/lib/authApi";
 
 type AuthMode = "login" | "register";
 type AuthPortal = "default" | "admin";
 type FieldErrors = Record<string, string>;
+type SocialProvider = SocialAuthProvider;
+
+const socialProviders: { id: SocialProvider; label: string }[] = [
+  { id: "google", label: "Google" },
+  { id: "naver", label: "네이버" },
+  { id: "kakao", label: "카카오" },
+];
+
+function SocialProviderMark({ provider }: { provider: SocialProvider }) {
+  if (provider === "google") {
+    return (
+      <svg className="auth-social-mark auth-social-mark-google" viewBox="0 0 24 24" aria-hidden="true">
+        <path fill="#4285F4" d="M21.6 12.2c0-.7-.1-1.4-.2-2H12v3.9h5.4a4.6 4.6 0 0 1-2 3v2.6h3.3c1.9-1.8 2.9-4.4 2.9-7.5Z" />
+        <path fill="#34A853" d="M12 22c2.7 0 5-.9 6.7-2.3l-3.3-2.6c-.9.6-2.1 1-3.4 1a5.9 5.9 0 0 1-5.5-4.1H3.1v2.6A10.1 10.1 0 0 0 12 22Z" />
+        <path fill="#FBBC05" d="M6.5 14a6 6 0 0 1 0-3.9V7.4H3.1a10.1 10.1 0 0 0 0 9.2L6.5 14Z" />
+        <path fill="#EA4335" d="M12 6a5.4 5.4 0 0 1 3.8 1.5l2.9-2.8A9.7 9.7 0 0 0 12 2a10.1 10.1 0 0 0-8.9 5.4l3.4 2.7A5.9 5.9 0 0 1 12 6Z" />
+      </svg>
+    );
+  }
+  if (provider === "naver") {
+    return <span className="auth-social-mark auth-social-mark-naver" aria-hidden="true">N</span>;
+  }
+  return (
+    <svg className="auth-social-mark auth-social-mark-kakao" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 4C6.9 4 3 7 3 10.8c0 2.4 1.6 4.5 4 5.7l-1 3.7 4.3-2.8c.6.1 1.1.2 1.7.2 5.1 0 9-3 9-6.8S17.1 4 12 4Z" />
+    </svg>
+  );
+}
+
+function SocialAuthSection({
+  mode,
+  onSelect,
+  pendingProvider,
+}: {
+  mode: AuthMode;
+  onSelect: (provider: SocialProvider) => void;
+  pendingProvider: SocialProvider | null;
+}) {
+  const actionLabel = mode === "login" ? "간편 로그인" : "간편 가입";
+  return (
+    <section className="auth-social" aria-labelledby="auth-social-title">
+      <h2 id="auth-social-title">{actionLabel}</h2>
+      <div className="auth-social-buttons">
+        {socialProviders.map((provider) => (
+          <button
+            key={provider.id}
+            className="auth-social-button"
+            type="button"
+            aria-label={`${provider.label} ${actionLabel}`}
+            disabled={pendingProvider !== null}
+            aria-busy={pendingProvider === provider.id}
+            onClick={() => onSelect(provider.id)}
+          >
+            <SocialProviderMark provider={provider.id} />
+            <span>{provider.label}</span>
+          </button>
+        ))}
+      </div>
+      <div className="auth-email-divider" role="separator" aria-label="이메일 인증">
+        <span>또는 이메일</span>
+      </div>
+    </section>
+  );
+}
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const passwordPattern = /^(?=.*[A-Za-z])(?=.*[0-9]).{8,128}$/;
@@ -291,6 +355,7 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
   const [passwordConfirm, setPasswordConfirm] = useState("");
   const [passwordShakeKey, setPasswordShakeKey] = useState(0);
   const [confirmShakeKey, setConfirmShakeKey] = useState(0);
+  const [pendingSocialProvider, setPendingSocialProvider] = useState<SocialProvider | null>(null);
 
   useEffect(() => {
     if (!isLogin) return;
@@ -367,6 +432,19 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
     }
   };
 
+  const handleSocialAuth = (provider: SocialProvider) => {
+    const providerLabel = socialProviders.find((item) => item.id === provider)?.label ?? provider;
+    setRoleMismatch(false);
+    setPendingSocialProvider(provider);
+    setSubmitMessage(`${providerLabel} 인증 페이지로 이동하고 있습니다.`);
+    try {
+      window.location.assign(getOAuthStartUrl(provider));
+    } catch (error) {
+      setPendingSocialProvider(null);
+      setSubmitMessage(error instanceof AuthApiError ? error.message : "소셜 인증을 시작하지 못했습니다.");
+    }
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSubmitMessage("");
@@ -437,6 +515,8 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
             <p className="auth-form-eyebrow">{isLogin ? <span key={theme} className="auth-moment-label">{loginScene[theme].moment}</span> : "GET STARTED"}</p>
             <h1 id="auth-title">{isLogin ? "다시, 연결을 이어가세요" : <>FlowLink를 <span>시작해볼까요?</span></>}</h1>
             <p className="auth-form-description">{isLogin ? "로그인하고 신고와 발견의 진행 상황을 확인하세요." : registerScene[theme].description}</p>
+
+            {!isAdminPortal && <SocialAuthSection mode={mode} onSelect={handleSocialAuth} pendingProvider={pendingSocialProvider} />}
 
             <div className="auth-fields">
               <div className="auth-field">

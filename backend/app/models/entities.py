@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import JSON, BigInteger, Boolean, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -15,7 +15,7 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     email: Mapped[str] = mapped_column(String(255), nullable=False)
-    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    password_hash: Mapped[str | None] = mapped_column(Text)
     nickname: Mapped[str] = mapped_column(String(50), nullable=False)
     role: Mapped[str] = mapped_column(String(10), nullable=False, default="USER")
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
@@ -40,6 +40,26 @@ class User(Base):
     community_posts: Mapped[list[CommunityPost]] = relationship(back_populates="user")
     community_comments: Mapped[list[CommunityComment]] = relationship(back_populates="user")
     copilot_conversations: Mapped[list[CopilotConversation]] = relationship(back_populates="user")
+    social_accounts: Mapped[list[UserSocialAccount]] = relationship(back_populates="user", passive_deletes=True)
+
+
+class UserSocialAccount(Base):
+    __tablename__ = "user_social_accounts"
+    __table_args__ = (
+        CheckConstraint("provider IN ('GOOGLE', 'NAVER', 'KAKAO')", name="ck_user_social_accounts_provider"),
+        UniqueConstraint("provider", "provider_user_id", name="uq_user_social_accounts_provider_identity"),
+        UniqueConstraint("user_id", "provider", name="uq_user_social_accounts_user_provider"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    provider: Mapped[str] = mapped_column(String(20), nullable=False)
+    provider_user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_email: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+    user: Mapped[User] = relationship(back_populates="social_accounts")
 
 
 class ObjectClass(Base):
