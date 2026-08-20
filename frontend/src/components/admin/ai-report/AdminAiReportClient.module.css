@@ -25,7 +25,7 @@
 :global(html[data-theme="dawn"]) .page {
   --report-card-wash: linear-gradient(145deg, rgba(255,255,255,.98), rgba(255,250,247,.74) 52%, rgba(255,245,239,.42));
   --report-panel-wash: linear-gradient(145deg, rgba(255,255,255,.98), rgba(255,251,248,.78) 58%, rgba(255,246,241,.48));
-  --report-spotlight-wash: linear-gradient(135deg, rgba(255,255,255,.98), rgba(255,251,248,.8) 46%, rgba(255,247,242,.5));
+  --report-spotlight-wash: linear-gradient(135deg, rgba(255,255,255,.99), rgba(255,253,251,.84) 48%, rgba(255,250,247,.42));
   --report-spotlight-tint: var(--color-accent);
   --report-ambient-wash: radial-gradient(circle at 13% 8%, rgba(255,155,114,.08), transparent 30%), radial-gradient(circle at 84% 14%, rgba(255,207,181,.1), transparent 28%), linear-gradient(180deg, rgba(255,251,248,.58), transparent 55%);
   --report-card-line: rgba(255,155,114,.34);
@@ -75,9 +75,11 @@
 .overview { display: grid; grid-template-columns: minmax(280px, .7fr) minmax(0, 1.3fr); gap: 16px; align-items: stretch; }
 .panel, .spotlight { min-width: 0; padding: 22px; border: 1px solid var(--color-border); border-radius: 22px; background: var(--report-panel-wash); box-shadow: var(--shadow-card); }
 .spotlight { background: linear-gradient(145deg, color-mix(in srgb, var(--report-spotlight-tint) 7%, transparent), transparent 42%), var(--report-spotlight-wash); }
+:global(html[data-theme="dawn"]) .spotlight { background: linear-gradient(145deg, color-mix(in srgb, var(--report-spotlight-tint) 3%, transparent), transparent 44%), var(--report-spotlight-wash); }
 .spotlight h2, .panelTitle h2, .modelEmpty h2 { margin: 0; font-size: 18px; letter-spacing: -.025em; }
 .spotlight > div { display: grid; gap: 10px; margin-top: 16px; }
 .spotlight p { margin: 0; padding: 12px; border: 1px solid color-mix(in srgb, var(--color-primary) 16%, var(--color-border)); border-radius: 16px; background: var(--report-inner-wash); display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; }
+:global(html[data-theme="dawn"]) .spotlight p { border-color: color-mix(in srgb, var(--color-primary) 10%, var(--color-border)); background: linear-gradient(145deg, rgba(255,255,255,.9), rgba(255,252,250,.52)); }
 .spotlight b { grid-column: 1 / -1; color: var(--color-text-muted); font-size: 10px; }
 .spotlight strong { font-size: 16px; }
 .spotlight em { color: var(--color-primary); font-size: 13px; font-style: normal; font-weight: 900; }
