@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { Icon } from "@/components/common/Icon";
 import { useDaru } from "@/components/mascot";
@@ -10,7 +10,7 @@ import type { IconName } from "@/components/common/Icon";
 import { OwnershipClaimForm } from "@/components/ownership-claims/OwnershipClaimForm";
 import { listMyLostReports } from "@/lib/lostReportsApi";
 import type { LostReportResponse } from "@/lib/lostReportsApi";
-import { MatchesApiError, listMyMatches, resolveMatchImageUrl } from "@/lib/matchesApi";
+import { MatchesApiError, listMyMatches, listMyMatchesForReport, resolveMatchImageUrl } from "@/lib/matchesApi";
 import type { MatchCandidate } from "@/lib/matchesApi";
 import { getItemTypeMeta } from "@/lib/itemTypeMeta";
 import styles from "./MatchesClient.module.css";
@@ -160,7 +160,7 @@ function ReportWorkspace({ reports, selectedId, onSelect, count }: { reports: Lo
       <div className={styles.reportSummary}>
         <LostReportVisual report={selected} />
         <div><strong>{selected.item_category_name}</strong><span>{selected.color || "색상 미상"} · {selected.area_name} · {formatDateTime(selected.lost_from)}</span></div>
-        <Link className={styles.reportLink} href="/mypage"><Icon name="fileSearch" size={19} /> 신고 내용 확인</Link>
+        <Link className={styles.reportLink} href={`/mypage?reportId=${selected.id}`}><Icon name="fileSearch" size={19} /> 신고 내용 확인</Link>
       </div>
     </section>
   );
@@ -205,7 +205,10 @@ function MatchCard({ match, isClaimFormOpen, onOpenClaimForm, onCloseClaimForm, 
 
 export function MatchesClient() {
   const { cue: cueDaru } = useDaru();
+  const router = useRouter();
   const searchParams = useSearchParams();
+  const reportIdParam = searchParams.get("reportId");
+  const requestedReportId = reportIdParam && /^\d+$/.test(reportIdParam) ? Number(reportIdParam) : null;
   const matchIdParam = searchParams.get("matchId");
   const requestedMatchId = matchIdParam && /^\d+$/.test(matchIdParam) ? Number(matchIdParam) : null;
   const [matches, setMatches] = useState<MatchCandidate[]>([]);
@@ -217,33 +220,89 @@ export function MatchesClient() {
   const [activeClaimMatchId, setActiveClaimMatchId] = useState<number | null>(null);
   const [submitted, setSubmitted] = useState<Set<number>>(() => new Set());
   const [blocked, setBlocked] = useState<Set<number>>(() => new Set());
+  const requestGeneration = useRef(0);
+  const matchRequest = useRef<AbortController | null>(null);
+  const cuedReports = useRef(new Set<number>());
+
+  const updateReportUrl = useCallback((reportId: number) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("reportId", String(reportId));
+    router.replace(`/matches?${params.toString()}`, { scroll: false });
+  }, [router, searchParams]);
 
   const loadData = useCallback(async (signal?: AbortSignal) => {
     try {
-      const [matchData, reportData] = await Promise.all([listMyMatches(signal), listMyLostReports(signal)]);
-      setMatches(matchData); setReports(reportData);
-      if (matchData.length) cueDaru("match", { source: "service" });
-      const requestedMatch = Number.isSafeInteger(requestedMatchId)
-        ? matchData.find((match) => match.id === requestedMatchId)
-        : undefined;
-      setSelectedReportId((current) => requestedMatch?.lost_report.id
-        ?? (current && reportData.some((report) => report.id === current)
-          ? current
-          : (matchData[0]?.lost_report.id ?? reportData[0]?.id ?? null)));
+      const reportData = await listMyLostReports(signal);
+      setReports(reportData);
+      let selected = Number.isSafeInteger(requestedReportId) && reportData.some((report) => report.id === requestedReportId)
+        ? requestedReportId
+        : null;
+      if (!selected && Number.isSafeInteger(requestedMatchId)) {
+        const legacyMatches = await listMyMatches(signal);
+        selected = legacyMatches.find((match) => match.id === requestedMatchId)?.lost_report.id ?? null;
+      }
+      selected ??= reportData[0]?.id ?? null;
+      setSelectedReportId(selected);
+      if (selected && selected !== requestedReportId) updateReportUrl(selected);
+      if (!selected && !signal?.aborted) setLoading(false);
     } catch (caught) {
       if (caught instanceof DOMException && caught.name === "AbortError") return;
       setErrorStatus(caught instanceof MatchesApiError ? (caught.status ?? null) : null);
       setError(caught instanceof MatchesApiError ? caught.message : "잠시 후 다시 시도해 주세요.");
-    } finally { if (!signal?.aborted) setLoading(false); }
-  }, [cueDaru, requestedMatchId]);
+      setLoading(false);
+    }
+  }, [requestedMatchId, requestedReportId, updateReportUrl]);
 
   useEffect(() => {
     const controller = new AbortController();
     const requestId = window.setTimeout(() => void loadData(controller.signal), 0);
     return () => { window.clearTimeout(requestId); controller.abort(); };
   }, [loadData]);
-  const visibleMatches = useMemo(() => selectedReportId ? matches.filter((match) => match.lost_report.id === selectedReportId) : matches, [matches, selectedReportId]);
-  const refresh = useCallback(() => loadData(), [loadData]);
+  const loadMatches = useCallback(async (reportId: number) => {
+    matchRequest.current?.abort();
+    const controller = new AbortController();
+    matchRequest.current = controller;
+    const generation = ++requestGeneration.current;
+    setMatches([]);
+    setActiveClaimMatchId(null);
+    setLoading(true);
+    setError(null);
+    setErrorStatus(null);
+    try {
+      const matchData = await listMyMatchesForReport(reportId, controller.signal);
+      if (generation !== requestGeneration.current) return;
+      setMatches(matchData);
+      if (matchData.length && !cuedReports.current.has(reportId)) {
+        cuedReports.current.add(reportId);
+        cueDaru("match", { source: "service" });
+      }
+    } catch (caught) {
+      if (caught instanceof DOMException && caught.name === "AbortError") return;
+      if (generation !== requestGeneration.current) return;
+      setErrorStatus(caught instanceof MatchesApiError ? (caught.status ?? null) : null);
+      setError(caught instanceof MatchesApiError ? caught.message : "매칭 후보를 불러오지 못했습니다.");
+    } finally {
+      if (generation === requestGeneration.current && !controller.signal.aborted) setLoading(false);
+    }
+  }, [cueDaru]);
+
+  useEffect(() => {
+    const requestId = window.setTimeout(() => {
+      if (selectedReportId) void loadMatches(selectedReportId);
+    }, 0);
+    return () => {
+      window.clearTimeout(requestId);
+      matchRequest.current?.abort();
+    };
+  }, [loadMatches, selectedReportId]);
+
+  const selectReport = useCallback((reportId: number) => {
+    setSelectedReportId(reportId);
+    updateReportUrl(reportId);
+  }, [updateReportUrl]);
+  const refresh = useCallback(() => {
+    if (selectedReportId) void loadMatches(selectedReportId);
+  }, [loadMatches, selectedReportId]);
 
   return (
     <main className={styles.page}>
@@ -253,20 +312,20 @@ export function MatchesClient() {
         <p>발견 위치·시간·물품 특징을 비교해 내 신고와 조건이 가까운 발견물을 보여드립니다.</p>
       </header>
 
-      {!loading && !error && reports.length > 0 && <ReportWorkspace reports={reports} selectedId={selectedReportId} onSelect={setSelectedReportId} count={visibleMatches.length} />}
+      {!error && reports.length > 0 && <ReportWorkspace reports={reports} selectedId={selectedReportId} onSelect={selectReport} count={matches.length} />}
 
       <section className={styles.results} aria-labelledby="matches-list-title" aria-busy={loading}>
         <div className={styles.sectionHeading}>
           <div><p className={styles.eyebrow}>MY MATCHES</p><h2 id="matches-list-title">내 매칭 후보</h2></div>
-          {!loading && !error && <span>{visibleMatches.length}건</span>}
+          {!loading && !error && <span>{matches.length}건</span>}
         </div>
         <CriteriaPopover />
 
         {loading && <div className={styles.skeleton} aria-label="매칭 후보를 불러오는 중"><i /><i /><i /></div>}
-        {!loading && error && <MatchState icon="search" title={errorStatus === 401 ? "로그인이 필요해요" : "매칭 정보를 불러오지 못했어요"} description={error} error action={<div className={styles.stateActions}>{errorStatus === 401 ? <Link className="button button-primary" href="/login">로그인하러 가기</Link> : <button className="button button-secondary" type="button" onClick={() => { setLoading(true); setError(null); void loadData(); }}>다시 불러오기</button>}</div>} />}
+        {!loading && error && <MatchState icon="search" title={errorStatus === 401 ? "로그인이 필요해요" : "매칭 정보를 불러오지 못했어요"} description={error} error action={<div className={styles.stateActions}>{errorStatus === 401 ? <Link className="button button-primary" href="/login">로그인하러 가기</Link> : <button className="button button-secondary" type="button" onClick={() => { setLoading(true); setError(null); refresh(); }}>다시 불러오기</button>}</div>} />}
         {!loading && !error && reports.length === 0 && <MatchState icon="fileSearch" title="아직 비교할 신고가 없어요" description="분실 신고를 등록하면 발견된 물품과 자동으로 비교해 드립니다." action={<div className={styles.stateActions}><Link className="button button-primary" href="/lost-reports/new">분실 신고하기</Link><Link className="button button-secondary" href="/found-items">발견물 센터 둘러보기</Link></div>} />}
-        {!loading && !error && reports.length > 0 && visibleMatches.length === 0 && <MatchState icon="scan" title="아직 조건이 가까운 발견물이 없어요" description="새로운 발견물이 등록되면 내 신고와 자동으로 다시 비교합니다." action={<div className={styles.stateActions}><Link className="button button-primary" href="/found-items">발견물 센터 둘러보기</Link><Link className={styles.inlineAction} href="/mypage"><Icon name="fileSearch" size={18} /> 신고 내용 확인</Link></div>} />}
-        {!loading && !error && visibleMatches.length > 0 && <div className={styles.matchList}>{visibleMatches.map((match) => <MatchCard key={match.id} match={match} isClaimFormOpen={activeClaimMatchId === match.id} onOpenClaimForm={() => setActiveClaimMatchId(match.id)} onCloseClaimForm={() => setActiveClaimMatchId(null)} onClaimSubmitted={() => { setSubmitted((current) => new Set(current).add(match.id)); void refresh(); }} onClaimBlocked={() => { setBlocked((current) => new Set(current).add(match.id)); void refresh(); }} onMatchesRefresh={() => void refresh()} hasSubmittedClaim={submitted.has(match.id)} isClaimBlocked={blocked.has(match.id)} />)}</div>}
+        {!loading && !error && reports.length > 0 && matches.length === 0 && <MatchState icon="scan" title="신고가 접수됐어요. 아직 비슷한 발견물이 없어요" description="새로운 발견물이 등록되면 선택한 신고와 자동으로 다시 비교해 알려드릴게요." action={<div className={styles.stateActions}><Link className="button button-primary" href="/found-items">발견물 센터 둘러보기</Link>{selectedReportId && <Link className={styles.inlineAction} href={`/mypage?reportId=${selectedReportId}`}><Icon name="fileSearch" size={18} /> 신고 내용 확인</Link>}</div>} />}
+        {!loading && !error && matches.length > 0 && <div className={styles.matchList}>{matches.map((match) => <MatchCard key={match.id} match={match} isClaimFormOpen={activeClaimMatchId === match.id} onOpenClaimForm={() => setActiveClaimMatchId(match.id)} onCloseClaimForm={() => setActiveClaimMatchId(null)} onClaimSubmitted={() => { setSubmitted((current) => new Set(current).add(match.id)); refresh(); }} onClaimBlocked={() => { setBlocked((current) => new Set(current).add(match.id)); refresh(); }} onMatchesRefresh={refresh} hasSubmittedClaim={submitted.has(match.id)} isClaimBlocked={blocked.has(match.id)} />)}</div>}
       </section>
     </main>
   );

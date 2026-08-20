@@ -260,7 +260,7 @@ export function CommunityDetail({ postId }: { postId: string }) {
                     <button type="submit" disabled={replyPendingId === comment.id || !replyContent.trim()}>{replyPendingId === comment.id ? "등록 중" : "답글 등록"}</button>
                   </form>
                 )}
-                {replies.length > 0 && <div className={styles.replyList}>{replies.map((reply) => <article key={reply.id}><div><strong>{reply.nickname}</strong><span>{new Date(reply.created_at).toLocaleString("ko-KR")}</span></div><p>{reply.content}</p>{(user?.id === reply.user_id || user?.role === "ADMIN") && <button type="button" onClick={() => void removeComment(reply.id)}>삭제</button>}</article>)}</div>}
+                {replies.length > 0 && <div className={styles.replyList} aria-label={`${comment.nickname}님 글의 답글`}>{replies.map((reply) => <article key={reply.id}><div><strong>{reply.nickname}</strong><span>{new Date(reply.created_at).toLocaleString("ko-KR")}</span></div><p>{reply.content}</p>{(user?.id === reply.user_id || user?.role === "ADMIN") && <button type="button" onClick={() => void removeComment(reply.id)}>삭제</button>}</article>)}</div>}
               </article>
             );
           }) : <p className={styles.noComments}>아직 댓글이 없어요. 첫 댓글을 남겨보세요.</p>}

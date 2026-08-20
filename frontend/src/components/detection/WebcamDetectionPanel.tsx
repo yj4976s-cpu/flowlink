@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/common/Icon";
 import { DetectionApiError, WebcamDetectionFrame, WebcamDetectionObject, detectWebcamFrame } from "@/lib/detectionApi";
+import { getContainedMediaRect, getContainedMediaRectStyle, getOverlayPercentageStyle, normalizeBBoxForDisplayMedia } from "./detectionOverlayGeometry";
 import styles from "./DetectionWorkbench.module.css";
 
 export type WebcamPanelStatus = "idle" | "requesting" | "ready" | "running" | "error";
@@ -93,34 +94,26 @@ function isAbortError(error: unknown) {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-function getVideoContentMetrics(container: Size, media: Size) {
-  if (!container.width || !container.height || !media.width || !media.height) return null;
-  const scale = Math.min(container.width / media.width, container.height / media.height);
-  const width = media.width * scale;
-  const height = media.height * scale;
-  return {
-    scale,
-    offsetX: (container.width - width) / 2,
-    offsetY: (container.height - height) / 2,
-  };
-}
-
 function WebcamOverlayBox({
   object,
-  metrics,
+  mediaWidth,
+  mediaHeight,
+  displayMediaSize,
 }: {
   object: WebcamDetectionObject;
-  metrics: NonNullable<ReturnType<typeof getVideoContentMetrics>>;
+  mediaWidth: number;
+  mediaHeight: number;
+  displayMediaSize: Size;
 }) {
-  const style = {
-    left: metrics.offsetX + object.bbox.x * metrics.scale,
-    top: metrics.offsetY + object.bbox.y * metrics.scale,
-    width: object.bbox.width * metrics.scale,
-    height: object.bbox.height * metrics.scale,
-  };
+  const normalized = normalizeBBoxForDisplayMedia(
+    object.bbox,
+    { width: mediaWidth, height: mediaHeight },
+    displayMediaSize,
+  );
+  if (!normalized) return null;
 
   return (
-    <span className={styles.overlayBox} style={style}>
+    <span className={styles.overlayBox} style={getOverlayPercentageStyle(normalized)}>
       <b>
         {getDisplayLabel(object)} {formatConfidence(object.confidence)}
       </b>
@@ -150,6 +143,7 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
   const [cameraActive, setCameraActive] = useState(false);
   const [frame, setFrame] = useState<WebcamDetectionFrame | null>(null);
   const [previewSize, setPreviewSize] = useState<Size>({ width: 0, height: 0 });
+  const [videoSize, setVideoSize] = useState<Size>({ width: 0, height: 0 });
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [candidates, setCandidates] = useState<StickyCandidate[]>([]);
@@ -228,7 +222,7 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
 
   useEffect(() => {
     const updatePreviewSize = () => {
-      const rect = previewRef.current?.getBoundingClientRect();
+      const rect = videoRef.current?.getBoundingClientRect() ?? previewRef.current?.getBoundingClientRect();
       if (!rect) return;
       setPreviewSize({ width: rect.width, height: rect.height });
     };
@@ -238,6 +232,14 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
     if (previewRef.current) observer.observe(previewRef.current);
     return () => observer.disconnect();
   }, [expanded]);
+
+  const updateVideoSize = useCallback(() => {
+    const video = videoRef.current;
+    setVideoSize({
+      width: video?.videoWidth ?? 0,
+      height: video?.videoHeight ?? 0,
+    });
+  }, []);
 
   useEffect(() => {
     if (!expanded) return;
@@ -363,7 +365,7 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
         }
       } catch (caught) {
         if (isAbortError(caught) || !mountedRef.current || generation !== loopGenerationRef.current) return;
-        const message = caught instanceof DetectionApiError ? caught.message : "실시간 웹캠 탐지를 처리하지 못했습니다.";
+        const message = caught instanceof DetectionApiError ? caught.message : "카메라로 물건을 확인하지 못했습니다.";
         setError(message);
         setCameraStatus("error");
         return;
@@ -411,6 +413,7 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
       video.srcObject = stream;
       try {
         await video.play();
+        updateVideoSize();
       } catch (playError) {
         if (streamRef.current === stream) streamRef.current = null;
         video.srcObject = null;
@@ -486,36 +489,55 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cameraStatus, reportModalOpen]);
 
-  const metrics = useMemo(
-    () => (frame ? getVideoContentMetrics(previewSize, { width: frame.media_width, height: frame.media_height }) : null),
-    [frame, previewSize],
+  const mediaRect = useMemo(
+    () => {
+      if (!frame) return null;
+      const naturalVideoSize = videoSize.width && videoSize.height
+        ? videoSize
+        : { width: frame.media_width, height: frame.media_height };
+      return getContainedMediaRect(previewSize, naturalVideoSize);
+    },
+    [frame, previewSize, videoSize],
   );
+  const displayVideoSize = videoSize.width && videoSize.height
+    ? videoSize
+    : frame
+      ? { width: frame.media_width, height: frame.media_height }
+      : { width: 0, height: 0 };
 
   return (
     <section className={styles.webcamPanel} aria-labelledby="webcam-title">
       <div className={styles.panelHeading}>
         <div>
           <p className={styles.eyebrow}>LIVE WEBCAM</p>
-          <h2 id="webcam-title">실시간 웹캠 탐지</h2>
+          <h2 id="webcam-title">카메라로 물건 확인</h2>
         </div>
-        <span>{cameraStatus === "running" ? "분석 중" : cameraActive ? "카메라 준비" : "대기"}</span>
+        <span>{cameraStatus === "running" ? "확인 중" : cameraActive ? "카메라 준비" : "대기"}</span>
       </div>
 
       <div className={`${styles.webcamStage} ${expanded ? styles.webcamStageExpanded : ""}`} ref={previewRef}>
-        <video ref={videoRef} className={styles.webcamVideo} playsInline muted />
+        <video ref={videoRef} className={styles.webcamVideo} playsInline muted onLoadedMetadata={updateVideoSize} onResize={updateVideoSize} />
         {!cameraActive && (
           <div className={styles.webcamEmpty}>
             <Icon name="scanLine" size={32} />
-            <strong>카메라를 켜고 실시간 탐지를 시작해보세요.</strong>
-            <span>브라우저 권한을 허용하면 현재 화면의 프레임만 서버로 전송해 분석합니다.</span>
+            <strong>카메라를 켜고 물건 확인을 시작해보세요.</strong>
+            <span>브라우저 권한을 허용하면 현재 화면의 프레임만 서버로 전송해 확인합니다.</span>
           </div>
         )}
         {cameraStatus === "running" && <span className={styles.liveBadge}>LIVE</span>}
-        {frame && metrics && (
-          <div className={styles.overlay} aria-hidden="true">
-            {frame.detected_objects.map((object, index) => (
-              <WebcamOverlayBox key={`${object.label}-${index}-${object.bbox.x}-${object.bbox.y}`} object={object} metrics={metrics} />
-            ))}
+        {frame && mediaRect && (
+          <div className={styles.mediaLayer} style={getContainedMediaRectStyle(mediaRect)} aria-hidden="true">
+            <div className={styles.overlay}>
+              {frame.detected_objects.map((object, index) => (
+                <WebcamOverlayBox
+                  key={`${object.label}-${index}-${object.bbox.x}-${object.bbox.y}`}
+                  object={object}
+                  mediaWidth={frame.media_width}
+                  mediaHeight={frame.media_height}
+                  displayMediaSize={displayVideoSize}
+                />
+              ))}
+            </div>
           </div>
         )}
         {cameraActive && !expanded && (
@@ -543,11 +565,11 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
         ) : (
           <>
             <button className="button button-primary" type="button" onClick={startDetection} disabled={cameraStatus === "running"}>
-              실시간 탐지 시작
+              물건 확인 시작
               <Icon name="scanLine" size={18} />
             </button>
             <button className="button button-secondary" type="button" onClick={cameraStatus === "running" ? stopDetection : stopCamera}>
-              {cameraStatus === "running" ? "탐지 일시정지" : "카메라 끄기"}
+              {cameraStatus === "running" ? "확인 일시정지" : "카메라 끄기"}
             </button>
           </>
         )}
@@ -557,13 +579,13 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
         <div className={styles.webcamReportPanel}>
           <div>
             <strong>발견 제보로 연결할 수 있는 후보가 있어요.</strong>
-            <span>AI가 실제 탐지한 프레임을 8초 동안 안전하게 보관합니다.</span>
+            <span>발견 제보 선택을 위해 확인 화면을 브라우저에서 최대 8초간 임시 보관합니다.</span>
           </div>
           <div className={styles.webcamReportActions}>
             {candidates.map((candidate) => <article key={candidate.object.class_code} className={styles.webcamCandidateCard}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={candidate.previewUrl} alt={`${getDisplayLabel(candidate.object)} 탐지 프레임`} />
-              <div><strong>{getDisplayLabel(candidate.object)} 후보를 발견했어요</strong><span>AI 탐지 신뢰도 {formatConfidence(candidate.object.confidence)}</span></div>
+              <img src={candidate.previewUrl} alt={`${getDisplayLabel(candidate.object)} 확인 화면`} />
+              <div><strong>{getDisplayLabel(candidate.object)} 후보를 발견했어요</strong><span>인식 신뢰도 {formatConfidence(candidate.object.confidence)}</span></div>
               <button type="button" onClick={() => openReport(candidate)}>발견 제보하기</button>
               <button type="button" className={styles.webcamCandidateClose} aria-label={`${getDisplayLabel(candidate.object)} 후보 닫기`} onClick={() => dismissCandidate(candidate.object.class_code)}><Icon name="close" size={15} /></button>
             </article>)}
@@ -572,7 +594,7 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
       )}
 
       <p className={styles.webcamNotice}>
-        웹캠 프레임은 저장하지 않고 실시간 탐지 요청에만 사용합니다. 정확한 판단이 필요한 경우 관리자 확인이 필요합니다.
+        카메라 화면은 물건 확인을 위해 서버로 전송되지만 탐지 기록으로 저장하지 않습니다. 발견 제보를 선택한 경우에만 해당 화면을 첨부합니다.
       </p>
     </section>
   );

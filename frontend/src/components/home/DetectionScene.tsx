@@ -104,8 +104,8 @@ export function DetectionScene() {
       {detections.map((detection) => <DetectionCard key={detection.label} {...detection} />)}
       <div className="live-card">
         <span className="live-icon"><Icon name="scan" size={27} /></span>
-        <span><strong>AI 탐지 데모</strong><small>한강 잠실 지역</small></span>
-        <b><i /> DEMO</b>
+        <span><strong>AI 탐지 흐름</strong><small>한강 잠실 지역</small></span>
+        <b><i /> LIVE</b>
       </div>
     </div>
   );

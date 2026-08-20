@@ -55,6 +55,7 @@ class CommunitySystemUpdate(BaseModel):
     place_name: str
     latitude: float | None
     longitude: float | None
+    image_url: str | None = None
     timestamp: datetime
     href: str | None
 
@@ -66,7 +67,9 @@ class CommunityContextResponse(BaseModel):
 
 
 class CommunityFeedResponse(BaseModel):
+    notices: list[CommunityPostResponse]
     posts: list[CommunityPostResponse]
     system_updates: list[CommunitySystemUpdate]
     context: CommunityContextResponse
+    total: int
     has_more: bool

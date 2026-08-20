@@ -58,8 +58,128 @@ actions type은 NAVIGATE 또는 ASK만 허용한다. NAVIGATE target은 서버�
 suggestions는 현재 답변과 직접 관련된 후속 질문만 id와 message로 최대 5개 제안한다. 관련 질문이 적으면 억지로 채우지 않는다."""
 
 
+TEAM_MEMBERS = [
+    {
+        "name": "고태영",
+        "tags": "DATASET · PRESENTATION",
+        "roles": {"dataset", "presentation"},
+        "duties": [
+            "Roboflow 데이터 수집 및 정제",
+            "객체 데이터 라벨링",
+            "발표 자료 제작",
+        ],
+    },
+    {
+        "name": "홍진욱",
+        "tags": "DATASET · PRESENTATION",
+        "roles": {"dataset", "presentation"},
+        "duties": [
+            "Roboflow 데이터 수집 및 정제",
+            "객체 데이터 라벨링",
+            "발표 자료 구성 및 제작",
+        ],
+    },
+    {
+        "name": "유진설",
+        "tags": "FULL STACK · AI SERVICE",
+        "roles": {"fullstack", "ai"},
+        "duties": [
+            "사용자 서비스 Frontend · Backend 개발",
+            "AI 이미지·영상 탐지 서비스 연동",
+            "발견물·분실 신고 매칭 기능 개발",
+            "알림 기능 개발",
+            "Backend와 Backend AI 연동 흐름 정리",
+        ],
+    },
+    {
+        "name": "조정화",
+        "tags": "FULL STACK · ADMIN SERVICE",
+        "roles": {"fullstack", "admin"},
+        "duties": [
+            "Frontend UI 및 테마 개발",
+            "사용자/관리자 서비스 화면 개발",
+            "관리자 대시보드 및 운영 기능 개발",
+            "인증, DB, API 연동",
+            "전체 서비스 통합 보조",
+        ],
+    },
+]
+
+TEAM_GENERAL_KEYWORDS = (
+    "팀원",
+    "업무분담",
+    "업무 분담",
+    "분담표",
+    "팀역할",
+    "팀 역할",
+)
+TEAM_ROLE_KEYWORDS = {
+    "dataset": ("데이터셋", "라벨링", "roboflow", "로보플로우"),
+    "presentation": ("발표", "발표자료", "발표 자료", "ppt"),
+    "ai": ("ai서비스", "ai 서비스", "ai 담당", "backend ai", "백엔드 ai"),
+    "admin": ("관리자서비스", "관리자 서비스", "관리자 담당"),
+}
+
+
 def _mode(user: User | None) -> str:
     return "OPERATIONS" if user and user.role == "ADMIN" else "PERSONAL" if user else "GUIDE"
+
+
+def _presentation(response: CopilotResponse) -> dict[str, list[dict[str, object]]]:
+    return {
+        "cards": [item.model_dump(mode="json") for item in response.cards],
+        "actions": [item.model_dump(mode="json") for item in response.actions],
+        "suggestions": [item.model_dump(mode="json") for item in response.suggestions],
+    }
+
+
+def _team_role_response(text: str, user: User | None) -> CopilotResponse | None:
+    normalized = text.strip().casefold()
+    compact = "".join(normalized.split())
+    if not normalized:
+        return None
+
+    selected_members = [
+        member
+        for member in TEAM_MEMBERS
+        if member["name"].casefold() in normalized
+    ]
+    matched_roles = {
+        role
+        for role, keywords in TEAM_ROLE_KEYWORDS.items()
+        if any(keyword.casefold() in normalized or keyword.casefold() in compact for keyword in keywords)
+    }
+    if not selected_members and matched_roles:
+        selected_members = [
+            member
+            for member in TEAM_MEMBERS
+            if member["roles"] & matched_roles
+        ]
+
+    has_general_intent = any(keyword in normalized or keyword in compact for keyword in TEAM_GENERAL_KEYWORDS)
+    if not selected_members and not matched_roles and not has_general_intent:
+        return None
+    if not selected_members:
+        selected_members = TEAM_MEMBERS
+
+    lines = ["FlowLink 팀원 업무 분담은 이렇게 정리되어 있어요."]
+    for member in selected_members:
+        duties = ", ".join(member["duties"])
+        lines.append(f"- {member['name']} — {member['tags']}\n  {duties}을 담당했어요.")
+
+    return CopilotResponse(
+        message="\n\n".join(lines),
+        cards=[],
+        actions=[],
+        suggestions=[
+            CopilotSuggestion(id="team-dataset", message="데이터셋 담당 누구야?"),
+            CopilotSuggestion(id="team-ai", message="AI 서비스 담당 누구야?"),
+            CopilotSuggestion(id="team-admin", message="관리자 서비스 담당 누구야?"),
+        ],
+        mode=_mode(user),
+        provider="flowlink",
+        model="local-team-roles",
+    )
 
 
 def _tool_free_greeting(message: str) -> bool:
@@ -180,6 +300,10 @@ def _guest_community_response(db: Session, *, category: str, empty_message: str)
 
 def _guest_response(db: Session, request: CopilotRequest) -> CopilotResponse:
     text = request.messages[-1].content.strip().lower()
+    team_response = _team_role_response(text, None)
+    if team_response is not None:
+        return team_response
+
     common_actions = [
         CopilotAction(type="NAVIGATE", label="이용 안내", target="/guide"),
         CopilotAction(type="NAVIGATE", label="발견물 보기", target="/found-items"),
@@ -287,12 +411,31 @@ def create_copilot_briefing(db: Session, current_user: User) -> CopilotResponse:
     return CopilotResponse(message=message, cards=cards[:2], actions=actions, suggestions=[], mode="PERSONAL", provider="flowlink", model="briefing",)
 
 
+def _decode_response_object(raw: str) -> dict | None:
+    candidate = raw.strip()
+    if candidate.startswith("```") and candidate.endswith("```"):
+        lines = candidate.splitlines()
+        if len(lines) >= 3:
+            candidate = "\n".join(lines[1:-1]).strip()
+
+    # Providers occasionally return the object as a JSON-encoded string.
+    # Decode at most twice so structured fields do not appear as chat text.
+    for _ in range(2):
+        try:
+            decoded = json.loads(candidate)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if isinstance(decoded, dict):
+            return decoded
+        if not isinstance(decoded, str):
+            return None
+        candidate = decoded.strip()
+    return None
+
+
 def _safe_response(raw: str, *, user: User | None, model: str, provider: str) -> CopilotResponse:
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        data = {"message": raw, "cards": [], "actions": []}
-    if not isinstance(data, dict):
+    data = _decode_response_object(raw)
+    if data is None:
         data = {"message": raw, "cards": [], "actions": [], "suggestions": []}
     cards: list[CopilotCard] = []
     raw_cards = data.get("cards", [])
@@ -351,14 +494,16 @@ async def create_copilot_response(db: Session, request: CopilotRequest, current_
             db, conversation, "USER", current_text, client_id=request.client_message_id
         )
         db.commit()
+        team_response = _team_role_response(current_text, current_user)
+        if team_response is not None:
+            save_message(db, conversation, "ASSISTANT", team_response.message, presentation=_presentation(team_response))
+            db.commit()
+            team_response.conversation_public_id = conversation.public_id
+            logger.info("copilot_local_response type=team_roles mode=%s provider_calls=0", team_response.mode)
+            return team_response
         if _tool_free_greeting(current_text):
             response = _local_greeting_response(current_user)
-            presentation = {
-                "cards": [item.model_dump(mode="json") for item in response.cards],
-                "actions": [item.model_dump(mode="json") for item in response.actions],
-                "suggestions": [item.model_dump(mode="json") for item in response.suggestions],
-            }
-            save_message(db, conversation, "ASSISTANT", response.message, presentation=presentation)
+            save_message(db, conversation, "ASSISTANT", response.message, presentation=_presentation(response))
             db.commit()
             response.conversation_public_id = conversation.public_id
             logger.info("copilot_local_response type=greeting mode=%s provider_calls=0", response.mode)

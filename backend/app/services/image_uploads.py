@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import httpx
 from fastapi import HTTPException, UploadFile, status
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from app.core.config import get_settings
 
@@ -67,27 +67,33 @@ async def save_public_image(file: UploadFile | None, upload_root: Path, folder: 
         suffix, save_format = ALLOWED_IMAGE_FORMATS[image_format]
         with Image.open(BytesIO(payload)) as source:
             source.load()
-            if save_format == "JPEG":
-                clean = source.convert("RGB")
-            elif source.mode not in {"RGB", "RGBA"}:
-                clean = source.convert("RGBA")
-            else:
-                clean = source.copy()
-            filename = f"{uuid4().hex}{suffix}"
-            if _supabase_configured():
-                output = BytesIO()
-                clean.save(output, format=save_format, exif=b"")
+            normalized = ImageOps.exif_transpose(source)
+            try:
+                if save_format == "JPEG":
+                    clean = normalized.convert("RGB")
+                elif normalized.mode not in {"RGB", "RGBA"}:
+                    clean = normalized.convert("RGBA")
+                else:
+                    clean = normalized.copy()
+            finally:
+                if normalized is not source:
+                    normalized.close()
+            try:
+                filename = f"{uuid4().hex}{suffix}"
+                if _supabase_configured():
+                    output = BytesIO()
+                    clean.save(output, format=save_format, exif=b"")
+                    object_key = f"{folder.strip('/')}/{filename}"
+                    content_type = f"image/{'jpeg' if save_format == 'JPEG' else save_format.lower()}"
+                    return await _upload_to_supabase(object_key, output.getvalue(), content_type)
+                else:
+                    target_dir = upload_root / folder
+                    target_dir.mkdir(parents=True, exist_ok=True)
+                    target = target_dir / filename
+                    clean.save(target, format=save_format, exif=b"")
+                    return f"/uploads/{folder}/{filename}"
+            finally:
                 clean.close()
-                object_key = f"{folder.strip('/')}/{filename}"
-                content_type = f"image/{'jpeg' if save_format == 'JPEG' else save_format.lower()}"
-                return await _upload_to_supabase(object_key, output.getvalue(), content_type)
-            else:
-                target_dir = upload_root / folder
-                target_dir.mkdir(parents=True, exist_ok=True)
-                target = target_dir / filename
-                clean.save(target, format=save_format, exif=b"")
-                clean.close()
-                return f"/uploads/{folder}/{filename}"
     except HTTPException:
         raise
     except (UnidentifiedImageError, OSError, ValueError) as exc:

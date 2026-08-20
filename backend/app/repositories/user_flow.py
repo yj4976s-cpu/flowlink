@@ -5,8 +5,8 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Select, func, or_, select
-from sqlalchemy.orm import Session, joinedload, selectinload
+from sqlalchemy import Select, String, and_, case, cast, func, or_, select
+from sqlalchemy.orm import Session, aliased, joinedload, selectinload
 
 from app.services.found_item_images import representative_found_item_image_url
 
@@ -29,8 +29,91 @@ KST = ZoneInfo("Asia/Seoul")
 
 PUBLIC_FOUND_ITEM_STATUSES = ("RECOVERED", "AVAILABLE")
 MATCHABLE_FOUND_ITEM_STATUSES = ("AVAILABLE",)
+FOUND_ITEM_LIFECYCLE_STATUSES = ("DETECTED", "RECOVERED", "AVAILABLE", "CLAIM_PENDING", "RETURNED", "DISPOSED", "ARCHIVED")
 ACTIVE_OWNERSHIP_CLAIM_STATUSES = ("PENDING", "APPROVED")
 PERSONAL_ITEM_GROUP = "PERSONAL_ITEM"
+WASTE_GROUP = "WASTE"
+
+
+def get_admin_ai_report_data(db: Session) -> dict:
+    reviewed = DetectedObject.processing_status.in_(("CONFIRMED", "REJECTED"))
+    corrected = and_(
+        DetectedObject.processing_status == "CONFIRMED",
+        DetectedObject.final_class_code.is_not(None),
+        DetectedObject.final_class_code != ObjectClass.code,
+    )
+    operational = DetectionEvent.purpose == "OPERATION"
+    base_join = (
+        DetectedObject.__table__
+        .join(DetectionEvent.__table__, DetectedObject.detection_event_id == DetectionEvent.id)
+        .join(ObjectClass.__table__, DetectedObject.object_class_id == ObjectClass.id)
+    )
+
+    summary = db.execute(
+        select(
+            func.count(DetectedObject.id),
+            func.avg(DetectedObject.confidence),
+            func.sum(case((reviewed, 1), else_=0)),
+            func.sum(case((corrected, 1), else_=0)),
+        ).select_from(base_join).where(operational)
+    ).one()
+
+    class_rows = db.execute(
+        select(
+            ObjectClass.code,
+            ObjectClass.name_ko,
+            func.count(DetectedObject.id).label("detection_count"),
+            func.avg(DetectedObject.confidence).label("average_confidence"),
+            func.sum(case((reviewed, 1), else_=0)).label("reviewed_count"),
+            func.sum(case((corrected, 1), else_=0)).label("corrected_count"),
+        )
+        .select_from(base_join)
+        .where(operational)
+        .group_by(ObjectClass.code, ObjectClass.name_ko)
+        .order_by(func.count(DetectedObject.id).desc(), ObjectClass.code)
+    ).all()
+
+    bucket = case(
+        (DetectedObject.confidence < Decimal("0.5"), "under_05"),
+        (DetectedObject.confidence < Decimal("0.6"), "05_06"),
+        (DetectedObject.confidence < Decimal("0.7"), "06_07"),
+        (DetectedObject.confidence < Decimal("0.8"), "07_08"),
+        (DetectedObject.confidence < Decimal("0.9"), "08_09"),
+        else_="09_10",
+    )
+    bucket_counts = dict(db.execute(
+        select(bucket, func.count(DetectedObject.id))
+        .select_from(DetectedObject.__table__.join(DetectionEvent.__table__))
+        .where(operational)
+        .group_by(bucket)
+    ).all())
+    bucket_labels = (
+        ("under_05", "0.0 이상 0.5 미만"), ("05_06", "0.5 이상 0.6 미만"),
+        ("06_07", "0.6 이상 0.7 미만"), ("07_08", "0.7 이상 0.8 미만"),
+        ("08_09", "0.8 이상 0.9 미만"), ("09_10", "0.9 이상 1.0 이하"),
+    )
+
+    final_class = aliased(ObjectClass)
+    correction_rows = db.execute(
+        select(
+            ObjectClass.code, ObjectClass.name_ko,
+            final_class.code, final_class.name_ko,
+            func.count(DetectedObject.id).label("count"),
+        )
+        .join(DetectedObject, DetectedObject.object_class_id == ObjectClass.id)
+        .join(DetectionEvent, DetectedObject.detection_event_id == DetectionEvent.id)
+        .join(final_class, DetectedObject.final_class_code == final_class.code)
+        .where(operational, corrected)
+        .group_by(ObjectClass.code, ObjectClass.name_ko, final_class.code, final_class.name_ko)
+        .order_by(func.count(DetectedObject.id).desc(), ObjectClass.code, final_class.code)
+    ).all()
+
+    return {
+        "summary": {"total": summary[0], "average_confidence": summary[1], "reviewed": summary[2] or 0, "corrected": summary[3] or 0},
+        "class_metrics": [{"code": row[0], "name": row[1], "count": row[2], "average_confidence": row[3], "reviewed": row[4] or 0, "corrected": row[5] or 0} for row in class_rows],
+        "confidence_distribution": [{"key": key, "label": label, "count": bucket_counts.get(key, 0)} for key, label in bucket_labels],
+        "correction_patterns": [{"predicted_code": row[0], "predicted_name": row[1], "final_code": row[2], "final_name": row[3], "count": row[4]} for row in correction_rows],
+    }
 
 
 def normalize_object_code(value: str) -> str:
@@ -138,25 +221,88 @@ def get_public_found_item_by_id(db: Session, found_item_id: int) -> FoundItem | 
     return db.scalar(statement)
 
 
-def get_found_item_by_id(db: Session, found_item_id: int) -> FoundItem | None:
-    statement = (
-        select(FoundItem)
-        .options(joinedload(FoundItem.object_class), joinedload(FoundItem.detected_object).joinedload(DetectedObject.detection_event), selectinload(FoundItem.citizen_reports))
-        .where(FoundItem.id == found_item_id)
-    )
+def get_found_item_by_id(
+    db: Session,
+    found_item_id: int,
+    *,
+    for_update: bool = False,
+) -> FoundItem | None:
+    statement = select(FoundItem).where(FoundItem.id == found_item_id)
+    if for_update:
+        statement = statement.with_for_update(of=FoundItem)
+    else:
+        statement = statement.options(
+            joinedload(FoundItem.object_class),
+            joinedload(FoundItem.detected_object).joinedload(DetectedObject.detection_event),
+            selectinload(FoundItem.citizen_reports),
+        )
     return db.scalar(statement)
 
 
-def get_claimable_found_item_by_id(db: Session, found_item_id: int) -> FoundItem | None:
+def list_admin_found_items(
+    db: Session,
+    *,
+    skip: int,
+    limit: int,
+    status: str | None = None,
+    item_category: str | None = None,
+    q: str | None = None,
+    found_date: datetime | None = None,
+) -> tuple[Sequence[FoundItem], int, dict[str, int]]:
+    conditions = []
+    if item_category:
+        category = item_category.strip()
+        conditions.append(or_(ObjectClass.code == normalize_object_code(category), func.lower(ObjectClass.name_ko) == category.lower()))
+    if q:
+        normalized = q.strip()
+        pattern = f"%{normalized}%"
+        id_condition = cast(FoundItem.id, String).ilike(pattern) if normalized else False
+        conditions.append(or_(id_condition, ObjectClass.code.ilike(pattern), ObjectClass.name_ko.ilike(pattern), FoundItem.area_name.ilike(pattern), FoundItem.storage_location.ilike(pattern)))
+    if found_date:
+        start = found_date.replace(tzinfo=KST).astimezone(UTC)
+        end = (found_date + timedelta(days=1)).replace(tzinfo=KST).astimezone(UTC)
+        conditions.extend((FoundItem.found_at >= start, FoundItem.found_at < end))
+
+    filtered_conditions = [*conditions]
+    if status:
+        filtered_conditions.append(FoundItem.status == status)
+    else:
+        filtered_conditions.append(FoundItem.status != "ARCHIVED")
+    total = int(db.scalar(select(func.count(FoundItem.id)).join(FoundItem.object_class).where(*filtered_conditions)) or 0)
+    rows = db.scalars(
+        select(FoundItem)
+        .join(FoundItem.object_class)
+        .options(joinedload(FoundItem.object_class), joinedload(FoundItem.detected_object).joinedload(DetectedObject.detection_event), selectinload(FoundItem.citizen_reports))
+        .where(*filtered_conditions)
+        .order_by(FoundItem.updated_at.desc(), FoundItem.id.desc())
+        .offset(skip)
+        .limit(limit)
+    ).all()
+    grouped = dict(db.execute(
+        select(FoundItem.status, func.count(FoundItem.id))
+        .join(FoundItem.object_class)
+        .where(*conditions, FoundItem.status.in_(FOUND_ITEM_LIFECYCLE_STATUSES))
+        .group_by(FoundItem.status)
+    ).all())
+    return rows, total, {value: int(count) for value, count in grouped.items()}
+
+
+def get_claimable_found_item_by_id(
+    db: Session,
+    found_item_id: int,
+    *,
+    for_update: bool = False,
+) -> FoundItem | None:
     statement = (
         select(FoundItem)
-        .options(joinedload(FoundItem.object_class))
         .where(
             FoundItem.id == found_item_id,
             FoundItem.is_public.is_(True),
             FoundItem.status == "AVAILABLE",
         )
     )
+    if for_update:
+        statement = statement.with_for_update(of=FoundItem)
     return db.scalar(statement)
 
 
@@ -225,20 +371,75 @@ def add_match_candidate(db: Session, candidate: MatchCandidate) -> MatchCandidat
     return candidate
 
 
-def list_matches_for_user(db: Session, user_id: int, *, skip: int, limit: int) -> Sequence[MatchCandidate]:
+def list_matches_for_user(
+    db: Session,
+    user_id: int,
+    *,
+    lost_report_id: int | None = None,
+    skip: int,
+    limit: int,
+) -> Sequence[MatchCandidate]:
     statement = (
         select(MatchCandidate)
         .join(MatchCandidate.lost_report)
+        .join(MatchCandidate.found_item)
         .options(
             joinedload(MatchCandidate.lost_report).joinedload(LostReport.object_class),
             joinedload(MatchCandidate.found_item).joinedload(FoundItem.object_class),
             joinedload(MatchCandidate.found_item).joinedload(FoundItem.detected_object).joinedload(DetectedObject.detection_event),
             joinedload(MatchCandidate.found_item).selectinload(FoundItem.citizen_reports),
         )
-        .where(LostReport.user_id == user_id, MatchCandidate.status != "DISMISSED")
-        .order_by(MatchCandidate.total_score.desc(), MatchCandidate.created_at.desc())
-        .offset(skip)
-        .limit(limit)
+        .where(
+            LostReport.user_id == user_id,
+            MatchCandidate.status != "DISMISSED",
+            or_(
+                MatchCandidate.status == "CLAIMED",
+                FoundItem.status.in_(MATCHABLE_FOUND_ITEM_STATUSES),
+            ),
+        )
+    )
+    if lost_report_id is not None:
+        statement = statement.where(MatchCandidate.lost_report_id == lost_report_id)
+    statement = statement.order_by(
+        MatchCandidate.total_score.desc(),
+        MatchCandidate.created_at.desc(),
+        MatchCandidate.id.desc(),
+    ).offset(skip).limit(limit)
+    return db.scalars(statement).all()
+
+
+def list_matches_for_user_reports(
+    db: Session,
+    user_id: int,
+    lost_report_ids: Sequence[int],
+) -> Sequence[MatchCandidate]:
+    if not lost_report_ids:
+        return []
+    statement = (
+        select(MatchCandidate)
+        .join(MatchCandidate.lost_report)
+        .join(MatchCandidate.found_item)
+        .options(
+            joinedload(MatchCandidate.lost_report).joinedload(LostReport.object_class),
+            joinedload(MatchCandidate.found_item).joinedload(FoundItem.object_class),
+            joinedload(MatchCandidate.found_item).joinedload(FoundItem.detected_object).joinedload(DetectedObject.detection_event),
+            joinedload(MatchCandidate.found_item).selectinload(FoundItem.citizen_reports),
+        )
+        .where(
+            LostReport.user_id == user_id,
+            MatchCandidate.lost_report_id.in_(lost_report_ids),
+            MatchCandidate.status != "DISMISSED",
+            or_(
+                MatchCandidate.status == "CLAIMED",
+                FoundItem.status.in_(MATCHABLE_FOUND_ITEM_STATUSES),
+            ),
+        )
+        .order_by(
+            MatchCandidate.lost_report_id,
+            MatchCandidate.total_score.desc(),
+            MatchCandidate.created_at.desc(),
+            MatchCandidate.id.desc(),
+        )
     )
     return db.scalars(statement).all()
 
@@ -291,6 +492,7 @@ def list_detection_events(db: Session, *, skip: int, limit: int) -> Sequence[Det
             selectinload(DetectionEvent.detected_objects).joinedload(DetectedObject.final_class),
             selectinload(DetectionEvent.detected_objects).joinedload(DetectedObject.found_item),
         )
+        .where(DetectionEvent.purpose == "OPERATION")
         .order_by(DetectionEvent.captured_at.desc(), DetectionEvent.id.desc())
         .offset(skip)
         .limit(limit)
@@ -349,6 +551,82 @@ def list_ownership_claims(db: Session, *, skip: int, limit: int) -> Sequence[Own
     return db.scalars(statement).all()
 
 
+def list_ownership_claims_for_user(
+    db: Session,
+    user_id: int,
+    *,
+    skip: int,
+    limit: int,
+) -> Sequence[OwnershipClaim]:
+    statement = (
+        select(OwnershipClaim)
+        .where(OwnershipClaim.user_id == user_id)
+        .order_by(OwnershipClaim.created_at.desc(), OwnershipClaim.id.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    return db.scalars(statement).all()
+
+
+def list_representative_ownership_claims_for_user_reports(
+    db: Session,
+    user_id: int,
+    lost_report_ids: Sequence[int],
+) -> Sequence[OwnershipClaim]:
+    if not lost_report_ids:
+        return []
+    priority = case(
+        (OwnershipClaim.status == "RETURNED", 3),
+        (OwnershipClaim.status == "APPROVED", 2),
+        (OwnershipClaim.status == "PENDING", 1),
+        (OwnershipClaim.status == "REJECTED", 0),
+        else_=-1,
+    )
+    ranked = (
+        select(
+            OwnershipClaim.id.label("claim_id"),
+            func.row_number().over(
+                partition_by=OwnershipClaim.lost_report_id,
+                order_by=(priority.desc(), OwnershipClaim.created_at.desc(), OwnershipClaim.id.desc()),
+            ).label("claim_rank"),
+        )
+        .join(LostReport, LostReport.id == OwnershipClaim.lost_report_id)
+        .where(
+            OwnershipClaim.user_id == user_id,
+            LostReport.user_id == user_id,
+            OwnershipClaim.lost_report_id.in_(lost_report_ids),
+        )
+        .subquery()
+    )
+    statement = (
+        select(OwnershipClaim)
+        .join(ranked, ranked.c.claim_id == OwnershipClaim.id)
+        .where(ranked.c.claim_rank == 1)
+        .order_by(OwnershipClaim.lost_report_id, OwnershipClaim.id)
+    )
+    return db.scalars(statement).all()
+
+
+def list_ownership_claims_for_user_reports(
+    db: Session,
+    user_id: int,
+    lost_report_ids: Sequence[int],
+) -> Sequence[OwnershipClaim]:
+    if not lost_report_ids:
+        return []
+    statement = (
+        select(OwnershipClaim)
+        .join(LostReport, LostReport.id == OwnershipClaim.lost_report_id)
+        .where(
+            OwnershipClaim.user_id == user_id,
+            LostReport.user_id == user_id,
+            OwnershipClaim.lost_report_id.in_(lost_report_ids),
+        )
+        .order_by(OwnershipClaim.created_at.desc(), OwnershipClaim.id.desc())
+    )
+    return db.scalars(statement).all()
+
+
 def get_ownership_claim_by_id(db: Session, claim_id: int) -> OwnershipClaim | None:
     statement = (
         select(OwnershipClaim)
@@ -393,12 +671,44 @@ def get_admin_dashboard_data(db: Session, *, since, period: str = "today", now=N
     personal_items = FoundItem.object_class_id.in_(
         select(ObjectClass.id).where(ObjectClass.group_code == PERSONAL_ITEM_GROUP)
     )
+    active_found_item = FoundItem.status != "ARCHIVED"
+    active_match_candidate = MatchCandidate.found_item.has(active_found_item)
+    original_class = aliased(ObjectClass)
+    final_class = aliased(ObjectClass)
+    waste_collection_completed = (
+        select(ProcessingHistory.id)
+        .where(
+            ProcessingHistory.entity_type == "DETECTED_OBJECT",
+            ProcessingHistory.entity_id == DetectedObject.id,
+            ProcessingHistory.action_type == "WASTE_COLLECTION_COMPLETED",
+        )
+        .exists()
+    )
+    effective_waste_class = or_(
+        and_(DetectedObject.final_class_code.is_not(None), final_class.group_code == WASTE_GROUP),
+        and_(DetectedObject.final_class_code.is_(None), original_class.group_code == WASTE_GROUP),
+    )
 
     def count(model, *conditions) -> int:
         return int(db.scalar(select(func.count(model.id)).where(*conditions)) or 0)
 
     def period_condition(column):
         return column >= since if since is not None else True
+
+    def waste_collection_pending_count() -> int:
+        statement = (
+            select(func.count(DetectedObject.id))
+            .join(DetectionEvent, DetectedObject.detection_event_id == DetectionEvent.id)
+            .join(original_class, DetectedObject.object_class_id == original_class.id)
+            .outerjoin(final_class, DetectedObject.final_class_code == final_class.code)
+            .where(
+                DetectionEvent.purpose == "OPERATION",
+                DetectedObject.processing_status == "CONFIRMED",
+                effective_waste_class,
+                ~waste_collection_completed,
+            )
+        )
+        return int(db.scalar(statement) or 0)
 
     found_items = db.scalars(
         select(FoundItem)
@@ -407,7 +717,7 @@ def get_admin_dashboard_data(db: Session, *, since, period: str = "today", now=N
             joinedload(FoundItem.detected_object).joinedload(DetectedObject.detection_event),
             selectinload(FoundItem.citizen_reports),
         )
-        .where(period_condition(FoundItem.created_at), personal_items)
+        .where(period_condition(FoundItem.created_at), personal_items, active_found_item)
         .order_by(FoundItem.created_at.desc())
         .limit(4)
     ).all()
@@ -417,15 +727,20 @@ def get_admin_dashboard_data(db: Session, *, since, period: str = "today", now=N
             joinedload(DetectedObject.object_class),
             joinedload(DetectedObject.detection_event),
         )
-        .where(period_condition(DetectedObject.detected_at))
+        .where(
+            period_condition(DetectedObject.detected_at),
+            DetectedObject.detection_event.has(DetectionEvent.purpose == "OPERATION"),
+        )
         .order_by(DetectedObject.detected_at.desc(), DetectedObject.id.desc())
         .limit(4)
     ).all()
     category_rows = db.execute(
         select(ObjectClass.code, ObjectClass.name_ko, func.count(DetectedObject.id))
         .join(DetectedObject, DetectedObject.object_class_id == ObjectClass.id)
+        .join(DetectionEvent, DetectedObject.detection_event_id == DetectionEvent.id)
         .where(
             period_condition(DetectedObject.detected_at),
+            DetectionEvent.purpose == "OPERATION",
             ObjectClass.group_code == PERSONAL_ITEM_GROUP,
         )
         .group_by(ObjectClass.code, ObjectClass.name_ko)
@@ -443,8 +758,8 @@ def get_admin_dashboard_data(db: Session, *, since, period: str = "today", now=N
         .order_by(ProcessingHistory.created_at.desc())
         .limit(7)
     ).all()
-    found_dates = list(db.scalars(select(FoundItem.created_at).where(period_condition(FoundItem.created_at), personal_items)).all())
-    match_dates = list(db.scalars(select(MatchCandidate.created_at).where(period_condition(MatchCandidate.created_at))).all())
+    found_dates = list(db.scalars(select(FoundItem.created_at).where(period_condition(FoundItem.created_at), personal_items, active_found_item)).all())
+    match_dates = list(db.scalars(select(MatchCandidate.created_at).where(period_condition(MatchCandidate.created_at), active_match_candidate)).all())
     return_dates = list(db.scalars(select(OwnershipClaim.updated_at).where(period_condition(OwnershipClaim.updated_at), OwnershipClaim.status == "RETURNED")).all())
     all_dates = found_dates + match_dates + return_dates
     if period == "today":
@@ -468,12 +783,16 @@ def get_admin_dashboard_data(db: Session, *, since, period: str = "today", now=N
         return result
     found_group, match_group, return_group = grouped(found_dates), grouped(match_dates), grouped(return_dates)
     average_confidence = db.scalar(
-        select(func.avg(DetectedObject.confidence)).where(period_condition(DetectedObject.detected_at))
+        select(func.avg(DetectedObject.confidence)).where(
+            period_condition(DetectedObject.detected_at),
+            DetectedObject.detection_event.has(DetectionEvent.purpose == "OPERATION"),
+        )
     )
     latest_match = db.scalar(
         select(MatchCandidate)
         .options(joinedload(MatchCandidate.found_item).joinedload(FoundItem.detected_object))
         .where(MatchCandidate.status != "DISMISSED")
+        .where(active_match_candidate)
         .order_by(MatchCandidate.created_at.desc(), MatchCandidate.id.desc())
         .limit(1)
     )
@@ -514,19 +833,20 @@ def get_admin_dashboard_data(db: Session, *, since, period: str = "today", now=N
     return {
         "period": period,
         "metrics": {
-            "discovered": count(FoundItem, period_condition(FoundItem.created_at), personal_items),
-            "ai_detections": count(DetectedObject, period_condition(DetectedObject.detected_at)),
-            "official_found_items": count(FoundItem, period_condition(FoundItem.created_at), personal_items),
+            "discovered": count(FoundItem, period_condition(FoundItem.created_at), personal_items, active_found_item),
+            "ai_detections": count(DetectedObject, period_condition(DetectedObject.detected_at), DetectedObject.detection_event.has(DetectionEvent.purpose == "OPERATION")),
+            "official_found_items": count(FoundItem, period_condition(FoundItem.created_at), personal_items, active_found_item),
             "confirmed": count(FoundItem, period_condition(FoundItem.created_at), personal_items, FoundItem.status.in_(("AVAILABLE", "RECOVERED", "CLAIM_PENDING", "RETURNED"))),
-            "matched": count(MatchCandidate, period_condition(MatchCandidate.created_at)),
+            "matched": count(MatchCandidate, period_condition(MatchCandidate.created_at), active_match_candidate),
             "claims": count(OwnershipClaim, period_condition(OwnershipClaim.created_at)),
             "approved": count(OwnershipClaim, period_condition(OwnershipClaim.updated_at), OwnershipClaim.status.in_(("APPROVED", "RETURNED"))),
             "returned": count(OwnershipClaim, period_condition(OwnershipClaim.updated_at), OwnershipClaim.status == "RETURNED"),
             "lost_reports": count(LostReport, period_condition(LostReport.created_at)),
             "match_notifications": count(Notification, period_condition(Notification.created_at), Notification.notification_type == "MATCH_FOUND"),
-            "citizen_reports": count(CitizenReport, period_condition(CitizenReport.created_at)),
+            "citizen_reports": count(CitizenReport, period_condition(CitizenReport.created_at), CitizenReport.status != "CANCELLED"),
             "citizen_pending": count(CitizenReport, CitizenReport.status.in_(("PENDING", "UNDER_REVIEW"))),
             "operation_detection_pending": count(DetectedObject, DetectedObject.processing_status == "PENDING", DetectedObject.detection_event.has(DetectionEvent.purpose == "OPERATION")),
+            "waste_collection_pending": waste_collection_pending_count(),
             "citizen_review_pending": count(CitizenReport, CitizenReport.status == "PENDING"),
             "ownership_claim_pending": count(OwnershipClaim, OwnershipClaim.status == "PENDING"),
             "ownership_return_pending": count(OwnershipClaim, OwnershipClaim.status == "APPROVED"),

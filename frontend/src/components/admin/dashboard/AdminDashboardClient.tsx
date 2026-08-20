@@ -13,7 +13,7 @@ const dateTime = new Intl.DateTimeFormat("ko-KR", { month: "numeric", day: "nume
 const timeOnly = new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit" });
 const statusLabel: Record<string, string> = {
   DETECTED: "탐지됨", RECOVERED: "회수 확인", AVAILABLE: "보관 중", CLAIM_PENDING: "소유권 확인 중",
-  RETURNED: "반환 완료", APPROVED: "승인", REJECTED: "거절", PENDING: "검토 대기",
+  RETURNED: "반환 완료", DISPOSED: "폐기됨", ARCHIVED: "보관됨", APPROVED: "승인", REJECTED: "거절", PENDING: "검토 대기",
   CONFIRMED: "검토 완료",
 };
 const actionLabel: Record<string, string> = {
@@ -23,6 +23,7 @@ const actionLabel: Record<string, string> = {
   FOUND_ITEM_UPDATED: "공식 발견물 수정",
   CITIZEN_REPORT_REVIEWED: "발견 제보 검토",
   CITIZEN_REPORT_LINKED: "발견 제보 연결",
+  WASTE_COLLECTION_COMPLETED: "폐기물 수거 완료",
 };
 const entityLabel: Record<string, string> = {
   OWNERSHIP_CLAIM: "소유권 요청", DETECTED_OBJECT: "탐지 객체", FOUND_ITEM: "발견물",
@@ -97,16 +98,16 @@ export function AdminDashboardClient() {
   };
 
   const operationDetectionPending = current?.metrics.operation_detection_pending ?? 0;
+  const wasteCollectionPending = current?.metrics.waste_collection_pending ?? 0;
   const citizenReviewPending = current?.metrics.citizen_review_pending ?? 0;
   const ownershipClaimPending = current?.metrics.ownership_claim_pending ?? 0;
-  const ownershipReturnPending = current?.metrics.ownership_return_pending ?? 0;
-  const waiting = operationDetectionPending + citizenReviewPending + ownershipClaimPending + ownershipReturnPending;
-  const priorities = [
-    { key: "operation-detection", tone: "attention", label: "AI 탐지 검토 대기", title: "운영 탐지에서 확인할 객체", count: operationDetectionPending, detail: "OPERATION · PENDING", href: "/admin/detections?purpose=OPERATION&status=PENDING", action: "탐지 검토" },
-    { key: "citizen-report", tone: "citizen", label: "시민 발견 제보 검토", title: "새로 접수된 발견 제보", count: citizenReviewPending, detail: "CitizenReport · PENDING", href: "/admin/citizen-reports", action: "제보 검토" },
-    { key: "ownership-claim", tone: "claim", label: "소유권 요청 검토", title: "소유권 확인 요청", count: ownershipClaimPending, detail: "OwnershipClaim · PENDING", href: "/admin/ownership-claims", action: "요청 검토" },
-    { key: "ownership-return", tone: "return", label: "반환 처리", title: "승인 후 반환 대기", count: ownershipReturnPending, detail: "OwnershipClaim · APPROVED", href: "/admin/ownership-claims", action: "반환 처리" },
-  ].filter((item) => item.count > 0);
+  const waiting = operationDetectionPending + wasteCollectionPending + citizenReviewPending + ownershipClaimPending;
+  const workQueues = [
+    { key: "operation-detection", tone: "attention", label: "AI 탐지 검토", count: operationDetectionPending, pending: "관리자 확인이 필요한 운영 탐지입니다.", empty: "현재 확인할 탐지 결과가 없어요.", href: "/admin/detections", action: "검토하러 가기" },
+    { key: "waste-collection", tone: "waste", label: "폐기물 수거 대기", count: wasteCollectionPending, pending: "검토가 끝나 실제 수거 완료 확인을 기다리는 폐기물입니다.", empty: "현재 수거를 기다리는 폐기물이 없어요.", href: "/admin/detections?purpose=OPERATION&followUp=WASTE_PENDING", action: "수거 처리하기" },
+    { key: "citizen-report", tone: "citizen", label: "시민 발견 신고", count: citizenReviewPending, pending: "새로 접수되어 검토를 기다리는 신고입니다.", empty: "현재 검토를 기다리는 신고가 없어요.", href: "/admin/citizen-reports", action: "신고 확인하기" },
+    { key: "ownership-claim", tone: "claim", label: "소유권 요청", count: ownershipClaimPending, pending: "승인 또는 거절이 필요한 요청입니다.", empty: "현재 처리할 소유권 요청이 없어요.", href: "/admin/ownership-claims", action: "요청 처리하기" },
+  ] as const;
   const historyRecords = current?.recent_history ?? [];
   const historyPageCount = Math.max(1, Math.ceil(historyRecords.length / HISTORY_PAGE_SIZE));
   const activeHistoryPage = Math.min(historyPage, historyPageCount);
@@ -122,22 +123,33 @@ export function AdminDashboardClient() {
   };
 
   return <main className={styles.page}>
-    <header className={styles.intro}><p>ADMIN CONTROL</p><h1>관리자 대시보드</h1><span>발견부터 검토·매칭·반환까지 현재 운영 흐름을 확인합니다.</span>{waiting > 0 && <b><i />확인 필요 업무 {waiting}건</b>}</header>
+    <header className={styles.intro}><p>ADMIN WORK QUEUE</p><h1>업무 처리</h1><span>확인이 필요한 운영 업무를 한 곳에서 확인하세요.</span></header>
 
-    <section className={styles.kpi} aria-label="현재 운영 요약">
+    <section className={styles.workHub} aria-labelledby="work-hub-title">
+      <div className={styles.workHubHeading}>
+        <div><h2 id="work-hub-title">지금 처리할 업무</h2><p>각 업무를 선택하면 기존 상세 처리 화면으로 이동합니다.</p></div>
+        {!current ? currentError ? <strong className={styles.workTotalError}>업무 현황을 불러오지 못했어요.</strong> : <span className={styles.workTotalLoading} role="status">처리 필요 건수 확인 중</span> : <strong className={styles.workTotal}>{waiting === 0 ? "현재 처리할 업무 없음" : `총 처리 필요 ${waiting}건`}</strong>}
+      </div>
+      {current && waiting === 0 && <div className={styles.workComplete} role="status"><Icon name="packageCheck" size={19} /><span><strong>현재 처리할 업무가 없어요.</strong>모든 운영 요청이 최신 상태예요.</span></div>}
+      <div className={styles.workCards}>
+        {workQueues.map((item) => <article className={styles.workCard} data-tone={item.tone} key={item.key} aria-label={current ? `${item.label}, 처리 필요 ${item.count}건` : `${item.label}, ${currentError ? "현황 불러오기 실패" : "현황 확인 중"}`}>
+          <span className={styles.workCardLabel}>{item.label}</span>
+          {!current ? currentError ? <strong className={styles.workCardError}>현황을 불러오지 못했어요.</strong> : <span className={styles.workCardSkeleton} aria-hidden="true" /> : <strong className={styles.workCardCount}>{item.count}건</strong>}
+          <p>{current ? item.count > 0 ? item.pending : item.empty : currentError ? "잠시 후 다시 확인해 주세요." : "처리 필요 건수를 확인하고 있어요."}</p>
+          <Link href={item.href}>{item.action}<Icon name="arrow" size={14} /></Link>
+        </article>)}
+      </div>
+    </section>
+
+    <section className={styles.kpi} aria-label="기존 운영 요약">
       <div data-tone="primary"><span>발견</span><strong>{currentError ? "–" : current?.metrics.discovered ?? 0}</strong><small>오늘 기준</small></div>
       <div data-tone="secondary"><span>발견물 등록</span><strong>{currentError ? "–" : current?.metrics.official_found_items ?? 0}</strong><small>오늘 기준</small></div>
       <div data-tone="match"><span>자동 매칭</span><strong>{currentError ? "–" : current?.metrics.matched ?? 0}</strong><small>오늘 기준</small></div>
-      <div data-tone="attention"><span>검토 대기</span><strong>{currentError ? "–" : waiting}</strong><small>지금 확인할 업무</small></div>
       <div data-tone="claim"><span>소유권 요청</span><strong>{currentError ? "–" : current?.metrics.claims ?? 0}</strong><small>오늘 기준</small></div>
       <div data-tone="success"><span>반환 완료</span><strong>{currentError ? "–" : current?.metrics.returned ?? 0}</strong><small>오늘 기준</small></div>
     </section>
 
     <div className={styles.primaryGrid}>
-      <section className={styles.priorityPanel} aria-labelledby="priority-title"><SectionHeading id="priority-title" title="지금 확인할 업무" />
-        {currentError ? <State error>현재 업무 목록을 불러오지 못했습니다.</State> : priorities.length ? <div className={styles.priorityList}>{priorities.map((item) => <div className={styles.priority} data-tone={item.tone} key={item.key}><i /><div><span>{item.label}</span><strong>{item.count}건 · {item.title}</strong><small>{item.detail}</small></div><Link href={item.href}>{item.action}<Icon name="arrow" size={14} /></Link></div>)}</div> : <State>현재 확인이 필요한 업무가 없습니다.<br />새로운 요청이나 처리 항목이 발생하면 이곳에 표시됩니다.</State>}
-      </section>
-
       <section className={styles.recentPanel} aria-labelledby="recent-title"><SectionHeading id="recent-title" title="최근 발견" href="/admin/found-items" action="발견물 관리" />
         {!current ? currentError ? <State error>최근 발견물을 불러오지 못했습니다.</State> : <Skeleton /> : current.recent_items.length ? <div className={styles.recentList}>{current.recent_items.slice(0, 4).map((item) => <Link href="/admin/found-items" key={item.id}><DetectionThumbnail imageUrl={item.image_url} label={`${item.item_category_name} 발견물 이미지`} icon="archive" /><div><strong>{item.public_description || `${item.color ?? ""} ${item.item_category_name}`}</strong><span>{dateTime.format(new Date(item.found_at))} · {item.area_name}</span></div><b>{statusLabel[item.status] ?? item.status}</b></Link>)}</div> : <State>최근 등록된 발견물이 없습니다.</State>}
       </section>
@@ -177,10 +189,9 @@ export function AdminDashboardClient() {
 function OperationalFlow({ metrics }: { metrics: AdminDashboardData["metrics"] }) {
   const steps = [
     { label: "AI 탐지", value: metrics.ai_detections, tone: "primary" },
-    { label: "발견물 등록", value: metrics.official_found_items, tone: "secondary" },
+    { label: "발견물 등록/폐기물 수거", value: metrics.official_found_items + metrics.waste_collection_pending, tone: "secondary" },
     { label: "분실 신고", value: metrics.lost_reports, tone: "primary" },
     { label: "자동 매칭", value: metrics.matched, tone: "match" },
-    { label: "MATCH_FOUND 알림", value: metrics.match_notifications, tone: "match" },
     { label: "소유권 확인", value: metrics.claims, tone: "attention" },
     { label: "반환 완료", value: metrics.returned, tone: "success" },
   ];

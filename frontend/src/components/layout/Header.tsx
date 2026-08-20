@@ -10,8 +10,15 @@ import { NotificationToastHost } from "@/components/notifications/NotificationTo
 import { DaruSettings } from "@/components/mascot";
 import { AuthUser, getCurrentUser, logout as logoutRequest } from "@/lib/authApi";
 
-const userNavigation = [
-  { label: "AI 탐지", href: "/detect" },
+type NavigationItem = {
+  label: string;
+  href: string;
+  children?: readonly { label: string; href: string }[];
+  activePaths?: readonly string[];
+};
+
+const userNavigation: readonly NavigationItem[] = [
+  { label: "분실 신고", href: "/lost-reports/new" },
   {
     label: "발견물 센터",
     href: "/found-items",
@@ -20,32 +27,50 @@ const userNavigation = [
       { label: "발견물 지도", href: "/map" },
     ],
   },
+  { label: "물건 확인", href: "/detect" },
   { label: "커뮤니티", href: "/community" },
-  { label: "서비스 소개", href: "/about" },
-  { label: "이용 안내", href: "/guide" },
-] as const;
+  { label: "내 진행 상황", href: "/mypage" },
+];
 
-const adminNavigation = [
-  { label: "대시보드", href: "/admin" },
+const adminNavigation: readonly NavigationItem[] = [
   {
-    label: "검토 업무",
-    href: "/admin/detections",
+    label: "업무 처리",
+    href: "/admin",
+    activePaths: ["/admin", "/admin/detections", "/admin/citizen-reports", "/admin/ownership-claims"],
     children: [
-      { label: "AI 탐지 관리", href: "/admin/detections" },
-      { label: "제보 관리", href: "/admin/citizen-reports" },
+      { label: "관리자 대시보드", href: "/admin" },
+      { label: "AI 탐지 검토", href: "/admin/detections" },
+      { label: "시민 제보 관리", href: "/admin/citizen-reports" },
       { label: "소유권 요청", href: "/admin/ownership-claims" },
     ],
   },
-  { label: "발견물 관리", href: "/admin/found-items" },
   {
-    label: "운영 도구",
-    href: "/admin/map",
+    label: "발견물 관리",
+    href: "/admin/found-items",
+    activePaths: ["/admin/found-items", "/admin/map"],
     children: [
-      { label: "운영 지도", href: "/admin/map" },
-      { label: "AI 탐지 리포트", href: "/admin/ai-report" },
+      { label: "발견물 목록", href: "/admin/found-items" },
+      { label: "관리자 지도", href: "/admin/map" },
     ],
   },
-] as const;
+  {
+    label: "운영 분석",
+    href: "/admin/ai-report",
+    activePaths: ["/admin/ai-report", "/admin/users", "/admin/community-posts"],
+    children: [
+      { label: "AI 리포트", href: "/admin/ai-report" },
+      { label: "사용자 관리", href: "/admin/users" },
+      { label: "게시글 관리", href: "/admin/community-posts" },
+    ],
+  },
+];
+
+function isNavigationItemCurrent(item: NavigationItem, pathname: string) {
+  if (item.activePaths) {
+    return item.activePaths.some((path) => pathname === path || (path !== "/admin" && pathname.startsWith(`${path}/`)));
+  }
+  return pathname === item.href || pathname.startsWith(`${item.href}/`);
+}
 
 function LogoutConfirmDialog({ user, pending, error, onCancel, onConfirm }: { user: AuthUser; pending: boolean; error: string; onCancel: () => void; onConfirm: () => void }) {
   const dialogRef = useRef<HTMLElement>(null);
@@ -183,9 +208,9 @@ export function Header() {
   const requestLogout = () => { setLogoutError(""); setLogoutConfirm(true); };
   const continueSession = () => { if (!logoutPending) { setLogoutConfirm(false); setLogoutError(""); window.setTimeout(() => logoutTriggerRef.current?.focus()); } };
   const renderDesktopNavItem = (item: (typeof navigation)[number]) => {
-    const isCurrent = pathname === item.href;
-    const isGroupCurrent = "children" in item && item.children.some((child) => pathname === child.href || pathname.startsWith(`${child.href}/`));
-    if ("children" in item) {
+    const isCurrent = isNavigationItemCurrent(item, pathname);
+    const isGroupCurrent = item.children?.some((child) => pathname === child.href || pathname.startsWith(`${child.href}/`)) ?? false;
+    if (item.children?.length) {
       const expanded = openNavGroup === item.label;
       return (
         <div
@@ -266,14 +291,14 @@ export function Header() {
         <div ref={menuRef} id="mobile-menu" className="mobile-menu is-open">
           <nav aria-label="모바일 메뉴">
             {authResolved && navigation.map((item) => {
-              const isCurrent = pathname === item.href;
-              const groupCurrent = "children" in item && item.children.some((child) => pathname === child.href || pathname.startsWith(`${child.href}/`));
+              const isCurrent = isNavigationItemCurrent(item, pathname);
+              const groupCurrent = item.children?.some((child) => pathname === child.href || pathname.startsWith(`${child.href}/`)) ?? false;
               return (
                 <Fragment key={item.label}>
                   <Link href={item.href} onClick={closeMenu} aria-current={isCurrent ? "page" : undefined} data-active={groupCurrent || isCurrent}>
                     {item.label}
                   </Link>
-                  {"children" in item && item.children.map((child) => {
+                  {item.children?.map((child) => {
                     const childCurrent = pathname === child.href || pathname.startsWith(`${child.href}/`);
                     return <Link className="mobile-sub-link" key={child.href} href={child.href} onClick={closeMenu} aria-current={childCurrent ? "page" : undefined}>{child.label}</Link>;
                   })}
@@ -282,7 +307,7 @@ export function Header() {
             })}
             {currentUser ? (
               <>
-                <Link href={isAdmin ? "/admin" : "/mypage"} onClick={closeMenu}>{isAdmin ? "관리자 정보" : "마이페이지"}</Link>
+                {isAdmin && <Link href="/admin" onClick={closeMenu}>관리자 정보</Link>}
                 {!isAdmin && <Link href="/notifications" onClick={closeMenu}>알림</Link>}
                 <button className="mobile-auth-button" type="button" onClick={requestLogout}>로그아웃</button>
               </>

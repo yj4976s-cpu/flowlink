@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FormEvent, useRef, useState } from "react";
 import { Icon } from "@/components/common/Icon";
 import {
@@ -58,6 +59,7 @@ export function OwnershipClaimForm({
   onClaimUnavailable: () => void;
   onRequestRefresh: () => void;
 }) {
+  const router = useRouter();
   const [verificationDetails, setVerificationDetails] = useState("");
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -99,6 +101,7 @@ export function OwnershipClaimForm({
       setCreatedClaim(claim);
       setVerificationDetails("");
       onSubmitted();
+      router.replace(`/mypage?reportId=${lostReportId}&submitted=claim`);
     } catch (caught) {
       const isApiError = caught instanceof OwnershipClaimsApiError;
       setSubmitError(

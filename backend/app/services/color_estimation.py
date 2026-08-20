@@ -13,6 +13,29 @@ STANDARD_ITEM_COLORS: tuple[str, ...] = (
     "진파랑", "남색", "보라", "분홍",
 )
 
+_ITEM_COLOR_ALIASES: dict[str, str] = {
+    **{color.casefold(): color for color in STANDARD_ITEM_COLORS},
+    **{f"{color}색".casefold(): color for color in STANDARD_ITEM_COLORS if not color.endswith("색")},
+    "검은색": "검정",
+    "흑색": "검정",
+    "블랙": "검정",
+    "black": "검정",
+    "하얀색": "흰색",
+    "백색": "흰색",
+    "화이트": "흰색",
+    "white": "흰색",
+    "빨간색": "빨강",
+    "적색": "빨강",
+    "레드": "빨강",
+    "red": "빨강",
+    "파란색": "파랑",
+    "청색": "파랑",
+    "블루": "파랑",
+    "blue": "파랑",
+    "네이비": "남색",
+    "navy": "남색",
+}
+
 _COLOR_RGB: dict[str, tuple[int, int, int]] = {
     "검정": (25, 25, 28), "흰색": (242, 242, 240), "회색": (128, 130, 134),
     "아이보리": (238, 232, 207), "크림": (241, 222, 174), "베이지": (202, 181, 145),
@@ -25,8 +48,8 @@ _COLOR_RGB: dict[str, tuple[int, int, int]] = {
 
 
 def normalize_item_color(value: str | None) -> str | None:
-    normalized = value.strip() if value else ""
-    return normalized if normalized in STANDARD_ITEM_COLORS else None
+    normalized = value.strip().casefold() if value else ""
+    return _ITEM_COLOR_ALIASES.get(normalized)
 
 
 def _color_distance(left: tuple[int, int, int], right: tuple[int, int, int]) -> float:

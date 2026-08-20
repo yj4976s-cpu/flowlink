@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from unittest.mock import Mock
 from datetime import datetime, timezone
@@ -64,6 +65,19 @@ def test_malformed_suggestions_are_ignored() -> None:
     assert response.suggestions == []
     non_object = _safe_response('["unexpected"]', user=None, model="test", provider="gemini")
     assert non_object.suggestions == []
+
+
+def test_json_encoded_response_is_decoded() -> None:
+    payload = '{"message":"ok","cards":[{"type":"MATCH","title":"bag","details":["available"]}],"actions":[],"suggestions":[]}'
+    response = _safe_response(json.dumps(payload), user=Mock(role="USER"), model="test", provider="gemini")
+    assert response.message == "ok"
+    assert [card.title for card in response.cards] == ["bag"]
+
+
+def test_markdown_fenced_response_is_decoded() -> None:
+    raw = '```json\n{"message":"ok","cards":[],"actions":[],"suggestions":[]}\n```'
+    response = _safe_response(raw, user=Mock(role="USER"), model="test", provider="gemini")
+    assert response.message == "ok"
 
 
 def test_evidence_timeline_and_safe_map_actions_are_preserved() -> None:
@@ -209,6 +223,64 @@ def test_plain_greeting_does_not_expose_personal_tools(monkeypatch: pytest.Monke
     provider_factory.assert_not_called()
     assert response.provider == "flowlink"
     assert response.model == "local-greeting"
+
+
+def test_logged_in_team_role_response_is_local_and_saved(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider_factory = Mock(side_effect=AssertionError("team role questions should not call the provider"))
+    monkeypatch.setattr("app.services.copilot.create_chat_provider", provider_factory)
+    conversation = Mock(public_id="conversation-id")
+    monkeypatch.setattr("app.services.copilot.validated_context", lambda *_: ("GENERAL", None))
+    monkeypatch.setattr("app.services.copilot.get_or_create", lambda *_: conversation)
+    save_message = Mock()
+    monkeypatch.setattr("app.services.copilot.save_message", save_message)
+    monkeypatch.setattr(
+        "app.services.copilot.model_history",
+        lambda *_: [{"role": "user", "content": "유진설은 뭐 담당했어?"}],
+    )
+    request = CopilotRequest.model_validate(
+        {
+            "messages": [{"role": "user", "content": "유진설은 뭐 담당했어?"}],
+            "context": {"page": "HOME", "path": "/"},
+            "conversation_public_id": "conversation-id",
+        }
+    )
+    response = asyncio.run(create_copilot_response(Mock(), request, Mock(id=1, role="USER")))
+    provider_factory.assert_not_called()
+    assert response.provider == "flowlink"
+    assert response.model == "local-team-roles"
+    assert response.conversation_public_id == "conversation-id"
+    assert "유진설" in response.message
+    assert "조정화" not in response.message
+    assert save_message.call_count == 2
+    assert save_message.call_args_list[0].args[2] == "USER"
+    assert save_message.call_args_list[1].args[2] == "ASSISTANT"
+
+
+def test_logged_in_broad_role_question_uses_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = Mock()
+
+    async def generate(**_kwargs):
+        return Mock(text='{"message":"AI 탐지 역할 안내"}', model="provider-model", provider="test-provider")
+
+    provider.generate = generate
+    provider_factory = Mock(return_value=provider)
+    monkeypatch.setattr("app.services.copilot.create_chat_provider", provider_factory)
+    conversation = Mock(public_id="conversation-id")
+    monkeypatch.setattr("app.services.copilot.validated_context", lambda *_: ("GENERAL", None))
+    monkeypatch.setattr("app.services.copilot.get_or_create", lambda *_: conversation)
+    monkeypatch.setattr("app.services.copilot.save_message", Mock())
+    monkeypatch.setattr(
+        "app.services.copilot.model_history",
+        lambda *_: [{"role": "user", "content": "AI 탐지는 어떤 역할이야?"}],
+    )
+    request = CopilotRequest.model_validate(
+        {"messages": [{"role": "user", "content": "AI 탐지는 어떤 역할이야?"}], "context": {"page": "HOME", "path": "/"}}
+    )
+    response = asyncio.run(create_copilot_response(Mock(), request, Mock(id=1, role="USER")))
+    provider_factory.assert_called_once()
+    assert response.provider == "test-provider"
+    assert response.model == "provider-model"
+    assert response.model != "local-team-roles"
 
 
 def function_call_response(name: str, args: dict) -> Mock:

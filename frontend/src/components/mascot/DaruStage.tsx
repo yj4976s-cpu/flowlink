@@ -85,15 +85,17 @@ export function DaruStage() {
     animationTimerRef.current = window.setTimeout(() => { setInteraction("none"); animationTimerRef.current = null; }, duration);
   }, [reducedMotion]);
 
-  const closeGuide = useCallback(() => {
+  const closeGuide = useCallback(({ restoreFocus = false }: { restoreFocus?: boolean } = {}) => {
     setGuideOpen(false);
-    window.setTimeout(() => stageRef.current?.querySelector<HTMLButtonElement>(`.${styles.character}`)?.focus());
+    if (restoreFocus) {
+      window.setTimeout(() => stageRef.current?.querySelector<HTMLButtonElement>(`.${styles.guideTrigger}`)?.focus());
+    }
   }, []);
 
   useEffect(() => {
     if (!guideOpen) return;
-    const closeOnOutside = (event: PointerEvent) => { if (!stageRef.current?.contains(event.target as Node)) closeGuide(); };
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); closeGuide(); } };
+    const closeOnOutside = (event: PointerEvent) => { if (!stageRef.current?.contains(event.target as Node)) setGuideOpen(false); };
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); closeGuide({ restoreFocus: true }); } };
     document.addEventListener("pointerdown", closeOnOutside);
     window.addEventListener("keydown", closeOnEscape);
     stageRef.current?.querySelector<HTMLElement>(`.${styles.guidePanel} a, .${styles.guidePanel} button`)?.focus();
@@ -119,9 +121,9 @@ export function DaruStage() {
       .filter((element) => !stage.contains(element) && element.offsetParent !== null)
       .map((element) => element.getBoundingClientRect());
     const overlaps = (left: number, top: number) => blockers.some((item) => left < item.right + 14 && left + rect.width > item.left - 14 && top < item.bottom + 14 && top + rect.height > item.top - 14);
-    const horizontalRange = DARU_GROUNDED_ROAMING_CONFIG.mobileRange;
-    const minLeft = mobile ? Math.max(12, rect.left - horizontalRange / 2) : 16;
-    const maxLeft = mobile ? Math.min(window.innerWidth - rect.width - 12, rect.left + horizontalRange / 2) : window.innerWidth - rect.width - 16;
+    const horizontalRange = mobile ? DARU_GROUNDED_ROAMING_CONFIG.mobileRange : DARU_GROUNDED_ROAMING_CONFIG.desktopRange;
+    const minLeft = Math.max(mobile ? 12 : 16, rect.left - horizontalRange / 2);
+    const maxLeft = Math.min(window.innerWidth - rect.width - (mobile ? 12 : 16), rect.left + horizontalRange / 2);
     const groundInset = mobile ? DARU_GROUNDED_ROAMING_CONFIG.mobileGroundInset : DARU_GROUNDED_ROAMING_CONFIG.desktopGroundInset;
     const groundTop = Math.max(88, window.innerHeight - rect.height - groundInset);
     for (let attempt = 0; attempt < 28; attempt += 1) {
@@ -149,30 +151,33 @@ export function DaruStage() {
   }, [roaming]);
 
   const handlePointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
-    if (mode === "hidden" || window.matchMedia("(max-width: 600px)").matches) return;
-    event.preventDefault();
+    if (mode === "hidden") return;
     let dragOrigin = { x: position.x, y: position.y };
     const translated = stageRef.current ? getComputedStyle(stageRef.current).translate.split(" ") : [];
     const translatedX = Number.parseFloat(translated[0]);
     const translatedY = Number.parseFloat(translated[1] ?? "0");
     if (Number.isFinite(translatedX) && Number.isFinite(translatedY)) dragOrigin = { x: translatedX, y: translatedY };
-    freezeRoaming();
-    setGuideOpen(false);
     event.currentTarget.setPointerCapture(event.pointerId);
     dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, originX: dragOrigin.x, originY: dragOrigin.y, moved: false };
-    setInteraction("none");
-    setDragging(true);
-    setLocomotion("drag");
-  }, [freezeRoaming, mode, position.x, position.y]);
+  }, [mode, position.x, position.y]);
 
   const handlePointerMove = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     const dx = event.clientX - drag.startX;
     const dy = event.clientY - drag.startY;
-    if (Math.hypot(dx, dy) > 5) drag.moved = true;
+    if (!drag.moved && Math.hypot(dx, dy) > 5) {
+      drag.moved = true;
+      freezeRoaming();
+      setInteraction("none");
+      setDragging(true);
+      setLocomotion("drag");
+      setGuideOpen(false);
+    }
+    if (!drag.moved) return;
+    event.preventDefault();
     setPosition(clampPosition(drag.originX + dx, drag.originY + dy));
-  }, [clampPosition]);
+  }, [clampPosition, freezeRoaming]);
 
   const handlePointerUp = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
     const drag = dragRef.current;
@@ -180,10 +185,25 @@ export function DaruStage() {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     suppressClickRef.current = drag.moved;
     dragRef.current = null;
+    if (!drag.moved) return;
     setDragging(false);
     setLocomotion("land");
     if (locomotionTimerRef.current !== null) window.clearTimeout(locomotionTimerRef.current);
-    locomotionTimerRef.current = window.setTimeout(() => { setLocomotion("idle"); locomotionTimerRef.current = null; }, 220);
+    locomotionTimerRef.current = window.setTimeout(() => { setLocomotion("idle"); locomotionTimerRef.current = null; }, DARU_GROUNDED_ROAMING_CONFIG.stopWalkMs);
+  }, []);
+
+  const handlePointerCancel = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    suppressClickRef.current = false;
+    dragRef.current = null;
+    if (drag.moved) {
+      setDragging(false);
+      if (locomotionTimerRef.current !== null) window.clearTimeout(locomotionTimerRef.current);
+      locomotionTimerRef.current = null;
+      setLocomotion("idle");
+    }
   }, []);
 
   useEffect(() => {
@@ -211,7 +231,7 @@ export function DaruStage() {
       if (distance < 28) { setRoamRetry((current) => current + 1); return; }
       const mobile = window.matchMedia("(max-width: 600px)").matches;
       const speed = mobile ? DARU_GROUNDED_ROAMING_CONFIG.mobileSpeed : DARU_GROUNDED_ROAMING_CONFIG.desktopSpeed;
-      const duration = Math.min(mobile ? 2800 : 4600, Math.max(mobile ? 1100 : 1500, distance / speed * 1000));
+      const duration = Math.min(mobile ? 5200 : 12000, Math.max(mobile ? 1600 : 2600, distance / speed * 1000));
       const nextFacing = target.x < position.x ? "left" : "right";
       const normalizedSpeed = normalizedMovementSpeed(distance / (duration / 1000), speed) * DARU_PERSONALITY.walkEnergy;
       const startMovement = () => {
@@ -221,7 +241,7 @@ export function DaruStage() {
         setLocomotion("start_walk");
         setRoaming(true);
         setPosition(target);
-        locomotionTimerRef.current = window.setTimeout(() => { setLocomotion("walk"); locomotionTimerRef.current = null; }, 170);
+        locomotionTimerRef.current = window.setTimeout(() => { setLocomotion("walk"); locomotionTimerRef.current = null; }, DARU_GROUNDED_ROAMING_CONFIG.startWalkMs);
       };
       if (nextFacing !== facing) {
         setLocomotion("turn");
@@ -240,8 +260,8 @@ export function DaruStage() {
       setMovementSpeed(0);
       setLocomotion("stop_walk");
       if (locomotionTimerRef.current !== null) window.clearTimeout(locomotionTimerRef.current);
-      locomotionTimerRef.current = window.setTimeout(() => { setLocomotion("idle"); locomotionTimerRef.current = null; }, 220);
-    }, roamDuration + 80);
+      locomotionTimerRef.current = window.setTimeout(() => { setLocomotion("idle"); locomotionTimerRef.current = null; }, DARU_GROUNDED_ROAMING_CONFIG.stopWalkMs);
+    }, roamDuration + DARU_GROUNDED_ROAMING_CONFIG.arrivalSlackMs);
     return () => window.clearTimeout(timer);
   }, [roamDuration, roaming]);
 
@@ -261,11 +281,18 @@ export function DaruStage() {
   }, []);
 
   if (mode === "hidden") return null;
-  const toggleGuide = () => {
+  const handleGuideToggle = () => {
     const rect = stageRef.current?.getBoundingClientRect();
     if (rect) { setPanelSide(rect.left < 330 ? "left" : "right"); setPanelVertical(rect.top < 430 ? "below" : "above"); }
     if (!guideOpen) freezeRoaming();
     setGuideOpen((open) => !open);
+  };
+
+  const handleCharacterClick = () => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
     playOneShot("CLICK", 520);
   };
 
@@ -299,7 +326,7 @@ export function DaruStage() {
   return (
     <aside ref={stageRef} className={styles.stage} data-daru-stage="true" data-dragging={dragging || undefined} data-guide-open={guideOpen || undefined} data-roaming={roaming || undefined} data-panel-side={panelSide} data-panel-vertical={panelVertical} data-occluded={occluded || undefined} style={{ "--daru-x": `${position.x}px`, "--daru-y": `${position.y}px`, "--daru-roam-duration": `${roamDuration}ms` } as React.CSSProperties} aria-label="FlowLink 마스코트 다루">
       {guideOpen && <DaruGuidePanel role={guideRole} userPaused={userPaused} reducedMotion={reducedMotion} onClose={closeGuide} onToggleRoaming={toggleUserPaused} />}
-      <DaruMascot action={action} mode={mode} message={message} reducedMotion={reducedMotion} dragging={dragging} guideOpen={guideOpen} rendererState={rendererState} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onHover={() => { if (!roaming) playOneShot("HOVER", 480); }} onInteract={() => { if (suppressClickRef.current) { suppressClickRef.current = false; return; } toggleGuide(); }} onGuide={toggleGuide} />
+      <DaruMascot action={action} mode={mode} message={message} reducedMotion={reducedMotion} dragging={dragging} guideOpen={guideOpen} rendererState={rendererState} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerCancel} onHover={() => { if (!roaming) playOneShot("HOVER", 480); }} onInteract={handleCharacterClick} onGuide={handleGuideToggle} />
     </aside>
   );
 }

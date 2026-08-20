@@ -20,14 +20,15 @@ interface DaruMascotProps {
   onPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => void;
   onPointerMove: (event: React.PointerEvent<HTMLButtonElement>) => void;
   onPointerUp: (event: React.PointerEvent<HTMLButtonElement>) => void;
+  onPointerCancel: (event: React.PointerEvent<HTMLButtonElement>) => void;
 }
 
-export function DaruMascot({ action, mode, message, reducedMotion, dragging, guideOpen, rendererState, onInteract, onGuide, onHover, onPointerDown, onPointerMove, onPointerUp }: DaruMascotProps) {
+export function DaruMascot({ action, mode, message, reducedMotion, dragging, guideOpen, rendererState, onInteract, onGuide, onHover, onPointerDown, onPointerMove, onPointerUp, onPointerCancel }: DaruMascotProps) {
   const label = message ?? DARU_ACTION_LABEL[action];
   return (
     <div className={styles.mascot} data-action={action} data-mode={mode} data-dragging={dragging || undefined} data-reduced-motion={reducedMotion || undefined}>
       {mode === "active" && action !== "idle" && !guideOpen && <p className={styles.bubble} role="status">{label}</p>}
-      <button className={styles.character} type="button" aria-label="다루 안내 열기 또는 끌어서 옮기기" aria-expanded={guideOpen} aria-controls="daru-guide-panel" onClick={onInteract} onPointerEnter={onHover} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
+      <button className={styles.character} type="button" aria-label="다루와 상호작용하거나 끌어서 이동하기" onClick={onInteract} onPointerEnter={onHover} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerCancel}>
         <DaruCharacter state={rendererState} />
       </button>
       <button className={styles.guideTrigger} type="button" aria-label="다루 안내 열기" aria-expanded={guideOpen} aria-controls="daru-guide-panel" onClick={onGuide}>i</button>

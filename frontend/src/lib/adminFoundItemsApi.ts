@@ -7,6 +7,28 @@ export type AdminFoundItemUpdate = {
   admin_memo?: string;
 };
 
+export type AdminFoundItem = {
+  id: number;
+  item_category: string;
+  item_category_name: string;
+  color: string | null;
+  public_description: string | null;
+  area_name: string;
+  found_at: string;
+  status: string;
+  source_type: "AI" | "CITIZEN" | "ADMIN";
+  storage_location: string | null;
+  image_url: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AdminFoundItemList = {
+  items: AdminFoundItem[];
+  total: number;
+  status_counts: Array<{ status: string; count: number }>;
+};
+
 export class AdminFoundItemsApiError extends Error {
   constructor(message: string, readonly status?: number) {
     super(message);
@@ -18,6 +40,17 @@ function apiBaseUrl() {
   const value = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
   if (!value) throw new AdminFoundItemsApiError("API 서버 주소가 설정되지 않았습니다.");
   return value.replace(/\/+$/, "");
+}
+
+export async function listAdminFoundItems(filters: { skip: number; limit: number; status?: string; item_category?: string; q?: string; found_date?: string }, signal?: AbortSignal) {
+  const url = new URL(`${apiBaseUrl()}/api/admin/found-items`);
+  Object.entries(filters).forEach(([key, value]) => {
+    const normalized = key === "found_date" && value ? `${value}T00:00:00` : String(value ?? "").trim();
+    if (normalized) url.searchParams.set(key, normalized);
+  });
+  const response = await fetch(url, { credentials: "include", signal });
+  if (!response.ok) throw new AdminFoundItemsApiError(response.status === 403 ? "관리자 권한이 필요합니다." : "발견물 정보를 불러오지 못했습니다.", response.status);
+  return response.json() as Promise<AdminFoundItemList>;
 }
 
 export async function updateAdminFoundItem(id: number, update: AdminFoundItemUpdate) {
@@ -37,6 +70,26 @@ export async function updateAdminFoundItem(id: number, update: AdminFoundItemUpd
         : response.status === 422
           ? "현재 상태로 변경할 수 없습니다."
           : "발견물 관리 정보를 저장하지 못했습니다.");
+    throw new AdminFoundItemsApiError(message, response.status);
+  }
+  return response.json() as Promise<{ message: string }>;
+}
+
+export async function archiveAdminFoundItem(id: number) {
+  const response = await fetch(`${apiBaseUrl()}/api/admin/found-items/${id}/archive`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    let serverDetail = "";
+    try { serverDetail = ((await response.json()) as { detail?: string }).detail ?? ""; } catch { /* fallback below */ }
+    const message = serverDetail || (response.status === 403
+      ? "관리자 권한이 필요합니다."
+      : response.status === 404
+        ? "발견물을 찾을 수 없습니다."
+        : response.status === 409
+          ? "진행 중인 소유권 요청을 먼저 처리해야 보관할 수 있습니다."
+          : "발견물을 보관하지 못했습니다.");
     throw new AdminFoundItemsApiError(message, response.status);
   }
   return response.json() as Promise<{ message: string }>;

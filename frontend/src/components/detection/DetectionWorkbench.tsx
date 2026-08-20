@@ -7,6 +7,7 @@ import { useDaru } from "@/components/mascot";
 import { createCitizenReport } from "@/lib/citizenReportsApi";
 import {
   DetectionApiError,
+  DetectionBBox,
   DetectionEvent,
   DetectionObject,
   WebcamDetectionFrame,
@@ -20,6 +21,7 @@ import {
 import type { CitizenReport } from "@/types/discoveryNetwork";
 import { WebcamDetectionPanel } from "./WebcamDetectionPanel";
 import type { WebcamPanelStatus, WebcamReportCandidate } from "./WebcamDetectionPanel";
+import { getContainedMediaRect, getContainedMediaRectStyle, getOverlayPercentageStyle, normalizeBBoxForDisplayMedia } from "./detectionOverlayGeometry";
 import styles from "./DetectionWorkbench.module.css";
 
 type DetectionTab = "image" | "video" | "webcam";
@@ -29,8 +31,22 @@ type FoundReportCandidate = {
   objectClassCode: string;
   objectClassName: string;
   confidence: number;
+  bbox: DetectionBBox | null;
+  mediaWidth: number | null;
+  mediaHeight: number | null;
   image: File | null;
+  previewUrl: string;
   capturedAt: string;
+};
+type OverlayItem = {
+  key: string;
+  bbox: DetectionBBox;
+  label: string;
+  confidence: number;
+};
+type Size = {
+  width: number;
+  height: number;
 };
 
 const IMAGE_MAX_BYTES = 20 * 1024 * 1024;
@@ -42,6 +58,8 @@ const VIDEO_MAX_SECONDS = 30;
 const VIDEO_REPORT_FRAME_MAX_WIDTH = 960;
 const VIDEO_REPORT_FRAME_TIMEOUT_MS = 8000;
 const HISTORY_PAGE_SIZE = 8;
+const RESULT_PAGE_SIZE = 4;
+const CTA_PAGE_SIZE = 4;
 const imageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 const videoTypes = new Set(["video/mp4"]);
 
@@ -52,7 +70,7 @@ const dateFormatter = new Intl.DateTimeFormat("ko-KR", {
 
 const statusLabels: Record<string, string> = {
   PENDING: "대기 중",
-  PROCESSING: "분석 중",
+  PROCESSING: "확인 중",
   COMPLETED: "완료",
   FAILED: "실패",
 };
@@ -61,8 +79,14 @@ const webcamStatusLabels: Record<WebcamPanelStatus, string> = {
   idle: "대기",
   requesting: "권한 요청 중",
   ready: "카메라 준비",
-  running: "실시간 분석 중",
+  running: "실시간 확인 중",
   error: "확인 필요",
+};
+
+const sourceTypeLabels: Record<string, string> = {
+  IMAGE: "사진",
+  VIDEO: "영상",
+  WEBCAM: "카메라",
 };
 
 const groupLabels: Record<string, string> = {
@@ -288,12 +312,151 @@ function validateFile(file: File, tab: DetectionTab) {
   return "";
 }
 
+function detectionObjectToOverlayItem(object: DetectionObject): OverlayItem {
+  return {
+    key: String(object.id),
+    bbox: object.bbox,
+    label: object.class_name_ko,
+    confidence: object.confidence,
+  };
+}
+
+function reportCandidateOverlayItem(candidate: FoundReportCandidate): OverlayItem | null {
+  if (!candidate.bbox) return null;
+  return {
+    key: `${candidate.sourceType}-${candidate.objectClassCode}-${candidate.bbox.x}-${candidate.bbox.y}`,
+    bbox: candidate.bbox,
+    label: candidate.objectClassName,
+    confidence: candidate.confidence,
+  };
+}
+
+function BboxOverlay({
+  items,
+  mediaWidth,
+  mediaHeight,
+  mediaRect,
+  displayMediaSize,
+}: {
+  items: OverlayItem[];
+  mediaWidth: number | null | undefined;
+  mediaHeight: number | null | undefined;
+  mediaRect: NonNullable<ReturnType<typeof getContainedMediaRect>>;
+  displayMediaSize: Size;
+}) {
+  if (items.length === 0) return null;
+
+  return (
+    <div className={styles.mediaLayer} style={getContainedMediaRectStyle(mediaRect)} aria-hidden="true">
+      <div className={styles.overlay}>
+        {items.map((item) => {
+          const normalized = mediaWidth && mediaHeight
+            ? normalizeBBoxForDisplayMedia(
+                item.bbox,
+                { width: mediaWidth, height: mediaHeight },
+                displayMediaSize,
+              )
+            : null;
+          if (!normalized) return null;
+          return (
+            <span key={item.key} className={styles.overlayBox} style={getOverlayPercentageStyle(normalized)}>
+              <b>{item.label} {formatConfidence(item.confidence)}</b>
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function PreviewImageWithOverlay({
+  previewUrl,
+  alt,
+  className,
+  mediaWidth,
+  mediaHeight,
+  overlayItems,
+}: {
+  previewUrl: string;
+  alt: string;
+  className: string;
+  mediaWidth: number | null | undefined;
+  mediaHeight: number | null | undefined;
+  overlayItems: OverlayItem[];
+}) {
+  const frameRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [containerSize, setContainerSize] = useState<Size>({ width: 0, height: 0 });
+  const [loadedImage, setLoadedImage] = useState<{ url: string; size: Size }>({
+    url: "",
+    size: { width: 0, height: 0 },
+  });
+
+  const updateSize = useCallback(() => {
+    const rect = frameRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setContainerSize({ width: rect.width, height: rect.height });
+  }, []);
+
+  useEffect(() => {
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    if (frameRef.current) observer.observe(frameRef.current);
+    return () => observer.disconnect();
+  }, [updateSize, previewUrl]);
+
+  const handleImageLoad = useCallback(() => {
+    const image = imgRef.current;
+    updateSize();
+    setLoadedImage({
+      url: previewUrl,
+      size: {
+        width: image?.naturalWidth ?? 0,
+        height: image?.naturalHeight ?? 0,
+      },
+    });
+  }, [previewUrl, updateSize]);
+
+  const activeNaturalSize = loadedImage.url === previewUrl ? loadedImage.size : { width: 0, height: 0 };
+  const mediaRect = getContainedMediaRect(containerSize, activeNaturalSize);
+
+  return (
+    <div ref={frameRef} className={className}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img ref={imgRef} src={previewUrl} alt={alt} onLoad={handleImageLoad} />
+      {mediaRect && mediaWidth && mediaHeight && (
+        <BboxOverlay
+          items={overlayItems}
+          mediaWidth={mediaWidth}
+          mediaHeight={mediaHeight}
+          mediaRect={mediaRect}
+          displayMediaSize={activeNaturalSize}
+        />
+      )}
+    </div>
+  );
+}
+
 function ResultList({ event }: { event: DetectionEvent | null }) {
+  const [pageState, setPageState] = useState({ key: "", page: 1 });
+  const objects = event?.detected_objects ?? [];
+  const pageKey = `${event?.id ?? "empty"}:${objects.length}`;
+  const pageCount = Math.max(1, Math.ceil(objects.length / RESULT_PAGE_SIZE));
+  const requestedPage = pageState.key === pageKey ? pageState.page : 1;
+  const activePage = Math.min(requestedPage, pageCount);
+  const pagedObjects = objects.slice((activePage - 1) * RESULT_PAGE_SIZE, activePage * RESULT_PAGE_SIZE);
+  const setResultPage = (updater: (current: number) => number) => {
+    setPageState((current) => {
+      const currentPage = current.key === pageKey ? current.page : 1;
+      return { key: pageKey, page: updater(currentPage) };
+    });
+  };
+
   if (!event) {
     return (
       <div className={styles.emptyResult}>
         <Icon name="scan" size={24} />
-        <p>파일을 선택하고 AI 탐지를 시작하면 결과가 여기에 표시됩니다.</p>
+        <p>사진이나 영상을 선택하고 물건 확인을 시작하면 결과가 여기에 표시됩니다.</p>
       </div>
     );
   }
@@ -302,7 +465,7 @@ function ResultList({ event }: { event: DetectionEvent | null }) {
     return (
       <div className={styles.emptyResult}>
         <Icon name="spark" size={24} />
-        <p>탐지가 완료되지 않았습니다. 모델 연결 또는 파일 상태를 확인해주세요.</p>
+        <p>물건 확인을 완료하지 못했습니다. 파일 상태를 확인하고 다시 시도해주세요.</p>
       </div>
     );
   }
@@ -311,32 +474,45 @@ function ResultList({ event }: { event: DetectionEvent | null }) {
     return (
       <div className={styles.emptyResult}>
         <Icon name="check" size={24} />
-        <p>탐지된 객체가 없습니다. 이는 정상 완료 결과일 수 있습니다.</p>
+        <p>확인된 물건이 없습니다. 이는 정상 완료 결과일 수 있습니다.</p>
       </div>
     );
   }
 
   return (
-    <ul className={styles.resultList} aria-label="탐지 객체 목록">
-      {event.detected_objects.map((object) => (
-        <li key={object.id}>
-          <div>
-            <strong>{object.class_name_ko}</strong>
-            <span>{object.class_code} · {groupLabels[object.group_code] ?? object.group_code}</span>
-            {event.source_type === "VIDEO" && (
-              <small className={styles.trackMeta}>
-                {object.track_id !== null && `Track #${object.track_id} · `}
-                {object.first_seen_ms !== null && object.last_seen_ms !== null
-                  ? `${formatMilliseconds(object.first_seen_ms)} ~ ${formatMilliseconds(object.last_seen_ms)} · `
-                  : ""}
-                {object.appearance_count}프레임에서 확인
-              </small>
-            )}
-          </div>
-          <em>탐지 신뢰도 {formatConfidence(object.confidence)}</em>
-        </li>
-      ))}
-    </ul>
+    <div className={styles.resultListWrap}>
+      <ul className={styles.resultList} aria-label="확인된 물건 목록">
+        {pagedObjects.map((object) => (
+          <li key={object.id}>
+            <div>
+              <strong>{object.class_name_ko}</strong>
+              <span>{object.class_code} · {groupLabels[object.group_code] ?? object.group_code}</span>
+              {event.source_type === "VIDEO" && (
+                <small className={styles.trackMeta}>
+                  {object.track_id !== null && `Track #${object.track_id} · `}
+                  {object.first_seen_ms !== null && object.last_seen_ms !== null
+                    ? `${formatMilliseconds(object.first_seen_ms)} ~ ${formatMilliseconds(object.last_seen_ms)} · `
+                    : ""}
+                  {object.appearance_count}프레임에서 확인
+                </small>
+              )}
+            </div>
+            <em>인식 신뢰도 {formatConfidence(object.confidence)}</em>
+          </li>
+        ))}
+      </ul>
+      {objects.length > RESULT_PAGE_SIZE && (
+        <div className={styles.inlinePager} aria-label="확인된 물건 목록 페이지">
+          <button type="button" onClick={() => setResultPage((current) => Math.max(1, current - 1))} disabled={activePage <= 1} aria-label="이전 물건">
+            ←
+          </button>
+          <span>{activePage} / {pageCount}</span>
+          <button type="button" onClick={() => setResultPage((current) => Math.min(pageCount, current + 1))} disabled={activePage >= pageCount} aria-label="다음 물건">
+            →
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -347,8 +523,8 @@ function WebcamResultList({ frame, status }: { frame: WebcamDetectionFrame | nul
         <Icon name="scanLine" size={24} />
         <p>
           {status === "running"
-            ? "웹캠 프레임을 분석하고 있습니다. 첫 결과가 도착하면 여기에 표시됩니다."
-            : "카메라를 켜고 실시간 탐지를 시작하면 결과가 여기에 표시됩니다."}
+            ? "카메라 화면을 확인하고 있습니다. 첫 결과가 도착하면 여기에 표시됩니다."
+            : "카메라를 켜고 물건 확인을 시작하면 결과가 여기에 표시됩니다."}
         </p>
       </div>
     );
@@ -358,22 +534,22 @@ function WebcamResultList({ frame, status }: { frame: WebcamDetectionFrame | nul
     return (
       <div className={styles.emptyResult}>
         <Icon name="check" size={24} />
-        <p>현재 프레임에서 탐지된 객체가 없습니다. 카메라 각도나 조명을 조정해보세요.</p>
+        <p>현재 카메라 화면에서 확인된 물건이 없습니다. 각도나 조명을 조정해보세요.</p>
       </div>
     );
   }
 
   return (
-    <ul className={styles.resultList} aria-label="실시간 웹캠 탐지 객체 목록">
+    <ul className={styles.resultList} aria-label="카메라로 확인된 물건 목록">
       {frame.detected_objects.map((object, index) => (
         <li key={`${object.label}-${index}-${object.bbox.x}-${object.bbox.y}`}>
           <div>
             <strong>{object.label}</strong>
             <span>
-              {Math.round(object.bbox.width)}×{Math.round(object.bbox.height)}px · 실시간 프레임
+              {Math.round(object.bbox.width)}×{Math.round(object.bbox.height)}px · 확인 화면
             </span>
           </div>
-          <em>탐지 신뢰도 {formatConfidence(object.confidence)}</em>
+          <em>인식 신뢰도 {formatConfidence(object.confidence)}</em>
         </li>
       ))}
     </ul>
@@ -387,45 +563,15 @@ function ImageOverlay({
   event: DetectionEvent | null;
   previewUrl: string;
 }) {
-  const imageRef = useRef<HTMLImageElement>(null);
-  const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
-
-  const updateSize = useCallback(() => {
-    const rect = imageRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setImageSize({ width: rect.width, height: rect.height });
-  }, []);
-
-  useEffect(() => {
-    updateSize();
-    const observer = new ResizeObserver(updateSize);
-    if (imageRef.current) observer.observe(imageRef.current);
-    return () => observer.disconnect();
-  }, [updateSize, previewUrl]);
-
-  const canRenderOverlay = Boolean(
-    event?.media_width && event.media_height && event.detected_objects.length > 0 && imageSize.width && imageSize.height,
-  );
-
   return (
-    <div className={styles.previewFrame}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img ref={imageRef} src={previewUrl} alt="업로드한 이미지 미리보기" onLoad={updateSize} />
-      {canRenderOverlay && (
-        <div className={styles.overlay} aria-hidden="true">
-          {event!.detected_objects.map((object) => (
-            <OverlayBox
-              key={object.id}
-              object={object}
-              mediaWidth={event!.media_width!}
-              mediaHeight={event!.media_height!}
-              imageWidth={imageSize.width}
-              imageHeight={imageSize.height}
-            />
-          ))}
-        </div>
-      )}
-    </div>
+    <PreviewImageWithOverlay
+      previewUrl={previewUrl}
+      alt="업로드한 이미지 미리보기"
+      className={styles.previewFrame}
+      mediaWidth={event?.media_width}
+      mediaHeight={event?.media_height}
+      overlayItems={event?.detected_objects.map(detectionObjectToOverlayItem) ?? []}
+    />
   );
 }
 
@@ -444,8 +590,7 @@ function WebcamReportModal({
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
-  const [previewUrl, setPreviewUrl] = useState("");
-  const [previewFailed, setPreviewFailed] = useState(false);
+  const previewUrl = candidate.previewUrl;
   const defaultClassCode = candidate.objectClassCode || "BAG";
   const label = candidate.objectClassName;
   const emptyPreviewTitle = candidate.sourceType === "image" ? "이미지를 첨부하지 못했습니다." : "대표 이미지는 첨부하지 않습니다.";
@@ -454,32 +599,7 @@ function WebcamReportModal({
     : candidate.sourceType === "video"
       ? "영상 프레임을 캡처하지 못한 경우 물품 종류와 설명만으로 제보를 시작합니다."
       : "현재 프레임을 캡처하지 못한 경우 물품 종류와 설명만으로 제보를 시작합니다.";
-
-  useEffect(() => {
-    let active = true;
-    if (!candidate.image || candidate.image.size === 0) {
-      queueMicrotask(() => {
-        if (!active) return;
-        setPreviewFailed(false);
-        setPreviewUrl("");
-      });
-      return () => {
-        active = false;
-      };
-    }
-
-    const url = URL.createObjectURL(candidate.image);
-    queueMicrotask(() => {
-      if (!active) return;
-      setPreviewFailed(false);
-      setPreviewUrl(url);
-    });
-
-    return () => {
-      active = false;
-      URL.revokeObjectURL(url);
-    };
-  }, [candidate.image]);
+  const overlayItem = reportCandidateOverlayItem(candidate);
 
   return (
     <div className={styles.reportModalBackdrop} role="presentation" onMouseDown={onClose}>
@@ -504,33 +624,35 @@ function WebcamReportModal({
           <div className={styles.reportSuccess}>
             <Icon name="check" size={28} />
             <strong>발견 제보가 접수되었습니다.</strong>
-            <p>관리자가 탐지 내용과 발견 정보를 확인한 뒤 공식 발견물로 등록합니다.</p>
+            <p>관리자가 확인 내용과 발견 정보를 검토한 뒤 공식 발견물로 등록합니다.</p>
             <div>
               <Link className="button button-secondary" href="/mypage#my-activity">내 제보 확인</Link>
-              <button className="button button-primary" type="button" onClick={onClose}>계속 탐지하기</button>
+              <button className="button button-primary" type="button" onClick={onClose}>계속 확인하기</button>
             </div>
           </div>
         ) : (
           <form className={styles.reportForm} onSubmit={onSubmit}>
             <div className={styles.reportPreviewGrid}>
-              {previewUrl && !previewFailed ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={previewUrl}
-                  alt="발견 제보에 첨부할 탐지 이미지"
-                  onError={() => setPreviewFailed(true)}
+              {previewUrl ? (
+                <PreviewImageWithOverlay
+                  previewUrl={previewUrl}
+                  alt="발견 제보에 첨부할 확인 이미지"
+                  className={styles.reportPreviewFrame}
+                  mediaWidth={candidate.mediaWidth}
+                  mediaHeight={candidate.mediaHeight}
+                  overlayItems={overlayItem ? [overlayItem] : []}
                 />
               ) : (
                 <div className={styles.reportPreviewEmpty}>
                   <Icon name="document" size={26} />
-                  <strong>{previewFailed ? "탐지 프레임을 불러오지 못했어요." : emptyPreviewTitle}</strong>
-                  <p>{previewFailed ? "다시 실시간 탐지 후 제보해주세요." : emptyPreviewText}</p>
+                  <strong>{emptyPreviewTitle}</strong>
+                  <p>{emptyPreviewText}</p>
                 </div>
               )}
               <div className={styles.reportCandidateMeta}>
-                <span>AI 예상 후보</span>
+                <span>물건 종류 후보</span>
                 <strong>{label}</strong>
-                <em>탐지 신뢰도 {formatConfidence(candidate.confidence)}</em>
+                <em>인식 신뢰도 {formatConfidence(candidate.confidence)}</em>
                 <p>물품 종류는 참고값입니다. 실제 제보 내용에 맞게 수정할 수 있어요.</p>
               </div>
             </div>
@@ -577,35 +699,6 @@ function WebcamReportModal({
   );
 }
 
-function OverlayBox({
-  object,
-  mediaWidth,
-  mediaHeight,
-  imageWidth,
-  imageHeight,
-}: {
-  object: DetectionObject;
-  mediaWidth: number;
-  mediaHeight: number;
-  imageWidth: number;
-  imageHeight: number;
-}) {
-  const scaleX = imageWidth / mediaWidth;
-  const scaleY = imageHeight / mediaHeight;
-  const style = {
-    left: object.bbox.x * scaleX,
-    top: object.bbox.y * scaleY,
-    width: object.bbox.width * scaleX,
-    height: object.bbox.height * scaleY,
-  };
-
-  return (
-    <span className={styles.overlayBox} style={style}>
-      <b>{object.class_name_ko} {formatConfidence(object.confidence)}</b>
-    </span>
-  );
-}
-
 export function DetectionWorkbench() {
   const { cue: cueDaru } = useDaru();
   const [tab, setTab] = useState<DetectionTab>("image");
@@ -628,9 +721,11 @@ export function DetectionWorkbench() {
   const [deletingHistoryIds, setDeletingHistoryIds] = useState<Set<number>>(() => new Set());
   const [deletingAllHistory, setDeletingAllHistory] = useState(false);
   const [historyPage, setHistoryPage] = useState(1);
+  const [ctaPageState, setCtaPageState] = useState({ key: "", page: 1 });
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewUrlRef = useRef("");
+  const reportPreviewUrlRef = useRef("");
   const webcamReportSubmittingRef = useRef(false);
   const webcamFoundSignatureRef = useRef("");
 
@@ -657,6 +752,20 @@ export function DetectionWorkbench() {
     () => currentEvent?.detected_objects.filter(isReportablePersonalItem) ?? [],
     [currentEvent],
   );
+  const ctaPageKey = `${currentEvent?.id ?? "empty"}:${personalItemObjects.length}`;
+  const ctaPageCount = Math.max(1, Math.ceil(personalItemObjects.length / CTA_PAGE_SIZE));
+  const requestedCtaPage = ctaPageState.key === ctaPageKey ? ctaPageState.page : 1;
+  const activeCtaPage = Math.min(requestedCtaPage, ctaPageCount);
+  const pagedPersonalItemObjects = useMemo(() => {
+    const start = (activeCtaPage - 1) * CTA_PAGE_SIZE;
+    return personalItemObjects.slice(start, start + CTA_PAGE_SIZE);
+  }, [activeCtaPage, personalItemObjects]);
+  const setCtaPage = (updater: (current: number) => number) => {
+    setCtaPageState((current) => {
+      const currentPage = current.key === ctaPageKey ? current.page : 1;
+      return { key: ctaPageKey, page: updater(currentPage) };
+    });
+  };
   const historyPageCount = Math.max(1, Math.ceil(history.length / HISTORY_PAGE_SIZE));
   const activeHistoryPage = Math.min(historyPage, historyPageCount);
   const pagedHistory = useMemo(() => {
@@ -671,10 +780,17 @@ export function DetectionWorkbench() {
       setHistoryPage(1);
     } catch (caught) {
       if (caught instanceof DOMException && caught.name === "AbortError") return;
-      const message = caught instanceof DetectionApiError ? caught.message : "탐지 기록을 불러오지 못했습니다.";
+      const message = caught instanceof DetectionApiError ? caught.message : "확인 기록을 불러오지 못했습니다.";
       setHistoryError(message);
     } finally {
       if (!signal?.aborted) setHistoryLoading(false);
+    }
+  }, []);
+
+  const revokeReportPreviewUrl = useCallback(() => {
+    if (reportPreviewUrlRef.current) {
+      URL.revokeObjectURL(reportPreviewUrlRef.current);
+      reportPreviewUrlRef.current = "";
     }
   }, []);
 
@@ -687,6 +803,7 @@ export function DetectionWorkbench() {
   useEffect(() => {
     return () => {
       if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+      if (reportPreviewUrlRef.current) URL.revokeObjectURL(reportPreviewUrlRef.current);
     };
   }, []);
 
@@ -789,6 +906,7 @@ export function DetectionWorkbench() {
   };
 
   const resetSelectedFile = () => {
+    revokeReportPreviewUrl();
     setFile(null);
     setVideoDuration(null);
     setVideoThumbnailUrl("");
@@ -866,7 +984,7 @@ export function DetectionWorkbench() {
       setHistoryError("");
       await refreshHistory();
     } catch (caught) {
-      const message = caught instanceof DetectionApiError ? caught.message : "AI 탐지를 처리하지 못했습니다.";
+      const message = caught instanceof DetectionApiError ? caught.message : "물건 확인을 처리하지 못했습니다.";
       setError(message);
       setSubmitState("error");
       cueDaru("rest", { source: "service" });
@@ -887,7 +1005,7 @@ export function DetectionWorkbench() {
       setWebcamFrame(null);
       setWebcamStatus("idle");
     } catch (caught) {
-      const message = caught instanceof DetectionApiError ? caught.message : "탐지 상세를 불러오지 못했습니다.";
+      const message = caught instanceof DetectionApiError ? caught.message : "확인 상세를 불러오지 못했습니다.";
       setError(message);
       setSubmitState("error");
     }
@@ -905,7 +1023,7 @@ export function DetectionWorkbench() {
         setSubmitState(file ? "selected" : "idle");
       }
     } catch (caught) {
-      const message = caught instanceof DetectionApiError ? caught.message : "탐지 기록을 삭제하지 못했습니다.";
+      const message = caught instanceof DetectionApiError ? caught.message : "확인 기록을 삭제하지 못했습니다.";
       setHistoryError(message);
     } finally {
       setDeletingHistoryIds((current) => {
@@ -918,7 +1036,7 @@ export function DetectionWorkbench() {
 
   const handleDeleteAllHistory = async () => {
     if (deletingAllHistory || history.length === 0) return;
-    const confirmed = window.confirm("내 AI 탐지 기록을 모두 삭제할까요? 업로드한 이미지·영상 기록도 함께 정리됩니다.");
+    const confirmed = window.confirm("내 물건 확인 기록을 모두 삭제할까요? 업로드한 이미지·영상 기록도 함께 정리됩니다.");
     if (!confirmed) return;
 
     setHistoryError("");
@@ -930,7 +1048,7 @@ export function DetectionWorkbench() {
       setCurrentEvent(null);
       setSubmitState(file ? "selected" : "idle");
     } catch (caught) {
-      const message = caught instanceof DetectionApiError ? caught.message : "탐지 기록을 모두 삭제하지 못했습니다.";
+      const message = caught instanceof DetectionApiError ? caught.message : "확인 기록을 모두 삭제하지 못했습니다.";
       setHistoryError(message);
     } finally {
       setDeletingAllHistory(false);
@@ -941,12 +1059,19 @@ export function DetectionWorkbench() {
   const openWebcamReport = (candidate: WebcamReportCandidate) => {
     const classCode = getReportableClassCode(candidate.object.class_code);
     if (!classCode) return;
+    const reportPreviewUrl = URL.createObjectURL(candidate.image);
+    revokeReportPreviewUrl();
+    reportPreviewUrlRef.current = reportPreviewUrl;
     setWebcamReportCandidate({
       sourceType: "webcam",
       objectClassCode: classCode,
       objectClassName: candidate.object.class_name_ko ?? reportableClassNames[classCode] ?? candidate.object.label,
       confidence: candidate.object.confidence,
+      bbox: candidate.object.bbox,
+      mediaWidth: candidate.frame.media_width,
+      mediaHeight: candidate.frame.media_height,
       image: candidate.image,
+      previewUrl: reportPreviewUrl,
       capturedAt: candidate.capturedAt,
     });
     setWebcamReportError("");
@@ -972,12 +1097,20 @@ export function DetectionWorkbench() {
       image = await captureVideoReportFrame(sourceFile, object);
     }
 
+    const reportPreviewUrl = image ? URL.createObjectURL(image) : "";
+    revokeReportPreviewUrl();
+    reportPreviewUrlRef.current = reportPreviewUrl;
+
     setWebcamReportCandidate({
       sourceType,
       objectClassCode: classCode,
       objectClassName: object.class_name_ko || reportableClassNames[classCode],
       confidence: object.confidence,
+      bbox: object.bbox,
+      mediaWidth: sourceEvent.media_width,
+      mediaHeight: sourceEvent.media_height,
       image,
+      previewUrl: reportPreviewUrl,
       capturedAt: sourceEvent.processing_completed_at ?? sourceEvent.created_at,
     });
     setWebcamReportError(imageError);
@@ -986,6 +1119,7 @@ export function DetectionWorkbench() {
 
   const closeWebcamReport = () => {
     if (webcamReportSubmittingRef.current) return;
+    revokeReportPreviewUrl();
     setWebcamReportCandidate(null);
     setWebcamReportError("");
     setWebcamReportSuccess(null);
@@ -1008,7 +1142,7 @@ export function DetectionWorkbench() {
     }
 
     if (webcamReportCandidate.sourceType === "webcam" && (!webcamReportCandidate.image || webcamReportCandidate.image.size === 0)) {
-      setWebcamReportError("웹캠 탐지 프레임을 첨부하지 못했습니다. 다시 탐지한 뒤 발견 제보를 접수해 주세요.");
+      setWebcamReportError("카메라 확인 화면을 첨부하지 못했습니다. 다시 확인한 뒤 발견 제보를 접수해 주세요.");
       return;
     }
 
@@ -1043,25 +1177,26 @@ export function DetectionWorkbench() {
     ? webcamFrame?.detected_objects.length ?? 0
     : currentEvent?.detected_objects.length ?? 0;
   const displayedSourceType = tab === "webcam" ? "WEBCAM" : currentEvent?.source_type ?? (tab === "image" ? "IMAGE" : "VIDEO");
+  const displayedSourceTypeLabel = sourceTypeLabels[displayedSourceType] ?? displayedSourceType;
 
   return (
     <main className={styles.page}>
       <section className={styles.hero} aria-labelledby="detect-title">
-        <p className={styles.eyebrow}>AI DETECTION</p>
-        <h1 id="detect-title">AI 수면 객체 탐지</h1>
-        <p>사진·영상·웹캠으로 수면 위 객체 후보를 빠르게 확인합니다. 결과는 참고용이며 관리자 확인 전 실제 객체와 다를 수 있습니다.</p>
+        <p className={styles.eyebrow}>AI 자동 분석</p>
+        <h1 id="detect-title">사진·영상 속 물건을 확인해요</h1>
+        <p>사진·영상 또는 카메라를 사용하면 화면 속 물건의 종류와 위치를 자동으로 확인해드려요. 결과를 확인한 뒤 발견 제보나 분실 신고로 이어갈 수 있어요.</p>
       </section>
 
       <section className={styles.workbench} aria-labelledby="workbench-title">
-        <div className={styles.tabs} role="tablist" aria-label="탐지 유형">
+        <div className={styles.tabs} role="tablist" aria-label="물건 확인 방법">
           <button type="button" role="tab" aria-selected={tab === "image"} onClick={() => handleTabChange("image")}>
-            이미지 분석
+            사진으로 확인
           </button>
           <button type="button" role="tab" aria-selected={tab === "video"} onClick={() => handleTabChange("video")}>
-            영상 분석
+            영상으로 확인
           </button>
           <button type="button" role="tab" aria-selected={tab === "webcam"} onClick={() => handleTabChange("webcam")}>
-            실시간 웹캠
+            카메라로 확인
           </button>
         </div>
 
@@ -1130,7 +1265,7 @@ export function DetectionWorkbench() {
 
                 <div className={styles.actions}>
                   <button className="button button-primary" type="submit" disabled={!file || submitState === "analyzing"}>
-                    {submitState === "analyzing" ? "AI 탐지 중..." : "AI 탐지 시작"}
+                    {submitState === "analyzing" ? "물건 확인 중..." : "물건 확인 시작"}
                     <Icon name="arrow" size={18} />
                   </button>
                   <button className="button button-secondary" type="button" onClick={resetSelectedFile} disabled={submitState === "analyzing"}>
@@ -1145,35 +1280,35 @@ export function DetectionWorkbench() {
             <div className={styles.panelHeading}>
               <div>
                 <p className={styles.eyebrow}>RESULT</p>
-                <h2>분석 상태</h2>
+                <h2>확인 결과</h2>
               </div>
               <span>{displayedStatus}</span>
             </div>
 
             <div className={styles.summaryCards}>
               <div>
-                <span>탐지 객체</span>
+                <span>확인된 물건</span>
                 <strong>{displayedObjectCount}개</strong>
               </div>
               <div>
-                <span>분석 유형</span>
-                <strong>{displayedSourceType}</strong>
+                <span>확인 방법</span>
+                <strong>{displayedSourceTypeLabel}</strong>
               </div>
             </div>
 
             {tab === "webcam" ? <WebcamResultList frame={webcamFrame} status={webcamStatus} /> : <ResultList event={currentEvent} />}
 
-            <p className={styles.notice}>AI 분석 결과는 참고용이며 동일 물품 또는 소유권을 확정하지 않습니다.</p>
+            <p className={styles.notice}>자동 확인 결과는 참고용이며 동일한 물건이나 소유권을 확정하지 않습니다.</p>
 
             {personalItemObjects.length > 0 && tab !== "webcam" && (
               <div className={styles.ctaBox}>
-                <strong>개인 물품 후보를 어떻게 처리할까요?</strong>
+                <strong>확인된 물건을 어떻게 처리할까요?</strong>
                 <p>AI가 실제 소유자를 확정하지는 않습니다. 상황에 맞는 다음 행동을 선택해주세요.</p>
                 <div className={styles.ctaObjectList}>
-                  {personalItemObjects.map((object) => (
+                  {pagedPersonalItemObjects.map((object) => (
                     <article key={object.id} className={styles.ctaObjectCard}>
                       <span>{object.class_name_ko || reportableClassNames[object.class_code]}</span>
-                      <small>탐지 신뢰도 {formatConfidence(object.confidence)}</small>
+                      <small>인식 신뢰도 {formatConfidence(object.confidence)}</small>
                       <div>
                         <button className="button button-secondary" type="button" onClick={() => void openDetectionReport(object)}>
                           발견한 물건을 제보할게요
@@ -1187,6 +1322,17 @@ export function DetectionWorkbench() {
                 </div>
                 <div className={styles.ctaFooter}>
                   <Link className="button button-secondary" href="/found-items">비슷한 발견물 보기</Link>
+                  {personalItemObjects.length > CTA_PAGE_SIZE && (
+                    <div className={styles.inlinePager} aria-label="개인 물품 후보 페이지">
+                      <button type="button" onClick={() => setCtaPage((current) => Math.max(1, current - 1))} disabled={activeCtaPage <= 1} aria-label="이전 개인 물품 후보">
+                        ←
+                      </button>
+                      <span>{activeCtaPage} / {ctaPageCount}</span>
+                      <button type="button" onClick={() => setCtaPage((current) => Math.min(ctaPageCount, current + 1))} disabled={activeCtaPage >= ctaPageCount} aria-label="다음 개인 물품 후보">
+                        →
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -1209,7 +1355,7 @@ export function DetectionWorkbench() {
         <div className={styles.panelHeading}>
           <div>
             <p className={styles.eyebrow}>MY HISTORY</p>
-            <h2 id="history-title">최근 내 탐지 기록</h2>
+            <h2 id="history-title">최근 내 확인 기록</h2>
           </div>
           <div className={styles.historyActions}>
             <span>
@@ -1217,12 +1363,12 @@ export function DetectionWorkbench() {
                 ? "불러오는 중"
                 : `총 ${history.length}건 · ${activeHistoryPage} / ${historyPageCount}`}
             </span>
-            <div className={styles.historyPager} aria-label="탐지 기록 페이지">
+            <div className={styles.historyPager} aria-label="확인 기록 페이지">
               <button
                 type="button"
                 onClick={() => setHistoryPage((current) => Math.max(1, current - 1))}
                 disabled={historyLoading || activeHistoryPage <= 1 || deletingAllHistory}
-                aria-label="이전 탐지 기록 페이지"
+                aria-label="이전 확인 기록 페이지"
               >
                 ←
               </button>
@@ -1230,7 +1376,7 @@ export function DetectionWorkbench() {
                 type="button"
                 onClick={() => setHistoryPage((current) => Math.min(historyPageCount, current + 1))}
                 disabled={historyLoading || activeHistoryPage >= historyPageCount || deletingAllHistory}
-                aria-label="다음 탐지 기록 페이지"
+                aria-label="다음 확인 기록 페이지"
               >
                 →
               </button>
@@ -1246,11 +1392,11 @@ export function DetectionWorkbench() {
         </div>
 
         {historyError && <p className={styles.error} role="alert">{historyError}</p>}
-        {historyLoading && <div className={styles.stateCard} role="status"><Icon name="scan" size={22} /> 탐지 기록을 불러오고 있습니다.</div>}
+        {historyLoading && <div className={styles.stateCard} role="status"><Icon name="scan" size={22} /> 확인 기록을 불러오고 있습니다.</div>}
         {!historyLoading && !historyError && history.length === 0 && (
           <div className={styles.stateCard}>
             <Icon name="document" size={22} />
-            <span>아직 저장된 사용자 분석 기록이 없습니다.</span>
+            <span>아직 저장된 물건 확인 기록이 없습니다.</span>
           </div>
         )}
         {!historyLoading && !historyError && history.length > 0 && (
@@ -1268,14 +1414,14 @@ export function DetectionWorkbench() {
                     <span>{event.source_type}</span>
                     <strong>{statusLabels[event.status] ?? event.status}</strong>
                     <em>{formatDateTime(event.created_at)}</em>
-                    <b>{event.detected_objects.length}개 · {event.detected_objects[0]?.class_name_ko ?? "탐지 객체 없음"}</b>
+                    <b>{event.detected_objects.length}개 · {event.detected_objects[0]?.class_name_ko ?? "확인된 물건 없음"}</b>
                   </button>
                   <button
                     type="button"
                     className={styles.historyDeleteButton}
                     onClick={() => void handleDeleteHistory(event.id)}
                     disabled={isDeleting || deletingAllHistory}
-                    aria-label={`탐지 기록 ${event.id} 삭제`}
+                    aria-label={`확인 기록 ${event.id} 삭제`}
                   >
                     {isDeleting ? "삭제 중" : "삭제"}
                   </button>

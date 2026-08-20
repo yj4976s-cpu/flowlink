@@ -36,7 +36,9 @@ export function guestContextPrompts(pageContext: ChatPageContext): ChatPrompt[] 
 }
 
 const allPublic: ChatRole[] = ["GUEST", "USER"];
+const allRoles: ChatRole[] = ["GUEST", "USER", "ADMIN"];
 const prompts: ChatPrompt[] = [
+  { id: "team-roles", title: "팀원 역할 보기", message: "FlowLink 팀원 역할 알려줘", roles: allRoles, priority: 78 },
   { id: "lost-write", title: "신고 내용 작성하기", description: "찾는 데 도움이 되는 필수 정보를 확인해요.", message: "분실 신고에 어떤 내용을 적어야 해?", roles: allPublic, pages: ["LOST_REPORT_NEW"], priority: 100 },
   { id: "lost-location", title: "위치가 정확하지 않을 때", message: "위치를 정확히 기억하지 못하면 어떻게 해?", roles: allPublic, pages: ["LOST_REPORT_NEW"], priority: 95 },
   { id: "lost-photo", title: "사진 없이 신고하기", message: "사진이 없어도 분실 신고를 할 수 있어?", roles: allPublic, pages: ["LOST_REPORT_NEW"], priority: 90 },

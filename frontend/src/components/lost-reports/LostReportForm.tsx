@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/common/Icon";
 import {
@@ -338,6 +338,7 @@ function SuccessPanel({ report, onReset }: { report: LostReportResponse; onReset
 }
 
 export function LostReportForm() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [formData, setFormData] = useState<FormData>(emptyFormData);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
@@ -610,6 +611,7 @@ export function LostReportForm() {
       const report = await createLostReport(createRequest(formData, lostAt, selectedColors, selectedLocation, { subtypeLabel, footwearCondition, footwearSide, ballSize, colorBalance }), selectedImage ?? undefined);
       setCreatedReport(report);
       clearImage();
+      router.replace(`/matches?reportId=${report.id}`);
     } catch (caught) {
       const isApiError = caught instanceof LostReportsApiError;
       const message = isApiError

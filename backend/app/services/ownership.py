@@ -17,6 +17,9 @@ from app.repositories.user_flow import (
     get_match_candidate,
     get_ownership_claim_by_id,
     has_other_active_ownership_claim,
+    list_ownership_claims_for_user,
+    list_ownership_claims_for_user_reports,
+    list_representative_ownership_claims_for_user_reports,
 )
 from app.schemas.ownership_claim import OwnershipClaimCreateRequest, OwnershipClaimResponse, OwnershipClaimUpdateRequest
 from app.services.mappers import ownership_claim_response
@@ -32,13 +35,49 @@ CLAIM_TRANSITIONS = {
 }
 
 
+def list_claims_for_user(
+    db: Session,
+    *,
+    current_user: User,
+    skip: int,
+    limit: int,
+) -> list[OwnershipClaimResponse]:
+    claims = list_ownership_claims_for_user(
+        db,
+        current_user.id,
+        skip=skip,
+        limit=limit,
+    )
+    return [ownership_claim_response(claim) for claim in claims]
+
+
+def list_claim_progress_for_user(
+    db: Session,
+    *,
+    current_user: User,
+    lost_report_ids: list[int],
+) -> list[OwnershipClaimResponse]:
+    claims = list_representative_ownership_claims_for_user_reports(db, current_user.id, lost_report_ids)
+    return [ownership_claim_response(claim) for claim in claims]
+
+
+def list_claim_activity_for_user(
+    db: Session,
+    *,
+    current_user: User,
+    lost_report_ids: list[int],
+) -> list[OwnershipClaimResponse]:
+    claims = list_ownership_claims_for_user_reports(db, current_user.id, lost_report_ids)
+    return [ownership_claim_response(claim) for claim in claims]
+
+
 def create_claim_for_user(
     db: Session,
     *,
     current_user: User,
     request: OwnershipClaimCreateRequest,
 ) -> OwnershipClaimResponse:
-    found_item = get_claimable_found_item_by_id(db, request.found_item_id)
+    found_item = get_claimable_found_item_by_id(db, request.found_item_id, for_update=True)
     if found_item is None:
         # 비공개이거나 claim 불가능한 발견물도 404로 숨겨 ID 존재 여부를 노출하지 않는다.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Found item not found")
@@ -101,6 +140,7 @@ def create_claim_for_user(
             if match_candidate is not None:
                 match_candidate.status = "CLAIMED"
                 match_candidate.updated_at = now
+        reconcile_match_candidates_for_found_item(db, found_item)
         add_processing_history(
             db,
             ProcessingHistory(

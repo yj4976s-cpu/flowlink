@@ -15,6 +15,7 @@ from app.core.security import hash_password
 from app.db.session import Base, get_db
 from app.main import app
 from app.models import CitizenReport, CitizenSighting, FoundItem, LostReport, MatchCandidate, ObjectClass, ProcessingHistory, User
+from app.services.citizen_reports import cancel_report
 from app.services.image_uploads import save_public_image
 
 
@@ -55,6 +56,18 @@ def create_report(client: TestClient) -> dict:
     response = client.post("/api/citizen-reports", data={"object_class": "BAG", "color": "검정", "description": "검정 가방을 발견했습니다", "area_name": "잠실", "found_at": "2026-08-10T01:00:00Z"})
     assert response.status_code == 201
     return response.json()
+
+
+def image_bytes(*, width: int = 8, height: int = 8, image_format: str = "JPEG", orientation: int | None = None) -> bytes:
+    payload = BytesIO()
+    image = Image.new("RGB", (width, height), "red")
+    if orientation is None:
+        image.save(payload, format=image_format)
+    else:
+        exif = Image.Exif()
+        exif[274] = orientation
+        image.save(payload, format=image_format, exif=exif)
+    return payload.getvalue()
 
 
 def test_webcam_style_footwear_report_attaches_image_and_is_pending_for_admin(
@@ -203,12 +216,208 @@ def test_admin_citizen_report_access_list_detail_review_and_missing(client: Test
     assert client.post("/api/admin/citizen-reports/999999/resolve", json={"mode": "LINK_EXISTING", "found_item_id": 1}).status_code == 404
 
 
+def test_owner_can_delete_pending_report_and_remove_uploaded_image(client: TestClient, db: Session, tmp_path, monkeypatch) -> None:
+    seed(db)
+    login(client, "user@example.com")
+    monkeypatch.setattr("app.api.citizen_reports.upload_root", lambda: tmp_path)
+    response = client.post(
+        "/api/citizen-reports",
+        data={"object_class": "FOOTWEAR", "color": "white", "description": "webcam frame report", "area_name": "demo booth", "found_at": "2026-08-10T01:00:00Z"},
+        files={"image": ("frame.jpg", image_bytes(), "image/jpeg")},
+    )
+    assert response.status_code == 201
+    report = response.json()
+    image_path = tmp_path / report["image_url"].removeprefix("/uploads/")
+    assert image_path.is_file()
+
+    deleted = client.delete(f"/api/citizen-reports/{report['id']}")
+
+    assert deleted.status_code == 200
+    assert deleted.json()["status"] == "CANCELLED"
+    stored = db.get(CitizenReport, report["id"])
+    assert stored is not None
+    assert stored.status == "CANCELLED"
+    assert stored.image_url is None
+    assert not image_path.exists()
+    assert client.get("/api/citizen-reports/mine").json() == []
+    assert client.get("/api/citizen-reports").json() == []
+    login(client, "admin@example.com")
+    assert client.get("/api/admin/citizen-reports").json() == []
+    assert client.get("/api/admin/citizen-reports?status=CANCELLED").json() == []
+    assert client.get(f"/api/admin/citizen-reports/{report['id']}").status_code == 404
+
+
+def test_only_owner_can_delete_citizen_report(client: TestClient, db: Session) -> None:
+    seed(db)
+    login(client, "user@example.com")
+    report = create_report(client)
+
+    login(client, "other@example.com")
+    response = client.delete(f"/api/citizen-reports/{report['id']}")
+
+    assert response.status_code == 404
+    assert db.get(CitizenReport, report["id"]).status == "PENDING"
+
+
+def test_owner_can_delete_under_review_report(client: TestClient, db: Session) -> None:
+    seed(db)
+    login(client, "user@example.com")
+    report = create_report(client)
+    login(client, "admin@example.com")
+    assert client.patch(f"/api/admin/citizen-reports/{report['id']}", json={"status": "UNDER_REVIEW"}).status_code == 200
+
+    login(client, "user@example.com")
+    response = client.delete(f"/api/citizen-reports/{report['id']}")
+
+    assert response.status_code == 200
+    assert db.get(CitizenReport, report["id"]).status == "CANCELLED"
+
+
+def test_delete_report_removes_only_report_image_not_sighting_images(client: TestClient, db: Session, tmp_path, monkeypatch) -> None:
+    seed(db)
+    login(client, "user@example.com")
+    monkeypatch.setattr("app.api.citizen_reports.upload_root", lambda: tmp_path)
+    response = client.post(
+        "/api/citizen-reports",
+        data={"object_class": "BAG", "color": "black", "description": "report image cleanup", "area_name": "demo", "found_at": "2026-08-10T01:00:00Z"},
+        files={"image": ("report.jpg", image_bytes(), "image/jpeg")},
+    )
+    assert response.status_code == 201
+    report = response.json()
+    report_image = tmp_path / report["image_url"].removeprefix("/uploads/")
+    sighting_image = tmp_path / "citizen" / "sighting.jpg"
+    sighting_image.parent.mkdir(parents=True, exist_ok=True)
+    sighting_image.write_bytes(b"sighting")
+    stored = db.get(CitizenReport, report["id"])
+    stored.status = "UNDER_REVIEW"
+    db.add(CitizenSighting(citizen_report_id=stored.id, user_id=2, sighted_at=datetime(2026, 8, 10, tzinfo=UTC), location_name="demo", description="sighting", image_url="/uploads/citizen/sighting.jpg", created_at=datetime(2026, 8, 10, tzinfo=UTC)))
+    db.commit()
+
+    deleted = client.delete(f"/api/citizen-reports/{report['id']}")
+
+    assert deleted.status_code == 200
+    assert not report_image.exists()
+    assert sighting_image.exists()
+
+
+def test_linked_report_delete_returns_conflict_and_preserves_found_item(client: TestClient, db: Session) -> None:
+    seed(db)
+    login(client, "user@example.com")
+    report = create_report(client)
+    citizen = db.get(CitizenReport, report["id"])
+    citizen.image_url = "/uploads/citizen/linked.jpg"
+    db.commit()
+    login(client, "admin@example.com")
+    assert client.post(
+        f"/api/admin/citizen-reports/{report['id']}/resolve",
+        json={"mode": "CREATE_FOUND_ITEM", "found_item": {"object_class": "BAG", "public_description": "linked item", "area_name": "demo", "found_at": "2026-08-10T01:00:00Z"}},
+    ).status_code == 200
+    found_item_id = db.query(FoundItem).one().id
+
+    login(client, "user@example.com")
+    response = client.delete(f"/api/citizen-reports/{report['id']}")
+
+    assert response.status_code == 409
+    stored = db.get(CitizenReport, report["id"])
+    assert stored.status == "LINKED"
+    assert stored.image_url == "/uploads/citizen/linked.jpg"
+    assert stored.linked_found_item_id == found_item_id
+    assert db.get(FoundItem, found_item_id) is not None
+
+
+def test_duplicate_delete_returns_conflict(client: TestClient, db: Session) -> None:
+    seed(db)
+    login(client, "user@example.com")
+    report = create_report(client)
+
+    assert client.delete(f"/api/citizen-reports/{report['id']}").status_code == 200
+    assert client.delete(f"/api/citizen-reports/{report['id']}").status_code == 409
+
+
+def test_delete_db_failure_does_not_remove_image(db: Session, tmp_path, monkeypatch) -> None:
+    seed(db)
+    user = db.get(User, 1)
+    image_path = tmp_path / "citizen" / "rollback.jpg"
+    image_path.parent.mkdir(parents=True)
+    image_path.write_bytes(b"image")
+    report = CitizenReport(
+        user_id=user.id,
+        object_class_id=1,
+        color="white",
+        description="rollback report",
+        image_url="/uploads/citizen/rollback.jpg",
+        area_name="demo",
+        found_at=datetime(2026, 8, 10, tzinfo=UTC),
+        status="PENDING",
+        created_at=datetime(2026, 8, 10, tzinfo=UTC),
+        updated_at=datetime(2026, 8, 10, tzinfo=UTC),
+    )
+    db.add(report)
+    db.commit()
+
+    def fail_commit() -> None:
+        raise RuntimeError("commit failed")
+
+    monkeypatch.setattr(db, "commit", fail_commit)
+    with pytest.raises(RuntimeError):
+        cancel_report(db, user=user, report_id=report.id, upload_root=tmp_path)
+
+    assert image_path.exists()
+    db.rollback()
+
+
 def test_image_upload_decodes_reencodes_and_rejects_non_images(tmp_path) -> None:
     image_bytes = BytesIO(); Image.new("RGB", (8, 8), "red").save(image_bytes, format="JPEG", exif=b"Exif\x00\x00test")
     saved = asyncio.run(save_public_image(UploadFile(filename="photo.jpg", file=BytesIO(image_bytes.getvalue())), tmp_path))
     assert saved and saved.endswith(".jpg")
-    with Image.open(tmp_path / saved.removeprefix("/uploads/")) as stored: assert not stored.getexif()
+    with Image.open(tmp_path / saved.removeprefix("/uploads/")) as stored:
+        assert stored.size == (8, 8)
+        assert not stored.getexif()
     with pytest.raises(Exception): asyncio.run(save_public_image(UploadFile(filename="fake.jpg", file=BytesIO(b"not-image")), tmp_path))
+
+
+@pytest.mark.parametrize("orientation", [6, 8])
+def test_image_upload_applies_exif_orientation_and_removes_metadata(tmp_path, orientation: int) -> None:
+    saved = asyncio.run(
+        save_public_image(
+            UploadFile(filename="photo.jpg", file=BytesIO(image_bytes(width=40, height=20, orientation=orientation))),
+            tmp_path,
+        )
+    )
+
+    assert saved and saved.endswith(".jpg")
+    with Image.open(tmp_path / saved.removeprefix("/uploads/")) as stored:
+        assert stored.size == (20, 40)
+        assert not stored.getexif()
+        assert stored.getexif().get(274) is None
+
+
+def test_image_upload_supabase_path_uses_same_exif_normalized_payload(tmp_path, monkeypatch) -> None:
+    captured: dict[str, bytes | str] = {}
+
+    async def fake_upload(object_key: str, payload: bytes, content_type: str) -> str:
+        captured["object_key"] = object_key
+        captured["payload"] = payload
+        captured["content_type"] = content_type
+        return f"https://storage.example/{object_key}"
+
+    monkeypatch.setattr("app.services.image_uploads._supabase_configured", lambda: True)
+    monkeypatch.setattr("app.services.image_uploads._upload_to_supabase", fake_upload)
+
+    saved = asyncio.run(
+        save_public_image(
+            UploadFile(filename="photo.jpg", file=BytesIO(image_bytes(width=40, height=20, orientation=6))),
+            tmp_path,
+        )
+    )
+
+    assert saved == f"https://storage.example/{captured['object_key']}"
+    assert captured["content_type"] == "image/jpeg"
+    payload = captured["payload"]
+    assert isinstance(payload, bytes)
+    with Image.open(BytesIO(payload)) as stored:
+        assert stored.size == (20, 40)
+        assert not stored.getexif()
 
 
 def test_lost_report_image_upload_is_optional_validated_and_persisted(client: TestClient, db: Session, tmp_path, monkeypatch) -> None:

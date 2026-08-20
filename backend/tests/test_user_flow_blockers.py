@@ -17,7 +17,7 @@ from app.models import FoundItem, LostReport, MatchCandidate, Notification, Obje
 from app.repositories.user_flow import list_matchable_found_items
 from app.schemas.lost_report import LostReportCreateRequest
 from app.schemas.ownership_claim import OwnershipClaimCreateRequest, OwnershipClaimUpdateRequest
-from app.services.matching import create_match_candidates_for_lost_report
+from app.services.matching import create_match_candidates_for_found_item, create_match_candidates_for_lost_report, reconcile_match_candidates_for_found_item
 from app.services.ownership import create_claim_for_user, review_ownership_claim
 
 
@@ -359,7 +359,7 @@ def test_rejected_claim_reconciles_stale_candidate_below_threshold(db: Session) 
     assert db.query(Notification).filter_by(notification_type="MATCH_FOUND", related_id=50).count() == 1
 
 
-def test_rejected_claim_reconciles_and_restores_still_valid_candidate(db: Session) -> None:
+def test_rejected_claim_keeps_claimant_candidate_dismissed_even_when_score_is_valid(db: Session) -> None:
     _, admin = seed_basic_claim_data(db)
     now = utc_now()
     found_item = seed_found_item(db, 10, status="CLAIM_PENDING", found_at=now)
@@ -379,10 +379,10 @@ def test_rejected_claim_reconciles_and_restores_still_valid_candidate(db: Sessio
 
     assert claim.status == "REJECTED"
     assert found_item.status == "AVAILABLE"
-    assert candidate.status == "NOTIFIED"
+    assert candidate.status == "DISMISSED"
     assert candidate.total_score == 70
     assert (candidate.type_score, candidate.area_score, candidate.time_score, candidate.keyword_score) == (40, 0, 20, 10)
-    assert lost_report.status == "MATCHED"
+    assert lost_report.status == "OPEN"
     assert db.query(Notification).filter_by(notification_type="MATCH_FOUND", related_id=50).count() == 1
 
 
@@ -414,19 +414,377 @@ def test_ownership_claim_marks_related_match_claimed(db: Session) -> None:
     assert db.get(MatchCandidate, 50).status == "CLAIMED"
 
 
-def test_found_item_before_lost_time_is_excluded_from_matching(db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ownership_claim_requests_found_item_row_lock(db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    user, _ = seed_basic_claim_data(db)
+    seed_found_item(db, 10, status="AVAILABLE", is_public=True)
+    db.commit()
+    original = ownership_service.get_claimable_found_item_by_id
+    lock_requested = False
+
+    def get_locked_found_item(session: Session, found_item_id: int, *, for_update: bool = False):
+        nonlocal lock_requested
+        lock_requested = for_update
+        return original(session, found_item_id, for_update=for_update)
+
+    monkeypatch.setattr(ownership_service, "get_claimable_found_item_by_id", get_locked_found_item)
+
+    create_claim_for_user(db, current_user=user, request=OwnershipClaimCreateRequest(found_item_id=10, verification_details="안쪽 라벨과 고유 스티커 위치를 자세히 설명합니다."))
+
+    assert lock_requested is True
+
+
+def test_claim_reconciles_all_other_candidate_states_and_report_statuses(db: Session) -> None:
+    user, _ = seed_basic_claim_data(db)
+    found_item = seed_found_item(db, 10, status="AVAILABLE", is_public=True)
+    seed_lost_report(db, 20, user_id=1, status="MATCHED")
+    candidates = [
+        MatchCandidate(id=50, lost_report_id=20, found_item_id=10, total_score=85, type_score=40, area_score=25, time_score=20, keyword_score=0, status="NOTIFIED", created_at=utc_now(), updated_at=utc_now()),
+    ]
+    for index, candidate_status in enumerate(("SUGGESTED", "NOTIFIED", "VIEWED"), start=2):
+        seed_user(db, index)
+        seed_lost_report(db, 20 + index, user_id=index, status="MATCHED")
+        candidates.append(MatchCandidate(id=50 + index, lost_report_id=20 + index, found_item_id=10, total_score=80, type_score=40, area_score=25, time_score=15, keyword_score=0, status=candidate_status, created_at=utc_now(), updated_at=utc_now()))
+    db.add_all(candidates)
+    db.commit()
+
+    result = create_claim_for_user(
+        db,
+        current_user=user,
+        request=OwnershipClaimCreateRequest(found_item_id=10, lost_report_id=20, verification_details="안쪽 라벨과 고유 스티커 위치를 자세히 설명합니다."),
+    )
+
+    assert result.status == "PENDING"
+    assert found_item.status == "CLAIM_PENDING"
+    assert db.get(LostReport, 20).status == "CLAIM_PENDING"
+    assert candidates[0].status == "CLAIMED"
+    assert [candidate.status for candidate in candidates[1:]] == ["DISMISSED"] * 3
+    assert [db.get(LostReport, report_id).status for report_id in (22, 23, 24)] == ["OPEN"] * 3
+
+
+def test_claim_keeps_other_report_matched_when_another_active_candidate_remains(db: Session) -> None:
+    user, _ = seed_basic_claim_data(db)
+    seed_user(db, 2)
+    seed_found_item(db, 10, status="AVAILABLE", is_public=True)
+    seed_found_item(db, 11, status="AVAILABLE", is_public=True)
+    seed_lost_report(db, 20, user_id=1, status="MATCHED")
+    other_report = seed_lost_report(db, 21, user_id=2, status="MATCHED")
+    db.add_all([
+        MatchCandidate(id=50, lost_report_id=20, found_item_id=10, total_score=85, type_score=40, area_score=25, time_score=20, keyword_score=0, status="NOTIFIED", created_at=utc_now(), updated_at=utc_now()),
+        MatchCandidate(id=51, lost_report_id=21, found_item_id=10, total_score=80, type_score=40, area_score=25, time_score=15, keyword_score=0, status="VIEWED", created_at=utc_now(), updated_at=utc_now()),
+        MatchCandidate(id=52, lost_report_id=21, found_item_id=11, total_score=75, type_score=40, area_score=25, time_score=10, keyword_score=0, status="NOTIFIED", created_at=utc_now(), updated_at=utc_now()),
+    ])
+    db.commit()
+
+    create_claim_for_user(db, current_user=user, request=OwnershipClaimCreateRequest(found_item_id=10, lost_report_id=20, verification_details="안쪽 라벨과 고유 스티커 위치를 자세히 설명합니다."))
+
+    assert db.get(MatchCandidate, 51).status == "DISMISSED"
+    assert db.get(MatchCandidate, 52).status == "NOTIFIED"
+    assert other_report.status == "MATCHED"
+
+
+def test_rejected_claim_restores_existing_candidates_without_duplicates(db: Session) -> None:
+    user, admin = seed_basic_claim_data(db)
+    seed_user(db, 2)
+    now = utc_now()
+    found_item = seed_found_item(db, 10, status="AVAILABLE", is_public=True, found_at=now)
+    report_a = seed_lost_report(db, 20, user_id=1, status="MATCHED", lost_from=now - timedelta(days=1))
+    report_b = seed_lost_report(db, 21, user_id=2, status="MATCHED", lost_from=now - timedelta(days=1))
+    candidates = [
+        MatchCandidate(id=50, lost_report_id=20, found_item_id=10, total_score=85, type_score=40, area_score=25, time_score=20, keyword_score=0, status="NOTIFIED", created_at=now, updated_at=now),
+        MatchCandidate(id=51, lost_report_id=21, found_item_id=10, total_score=85, type_score=40, area_score=25, time_score=20, keyword_score=0, status="NOTIFIED", created_at=now, updated_at=now),
+    ]
+    db.add_all(candidates + [
+        Notification(id=60, user_id=1, notification_type="MATCH_FOUND", title="match", message="match", related_type="MATCH_CANDIDATE", related_id=50, created_at=now),
+        Notification(id=61, user_id=2, notification_type="MATCH_FOUND", title="match", message="match", related_type="MATCH_CANDIDATE", related_id=51, created_at=now),
+    ])
+    db.commit()
+
+    claim = create_claim_for_user(db, current_user=user, request=OwnershipClaimCreateRequest(found_item_id=10, lost_report_id=20, verification_details="안쪽 라벨과 고유 스티커 위치를 자세히 설명합니다."))
+    assert candidates[1].status == "DISMISSED"
+    review_ownership_claim(db, current_admin=admin, claim_id=claim.id, request=OwnershipClaimUpdateRequest(status="REJECTED"))
+
+    assert found_item.status == "AVAILABLE"
+    assert [candidate.status for candidate in candidates] == ["DISMISSED", "NOTIFIED"]
+    assert [report_a.status, report_b.status] == ["OPEN", "MATCHED"]
+    assert db.query(MatchCandidate).filter_by(found_item_id=10).count() == 2
+    assert db.query(Notification).filter_by(notification_type="MATCH_FOUND").count() == 3
+    grouped = db.query(Notification).filter_by(notification_type="MATCH_FOUND", related_type="LOST_REPORT", related_id=report_b.id).one()
+    assert grouped.message == "새로운 매칭 후보를 찾았어요."
+
+
+def test_rejected_pair_does_not_block_other_candidate_or_new_claim(db: Session) -> None:
+    user, _ = seed_basic_claim_data(db)
+    now = utc_now()
+    seed_found_item(db, 10, status="AVAILABLE", is_public=True, found_at=now)
+    seed_found_item(db, 11, status="AVAILABLE", is_public=True, found_at=now)
+    report = seed_lost_report(db, 20, status="MATCHED", lost_from=now - timedelta(days=1))
+    rejected = MatchCandidate(id=50, lost_report_id=20, found_item_id=10, total_score=85, type_score=40, area_score=25, time_score=20, keyword_score=0, status="DISMISSED", created_at=now, updated_at=now)
+    available = MatchCandidate(id=51, lost_report_id=20, found_item_id=11, total_score=85, type_score=40, area_score=25, time_score=20, keyword_score=0, status="NOTIFIED", created_at=now, updated_at=now)
+    db.add_all([rejected, available, seed_claim(db, 30, found_item_id=10, status="REJECTED")])
+    db.commit()
+
+    reconcile_match_candidates_for_found_item(db, db.get(FoundItem, 10))
+    assert rejected.status == "DISMISSED"
+    assert available.status == "NOTIFIED" and report.status == "MATCHED"
+    result = create_claim_for_user(db, current_user=user, request=OwnershipClaimCreateRequest(found_item_id=11, lost_report_id=20, verification_details="다른 발견물의 고유 특징을 자세히 설명합니다."))
+
+    assert result.status == "PENDING"
+    assert available.status == "CLAIMED"
+
+
+def test_same_rejected_pair_claim_still_returns_conflict(db: Session) -> None:
+    user, _ = seed_basic_claim_data(db)
+    seed_found_item(db, 10, status="AVAILABLE", is_public=True)
+    seed_lost_report(db, 20, status="OPEN")
+    seed_claim(db, 30, status="REJECTED")
+    db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        create_claim_for_user(db, current_user=user, request=OwnershipClaimCreateRequest(found_item_id=10, lost_report_id=20, verification_details="동일 조합을 다시 요청합니다."))
+
+    assert exc_info.value.status_code == 409
+
+
+def test_candidate_creation_paths_skip_rejected_pair(db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_user(db, 1)
+    seed_user(db, 2)
+    seed_object_class(db, 1, "BAG")
+    now = utc_now()
+    report_a = seed_lost_report(db, 20, user_id=1, status="OPEN", lost_from=now - timedelta(days=1))
+    report_b = seed_lost_report(db, 21, user_id=2, status="OPEN", lost_from=now - timedelta(days=1))
+    found_item = seed_found_item(db, 10, status="AVAILABLE", is_public=True, found_at=now)
+    seed_claim(db, 30, user_id=1, found_item_id=10, lost_report_id=20, status="REJECTED")
+    db.commit()
+    found_item.found_at = now
+    monkeypatch.setattr(matching_service, "list_matchable_found_items", lambda session, object_class_id: [found_item])
+
+    assert create_match_candidates_for_lost_report(db, report_a) == []
+    created = create_match_candidates_for_found_item(db, found_item)
+
+    assert [(candidate.lost_report_id, candidate.found_item_id) for candidate in created] == [(21, 10)]
+    assert db.query(MatchCandidate).filter_by(lost_report_id=20, found_item_id=10).count() == 0
+    assert report_a.status == "OPEN" and report_b.status == "MATCHED"
+
+
+def test_approved_and_returned_do_not_restore_other_candidates(db: Session) -> None:
+    user, admin = seed_basic_claim_data(db)
+    seed_user(db, 2)
+    seed_found_item(db, 10, status="AVAILABLE", is_public=True)
+    seed_lost_report(db, 20, user_id=1, status="MATCHED")
+    seed_lost_report(db, 21, user_id=2, status="MATCHED")
+    db.add_all([
+        MatchCandidate(id=50, lost_report_id=20, found_item_id=10, total_score=85, type_score=40, area_score=25, time_score=20, keyword_score=0, status="NOTIFIED", created_at=utc_now(), updated_at=utc_now()),
+        MatchCandidate(id=51, lost_report_id=21, found_item_id=10, total_score=80, type_score=40, area_score=25, time_score=15, keyword_score=0, status="NOTIFIED", created_at=utc_now(), updated_at=utc_now()),
+    ])
+    db.commit()
+
+    claim = create_claim_for_user(db, current_user=user, request=OwnershipClaimCreateRequest(found_item_id=10, lost_report_id=20, verification_details="안쪽 라벨과 고유 스티커 위치를 자세히 설명합니다."))
+    review_ownership_claim(db, current_admin=admin, claim_id=claim.id, request=OwnershipClaimUpdateRequest(status="APPROVED"))
+    assert db.get(FoundItem, 10).status == "CLAIM_PENDING"
+    assert db.get(MatchCandidate, 51).status == "DISMISSED"
+    review_ownership_claim(db, current_admin=admin, claim_id=claim.id, request=OwnershipClaimUpdateRequest(status="RETURNED"))
+    assert db.get(FoundItem, 10).status == "RETURNED"
+    assert db.get(MatchCandidate, 51).status == "DISMISSED"
+
+
+def test_found_item_more_than_twelve_hours_before_lost_is_excluded_from_matching(db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
     seed_user(db, 1)
     seed_object_class(db, 1, "BAG")
     lost_report = seed_lost_report(db, 20, status="OPEN")
-    found_item = seed_found_item(db, 10, status="AVAILABLE", is_public=True, found_at=lost_report.lost_from - timedelta(seconds=1))
+    found_item = seed_found_item(db, 10, status="AVAILABLE", is_public=True, found_at=lost_report.lost_from - timedelta(hours=13))
     db.flush()
-    found_item.found_at = lost_report.lost_from - timedelta(seconds=1)
+    found_item.found_at = lost_report.lost_from - timedelta(hours=13)
     monkeypatch.setattr(matching_service, "list_matchable_found_items", lambda session, object_class_id: [found_item])
 
     candidates = create_match_candidates_for_lost_report(db, lost_report)
 
     assert candidates == []
     assert lost_report.status == "OPEN"
+
+
+def test_found_item_within_early_tolerance_creates_candidate_and_notification(db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_user(db, 1)
+    seed_object_class(db, 1, "BAG")
+    lost_report = seed_lost_report(db, 20, status="OPEN", lost_from=utc_now())
+    lost_report.latitude = 37.52
+    lost_report.longitude = 127.10
+    lost_report.color = "검정"
+    lost_report.colors = ["검정"]
+    lost_report.description = "분실정보"
+    found_item = seed_found_item(db, 10, status="AVAILABLE", is_public=True, found_at=lost_report.lost_from - timedelta(hours=2))
+    found_item.latitude = 37.54
+    found_item.longitude = 127.10
+    found_item.color = "빨강"
+    found_item.public_description = "발견정보"
+    db.flush()
+    monkeypatch.setattr(matching_service, "list_matchable_found_items", lambda session, object_class_id: [found_item])
+
+    candidates = create_match_candidates_for_lost_report(db, lost_report)
+
+    assert len(candidates) == 1
+    assert candidates[0].time_score == 20 and candidates[0].area_score == 15 and candidates[0].total_score == 75
+    assert lost_report.status == "MATCHED"
+    assert db.query(Notification).filter_by(notification_type="MATCH_FOUND", related_type="LOST_REPORT", related_id=lost_report.id).count() == 1
+
+
+def test_reconciliation_updates_five_day_candidate_to_medium_time_score(db: Session) -> None:
+    seed_user(db, 1)
+    seed_object_class(db, 1, "BAG")
+    now = utc_now()
+    report = seed_lost_report(db, 20, status="MATCHED", lost_from=now - timedelta(days=5))
+    report.area_name = "서울"
+    report.color = "검정"
+    report.colors = ["검정"]
+    report.description = "분실정보"
+    found = seed_found_item(db, 10, status="AVAILABLE", is_public=True, found_at=now)
+    found.area_name = "서울"
+    found.color = "빨강"
+    found.public_description = "발견정보"
+    candidate = MatchCandidate(id=50, lost_report_id=20, found_item_id=10, total_score=85, type_score=40, area_score=25, time_score=20, keyword_score=0, status="NOTIFIED", created_at=now, updated_at=now)
+    db.add(candidate)
+    db.commit()
+
+    reconcile_match_candidates_for_found_item(db, found)
+    db.commit()
+
+    assert candidate.time_score == 15 and candidate.total_score == 80
+    assert candidate.status == "NOTIFIED" and report.status == "MATCHED"
+
+
+def test_reconciliation_dismisses_candidate_that_falls_below_threshold_after_time_rescore(db: Session) -> None:
+    seed_user(db, 1)
+    seed_object_class(db, 1, "BAG")
+    now = utc_now()
+    report = seed_lost_report(db, 20, status="MATCHED", lost_from=now - timedelta(days=5))
+    report.area_name = "서울"
+    report.color = "검정"
+    report.colors = ["검정"]
+    report.description = "희귀표식"
+    found = seed_found_item(db, 10, status="AVAILABLE", is_public=True, found_at=now)
+    found.area_name = "부산"
+    found.color = "빨강"
+    found.public_description = "희귀표식"
+    candidate = MatchCandidate(id=50, lost_report_id=20, found_item_id=10, total_score=61, type_score=40, area_score=0, time_score=20, keyword_score=1, status="NOTIFIED", created_at=now, updated_at=now)
+    db.add(candidate)
+    db.commit()
+
+    reconcile_match_candidates_for_found_item(db, found)
+    db.commit()
+
+    assert candidate.time_score == 15 and candidate.total_score == 56
+    assert candidate.status == "DISMISSED" and report.status == "OPEN"
+
+
+def test_reconciliation_dismisses_time_too_early_candidate_and_reopens_report(db: Session) -> None:
+    seed_user(db, 1)
+    seed_object_class(db, 1, "BAG")
+    lost_at = utc_now()
+    report = seed_lost_report(db, 20, status="MATCHED", lost_from=lost_at)
+    found = seed_found_item(db, 10, status="AVAILABLE", is_public=True, found_at=lost_at - timedelta(hours=13))
+    candidate = MatchCandidate(id=50, lost_report_id=20, found_item_id=10, total_score=85, type_score=40, area_score=25, time_score=20, keyword_score=0, status="NOTIFIED", created_at=lost_at, updated_at=lost_at)
+    db.add(candidate)
+    db.commit()
+
+    reconcile_match_candidates_for_found_item(db, found)
+    db.commit()
+
+    assert candidate.status == "DISMISSED"
+    assert report.status == "OPEN"
+
+
+def test_reconciliation_recomputes_keyword_score_without_generic_or_color_double_count(db: Session) -> None:
+    seed_user(db, 1)
+    seed_object_class(db, 1, "BAG")
+    now = utc_now()
+    report = seed_lost_report(db, 20, status="MATCHED", lost_from=now - timedelta(days=5))
+    report.area_name = "서울"
+    report.color = "검정색"
+    report.colors = ["검정색"]
+    report.description = "검정 가방을 분실했습니다"
+    found = seed_found_item(db, 10, status="AVAILABLE", is_public=True, found_at=now)
+    found.area_name = "부산"
+    found.color = "블랙"
+    found.public_description = "블랙 가방 발견"
+    candidate = MatchCandidate(id=50, lost_report_id=20, found_item_id=10, total_score=67, type_score=40, area_score=0, time_score=15, keyword_score=12, status="NOTIFIED", created_at=now, updated_at=now)
+    db.add(candidate)
+    db.commit()
+
+    reconcile_match_candidates_for_found_item(db, found)
+    db.commit()
+
+    assert candidate.keyword_score == 10 and candidate.total_score == 65
+    assert candidate.status == "NOTIFIED" and report.status == "MATCHED"
+
+
+def test_reconciliation_dismisses_candidate_when_only_generic_feature_evidence_is_removed(db: Session) -> None:
+    seed_user(db, 1)
+    seed_object_class(db, 1, "BAG")
+    now = utc_now()
+    report = seed_lost_report(db, 20, status="MATCHED", lost_from=now - timedelta(days=1))
+    report.area_name = "서울"
+    report.color = "검정"
+    report.colors = ["검정"]
+    report.description = "물건 신고"
+    found = seed_found_item(db, 10, status="AVAILABLE", is_public=True, found_at=now)
+    found.area_name = "부산"
+    found.color = "빨강"
+    found.public_description = "물건 신고"
+    candidate = MatchCandidate(id=50, lost_report_id=20, found_item_id=10, total_score=61, type_score=40, area_score=0, time_score=20, keyword_score=1, status="NOTIFIED", created_at=now, updated_at=now)
+    db.add(candidate)
+    db.commit()
+
+    reconcile_match_candidates_for_found_item(db, found)
+    db.commit()
+
+    assert candidate.keyword_score == 0 and candidate.total_score == 60
+    assert candidate.status == "DISMISSED" and report.status == "OPEN"
+
+
+def test_color_synonym_creates_candidate_without_feature_double_count(db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_user(db, 1)
+    seed_object_class(db, 1, "BAG")
+    now = utc_now()
+    report = seed_lost_report(db, 20, status="OPEN", lost_from=now)
+    report.area_name = "서울"
+    report.color = "검정색"
+    report.colors = ["검정색"]
+    report.description = "검정색 가방을 분실했습니다"
+    found = seed_found_item(db, 10, status="AVAILABLE", is_public=True, found_at=now + timedelta(hours=1))
+    found.area_name = "부산"
+    found.color = "블랙"
+    found.public_description = "블랙 가방 발견"
+    db.flush()
+    monkeypatch.setattr(matching_service, "list_matchable_found_items", lambda session, object_class_id: [found])
+
+    created = create_match_candidates_for_lost_report(db, report)
+
+    assert len(created) == 1
+    assert created[0].keyword_score == 10 and created[0].total_score == 70
+    assert db.query(Notification).filter_by(notification_type="MATCH_FOUND", related_type="LOST_REPORT", related_id=report.id).count() == 1
+
+
+def test_type_and_time_only_match_creates_no_candidate_or_notification(db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_user(db, 1)
+    seed_object_class(db, 1, "BAG")
+    now = utc_now()
+    lost_report = seed_lost_report(db, 20, status="OPEN", lost_from=now)
+    lost_report.area_name = "서울"
+    lost_report.color = "검정"
+    lost_report.colors = ["검정"]
+    lost_report.description = "고유 특징 없음"
+    found_item = seed_found_item(db, 10, status="AVAILABLE", is_public=True, found_at=now + timedelta(days=1))
+    found_item.area_name = "부산"
+    found_item.color = "빨강"
+    found_item.public_description = "별도 설명"
+    db.flush()
+    monkeypatch.setattr(matching_service, "list_matchable_found_items", lambda session, object_class_id: [found_item])
+
+    candidates = create_match_candidates_for_lost_report(db, lost_report)
+
+    assert candidates == []
+    assert lost_report.status == "OPEN"
+    assert db.query(MatchCandidate).count() == 0
+    assert db.query(Notification).filter_by(notification_type="MATCH_FOUND").count() == 0
 
 
 def test_matchable_found_items_only_include_public_available_items(db: Session) -> None:
@@ -438,6 +796,94 @@ def test_matchable_found_items_only_include_public_available_items(db: Session) 
     db.commit()
 
     assert [item.id for item in list_matchable_found_items(db, 1)] == [10]
+
+
+def test_report_top_five_preserves_rows_groups_notifications_and_is_idempotent(db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_user(db, 1)
+    seed_object_class(db, 1, "BAG")
+    now = utc_now()
+    report = seed_lost_report(db, 20, status="OPEN", lost_from=now - timedelta(days=1))
+    candidates = []
+    scores = {}
+    for index in range(8):
+        found = seed_found_item(db, 10 + index, status="AVAILABLE", is_public=True, found_at=now)
+        candidate = MatchCandidate(id=100 + index, lost_report_id=20, found_item_id=found.id, total_score=0, type_score=0, area_score=0, time_score=0, keyword_score=0, status="DISMISSED", created_at=now + timedelta(seconds=index), updated_at=now)
+        candidates.append(candidate)
+        scores[found.id] = matching_service.MatchScore(90 - index, 40, 25, 20, 5)
+    db.add_all(candidates)
+    db.commit()
+
+    monkeypatch.setattr(matching_service, "evaluate_match_candidate", lambda lost, found: matching_service.MatchEvaluation(True, scores[found.id], None))
+    first_top = matching_service.reconcile_top_match_candidates_for_report(db, report)
+    db.flush()
+
+    assert [candidate.id for candidate in first_top] == [100, 101, 102, 103, 104]
+    assert [candidate.status for candidate in candidates] == ["NOTIFIED"] * 5 + ["DISMISSED"] * 3
+    assert db.query(MatchCandidate).filter_by(lost_report_id=20).count() == 8
+    notifications = db.query(Notification).filter_by(notification_type="MATCH_FOUND", related_type="LOST_REPORT", related_id=20).all()
+    assert len(notifications) == 1 and notifications[0].message == "새로운 매칭 후보 5건을 찾았어요."
+
+    candidates[0].status = "VIEWED"
+    scores[10] = matching_service.MatchScore(86, 40, 25, 20, 1)
+    scores[11] = matching_service.MatchScore(90, 40, 25, 20, 5)
+    matching_service.reconcile_top_match_candidates_for_report(db, report)
+    db.flush()
+
+    assert candidates[0].status == "VIEWED"
+    assert db.query(Notification).filter_by(notification_type="MATCH_FOUND", related_type="LOST_REPORT", related_id=20).count() == 1
+
+
+def test_report_top_five_promotes_multiple_entries_with_one_grouped_notification(db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_user(db, 1)
+    seed_object_class(db, 1, "BAG")
+    now = utc_now()
+    report = seed_lost_report(db, 20, status="MATCHED", lost_from=now - timedelta(days=1))
+    candidates = []
+    scores = {}
+    for index in range(8):
+        found = seed_found_item(db, 10 + index, status="AVAILABLE", is_public=True, found_at=now)
+        candidate = MatchCandidate(id=100 + index, lost_report_id=20, found_item_id=found.id, total_score=90 - index, type_score=40, area_score=25, time_score=20, keyword_score=5, status="NOTIFIED" if index < 5 else "DISMISSED", created_at=now + timedelta(seconds=index), updated_at=now)
+        candidates.append(candidate)
+        scores[found.id] = matching_service.MatchScore(90 - index, 40, 25, 20, 5)
+    db.add_all(candidates)
+    db.commit()
+    monkeypatch.setattr(matching_service, "evaluate_match_candidate", lambda lost, found: matching_service.MatchEvaluation(True, scores[found.id], None))
+
+    for found_id, total in ((15, 99), (16, 98), (17, 97)):
+        scores[found_id] = matching_service.MatchScore(total, 40, 25, 20, 5)
+    top = matching_service.reconcile_top_match_candidates_for_report(db, report)
+    db.flush()
+
+    assert {candidate.id for candidate in top} == {100, 101, 105, 106, 107}
+    assert [c.status for c in candidates[2:5]] == ["DISMISSED"] * 3
+    assert [c.status for c in candidates[5:]] == ["NOTIFIED"] * 3
+    notifications = db.query(Notification).filter_by(notification_type="MATCH_FOUND", related_type="LOST_REPORT", related_id=20).all()
+    assert len(notifications) == 1 and notifications[0].message == "새로운 매칭 후보 3건을 찾았어요."
+
+
+def test_claimed_candidate_is_separate_from_general_top_five(db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_user(db, 1)
+    seed_object_class(db, 1, "BAG")
+    now = utc_now()
+    report = seed_lost_report(db, 20, status="CLAIM_PENDING", lost_from=now - timedelta(days=1))
+    candidates = []
+    scores = {}
+    for index in range(7):
+        found = seed_found_item(db, 10 + index, status="AVAILABLE", is_public=True, found_at=now)
+        candidate = MatchCandidate(id=100 + index, lost_report_id=20, found_item_id=found.id, total_score=70, type_score=40, area_score=25, time_score=0, keyword_score=5, status="CLAIMED" if index == 0 else "DISMISSED", created_at=now + timedelta(seconds=index), updated_at=now)
+        candidates.append(candidate)
+        scores[found.id] = matching_service.MatchScore(90 - index, 40, 25, 20, 5)
+    db.add_all(candidates)
+    db.commit()
+    monkeypatch.setattr(matching_service, "evaluate_match_candidate", lambda lost, found: matching_service.MatchEvaluation(True, scores[found.id], None))
+
+    top = matching_service.reconcile_top_match_candidates_for_report(db, report)
+    db.flush()
+
+    assert candidates[0].status == "CLAIMED"
+    assert len(top) == 5
+    assert sum(candidate.status in matching_service.GENERAL_ACTIVE_MATCH_STATUSES for candidate in candidates) == 5
+    assert report.status == "CLAIM_PENDING"
 
 
 def test_overlong_location_and_color_validation() -> None:

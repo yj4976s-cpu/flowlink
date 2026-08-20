@@ -33,6 +33,7 @@
   line-height: 0;
   pointer-events: auto;
   cursor: grab;
+  touch-action: none;
   transform-origin: 50% 88%;
 }
 .mascot[data-dragging] .character { cursor: grabbing; transform: scale(1.025); }
@@ -42,12 +43,9 @@
 .renderer { position: relative; width: 100%; height: 100%; display: block; transform-origin: 50% 82%; }
 .riveCanvas { display: block; width: 100%; height: 100%; }
 .contactShadow { position: absolute; z-index: 1; left: 25%; bottom: 1.5%; width: 50%; height: 7%; border-radius: 50%; background: color-mix(in srgb, var(--color-text) 13%, transparent); filter: blur(3px); opacity: .62; transform: scaleY(.55); pointer-events: none; }
-.daruImage { position: relative; z-index: 2; display: block; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; background: transparent url("/mascot/daru-idle-day.png") center / contain no-repeat; box-shadow: none; filter: drop-shadow(0 10px 14px color-mix(in srgb, var(--color-text) 14%, transparent)); transform-origin: 50% 78%; }
+.daruImage { position: relative; z-index: 2; display: block; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; background-color: transparent; background-position: center; background-size: contain; background-repeat: no-repeat; box-shadow: none; filter: drop-shadow(0 10px 14px color-mix(in srgb, var(--color-text) 14%, transparent)); transform: translateY(5px) scale(1.06); transform-origin: 50% 100%; user-select: none; pointer-events: none; }
 .spriteImage { position: relative; z-index: 2; display: block; width: 100%; height: 100%; object-fit: contain; object-position: center bottom; margin: 0; padding: 0; border: 0; background: transparent; box-shadow: none; filter: drop-shadow(0 10px 14px color-mix(in srgb, var(--color-text) 14%, transparent)); user-select: none; pointer-events: none; }
 .renderer[data-renderer="sprite"][data-facing="left"] .spriteImage { transform: scaleX(-1); }
-:global(html[data-theme="dawn"]) .daruImage { background-image: url("/mascot/daru-idle-dawn.png"); }
-:global(html[data-theme="day"]) .daruImage { background-image: url("/mascot/daru-idle-day.png"); }
-:global(html[data-theme="night"]) .daruImage { background-image: url("/mascot/daru-idle-night.png"); }
 .bubble {
   --bubble-bg-start: color-mix(in srgb, var(--color-surface-elevated) 96%, var(--color-primary-soft));
   --bubble-bg-end: color-mix(in srgb, var(--color-surface-elevated) 84%, var(--color-primary-soft));
@@ -125,8 +123,8 @@
 .guideRoamingSetting button { min-height: 30px; padding: 0 9px; border: 1px solid var(--color-border); border-radius: 9px; background: transparent; color: var(--color-text-muted); cursor: pointer; font: inherit; font-size: 10px; font-weight: 780; }
 .guideRoamingSetting button:hover, .guideRoamingSetting button:focus-visible { border-color: color-mix(in srgb, var(--color-primary) 38%, var(--color-border)); background: var(--color-primary-soft); color: var(--color-primary); }
 @keyframes guidePanelIn { from { opacity: 0; transform: translateY(6px) scale(.98); } }
-.renderer[data-renderer="static"] { --daru-facing-angle: 3deg; transform: perspective(700px) rotateY(var(--daru-facing-angle)); transition: transform 260ms ease; }
-.renderer[data-renderer="static"][data-facing="right"] { --daru-facing-angle: -3deg; }
+.renderer[data-renderer="static"] { --daru-facing-angle: 0deg; transform: perspective(700px) rotateY(var(--daru-facing-angle)); transition: transform 260ms ease; }
+.renderer[data-renderer="static"][data-facing="right"] { --daru-facing-angle: 0deg; }
 /* Keep the branded scarf/logo orientation intact in the PNG fallback. Facing is metadata for the future Rive rig; no scaleX mirroring here. */
 .renderer[data-renderer="static"][data-locomotion="idle"][data-behavior="normal"][data-interaction="none"] { animation: naturalBreath 6.8s cubic-bezier(.37,.02,.2,1) infinite; }
 .renderer[data-renderer="static"][data-interaction="hover"] { animation: staticHover 480ms cubic-bezier(.2,.72,.18,1) 1; }
@@ -137,8 +135,8 @@
 @keyframes bubbleIn { from { opacity: 0; transform: translateY(5px) scale(.97); } }
 @keyframes naturalBreath { 0%,18%,100% { transform: translateY(1px) scale(1); } 46% { transform: translateY(0) scaleX(1.006) scaleY(1.012); } 72% { transform: translateY(1px) scaleX(.998) scaleY(1.004); } }
 @keyframes staticHover { 0%,100% { transform: perspective(700px) rotateY(var(--daru-facing-angle)); } 45% { transform: perspective(700px) rotateY(var(--daru-facing-angle)) translateY(-1px) rotateZ(-.25deg); } }
-@keyframes staticClick { 0%,100% { transform: perspective(700px) rotateY(var(--daru-facing-angle)); } 42% { transform: perspective(700px) rotateY(var(--daru-facing-angle)) translateY(-2px) scale(1.008); } 72% { transform: perspective(700px) rotateY(var(--daru-facing-angle)) translateY(-1px) scale(1.003); } }
+@keyframes staticClick { 0%,100% { transform: perspective(700px) rotateY(var(--daru-facing-angle)); } 34% { transform: perspective(700px) rotateY(var(--daru-facing-angle)) translateY(-5px) rotateZ(-1.4deg) scale(1.018); } 64% { transform: perspective(700px) rotateY(var(--daru-facing-angle)) translateY(1px) rotateZ(.8deg) scale(.998); } 82% { transform: perspective(700px) rotateY(var(--daru-facing-angle)) translateY(-1px) rotateZ(-.35deg) scale(1.004); } }
 @media (max-width: 1024px) { .stage { right: 91px; width: 122px; }.character { width: 112px; height: 112px; }.bubble { right: 8px; max-width: 190px; font-size: 11px; } }
-@media (min-width: 601px) { .character { touch-action: none; user-select: none; -webkit-user-select: none; } }
+@media (min-width: 601px) { .character { user-select: none; -webkit-user-select: none; } }
 @media (max-width: 600px) { .stage { right: 76px; bottom: max(12px, env(safe-area-inset-bottom)); width: 92px; }.character, .mascot[data-mode="quiet"] .character { width: 88px; height: 88px; cursor: pointer; }.guideTrigger { right: -2px; bottom: 4px; width: 23px; height: 23px; }.bubble { display: none; }.guidePanel, .stage[data-panel-side] .guidePanel, .stage[data-panel-vertical] .guidePanel { position: fixed; top: auto; right: 12px; bottom: max(12px, env(safe-area-inset-bottom)); left: 12px; width: auto; max-height: calc(100dvh - 24px); overflow-y: auto; padding: 18px; border-radius: 22px; } }
 @media (prefers-reduced-motion: reduce) { .stage, .character, .renderer, .bubble, .guidePanel { animation: none !important; transition: none !important; }.mascot[data-action] .character, .mascot[data-action] .renderer { transform: none; } }

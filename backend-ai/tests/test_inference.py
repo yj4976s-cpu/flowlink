@@ -20,6 +20,7 @@ class FakeRuntime:
         self.predictions = predictions or []
         self.fail = fail
         self.calls = 0
+        self.image_sizes: list[tuple[int, int]] = []
 
     def predict(self, image: Image.Image) -> list[YoloPrediction]:
         self.calls += 1
@@ -28,6 +29,7 @@ class FakeRuntime:
 
             raise YoloRuntimeUnavailableError("model unavailable")
         assert image.mode == "RGB"
+        self.image_sizes.append(image.size)
         return self.predictions
 
 
@@ -84,6 +86,14 @@ def auth_headers() -> dict[str, str]:
 def image_payload(*, width: int = 32, height: int = 24, image_format: str = "JPEG") -> bytes:
     payload = BytesIO()
     Image.new("RGB", (width, height), color=(20, 90, 160)).save(payload, format=image_format)
+    return payload.getvalue()
+
+
+def exif_oriented_jpeg_payload(*, width: int = 40, height: int = 20, orientation: int = 6) -> bytes:
+    payload = BytesIO()
+    exif = Image.Exif()
+    exif[274] = orientation
+    Image.new("RGB", (width, height), color=(20, 90, 160)).save(payload, format="JPEG", exif=exif)
     return payload.getvalue()
 
 
@@ -147,6 +157,22 @@ def test_inference_returns_raw_yolo_predictions(client: TestClient) -> None:
             "bbox": {"x": 2.0, "y": 3.0, "width": 10.0, "height": 12.0},
         }
     ]
+
+
+@pytest.mark.parametrize("orientation", [6, 8])
+def test_inference_applies_exif_orientation_before_prediction(orientation: int) -> None:
+    fake_runtime = FakeRuntime()
+    service = ImageInferenceService(runtime=fake_runtime)
+
+    response = service.analyze_image_bytes(
+        exif_oriented_jpeg_payload(orientation=orientation),
+        content_type="image/jpeg",
+    )
+
+    assert fake_runtime.calls == 1
+    assert fake_runtime.image_sizes == [(20, 40)]
+    assert response.media_width == 20
+    assert response.media_height == 40
 
 
 def test_inference_rejects_invalid_payloads(client: TestClient) -> None:
