@@ -29,6 +29,11 @@ export function ObjectIllustration({ kind, title }: { kind: ObjectKind; title?: 
         <path d="M71 76 57 44M100 59l24-31M122 45l31 10M50 88l-25-9" strokeWidth="7" />
         <path d="M28 102c39-14 67-35 126-73" stroke="var(--object-detail)" strokeWidth="2.5" opacity=".55" />
       </g>}
+      {kind === "ball" && <g>
+        <circle cx="90" cy="70" r="48" fill={`url(#object-fill-${kind})`} stroke="currentColor" strokeWidth="4" />
+        <path d="M56 37c24 15 53 15 78 0M55 103c25-17 55-17 80 0M42 70h96" fill="none" stroke="var(--object-detail)" strokeWidth="4" opacity=".65" />
+        <path d="M90 22c-12 19-18 34-18 48s6 29 18 48M90 22c12 19 18 34 18 48s-6 29-18 48" fill="none" stroke="var(--object-detail)" strokeWidth="4" opacity=".65" />
+      </g>}
       {kind === "container" && <g>
         <path d="m38 43 15-20h82l9 20-8 77H47Z" fill={`url(#object-fill-${kind})`} fillOpacity=".42" stroke="currentColor" strokeWidth="4" />
         <path d="M36 43h110M53 23l10 20M133 23l-9 20M61 58h60v46H61Z" fill="none" stroke="currentColor" strokeWidth="3" />

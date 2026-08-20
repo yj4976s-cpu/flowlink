@@ -1,11 +1,24 @@
-export type ObjectKind = "backpack" | "umbrella" | "branch" | "container";
+export type ObjectKind = "backpack" | "umbrella" | "branch" | "ball" | "container";
 
-export interface FoundItem {
+export interface HomeStats {
+  recentFound: number;
+  matchingActive: number;
+  returned: number;
+  todayDetections: number;
+}
+
+export interface HomeRecentItem {
   id: number;
   category: string;
   title: string;
   location: string;
-  confidence: number;
+  imageUrl: string | null;
+  confidence: number | null;
   foundAt: string;
   objectKind: ObjectKind;
+}
+
+export interface HomeSummary {
+  stats: HomeStats;
+  recentItems: HomeRecentItem[];
 }
