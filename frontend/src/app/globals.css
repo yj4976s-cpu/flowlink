@@ -124,8 +124,8 @@ svg { display: block; }
 }
 .brand { display: inline-flex; align-items: center; gap: 10px; font-size: 23px; font-weight: 600; letter-spacing: -.035em; white-space: nowrap; }
 .brand-mark { width: 36px; height: 36px; color: var(--color-primary); }
-.desktop-nav { display: flex; align-items: center; gap: clamp(20px, 2.7vw, 42px); margin-right: auto; }
-.desktop-nav a, .login-link { color: var(--color-text-muted); font-size: 14px; font-weight: 600; white-space: nowrap; transition: color .2s ease; }
+.desktop-nav { display: flex; align-items: center; gap: clamp(10px, 1.6vw, 28px); margin-right: auto; }
+.desktop-nav a, .login-link { color: var(--color-text-muted); font-size: clamp(12px, 1vw, 14px); font-weight: 600; white-space: nowrap; transition: color .2s ease; }
 .nav-group { position: relative; display: flex; align-items: center; }
 .nav-group-trigger { display: inline-flex; align-items: center; gap: 5px; }
 .nav-group-trigger .icon { opacity: .62; transition: transform .18s ease; }

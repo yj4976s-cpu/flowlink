@@ -153,6 +153,87 @@ class AdminFoundItemListResponse(BaseModel):
     status_counts: list[AdminFoundItemStatusCount]
 
 
+class AdminUserSummary(BaseModel):
+    total: int
+    active: int
+    inactive: int
+    admins: int
+    users: int
+    deleted: int
+    new_today: int
+    new_last_7_days: int
+
+
+class AdminUserRoleBreakdown(BaseModel):
+    role: str
+    count: int
+
+
+class AdminUserStatusBreakdown(BaseModel):
+    status: str
+    count: int
+
+
+class AdminUserSignupTrendPoint(BaseModel):
+    date: str
+    count: int
+
+
+class AdminUserListItem(BaseModel):
+    id: int
+    email: str
+    nickname: str
+    role: str
+    active: bool
+    created_at: datetime
+    last_login_at: datetime | None
+    deleted_at: datetime | None
+
+
+class AdminUserListResponse(BaseModel):
+    summary: AdminUserSummary
+    role_breakdown: list[AdminUserRoleBreakdown]
+    status_breakdown: list[AdminUserStatusBreakdown]
+    signup_trend: list[AdminUserSignupTrendPoint]
+    users: list[AdminUserListItem]
+    total: int
+
+
+class AdminCommunitySummary(BaseModel):
+    total: int
+    visible: int
+    deleted: int
+    notices: int
+    comments: int
+    new_today: int
+    new_last_7_days: int
+
+
+class AdminCommunityCategoryCount(BaseModel):
+    category: str
+    count: int
+
+
+class AdminCommunityPostItem(BaseModel):
+    id: int
+    title: str
+    category: str
+    author_nickname: str
+    place_name: str | None
+    is_notice: bool
+    comment_count: int
+    created_at: datetime
+    updated_at: datetime
+    deleted_at: datetime | None
+
+
+class AdminCommunityPostListResponse(BaseModel):
+    summary: AdminCommunitySummary
+    category_breakdown: list[AdminCommunityCategoryCount]
+    posts: list[AdminCommunityPostItem]
+    total: int
+
+
 class AdminDashboardMetrics(BaseModel):
     discovered: int
     ai_detections: int

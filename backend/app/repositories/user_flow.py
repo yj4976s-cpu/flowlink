@@ -29,7 +29,7 @@ KST = ZoneInfo("Asia/Seoul")
 
 PUBLIC_FOUND_ITEM_STATUSES = ("RECOVERED", "AVAILABLE")
 MATCHABLE_FOUND_ITEM_STATUSES = ("AVAILABLE",)
-FOUND_ITEM_LIFECYCLE_STATUSES = ("DETECTED", "RECOVERED", "AVAILABLE", "CLAIM_PENDING", "RETURNED", "DISPOSED")
+FOUND_ITEM_LIFECYCLE_STATUSES = ("DETECTED", "RECOVERED", "AVAILABLE", "CLAIM_PENDING", "RETURNED", "DISPOSED", "ARCHIVED")
 ACTIVE_OWNERSHIP_CLAIM_STATUSES = ("PENDING", "APPROVED")
 PERSONAL_ITEM_GROUP = "PERSONAL_ITEM"
 WASTE_GROUP = "WASTE"
@@ -266,6 +266,8 @@ def list_admin_found_items(
     filtered_conditions = [*conditions]
     if status:
         filtered_conditions.append(FoundItem.status == status)
+    else:
+        filtered_conditions.append(FoundItem.status != "ARCHIVED")
     total = int(db.scalar(select(func.count(FoundItem.id)).join(FoundItem.object_class).where(*filtered_conditions)) or 0)
     rows = db.scalars(
         select(FoundItem)
@@ -282,7 +284,7 @@ def list_admin_found_items(
         .where(*conditions, FoundItem.status.in_(FOUND_ITEM_LIFECYCLE_STATUSES))
         .group_by(FoundItem.status)
     ).all())
-    return rows, total, {value: int(grouped.get(value, 0)) for value in FOUND_ITEM_LIFECYCLE_STATUSES}
+    return rows, total, {value: int(count) for value, count in grouped.items()}
 
 
 def get_claimable_found_item_by_id(
@@ -669,6 +671,8 @@ def get_admin_dashboard_data(db: Session, *, since, period: str = "today", now=N
     personal_items = FoundItem.object_class_id.in_(
         select(ObjectClass.id).where(ObjectClass.group_code == PERSONAL_ITEM_GROUP)
     )
+    active_found_item = FoundItem.status != "ARCHIVED"
+    active_match_candidate = MatchCandidate.found_item.has(active_found_item)
     original_class = aliased(ObjectClass)
     final_class = aliased(ObjectClass)
     waste_collection_completed = (
@@ -713,7 +717,7 @@ def get_admin_dashboard_data(db: Session, *, since, period: str = "today", now=N
             joinedload(FoundItem.detected_object).joinedload(DetectedObject.detection_event),
             selectinload(FoundItem.citizen_reports),
         )
-        .where(period_condition(FoundItem.created_at), personal_items)
+        .where(period_condition(FoundItem.created_at), personal_items, active_found_item)
         .order_by(FoundItem.created_at.desc())
         .limit(4)
     ).all()
@@ -754,8 +758,8 @@ def get_admin_dashboard_data(db: Session, *, since, period: str = "today", now=N
         .order_by(ProcessingHistory.created_at.desc())
         .limit(7)
     ).all()
-    found_dates = list(db.scalars(select(FoundItem.created_at).where(period_condition(FoundItem.created_at), personal_items)).all())
-    match_dates = list(db.scalars(select(MatchCandidate.created_at).where(period_condition(MatchCandidate.created_at))).all())
+    found_dates = list(db.scalars(select(FoundItem.created_at).where(period_condition(FoundItem.created_at), personal_items, active_found_item)).all())
+    match_dates = list(db.scalars(select(MatchCandidate.created_at).where(period_condition(MatchCandidate.created_at), active_match_candidate)).all())
     return_dates = list(db.scalars(select(OwnershipClaim.updated_at).where(period_condition(OwnershipClaim.updated_at), OwnershipClaim.status == "RETURNED")).all())
     all_dates = found_dates + match_dates + return_dates
     if period == "today":
@@ -788,6 +792,7 @@ def get_admin_dashboard_data(db: Session, *, since, period: str = "today", now=N
         select(MatchCandidate)
         .options(joinedload(MatchCandidate.found_item).joinedload(FoundItem.detected_object))
         .where(MatchCandidate.status != "DISMISSED")
+        .where(active_match_candidate)
         .order_by(MatchCandidate.created_at.desc(), MatchCandidate.id.desc())
         .limit(1)
     )
@@ -828,11 +833,11 @@ def get_admin_dashboard_data(db: Session, *, since, period: str = "today", now=N
     return {
         "period": period,
         "metrics": {
-            "discovered": count(FoundItem, period_condition(FoundItem.created_at), personal_items),
+            "discovered": count(FoundItem, period_condition(FoundItem.created_at), personal_items, active_found_item),
             "ai_detections": count(DetectedObject, period_condition(DetectedObject.detected_at), DetectedObject.detection_event.has(DetectionEvent.purpose == "OPERATION")),
-            "official_found_items": count(FoundItem, period_condition(FoundItem.created_at), personal_items),
+            "official_found_items": count(FoundItem, period_condition(FoundItem.created_at), personal_items, active_found_item),
             "confirmed": count(FoundItem, period_condition(FoundItem.created_at), personal_items, FoundItem.status.in_(("AVAILABLE", "RECOVERED", "CLAIM_PENDING", "RETURNED"))),
-            "matched": count(MatchCandidate, period_condition(MatchCandidate.created_at)),
+            "matched": count(MatchCandidate, period_condition(MatchCandidate.created_at), active_match_candidate),
             "claims": count(OwnershipClaim, period_condition(OwnershipClaim.created_at)),
             "approved": count(OwnershipClaim, period_condition(OwnershipClaim.updated_at), OwnershipClaim.status.in_(("APPROVED", "RETURNED"))),
             "returned": count(OwnershipClaim, period_condition(OwnershipClaim.updated_at), OwnershipClaim.status == "RETURNED"),

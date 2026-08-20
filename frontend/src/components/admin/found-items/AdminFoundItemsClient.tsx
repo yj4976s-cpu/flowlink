@@ -5,7 +5,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Icon } from "@/components/common/Icon";
-import { AdminFoundItemsApiError, listAdminFoundItems, updateAdminFoundItem, type AdminFoundItem, type AdminFoundItemUpdate } from "@/lib/adminFoundItemsApi";
+import { AdminFoundItemsApiError, archiveAdminFoundItem, listAdminFoundItems, updateAdminFoundItem, type AdminFoundItem, type AdminFoundItemUpdate } from "@/lib/adminFoundItemsApi";
 import { resolveFoundItemImageUrl } from "@/lib/foundItemsApi";
 import styles from "./AdminFoundItemsClient.module.css";
 
@@ -16,6 +16,7 @@ const lifecycleStatuses = [
   { value: "CLAIM_PENDING", label: "소유권 확인 중" },
   { value: "RETURNED", label: "반환 완료" },
   { value: "DISPOSED", label: "폐기됨" },
+  { value: "ARCHIVED", label: "보관됨" },
 ] as const;
 
 const editableStatuses = lifecycleStatuses.filter((item) => ["RECOVERED", "AVAILABLE", "DISPOSED"].includes(item.value));
@@ -208,7 +209,9 @@ export function AdminFoundItemsClient() {
   const dirty = Boolean(selected && (status !== selected.status || locationDirty || storage.trim() !== (selected.storage_location ?? "") || memo.trim()));
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const safePage = Math.min(page, totalPages);
-  const lifecycleTotal = lifecycleStatuses.reduce((sum, item) => sum + (statusCounts[item.value] ?? 0), 0);
+  const lifecycleTotal = lifecycleStatuses
+    .filter((item) => item.value !== "ARCHIVED")
+    .reduce((sum, item) => sum + (statusCounts[item.value] ?? 0), 0);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -335,6 +338,27 @@ export function AdminFoundItemsClient() {
     }
   };
 
+  const archiveSelected = async () => {
+    if (!selected || saving) return;
+    const ok = window.confirm("이 발견물을 보관할까요? 보관된 발견물은 공개 화면과 기본 관리자 목록에서 제외됩니다.");
+    if (!ok) return;
+    setSaving(true);
+    setMessage("");
+    setSaveError("");
+    try {
+      await archiveAdminFoundItem(selected.id);
+      setPageMessage(`발견물 #${selected.id}을(를) 보관했습니다.`);
+      setStatus("ARCHIVED");
+      setSelected((current) => current ? { ...current, status: "ARCHIVED" } : current);
+      await load();
+      if (statusFilter !== "ARCHIVED") applyClose();
+    } catch (reason) {
+      setSaveError(reason instanceof AdminFoundItemsApiError ? reason.message : "발견물을 보관하지 못했습니다.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const resetFilters = () => {
     setQuery("");
     setCategoryFilter("");
@@ -445,7 +469,12 @@ export function AdminFoundItemsClient() {
               </section>
             </div>
 
-            <footer className={styles.drawerFooter}><span>{dirty ? "저장하지 않은 변경사항이 있습니다." : "변경사항이 없습니다."}</span><button type="button" className="button button-secondary" disabled={saving} onClick={requestClose}>닫기</button><button type="button" className="button button-primary" disabled={saving || !dirty} onClick={() => void save()}>{saving ? "저장 중..." : "변경사항 저장"}</button></footer>
+            <footer className={styles.drawerFooter}>
+              <span>{dirty ? "저장하지 않은 변경사항이 있습니다." : "변경사항이 없습니다."}</span>
+              {selected.status !== "ARCHIVED" && <button type="button" className={styles.archiveButton} disabled={saving} onClick={() => void archiveSelected()}>보관</button>}
+              <button type="button" className="button button-secondary" disabled={saving} onClick={requestClose}>닫기</button>
+              <button type="button" className="button button-primary" disabled={saving || !dirty} onClick={() => void save()}>{saving ? "저장 중..." : "변경사항 저장"}</button>
+            </footer>
           </aside>
         </div>
       )}

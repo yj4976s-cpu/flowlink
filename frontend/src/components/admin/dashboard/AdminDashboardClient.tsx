@@ -13,7 +13,7 @@ const dateTime = new Intl.DateTimeFormat("ko-KR", { month: "numeric", day: "nume
 const timeOnly = new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit" });
 const statusLabel: Record<string, string> = {
   DETECTED: "탐지됨", RECOVERED: "회수 확인", AVAILABLE: "보관 중", CLAIM_PENDING: "소유권 확인 중",
-  RETURNED: "반환 완료", APPROVED: "승인", REJECTED: "거절", PENDING: "검토 대기",
+  RETURNED: "반환 완료", DISPOSED: "폐기됨", ARCHIVED: "보관됨", APPROVED: "승인", REJECTED: "거절", PENDING: "검토 대기",
   CONFIRMED: "검토 완료",
 };
 const actionLabel: Record<string, string> = {
@@ -189,10 +189,9 @@ export function AdminDashboardClient() {
 function OperationalFlow({ metrics }: { metrics: AdminDashboardData["metrics"] }) {
   const steps = [
     { label: "AI 탐지", value: metrics.ai_detections, tone: "primary" },
-    { label: "발견물 등록", value: metrics.official_found_items, tone: "secondary" },
+    { label: "발견물 등록/폐기물 수거", value: metrics.official_found_items + metrics.waste_collection_pending, tone: "secondary" },
     { label: "분실 신고", value: metrics.lost_reports, tone: "primary" },
     { label: "자동 매칭", value: metrics.matched, tone: "match" },
-    { label: "MATCH_FOUND 알림", value: metrics.match_notifications, tone: "match" },
     { label: "소유권 확인", value: metrics.claims, tone: "attention" },
     { label: "반환 완료", value: metrics.returned, tone: "success" },
   ];
