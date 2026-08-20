@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import HTTPException, status
 from sqlalchemy import and_, func, or_, select
@@ -13,9 +15,11 @@ from app.schemas.citizen_report import (
     CitizenReportUpdateRequest, CitizenSightingResponse, LinkedFoundItemSummary,
     ResolveCitizenReportRequest,
 )
+from app.services.image_uploads import remove_public_image
 from app.services.matching import create_match_candidates_for_found_item
 
 PUBLIC_STATUSES = {"UNDER_REVIEW", "LINKED"}
+logger = logging.getLogger(__name__)
 
 
 def _query():
@@ -57,12 +61,12 @@ def list_public(db: Session, *, user_id: int | None, skip: int, limit: int) -> l
 
 
 def list_mine(db: Session, user_id: int, *, skip: int, limit: int) -> list[CitizenReportResponse]:
-    rows = db.scalars(_query().where(CitizenReport.user_id == user_id).order_by(CitizenReport.created_at.desc()).offset(skip).limit(limit)).all()
+    rows = db.scalars(_query().where(CitizenReport.user_id == user_id, CitizenReport.status != "CANCELLED").order_by(CitizenReport.created_at.desc()).offset(skip).limit(limit)).all()
     return [_response(row, private=True) for row in rows]
 
 
 def list_admin(db: Session, *, report_status: str | None, skip: int, limit: int) -> list[AdminCitizenReportResponse]:
-    statement = _query()
+    statement = _query().where(CitizenReport.status != "CANCELLED")
     if report_status:
         statement = statement.where(CitizenReport.status == report_status)
     rows = db.scalars(statement.order_by(CitizenReport.created_at.desc()).offset(skip).limit(limit)).all()
@@ -75,14 +79,14 @@ def get_report(db: Session, report_id: int) -> CitizenReport | None:
 
 def admin_response(db: Session, report_id: int) -> AdminCitizenReportResponse:
     report = get_report(db, report_id)
-    if report is None:
+    if report is None or report.status == "CANCELLED":
         raise HTTPException(status_code=404, detail="Citizen report not found")
     return _response(report, private=True, admin=True)
 
 
 def visible_response(db: Session, report_id: int, user: User | None) -> CitizenReportResponse:
     report = get_report(db, report_id)
-    if report is None or (report.status not in PUBLIC_STATUSES and (user is None or (user.role != "ADMIN" and user.id != report.user_id))):
+    if report is None or report.status == "CANCELLED" or (report.status not in PUBLIC_STATUSES and (user is None or (user.role != "ADMIN" and user.id != report.user_id))):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Citizen report not found")
     return _response(report, private=user is not None and (user.role == "ADMIN" or user.id == report.user_id))
 
@@ -110,14 +114,26 @@ def update_report(db: Session, *, user: User, report_id: int, request: CitizenRe
     return visible_response(db, report.id, user)
 
 
-def cancel_report(db: Session, *, user: User, report_id: int) -> CitizenReportResponse:
+def cancel_report(db: Session, *, user: User, report_id: int, upload_root: Path) -> CitizenReportResponse:
     report = get_report(db, report_id)
     if report is None or report.user_id != user.id:
         raise HTTPException(status_code=404, detail="Citizen report not found")
     if report.status not in {"PENDING", "UNDER_REVIEW"}:
         raise HTTPException(status_code=409, detail="Report cannot be cancelled")
-    report.status = "CANCELLED"; report.updated_at = utc_now(); db.commit()
-    return visible_response(db, report.id, user)
+    image_url = report.image_url
+    report.status = "CANCELLED"; report.image_url = None; report.updated_at = utc_now()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    if image_url:
+        try:
+            remove_public_image(image_url, upload_root)
+        except Exception:
+            logger.exception("Failed to remove cancelled citizen report image", extra={"citizen_report_id": report.id})
+    db.refresh(report)
+    return _response(report, private=True)
 
 
 def add_sighting(db: Session, *, user: User, report_id: int, sighted_at: datetime, location_name: str, description: str, image_url: str | None) -> CitizenReportResponse:
@@ -132,7 +148,7 @@ def add_sighting(db: Session, *, user: User, report_id: int, sighted_at: datetim
 
 def review_report(db: Session, *, admin: User, report_id: int, request: AdminCitizenReportUpdateRequest) -> AdminCitizenReportResponse:
     report = get_report(db, report_id)
-    if report is None: raise HTTPException(status_code=404, detail="Citizen report not found")
+    if report is None or report.status == "CANCELLED": raise HTTPException(status_code=404, detail="Citizen report not found")
     if report.status not in {"PENDING", "UNDER_REVIEW"}: raise HTTPException(status_code=409, detail="Report cannot be reviewed")
     if request.status == "REJECTED" and not _clean(request.rejection_reason): raise HTTPException(status_code=422, detail="Rejection reason is required")
     previous = report.status; now = utc_now(); report.status = request.status; report.reviewed_by = admin.id; report.reviewed_at = now
@@ -146,7 +162,7 @@ def review_report(db: Session, *, admin: User, report_id: int, request: AdminCit
 
 def resolve_report(db: Session, *, admin: User, report_id: int, request: ResolveCitizenReportRequest, object_class: ObjectClass | None = None) -> AdminCitizenReportResponse:
     report = get_report(db, report_id)
-    if report is None: raise HTTPException(status_code=404, detail="Citizen report not found")
+    if report is None or report.status == "CANCELLED": raise HTTPException(status_code=404, detail="Citizen report not found")
     if report.status not in {"PENDING", "UNDER_REVIEW"}: raise HTTPException(status_code=409, detail="Report cannot be linked")
     now = utc_now()
     try:
