@@ -411,12 +411,31 @@ def create_copilot_briefing(db: Session, current_user: User) -> CopilotResponse:
     return CopilotResponse(message=message, cards=cards[:2], actions=actions, suggestions=[], mode="PERSONAL", provider="flowlink", model="briefing",)
 
 
+def _decode_response_object(raw: str) -> dict | None:
+    candidate = raw.strip()
+    if candidate.startswith("```") and candidate.endswith("```"):
+        lines = candidate.splitlines()
+        if len(lines) >= 3:
+            candidate = "\n".join(lines[1:-1]).strip()
+
+    # Providers occasionally return the object as a JSON-encoded string.
+    # Decode at most twice so structured fields do not appear as chat text.
+    for _ in range(2):
+        try:
+            decoded = json.loads(candidate)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if isinstance(decoded, dict):
+            return decoded
+        if not isinstance(decoded, str):
+            return None
+        candidate = decoded.strip()
+    return None
+
+
 def _safe_response(raw: str, *, user: User | None, model: str, provider: str) -> CopilotResponse:
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        data = {"message": raw, "cards": [], "actions": []}
-    if not isinstance(data, dict):
+    data = _decode_response_object(raw)
+    if data is None:
         data = {"message": raw, "cards": [], "actions": [], "suggestions": []}
     cards: list[CopilotCard] = []
     raw_cards = data.get("cards", [])
