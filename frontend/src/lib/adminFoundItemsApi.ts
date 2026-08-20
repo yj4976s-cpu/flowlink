@@ -74,3 +74,23 @@ export async function updateAdminFoundItem(id: number, update: AdminFoundItemUpd
   }
   return response.json() as Promise<{ message: string }>;
 }
+
+export async function archiveAdminFoundItem(id: number) {
+  const response = await fetch(`${apiBaseUrl()}/api/admin/found-items/${id}/archive`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    let serverDetail = "";
+    try { serverDetail = ((await response.json()) as { detail?: string }).detail ?? ""; } catch { /* fallback below */ }
+    const message = serverDetail || (response.status === 403
+      ? "관리자 권한이 필요합니다."
+      : response.status === 404
+        ? "발견물을 찾을 수 없습니다."
+        : response.status === 409
+          ? "진행 중인 소유권 요청을 먼저 처리해야 보관할 수 있습니다."
+          : "발견물을 보관하지 못했습니다.");
+    throw new AdminFoundItemsApiError(message, response.status);
+  }
+  return response.json() as Promise<{ message: string }>;
+}

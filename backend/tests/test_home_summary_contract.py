@@ -122,6 +122,7 @@ def test_home_summary_counts_public_data_and_limits_recent_items(client: TestCli
     add_found_item(db, bag, item_id=20, minutes_ago=0, is_public=False)
     add_found_item(db, bag, item_id=21, minutes_ago=0, status="RETURNED")
     cancelled = add_found_item(db, bag, item_id=22, minutes_ago=0)
+    add_found_item(db, bag, item_id=23, minutes_ago=0, status="ARCHIVED")
     db.add(CitizenReport(user_id=user.id, object_class_id=bag.id, description="cancelled report", area_name="hidden", found_at=utc_now(), status="CANCELLED", linked_found_item_id=cancelled.id, created_at=utc_now(), updated_at=utc_now()))
     lost = LostReport(id=1, user_id=user.id, object_class_id=bag.id, description="lost", area_name="home", lost_from=utc_now(), status="OPEN", created_at=utc_now(), updated_at=utc_now())
     db.add_all([
@@ -142,7 +143,7 @@ def test_home_summary_counts_public_data_and_limits_recent_items(client: TestCli
     assert payload["recent_items"][0]["image_url"] == "/uploads/detections/home.jpg"
     assert payload["recent_items"][0]["confidence"] == 92
     assert payload["recent_items"][0]["object_kind"] == "backpack"
-    assert all(item["id"] not in {20, 21, 22} for item in payload["recent_items"])
+    assert all(item["id"] not in {20, 21, 22, 23} for item in payload["recent_items"])
     response_text = response.text
     assert "storage_location" not in response_text
     assert "admin_memo" not in response_text

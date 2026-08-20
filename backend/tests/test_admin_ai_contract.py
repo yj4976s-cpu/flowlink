@@ -134,6 +134,51 @@ def test_ai_orm_models_and_found_item_detection_fk_match_database_contract() -> 
     assert foreign_key.ondelete == "SET NULL"
 
 
+def test_admin_archives_found_item_and_public_surfaces_exclude_it(client: TestClient, db: Session) -> None:
+    seed_admin(db)
+    item = seed_admin_found_item(db, item_id=301, latitude=Decimal("37.566500"), longitude=Decimal("126.978000"))
+    login(client)
+
+    response = client.post(f"/api/admin/found-items/{item.id}/archive")
+
+    assert response.status_code == 200
+    db.refresh(item)
+    assert item.status == "ARCHIVED"
+    assert item.is_public is False
+    assert client.get("/api/admin/found-items").json()["items"] == []
+    archived = client.get("/api/admin/found-items", params={"status": "ARCHIVED"}).json()
+    assert [row["id"] for row in archived["items"]] == [item.id]
+    assert client.get("/api/found-items").json() == []
+    assert client.get(f"/api/found-items/{item.id}").status_code == 404
+    assert client.get("/api/found-items/map").json() == []
+    home = client.get("/api/system/home-summary").json()
+    assert home["stats"]["recent_found"] == 0
+    assert home["recent_items"] == []
+    dashboard = client.get("/api/admin/dashboard", params={"period": "all"}).json()
+    assert dashboard["metrics"]["official_found_items"] == 0
+    assert dashboard["recent_items"] == []
+
+
+def test_admin_archive_requires_admin_and_blocks_active_claim(client: TestClient, db: Session) -> None:
+    seed_admin(db)
+    seed_user(db)
+    item = seed_admin_found_item(db, item_id=302)
+    now = datetime(2026, 1, 3, tzinfo=UTC)
+    db.add(OwnershipClaim(id=401, user_id=2, found_item_id=item.id, verification_details="details", status="PENDING", created_at=now, updated_at=now))
+    db.commit()
+
+    login_user(client)
+    assert client.post(f"/api/admin/found-items/{item.id}/archive").status_code == 403
+    client.post("/api/auth/logout")
+    login(client)
+    response = client.post(f"/api/admin/found-items/{item.id}/archive")
+
+    assert response.status_code == 409
+    db.refresh(item)
+    assert item.status == "AVAILABLE"
+    assert item.is_public is True
+
+
 def test_admin_ai_report_aggregates_only_operational_objects(client: TestClient, db: Session) -> None:
     seed_admin(db)
     now = datetime(2026, 1, 2, tzinfo=UTC)
@@ -198,7 +243,10 @@ def test_admin_found_item_register_supports_full_lifecycle_counts_filters_and_pa
     assert {entry["status"] for entry in returned["items"]} == {"RETURNED"}
     assert sum(entry["count"] for entry in returned["status_counts"]) == 21
     assert client.get("/api/admin/found-items", params={"q": "보관함 0"}).json()["total"] == 6
-    assert client.get("/api/admin/found-items", params={"status": "ARCHIVED"}).status_code == 422
+    archived = client.get("/api/admin/found-items", params={"status": "ARCHIVED"})
+    assert archived.status_code == 200
+    assert archived.json()["items"] == []
+    assert archived.json()["total"] == 0
 
 
 def test_recovered_found_item_is_automatically_geocoded_for_map(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:

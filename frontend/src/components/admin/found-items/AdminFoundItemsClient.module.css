@@ -68,6 +68,7 @@
 .statusAVAILABLE, .statusCLAIM_PENDING { border-color: color-mix(in srgb, var(--color-primary) 30%, var(--color-border)); background: var(--color-primary-soft); color: var(--color-primary); }
 .statusRETURNED { border-color: color-mix(in srgb, var(--color-success) 34%, var(--color-border)); background: color-mix(in srgb, var(--color-success) 8%, var(--color-surface)); color: var(--color-success); }
 .statusDISPOSED { color: var(--color-text-muted); }
+.statusARCHIVED { border-color: color-mix(in srgb, var(--color-text-muted) 32%, var(--color-border)); background: color-mix(in srgb, var(--color-text-muted) 8%, var(--color-surface)); color: var(--color-text-muted); }
 .tableWrap { overflow-x: auto; }
 .itemTable { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .itemTable th { height: 40px; padding: 0 10px; border-bottom: 1px solid var(--color-border); background: var(--color-surface-soft); color: var(--color-text-muted); text-align: left; font-size: 9px; font-weight: 900; }
@@ -135,6 +136,9 @@
 .drawerFooter { padding: 13px 18px; border-top: 1px solid var(--color-border); background: color-mix(in srgb, var(--color-surface-elevated) 92%, transparent); display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
 .drawerFooter > span { margin-right: auto; color: var(--color-text-muted); font-size: 10px; }
 .drawerFooter :global(.button) { min-height: 39px; padding: 9px 15px; font-size: 11px; }
+.archiveButton { min-height: 39px; padding: 9px 15px; border: 1px solid color-mix(in srgb, var(--color-error) 38%, var(--color-border)); border-radius: 999px; background: color-mix(in srgb, var(--color-error) 7%, var(--color-surface)); color: var(--color-error); font: inherit; font-size: 11px; font-weight: 850; cursor: pointer; }
+.archiveButton:hover:not(:disabled) { background: color-mix(in srgb, var(--color-error) 13%, var(--color-surface)); }
+.archiveButton:disabled { opacity: .52; cursor: not-allowed; }
 
 .confirmBackdrop { position: fixed; z-index: 180; inset: 0; padding: 20px; background: color-mix(in srgb, var(--color-page) 58%, transparent); display: grid; place-items: center; }
 .confirmDialog { width: min(100%, 420px); padding: 22px; border: 1px solid var(--color-border); border-radius: 18px; background: var(--color-surface-elevated); box-shadow: var(--shadow-floating); }

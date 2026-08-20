@@ -4,13 +4,13 @@ from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, Query, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.auth import require_admin
 from app.core.security import utc_now
 from app.db.session import get_db
-from app.models import Camera, FoundItem, ProcessingHistory, User
+from app.models import Camera, CommunityComment, CommunityPost, FoundItem, ProcessingHistory, User
 from app.repositories.user_flow import (
     clean_optional_text,
     get_admin_dashboard_data,
@@ -25,7 +25,7 @@ from app.repositories.user_flow import (
     list_ownership_claims,
     waste_collection_completed_ids,
 )
-from app.schemas.admin import AdminAiReportResponse, AdminCameraResponse, AdminDashboardResponse, AdminDetectedObjectCollectionResponse, AdminDetectedObjectFoundItemResponse, AdminDetectionEventResponse, AdminFoundItemListResponse, AdminOwnershipClaimResponse, DetectedObjectUpdateRequest
+from app.schemas.admin import AdminAiReportResponse, AdminCameraResponse, AdminCommunityPostListResponse, AdminDashboardResponse, AdminDetectedObjectCollectionResponse, AdminDetectedObjectFoundItemResponse, AdminDetectionEventResponse, AdminFoundItemListResponse, AdminOwnershipClaimResponse, AdminUserListResponse, DetectedObjectUpdateRequest
 from app.schemas.citizen_report import AdminCitizenReportResponse, AdminCitizenReportUpdateRequest, ResolveCitizenReportRequest
 from app.schemas.common import MessageResponse
 from app.schemas.found_item import FoundItemUpdateRequest
@@ -44,7 +44,7 @@ from app.api.detections import IMAGE_CONTENT_TYPES, IMAGE_MAX_BYTES, save_upload
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 KST = ZoneInfo("Asia/Seoul")
-FOUND_ITEM_STATUSES = {"DETECTED", "RECOVERED", "AVAILABLE", "CLAIM_PENDING", "RETURNED", "DISPOSED"}
+FOUND_ITEM_STATUSES = {"DETECTED", "RECOVERED", "AVAILABLE", "CLAIM_PENDING", "RETURNED", "DISPOSED", "ARCHIVED"}
 
 
 @router.get("/ai-report", response_model=AdminAiReportResponse, summary="AI 운영 탐지 품질 집계")
@@ -111,6 +111,178 @@ def get_admin_dashboard(
     since_kst = today_kst if period == "today" else today_kst - timedelta(days=6) if period == "7d" else None
     since = since_kst.astimezone(UTC) if since_kst is not None else None
     return AdminDashboardResponse.model_validate(get_admin_dashboard_data(db, since=since, period=period, now=now))
+
+
+@router.get("/users", response_model=AdminUserListResponse, summary="관리자 사용자 현황 조회")
+def list_admin_users(
+    current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    q: Annotated[str | None, Query(max_length=100)] = None,
+    role: Annotated[Literal["USER", "ADMIN"] | None, Query()] = None,
+    active: Annotated[bool | None, Query()] = None,
+    include_deleted: Annotated[bool, Query()] = False,
+) -> AdminUserListResponse:
+    del current_admin
+    now = utc_now()
+    today_kst = now.astimezone(KST).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = today_kst.astimezone(UTC)
+    seven_days_start = (today_kst - timedelta(days=6)).astimezone(UTC)
+    trend_dates = [(today_kst.date() - timedelta(days=6 - index)) for index in range(7)]
+    trend_counts = {date.isoformat(): 0 for date in trend_dates}
+    for created_at in db.scalars(select(User.created_at).where(User.created_at >= seven_days_start)).all():
+        date_key = created_at.astimezone(KST).date().isoformat()
+        if date_key in trend_counts:
+            trend_counts[date_key] += 1
+
+    total_users = int(db.scalar(select(func.count(User.id))) or 0)
+    deleted_users = int(db.scalar(select(func.count(User.id)).where(User.deleted_at.is_not(None))) or 0)
+    active_users = int(db.scalar(select(func.count(User.id)).where(User.deleted_at.is_(None), User.active.is_(True))) or 0)
+    inactive_users = int(db.scalar(select(func.count(User.id)).where(User.deleted_at.is_(None), User.active.is_(False))) or 0)
+    admin_users = int(db.scalar(select(func.count(User.id)).where(User.deleted_at.is_(None), User.role == "ADMIN")) or 0)
+    regular_users = int(db.scalar(select(func.count(User.id)).where(User.deleted_at.is_(None), User.role == "USER")) or 0)
+
+    conditions = []
+    if not include_deleted:
+        conditions.append(User.deleted_at.is_(None))
+    if q:
+        pattern = f"%{q.strip()}%"
+        conditions.append(or_(User.email.ilike(pattern), User.nickname.ilike(pattern)))
+    if role:
+        conditions.append(User.role == role)
+    if active is not None:
+        conditions.append(User.active.is_(active))
+
+    filtered_total = int(db.scalar(select(func.count(User.id)).where(*conditions)) or 0)
+    rows = db.scalars(
+        select(User)
+        .where(*conditions)
+        .order_by(User.created_at.desc(), User.id.desc())
+        .offset(skip)
+        .limit(limit)
+    ).all()
+    return AdminUserListResponse.model_validate({
+        "summary": {
+            "total": total_users,
+            "active": active_users,
+            "inactive": inactive_users,
+            "admins": admin_users,
+            "users": regular_users,
+            "deleted": deleted_users,
+            "new_today": int(db.scalar(select(func.count(User.id)).where(User.created_at >= today_start)) or 0),
+            "new_last_7_days": int(db.scalar(select(func.count(User.id)).where(User.created_at >= seven_days_start)) or 0),
+        },
+        "role_breakdown": [
+            {"role": "ADMIN", "count": admin_users},
+            {"role": "USER", "count": regular_users},
+        ],
+        "status_breakdown": [
+            {"status": "ACTIVE", "count": active_users},
+            {"status": "INACTIVE", "count": inactive_users},
+            {"status": "DELETED", "count": deleted_users},
+        ],
+        "signup_trend": [{"date": date.isoformat(), "count": trend_counts[date.isoformat()]} for date in trend_dates],
+        "users": [
+            {
+                "id": user.id,
+                "email": user.email,
+                "nickname": user.nickname,
+                "role": user.role,
+                "active": user.active,
+                "created_at": user.created_at,
+                "last_login_at": user.last_login_at,
+                "deleted_at": user.deleted_at,
+            }
+            for user in rows
+        ],
+        "total": filtered_total,
+    })
+
+
+@router.get("/community-posts", response_model=AdminCommunityPostListResponse, summary="관리자 커뮤니티 게시글 현황 조회")
+def list_admin_community_posts(
+    current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    q: Annotated[str | None, Query(max_length=100)] = None,
+    category: Annotated[Literal["FIELD_STORY", "QUESTION", "EXPERIENCE", "OPINION"] | None, Query()] = None,
+    include_deleted: Annotated[bool, Query()] = False,
+    notice: Annotated[bool | None, Query()] = None,
+) -> AdminCommunityPostListResponse:
+    del current_admin
+    now = utc_now()
+    today_kst = now.astimezone(KST).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = today_kst.astimezone(UTC)
+    seven_days_start = (today_kst - timedelta(days=6)).astimezone(UTC)
+    visible_condition = CommunityPost.deleted_at.is_(None)
+    comment_count = (
+        select(func.count(CommunityComment.id))
+        .where(CommunityComment.post_id == CommunityPost.id, CommunityComment.deleted_at.is_(None))
+        .correlate(CommunityPost)
+        .scalar_subquery()
+    )
+
+    total_posts = int(db.scalar(select(func.count(CommunityPost.id))) or 0)
+    visible_posts = int(db.scalar(select(func.count(CommunityPost.id)).where(visible_condition)) or 0)
+    deleted_posts = int(db.scalar(select(func.count(CommunityPost.id)).where(CommunityPost.deleted_at.is_not(None))) or 0)
+    notice_posts = int(db.scalar(select(func.count(CommunityPost.id)).where(visible_condition, CommunityPost.is_notice.is_(True))) or 0)
+    visible_comments = int(db.scalar(select(func.count(CommunityComment.id)).where(CommunityComment.deleted_at.is_(None))) or 0)
+
+    conditions = []
+    if not include_deleted:
+        conditions.append(visible_condition)
+    if q:
+        pattern = f"%{q.strip()}%"
+        conditions.append(or_(CommunityPost.title.ilike(pattern), CommunityPost.content.ilike(pattern), CommunityPost.place_name.ilike(pattern), User.nickname.ilike(pattern)))
+    if category:
+        conditions.append(CommunityPost.category == category)
+    if notice is not None:
+        conditions.append(CommunityPost.is_notice.is_(notice))
+
+    filtered_total = int(db.scalar(select(func.count(CommunityPost.id)).join(User).where(*conditions)) or 0)
+    rows = db.execute(
+        select(CommunityPost, User.nickname, comment_count.label("comment_count"))
+        .join(User)
+        .where(*conditions)
+        .order_by(CommunityPost.created_at.desc(), CommunityPost.id.desc())
+        .offset(skip)
+        .limit(limit)
+    ).all()
+    category_rows = db.execute(
+        select(CommunityPost.category, func.count(CommunityPost.id))
+        .where(visible_condition)
+        .group_by(CommunityPost.category)
+    ).all()
+    return AdminCommunityPostListResponse.model_validate({
+        "summary": {
+            "total": total_posts,
+            "visible": visible_posts,
+            "deleted": deleted_posts,
+            "notices": notice_posts,
+            "comments": visible_comments,
+            "new_today": int(db.scalar(select(func.count(CommunityPost.id)).where(CommunityPost.created_at >= today_start, visible_condition)) or 0),
+            "new_last_7_days": int(db.scalar(select(func.count(CommunityPost.id)).where(CommunityPost.created_at >= seven_days_start, visible_condition)) or 0),
+        },
+        "category_breakdown": [{"category": value, "count": count} for value, count in category_rows],
+        "posts": [
+            {
+                "id": post.id,
+                "title": post.title,
+                "category": post.category,
+                "author_nickname": nickname,
+                "place_name": post.place_name,
+                "is_notice": post.is_notice,
+                "comment_count": int(count),
+                "created_at": post.created_at,
+                "updated_at": post.updated_at,
+                "deleted_at": post.deleted_at,
+            }
+            for post, nickname, count in rows
+        ],
+        "total": filtered_total,
+    })
 
 
 def not_implemented() -> None:
@@ -325,6 +497,8 @@ def update_found_item(
         or next_longitude != item.longitude
     )
     item.status = next_status
+    if item.status == "ARCHIVED":
+        item.is_public = False
     item.area_name = next_area_name
     item.latitude = next_latitude
     item.longitude = next_longitude
@@ -336,6 +510,30 @@ def update_found_item(
     db.add(ProcessingHistory(actor_user_id=current_admin.id, entity_type="FOUND_ITEM", entity_id=item.id, action_type="FOUND_ITEM_UPDATED", previous_status=previous_status, new_status=item.status, note=item.admin_memo, created_at=item.updated_at))
     db.commit()
     return MessageResponse(message="Found item updated")
+
+
+@router.post("/found-items/{id}/archive", response_model=MessageResponse, summary="발견물 보관")
+def archive_found_item(
+    current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    id: Annotated[int, Path(ge=1)],
+) -> MessageResponse:
+    item = get_found_item_by_id(db, id, for_update=True)
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Found item not found")
+    if item.status != "ARCHIVED" and has_other_active_ownership_claim(db, found_item_id=item.id, claim_id=0):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Active ownership claim must be handled before archiving this found item",
+        )
+    previous_status = item.status
+    item.status = "ARCHIVED"
+    item.is_public = False
+    item.updated_at = utc_now()
+    reconcile_match_candidates_for_found_item(db, item)
+    db.add(ProcessingHistory(actor_user_id=current_admin.id, entity_type="FOUND_ITEM", entity_id=item.id, action_type="FOUND_ITEM_ARCHIVED", previous_status=previous_status, new_status=item.status, note=item.admin_memo, created_at=item.updated_at))
+    db.commit()
+    return MessageResponse(message="Found item archived")
 
 
 @router.get("/ownership-claims", response_model=list[AdminOwnershipClaimResponse], summary="소유권 확인 요청 목록 조회")

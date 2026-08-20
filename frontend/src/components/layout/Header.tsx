@@ -37,13 +37,32 @@ const adminNavigation: readonly NavigationItem[] = [
     label: "업무 처리",
     href: "/admin",
     activePaths: ["/admin", "/admin/detections", "/admin/citizen-reports", "/admin/ownership-claims"],
+    children: [
+      { label: "관리자 대시보드", href: "/admin" },
+      { label: "AI 탐지 검토", href: "/admin/detections" },
+      { label: "시민 제보 관리", href: "/admin/citizen-reports" },
+      { label: "소유권 요청", href: "/admin/ownership-claims" },
+    ],
   },
   {
     label: "발견물 관리",
     href: "/admin/found-items",
     activePaths: ["/admin/found-items", "/admin/map"],
+    children: [
+      { label: "발견물 목록", href: "/admin/found-items" },
+      { label: "관리자 지도", href: "/admin/map" },
+    ],
   },
-  { label: "AI 운영 분석", href: "/admin/ai-report", activePaths: ["/admin/ai-report"] },
+  {
+    label: "운영 분석",
+    href: "/admin/ai-report",
+    activePaths: ["/admin/ai-report", "/admin/users", "/admin/community-posts"],
+    children: [
+      { label: "AI 리포트", href: "/admin/ai-report" },
+      { label: "사용자 관리", href: "/admin/users" },
+      { label: "게시글 관리", href: "/admin/community-posts" },
+    ],
+  },
 ];
 
 function isNavigationItemCurrent(item: NavigationItem, pathname: string) {
