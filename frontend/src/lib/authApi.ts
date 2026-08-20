@@ -1,3 +1,5 @@
+import { buildApiUrl } from "@/lib/apiBase";
+
 export type AuthUser = {
   id: number;
   email: string;
@@ -41,14 +43,8 @@ function getErrorMessage(detail: unknown) {
   return "입력 내용을 확인해주세요.";
 }
 
-function getApiBaseUrl() {
-  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (!baseUrl) throw new AuthApiError("API 서버 주소가 설정되지 않았습니다.");
-  return baseUrl.replace(/\/+$/, "");
-}
-
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${getApiBaseUrl()}${path}`, {
+  const response = await fetch(buildApiUrl(path), {
     ...init,
     credentials: "include",
     headers: {

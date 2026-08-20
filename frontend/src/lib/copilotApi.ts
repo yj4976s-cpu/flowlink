@@ -1,3 +1,5 @@
+import { buildApiUrl } from "@/lib/apiBase";
+
 export type CopilotMode = "GUIDE" | "PERSONAL" | "OPERATIONS";
 export type CopilotCard = { type: "MATCH" | "ANALYSIS" | "STATUS" | "TIMELINE" | "EVIDENCE" | "SYSTEM_NOTICE" | "COMMUNITY"; title: string; subtitle?: string | null; score?: number | null; confidence?: number | null; status?: string | null; details: string[]; entity_id?: number | null };
 export type CopilotAction = { type: "NAVIGATE" | "ASK"; label: string; target: string };
@@ -12,14 +14,8 @@ export class CopilotApiError extends Error {
   constructor(message: string, readonly status?: number, readonly retryAfterSeconds?: number) { super(message); this.name = "CopilotApiError"; }
 }
 
-function baseUrl() {
-  const value = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (!value) throw new CopilotApiError("API 서버 주소가 설정되지 않았습니다.");
-  return value.replace(/\/+$/, "");
-}
-
 export async function sendCopilotMessage(messages: CopilotHistoryMessage[], context: { page: string; path: string; entity_id?: number }, options?: { signal?: AbortSignal; conversationId?: string | null; clientMessageId?: string }) {
-  const response = await fetch(`${baseUrl()}/api/copilot/chat`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages, context, conversation_public_id: options?.conversationId, client_message_id: options?.clientMessageId }), signal: options?.signal });
+  const response = await fetch(buildApiUrl("/api/copilot/chat"), { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages, context, conversation_public_id: options?.conversationId, client_message_id: options?.clientMessageId }), signal: options?.signal });
   if (!response.ok) {
     const retryAfterHeader = response.headers.get("Retry-After");
     const retryAfterSeconds = retryAfterHeader ? Number.parseInt(retryAfterHeader, 10) : undefined;
@@ -31,7 +27,7 @@ export async function sendCopilotMessage(messages: CopilotHistoryMessage[], cont
 }
 
 async function memoryFetch(path: string, init?: RequestInit) {
-  const response = await fetch(`${baseUrl()}${path}`, { credentials: "include", ...init, headers: { "Content-Type": "application/json", ...init?.headers } });
+  const response = await fetch(buildApiUrl(path), { credentials: "include", ...init, headers: { "Content-Type": "application/json", ...init?.headers } });
   if (!response.ok) throw new CopilotApiError("Flow Memory를 불러오지 못했어요.", response.status);
   return response;
 }
@@ -52,7 +48,7 @@ export async function deleteCopilotConversation(id: string) { await memoryFetch(
 export async function deleteAllCopilotConversations() { await memoryFetch("/api/copilot/conversations", { method: "DELETE" }); }
 
 export async function getCopilotBriefing(signal?: AbortSignal) {
-  const response = await fetch(`${baseUrl()}/api/copilot/briefing`, { credentials: "include", signal });
+  const response = await fetch(buildApiUrl("/api/copilot/briefing"), { credentials: "include", signal });
   if (!response.ok) throw new CopilotApiError("개인 브리핑을 불러오지 못했어요.", response.status);
   return response.json() as Promise<CopilotResponse>;
 }
