@@ -1,14 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import type { Ref } from "react";
 import { Icon } from "@/components/common/Icon";
 import { DARU_GUIDE_CONFIG, type DaruGuideRole } from "./daru.guide.config";
 import styles from "./DaruMascot.module.css";
 
-export function DaruGuidePanel({ role, userPaused, reducedMotion, onClose, onToggleRoaming }: { role: DaruGuideRole; userPaused: boolean; reducedMotion: boolean; onClose: (options?: { restoreFocus?: boolean }) => void; onToggleRoaming: () => void }) {
+export function DaruGuidePanel({ role, userPaused, reducedMotion, viewportLayer = false, panelRef, onClose, onToggleRoaming }: { role: DaruGuideRole; userPaused: boolean; reducedMotion: boolean; viewportLayer?: boolean; panelRef?: Ref<HTMLElement>; onClose: (options?: { restoreFocus?: boolean }) => void; onToggleRoaming: () => void }) {
   const guide = DARU_GUIDE_CONFIG[role];
   return (
-    <section id="daru-guide-panel" className={styles.guidePanel} role="dialog" aria-modal="false" aria-labelledby="daru-guide-title">
+    <section ref={panelRef} id="daru-guide-panel" className={styles.guidePanel} data-viewport-layer={viewportLayer || undefined} role="dialog" aria-modal="false" aria-labelledby="daru-guide-title">
       <header className={styles.guideHeader}>
         <div><strong id="daru-guide-title">다루</strong><span>{guide.roleLabel}</span></div>
         <button type="button" aria-label="다루 안내 닫기" onClick={() => onClose({ restoreFocus: true })}><Icon name="close" size={17} /></button>
