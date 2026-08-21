@@ -82,6 +82,16 @@ Feature-specific and optional integration values:
 
 Never put `SUPABASE_SERVICE_ROLE_KEY`, JWT secrets, AI internal keys, or provider API keys in `NEXT_PUBLIC_*` variables.
 
+## Database migration for social OAuth
+
+Before deploying the backend version that includes social OAuth, apply this migration once:
+
+`database/migrations/20260820_01_user_social_accounts.sql`
+
+This migration makes `users.password_hash` nullable for social-only accounts and creates the `user_social_accounts` table.
+
+Apply the migration to the Supabase PostgreSQL database before starting the updated backend. Run it only once.
+
 ## Build and run
 
 Validate the merged Compose config:

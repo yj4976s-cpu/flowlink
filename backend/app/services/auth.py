@@ -84,6 +84,7 @@ def login_user(db: Session, request: LoginRequest) -> LoginResult:
         user is None
         or not user.active
         or user.deleted_at is not None
+        or user.password_hash is None
         or not verify_password(request.password, user.password_hash)
     ):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
@@ -168,6 +169,8 @@ def update_nickname(db: Session, user: User, nickname: str) -> UserResponse:
 
 
 def change_password(db: Session, user: User, current_password: str, new_password: str) -> None:
+    if user.password_hash is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Password is not set for this account")
     if not verify_password(current_password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
     user.password_hash = hash_password(new_password)

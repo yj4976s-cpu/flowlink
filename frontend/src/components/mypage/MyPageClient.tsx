@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Icon, type IconName } from "@/components/common/Icon";
 import { AuthApiError, AuthUser, changePassword, deleteAccount, getCurrentUser, updateNickname } from "@/lib/authApi";
 import { listMyLostReports, LostReportResponse } from "@/lib/lostReportsApi";
@@ -17,7 +17,10 @@ import styles from "./MyPageClient.module.css";
 
 type LoadState = { user: AuthUser; reports: LostReportResponse[]; matches: MatchCandidate[]; progressClaims: OwnershipClaimResponse[]; claimActivity: OwnershipClaimResponse[]; notifications: NotificationResponse[]; citizenReports: CitizenReport[] };
 type ActivityTab = "reports" | "matches" | "claims" | "citizen";
+type ActivitySort = "newest" | "oldest";
 type FlowNav = "overview" | ActivityTab;
+type ReportFilter = "all" | "active" | "returned";
+type ReportSort = "newest" | "oldest";
 type LostReportCardModel = {
   report: LostReportResponse;
   candidateCount: number;
@@ -25,6 +28,87 @@ type LostReportCardModel = {
   imageUrl: string | null;
   imageSource: "report" | "match" | null;
 };
+
+const REPORTS_PER_PAGE = 5;
+const ACTIVITY_ITEMS_PER_PAGE = 5;
+const activityTabs: Array<{ key: ActivityTab; label: string }> = [
+  { key: "reports", label: "분실 신고" },
+  { key: "matches", label: "매칭 결과" },
+  { key: "claims", label: "소유권 확인 요청" },
+  { key: "citizen", label: "발견 제보" },
+];
+const reportFilters: Array<{ value: ReportFilter; label: string }> = [
+  { value: "all", label: "전체" },
+  { value: "active", label: "진행 중" },
+  { value: "returned", label: "반환 완료" },
+];
+
+function isActivityTab(value: string | null): value is ActivityTab {
+  return activityTabs.some((tab) => tab.key === value);
+}
+
+function readPositivePage(value: string | null) {
+  return value && /^\d+$/.test(value) && Number(value) > 0 ? Number(value) : 1;
+}
+
+function sortByActivityDate<T>(items: T[], getDate: (item: T) => string, sort: ActivitySort) {
+  return [...items].sort((left, right) => {
+    const difference = new Date(getDate(left)).getTime() - new Date(getDate(right)).getTime();
+    return sort === "newest" ? -difference : difference;
+  });
+}
+
+const reportSortOptions: Array<{ value: ReportSort; label: string }> = [
+  { value: "newest", label: "최신순" },
+  { value: "oldest", label: "오래된순" },
+];
+
+function SortDropdown({ value, label, className, onChange }: { value: ReportSort; label: string; className?: string; onChange: (value: ReportSort) => void }) {
+  const [open, setOpen] = useState(false);
+  const selectedIndex = Math.max(0, reportSortOptions.findIndex((option) => option.value === value));
+  const [activeIndex, setActiveIndex] = useState(selectedIndex);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const listboxId = useId();
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOutside = (event: PointerEvent) => { if (!rootRef.current?.contains(event.target as Node)) setOpen(false); };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    window.addEventListener("pointerdown", closeOutside);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => { window.removeEventListener("pointerdown", closeOutside); window.removeEventListener("keydown", closeOnEscape); };
+  }, [open]);
+
+  const choose = (index: number) => {
+    onChange(reportSortOptions[index].value);
+    setActiveIndex(index);
+    setOpen(false);
+    requestAnimationFrame(() => triggerRef.current?.focus());
+  };
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+      event.preventDefault();
+      setOpen(true);
+      setActiveIndex((current) => event.key === "Home" ? 0 : event.key === "End" ? reportSortOptions.length - 1 : event.key === "ArrowDown" ? (current + 1) % reportSortOptions.length : (current - 1 + reportSortOptions.length) % reportSortOptions.length);
+      return;
+    }
+    if ((event.key === "Enter" || event.key === " ") && open) { event.preventDefault(); choose(activeIndex); }
+  };
+
+  return <div className={`${styles.reportSort}${className ? ` ${className}` : ""}`} ref={rootRef}>
+    <button ref={triggerRef} type="button" aria-label={label} aria-haspopup="listbox" aria-expanded={open} aria-controls={listboxId} onClick={() => { setActiveIndex(selectedIndex); setOpen((current) => !current); }} onKeyDown={handleKeyDown}>
+      <span>{reportSortOptions[selectedIndex].label}</span><Icon name="chevron" size={16} />
+    </button>
+    {open && <div className={styles.reportSortMenu} id={listboxId} role="listbox" aria-label={`${label} 옵션`}>
+      {reportSortOptions.map((option, index) => <button type="button" role="option" aria-selected={option.value === value} data-active={activeIndex === index} id={`${listboxId}-option-${index}`} key={option.value} onMouseEnter={() => setActiveIndex(index)} onClick={() => choose(index)}>{option.label}</button>)}
+    </div>}
+  </div>;
+}
 
 const reportStatus: Record<string, string> = { OPEN: "진행 중", MATCHED: "매칭 확인 중", CLAIM_PENDING: "소유권 확인 중", RESOLVED: "반환 완료", CANCELLED: "취소" };
 const claimStatus: Record<string, string> = { PENDING: "관리자 확인 중", APPROVED: "반환 준비", REJECTED: "요청 미승인", RETURNED: "반환 완료" };
@@ -86,7 +170,7 @@ function LostReportCard({ model, selected }: { model: LostReportCardModel; selec
       <div className={styles.reportCardSummary}><span>현재 확인 가능한 매칭 후보 <strong>{model.candidateCount}개</strong></span></div>
       <LostReportProgress progress={progress} />
       <div className={styles.reportCardActions}>
-        {showCandidateAction && <Link className="button button-primary" href={`/matches?reportId=${report.id}`}>{progress.exception?.type === "REJECTED" ? "다른 후보 보기" : "매칭 후보 보기"}</Link>}
+        {showCandidateAction && <Link className={`button button-primary ${styles.candidateButton}`} href={`/matches?reportId=${report.id}`}>{progress.exception?.type === "REJECTED" ? "다른 후보 보기" : "매칭 후보 보기"}</Link>}
         {progress.step === 3 && hasCandidates && <Link href={`/matches?reportId=${report.id}`}>매칭 후보 확인</Link>}
       </div>
     </div>
@@ -133,9 +217,16 @@ export function MyPageClient() {
   const [passwordError, setPasswordError] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [failedSections, setFailedSections] = useState<string[]>([]);
-  const [activityTab, setActivityTab] = useState<ActivityTab>("reports");
+  const initialActivityTab = isActivityTab(searchParams.get("activity")) ? searchParams.get("activity") as ActivityTab : "reports";
+  const initialActivitySort: ActivitySort = searchParams.get("activitySort") === "oldest" ? "oldest" : "newest";
+  const [activityTab, setActivityTab] = useState<ActivityTab>(initialActivityTab);
+  const [activityPages, setActivityPages] = useState<Record<ActivityTab, number>>(() => ({ reports: 1, matches: 1, claims: 1, citizen: 1, [initialActivityTab]: readPositivePage(searchParams.get("activityPage")) }));
+  const [activitySorts, setActivitySorts] = useState<Record<ActivityTab, ActivitySort>>(() => ({ reports: "newest", matches: "newest", claims: "newest", citizen: "newest", [initialActivityTab]: initialActivitySort }));
   const [flowNav, setFlowNav] = useState<FlowNav>("overview");
   const [flowMenuOpen, setFlowMenuOpen] = useState(false);
+  const [reportFilter, setReportFilter] = useState<ReportFilter>("all");
+  const [reportSort, setReportSort] = useState<ReportSort>("newest");
+  const [reportPage, setReportPage] = useState(1);
   const [deletingCitizenReportId, setDeletingCitizenReportId] = useState<string | null>(null);
   const [citizenDeleteMessage, setCitizenDeleteMessage] = useState("");
   const [citizenDeleteError, setCitizenDeleteError] = useState("");
@@ -175,10 +266,17 @@ export function MyPageClient() {
       if (claimActivityResult.status === "rejected") failed.push("claimActivity");
       if (notificationsResult.status === "rejected") failed.push("notifications");
       if (citizenResult.status === "rejected") failed.push("citizen");
+      const loadedReports = reportsResult.status === "fulfilled" ? reportsResult.value : [];
+      if (requestedReportId !== null) {
+        const requestedIndex = [...loadedReports]
+          .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime() || right.id - left.id)
+          .findIndex((report) => report.id === requestedReportId);
+        if (requestedIndex >= 0) setReportPage(Math.floor(requestedIndex / REPORTS_PER_PAGE) + 1);
+      }
       setFailedSections(failed);
       setData({
         user,
-        reports: reportsResult.status === "fulfilled" ? reportsResult.value : [],
+        reports: loadedReports,
         matches: matchesResult.status === "fulfilled" ? matchesResult.value : [],
         progressClaims: progressClaimsResult.status === "fulfilled" ? progressClaimsResult.value : [],
         claimActivity: claimActivityResult.status === "fulfilled" ? claimActivityResult.value : [],
@@ -191,7 +289,7 @@ export function MyPageClient() {
         else setError("마이페이지 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.");
       });
     return () => controller.abort();
-  }, [router]);
+  }, [requestedReportId, router]);
 
   useEffect(() => {
     if (!accountOpen && !passwordOpen && !deleteOpen) return;
@@ -217,16 +315,63 @@ export function MyPageClient() {
     { label: "내 발견 제보", value: data.citizenReports.length, href: "/found-items#citizen", description: data.citizenReports.length ? "등록한 제보 확인" : "등록된 제보 없음", icon: "location" as const, tone: "secondary" },
   ] : [], [data]);
   const reportCards = useMemo(() => data ? buildLostReportCardModels(data.reports, data.matches, data.progressClaims) : [], [data]);
+  const filteredReportCards = useMemo(() => {
+    const filtered = reportCards.filter((model) => {
+      const returned = model.report.status === "RESOLVED";
+      if (reportFilter === "returned") return returned;
+      if (reportFilter === "active") return !returned;
+      return true;
+    });
+    return filtered.sort((left, right) => {
+      const dateDifference = new Date(left.report.created_at).getTime() - new Date(right.report.created_at).getTime();
+      const stableDifference = dateDifference || left.report.id - right.report.id;
+      return reportSort === "newest" ? -stableDifference : stableDifference;
+    });
+  }, [reportCards, reportFilter, reportSort]);
+  const reportPageCount = Math.ceil(filteredReportCards.length / REPORTS_PER_PAGE);
+  const effectiveReportPage = reportPageCount ? Math.min(reportPage, reportPageCount) : 1;
+  const paginatedReportCards = useMemo(() => {
+    const start = (effectiveReportPage - 1) * REPORTS_PER_PAGE;
+    return filteredReportCards.slice(start, start + REPORTS_PER_PAGE);
+  }, [effectiveReportPage, filteredReportCards]);
+  const sortedActivityReports = useMemo(() => sortByActivityDate(data?.reports ?? [], (report) => report.created_at, activitySorts.reports), [activitySorts.reports, data?.reports]);
+  const sortedActivityMatches = useMemo(() => sortByActivityDate(data?.matches ?? [], (match) => match.created_at, activitySorts.matches), [activitySorts.matches, data?.matches]);
+  const sortedActivityClaims = useMemo(() => sortByActivityDate(data?.claimActivity ?? [], (claim) => claim.created_at, activitySorts.claims), [activitySorts.claims, data?.claimActivity]);
+  const sortedCitizenReports = useMemo(() => sortByActivityDate(data?.citizenReports ?? [], (report) => report.foundAt, activitySorts.citizen), [activitySorts.citizen, data?.citizenReports]);
+  const activityCounts: Record<ActivityTab, number> = {
+    reports: sortedActivityReports.length,
+    matches: sortedActivityMatches.length,
+    claims: sortedActivityClaims.length,
+    citizen: sortedCitizenReports.length,
+  };
+  const activityPageCount = Math.ceil(activityCounts[activityTab] / ACTIVITY_ITEMS_PER_PAGE);
+  const effectiveActivityPage = activityPageCount ? Math.min(activityPages[activityTab], activityPageCount) : 1;
+  const activitySliceStart = (effectiveActivityPage - 1) * ACTIVITY_ITEMS_PER_PAGE;
+  const visibleActivityReports = sortedActivityReports.slice(activitySliceStart, activitySliceStart + ACTIVITY_ITEMS_PER_PAGE);
+  const visibleActivityMatches = sortedActivityMatches.slice(activitySliceStart, activitySliceStart + ACTIVITY_ITEMS_PER_PAGE);
+  const visibleActivityClaims = sortedActivityClaims.slice(activitySliceStart, activitySliceStart + ACTIVITY_ITEMS_PER_PAGE);
+  const visibleCitizenReports = sortedCitizenReports.slice(activitySliceStart, activitySliceStart + ACTIVITY_ITEMS_PER_PAGE);
+
+  useEffect(() => {
+    if (!data) return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("activity", activityTab);
+    params.set("activityPage", String(effectiveActivityPage));
+    params.set("activitySort", activitySorts[activityTab]);
+    const nextQuery = params.toString();
+    if (nextQuery === searchParams.toString()) return;
+    router.replace(`/mypage?${nextQuery}`, { scroll: false });
+  }, [activitySorts, activityTab, data, effectiveActivityPage, router, searchParams]);
 
   useEffect(() => {
     if (!Number.isSafeInteger(requestedReportId) || lastScrolledReportId.current === requestedReportId) return;
-    if (!reportCards.some((card) => card.report.id === requestedReportId)) return;
+    if (!filteredReportCards.some((card) => card.report.id === requestedReportId)) return;
     const target = document.getElementById(`lost-report-card-${requestedReportId}`);
     if (!target) return;
     lastScrolledReportId.current = requestedReportId;
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     target.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "center" });
-  }, [reportCards, requestedReportId]);
+  }, [effectiveReportPage, filteredReportCards, requestedReportId]);
 
   if (error) return <main className={styles.page}><section className={styles.errorPanel}><p>{error}</p><button className="button button-secondary" onClick={() => location.reload()}>다시 시도</button></section></main>;
   if (!data) return <main className={styles.page} aria-busy="true"><div className={styles.skeleton} /><div className={styles.skeleton} /><div className={styles.skeleton} /></main>;
@@ -299,7 +444,22 @@ export function MyPageClient() {
     </section>
 
     <section id="recent-flow" className={`${styles.section} ${styles.reveal}`}><div className={styles.sectionTitle}><div><p>MY LOST REPORTS</p><h2>신고별 진행 상황</h2></div></div>
-      {failedSections.some((section) => section === "reports" || section === "matches" || section === "claimProgress") ? <div className={styles.empty}>신고별 진행 상황을 불러오지 못했습니다.<button onClick={() => location.reload()}>다시 시도</button></div> : reportCards.length ? <div className={styles.reportCardList}>{reportCards.map((model) => <LostReportCard key={model.report.id} model={model} selected={model.report.id === selectedReportId} />)}</div> : <div className={styles.empty}>아직 등록한 분실 신고가 없어요. 물건을 잃어버렸다면 먼저 신고해 주세요.<Link href="/lost-reports/new">분실 신고하기</Link></div>}
+      {failedSections.some((section) => section === "reports" || section === "matches" || section === "claimProgress") ? <div className={styles.empty}>신고별 진행 상황을 불러오지 못했습니다.<button onClick={() => location.reload()}>다시 시도</button></div> : reportCards.length ? <>
+        <div className={styles.reportListControls}>
+          <div className={styles.reportFilters} role="group" aria-label="신고 진행 상태 필터">
+            {reportFilters.map((filter) => <button type="button" key={filter.value} aria-pressed={reportFilter === filter.value} onClick={() => { setReportFilter(filter.value); setReportPage(1); }}>{filter.label}</button>)}
+          </div>
+          <SortDropdown value={reportSort} label="신고 정렬" onChange={(nextSort) => { if (nextSort !== reportSort) { setReportSort(nextSort); setReportPage(1); } }} />
+        </div>
+        {paginatedReportCards.length ? <>
+          <div className={styles.reportCardList}>{paginatedReportCards.map((model) => <LostReportCard key={model.report.id} model={model} selected={model.report.id === selectedReportId} />)}</div>
+          <nav className={styles.reportPagination} aria-label="신고별 진행 상황 페이지">
+            <button type="button" aria-label="이전 페이지" disabled={effectiveReportPage === 1} onClick={() => setReportPage(Math.max(1, effectiveReportPage - 1))}>‹</button>
+            <span><strong>{String(effectiveReportPage).padStart(2, "0")}</strong><i>/</i>{String(reportPageCount).padStart(2, "0")}</span>
+            <button type="button" aria-label="다음 페이지" disabled={effectiveReportPage === reportPageCount} onClick={() => setReportPage(Math.min(reportPageCount, effectiveReportPage + 1))}>›</button>
+          </nav>
+        </> : <div className={styles.empty}>{reportFilter === "active" ? "진행 중인 신고가 없습니다." : "반환 완료된 신고가 없습니다."}</div>}
+      </> : <div className={styles.empty}>아직 등록한 분실 신고가 없어요. 물건을 잃어버렸다면 먼저 신고해 주세요.<Link href="/lost-reports/new">분실 신고하기</Link></div>}
     </section>
 
     <section className={`${styles.section} ${styles.reveal}`}><div className={styles.sectionTitle}><div><p>NOTIFICATIONS</p><h2>최근 알림</h2></div><Link href="/notifications">전체보기 <Icon name="arrow" size={16} /></Link></div>
@@ -307,22 +467,30 @@ export function MyPageClient() {
     </section>
 
     <section id="my-activity" className={`${styles.section} ${styles.reveal}`}><div className={styles.sectionTitle}><div><p>MY ACTIVITY</p><h2>내 활동</h2></div></div>
-      <div className={styles.activityTabs} role="tablist" aria-label="내 활동 종류">
-        {([['reports', '분실 신고'], ['matches', '매칭 결과'], ['claims', '소유권 확인 요청'], ['citizen', '발견 제보']] as const).map(([key, label]) => <button className={styles[`tab_${key}`]} key={key} role="tab" aria-selected={activityTab === key} aria-controls="activity-panel" onClick={() => { setActivityTab(key); setFlowNav(key); }}>{label}</button>)}
+      <div className={styles.activityToolbar}>
+        <div className={styles.activityTabs} role="tablist" aria-label="내 활동 종류">
+          {activityTabs.map(({ key, label }) => <button className={styles[`tab_${key}`]} key={key} role="tab" aria-selected={activityTab === key} aria-controls="activity-panel" onClick={() => { setActivityTab(key); setFlowNav(key); }}>{label}<small>{activityCounts[key]}</small></button>)}
+        </div>
+        <SortDropdown className={styles.activitySort} value={activitySorts[activityTab]} label="내 활동 정렬" onChange={(nextSort) => { if (nextSort !== activitySorts[activityTab]) { setActivitySorts((sorts) => ({ ...sorts, [activityTab]: nextSort })); setActivityPages((pages) => ({ ...pages, [activityTab]: 1 })); } }} />
       </div>
       <div id="activity-panel" className={styles.activityList} role="tabpanel">
-        {activityTab === "reports" && (failedSections.includes("reports") ? <ActivityEmpty text="분실 신고 내역을 불러오지 못했습니다." /> : data.reports.length ? data.reports.map((report) => <ActivityRow key={report.id} icon={getItemTypeMeta(report.item_category, report.item_category_name).icon} imageUrl={report.image_url} title={`${report.color ? `${report.color} ` : ""}${report.item_category_name}`} meta={`${new Date(report.lost_from).toLocaleDateString("ko-KR")} · ${report.area_name}`} status={reportStatus[report.status] ?? report.status} detail={`유사 발견물 ${data.matches.filter((match) => match.lost_report.id === report.id).length}건`} href={`/matches?reportId=${report.id}`} />) : <ActivityEmpty text="아직 등록한 분실 신고가 없습니다." href="/lost-reports/new" action="분실 신고 시작하기" />)}
-        {activityTab === "matches" && (failedSections.includes("matches") ? <ActivityEmpty text="매칭 결과를 불러오지 못했습니다." /> : data.matches.length ? data.matches.map((match) => <ActivityRow key={match.id} icon="match" title={match.found_item.public_description || match.found_item.item_category_name} meta={`${new Date(match.found_item.found_at).toLocaleDateString("ko-KR")} · ${match.found_item.area_name}`} status={`${match.total_score}% 유사`} detail="AI 탐지" href="/matches" tone="accent" />) : <ActivityEmpty text="아직 비슷한 발견물을 찾지 못했어요." />)}
-        {activityTab === "claims" && (failedSections.includes("claimActivity") ? <ActivityEmpty text="소유권 확인 요청을 불러오지 못했습니다." /> : data.claimActivity.length ? data.claimActivity.map((claim) => {
+        {activityTab === "reports" && (failedSections.includes("reports") ? <ActivityEmpty text="분실 신고 내역을 불러오지 못했습니다." /> : sortedActivityReports.length ? visibleActivityReports.map((report) => <ActivityRow key={report.id} icon={getItemTypeMeta(report.item_category, report.item_category_name).icon} imageUrl={report.image_url} title={`${report.color ? `${report.color} ` : ""}${report.item_category_name}`} meta={`${new Date(report.lost_from).toLocaleDateString("ko-KR")} · ${report.area_name}`} status={reportStatus[report.status] ?? report.status} detail={`유사 발견물 ${data.matches.filter((match) => match.lost_report.id === report.id).length}건`} href={`/matches?reportId=${report.id}`} />) : <ActivityEmpty text="아직 등록한 분실 신고가 없습니다." href="/lost-reports/new" action="분실 신고 시작하기" />)}
+        {activityTab === "matches" && (failedSections.includes("matches") ? <ActivityEmpty text="매칭 결과를 불러오지 못했습니다." /> : sortedActivityMatches.length ? visibleActivityMatches.map((match) => <ActivityRow key={match.id} icon="match" title={match.found_item.public_description || match.found_item.item_category_name} meta={`${new Date(match.found_item.found_at).toLocaleDateString("ko-KR")} · ${match.found_item.area_name}`} status={`${match.total_score}% 유사`} detail="AI 탐지" href="/matches" tone="accent" />) : <ActivityEmpty text="아직 비슷한 발견물을 찾지 못했어요." />)}
+        {activityTab === "claims" && (failedSections.includes("claimActivity") ? <ActivityEmpty text="소유권 확인 요청을 불러오지 못했습니다." /> : sortedActivityClaims.length ? visibleActivityClaims.map((claim) => {
           const match = data.matches.find((candidate) => candidate.found_item.id === claim.found_item_id && candidate.lost_report.id === claim.lost_report_id);
           return <ActivityRow key={claim.id} icon="check" title={match?.found_item.public_description || match?.found_item.item_category_name || `발견물 #${claim.found_item_id}`} meta={`요청일 ${new Date(claim.created_at).toLocaleDateString("ko-KR")}`} status={claimStatus[claim.status] ?? claim.status} detail="관리자 확인 절차가 진행됩니다." href={claim.lost_report_id === null ? "/matches" : `/matches?reportId=${claim.lost_report_id}`} tone="support" />;
         }) : <ActivityEmpty text="소유권 확인 요청 내역이 없습니다." />)}
         {activityTab === "citizen" && <>
           {citizenDeleteMessage && <p className={styles.activityStatusMessage} role="status">{citizenDeleteMessage}</p>}
           {citizenDeleteError && <p className={styles.activityErrorMessage} role="alert">{citizenDeleteError}</p>}
-          {failedSections.includes("citizen") ? <ActivityEmpty text="발견 제보를 불러오지 못했습니다." /> : data.citizenReports.length ? data.citizenReports.map((report) => <CitizenReportActivityRow key={report.id} report={report} deleting={deletingCitizenReportId === report.id} onDelete={removeCitizenReport} />) : <ActivityEmpty text="아직 작성한 발견 제보가 없습니다." href="/found-items#citizen" action="발견물 센터에서 물품 제보하기" />}
+          {failedSections.includes("citizen") ? <ActivityEmpty text="발견 제보를 불러오지 못했습니다." /> : sortedCitizenReports.length ? visibleCitizenReports.map((report) => <CitizenReportActivityRow key={report.id} report={report} deleting={deletingCitizenReportId === report.id} onDelete={removeCitizenReport} />) : <ActivityEmpty text="아직 작성한 발견 제보가 없습니다." href="/found-items#citizen" action="발견물 센터에서 물품 제보하기" />}
         </>}
       </div>
+      {activityPageCount > 1 && <nav className={styles.activityPagination} aria-label={`${activityTabs.find((tab) => tab.key === activityTab)?.label} 페이지`}>
+        <button type="button" aria-label="이전 페이지" disabled={effectiveActivityPage === 1} onClick={() => setActivityPages((pages) => ({ ...pages, [activityTab]: Math.max(1, effectiveActivityPage - 1) }))}>‹</button>
+        <span><strong>{String(effectiveActivityPage).padStart(2, "0")}</strong><i>/</i>{String(activityPageCount).padStart(2, "0")}</span>
+        <button type="button" aria-label="다음 페이지" disabled={effectiveActivityPage === activityPageCount} onClick={() => setActivityPages((pages) => ({ ...pages, [activityTab]: Math.min(activityPageCount, effectiveActivityPage + 1) }))}>›</button>
+      </nav>}
     </section>
 
     {accountOpen && <div className={styles.modalBackdrop} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setAccountOpen(false)}><section className={`${styles.modal} ${styles.accountModal}`} role="dialog" aria-modal="true" aria-labelledby="account-title"><button className={styles.modalClose} onClick={() => setAccountOpen(false)} aria-label="계정 정보 닫기"><Icon name="close" size={20} /></button><p className={styles.modalEyebrow}>ACCOUNT</p><h2 id="account-title">계정 정보</h2>

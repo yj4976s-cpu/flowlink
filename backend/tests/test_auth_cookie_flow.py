@@ -8,15 +8,16 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import BigInteger, create_engine
 from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.core.config import get_settings
-from app.core.config import Settings
-from app.core.security import hash_password, utc_now
+from app.core.config import Settings, get_settings
+from app.core.security import create_access_token, hash_password, utc_now
 from app.db.session import Base, get_db
 from app.main import app
-from app.models import User
+from app.models import User, UserSocialAccount
+from app.services.oauth.providers import OAuthIdentity
 
 
 @compiles(BigInteger, "sqlite")
@@ -84,7 +85,11 @@ def login(
     password: str = "password123",
     headers: dict[str, str] | None = None,
 ):
-    return client.post("/api/auth/login", json={"email": email, "password": password}, headers=headers)
+    return client.post(
+        "/api/auth/login",
+        json={"email": email, "password": password},
+        headers=headers,
+    )
 
 
 def register(
@@ -352,6 +357,17 @@ def test_login_failure_does_not_set_cookie(client: TestClient, db: Session) -> N
     assert settings.AUTH_COOKIE_NAME not in response.headers.get("set-cookie", "")
 
 
+def test_social_only_user_password_login_returns_401(client: TestClient, db: Session) -> None:
+    user = seed_user(db, email="social-only@example.com")
+    user.password_hash = None
+    db.commit()
+
+    response = login(client, email="social-only@example.com", password="password123")
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid email or password"
+
+
 def test_me_uses_login_cookie(client: TestClient, db: Session) -> None:
     seed_user(db)
 
@@ -390,6 +406,115 @@ def test_change_password_requires_current_password(client: TestClient, db: Sessi
     assert login(client, password="password123").status_code == 200
 
 
+def test_social_only_user_password_change_returns_domain_error(client: TestClient, db: Session) -> None:
+    settings = get_settings()
+    user = seed_user(db, email="social-only@example.com")
+    user.password_hash = None
+    db.commit()
+    token, _ = create_access_token(user.id, user.role)
+    client.cookies.set(settings.AUTH_COOKIE_NAME, token)
+
+    response = client.patch(
+        "/api/auth/me/password",
+        json={"current_password": "not-configured", "new_password": "TestPass1"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Password is not set for this account"
+
+
+def test_user_can_link_each_supported_social_provider(db: Session) -> None:
+    user = seed_user(db)
+    now = utc_now()
+    accounts = [
+        UserSocialAccount(
+            id=index,
+            user_id=user.id,
+            provider=provider,
+            provider_user_id=f"{provider.lower()}-123",
+            provider_email=f"{provider.lower()}@example.com",
+            created_at=now,
+            updated_at=now,
+        )
+        for index, provider in enumerate(("GOOGLE", "NAVER", "KAKAO"), start=1)
+    ]
+    db.add_all(accounts)
+    db.commit()
+
+    db.refresh(user)
+    assert {account.provider for account in user.social_accounts} == {"GOOGLE", "NAVER", "KAKAO"}
+
+
+def test_social_provider_identity_cannot_link_to_multiple_users(db: Session) -> None:
+    first = seed_user(db, user_id=1, email="first@example.com")
+    second = seed_user(db, user_id=2, email="second@example.com")
+    now = utc_now()
+    db.add(UserSocialAccount(
+        id=1,
+        user_id=first.id,
+        provider="GOOGLE",
+        provider_user_id="google-duplicate",
+        created_at=now,
+        updated_at=now,
+    ))
+    db.commit()
+    db.add(UserSocialAccount(
+        id=2,
+        user_id=second.id,
+        provider="GOOGLE",
+        provider_user_id="google-duplicate",
+        created_at=now,
+        updated_at=now,
+    ))
+
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
+def test_user_cannot_link_same_provider_twice(db: Session) -> None:
+    user = seed_user(db)
+    now = utc_now()
+    db.add(UserSocialAccount(
+        id=1,
+        user_id=user.id,
+        provider="NAVER",
+        provider_user_id="naver-first",
+        created_at=now,
+        updated_at=now,
+    ))
+    db.commit()
+    db.add(UserSocialAccount(
+        id=2,
+        user_id=user.id,
+        provider="NAVER",
+        provider_user_id="naver-second",
+        created_at=now,
+        updated_at=now,
+    ))
+
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
+def test_social_account_rejects_unsupported_provider(db: Session) -> None:
+    user = seed_user(db)
+    now = utc_now()
+    db.add(UserSocialAccount(
+        id=1,
+        user_id=user.id,
+        provider="GITHUB",
+        provider_user_id="github-123",
+        created_at=now,
+        updated_at=now,
+    ))
+
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
 def test_change_password_replaces_password_hash(client: TestClient, db: Session) -> None:
     seed_user(db)
     assert login(client).status_code == 200
@@ -405,6 +530,292 @@ def test_change_password_replaces_password_hash(client: TestClient, db: Session)
     client.cookies.clear()
     assert login(client, password="password123").status_code == 401
     assert login(client, password="TestPass1").status_code == 200
+
+
+class FakeOAuthProvider:
+    configured = True
+
+    def __init__(self, identity: OAuthIdentity) -> None:
+        self.identity = identity
+
+    def authorization_url(self, *, state: str, nonce: str, code_challenge: str | None) -> str:
+        return f"https://provider.example/authorize?state={state}"
+
+    def fetch_identity(
+        self, *, code: str, state: str, nonce: str, code_verifier: str | None
+    ) -> OAuthIdentity:
+        assert code == "valid-code"
+        return self.identity
+
+
+def configure_fake_oauth(monkeypatch: pytest.MonkeyPatch, identity: OAuthIdentity) -> None:
+    monkeypatch.setattr(
+        "app.api.oauth.get_oauth_provider",
+        lambda _provider: FakeOAuthProvider(identity),
+    )
+
+
+def begin_oauth(client: TestClient, provider: str = "google") -> str:
+    response = client.get(f"/api/auth/oauth/{provider}/start", follow_redirects=False)
+    assert response.status_code == 302
+    assert "flowlink_oauth_state" in response.headers["set-cookie"]
+    return response.headers["location"].split("state=", 1)[1]
+
+
+def test_google_oauth_start_redirect_and_state_cookie(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configure_fake_oauth(monkeypatch, OAuthIdentity("GOOGLE", "g-1", "new@example.com", "new"))
+
+    state_value = begin_oauth(client)
+
+    assert state_value
+
+
+def test_oauth_start_returns_503_when_provider_is_not_configured(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    provider = FakeOAuthProvider(OAuthIdentity("GOOGLE", "g-1", "new@example.com", "new"))
+    provider.configured = False
+    monkeypatch.setattr("app.api.oauth.get_oauth_provider", lambda _provider: provider)
+
+    response = client.get("/api/auth/oauth/google/start")
+
+    assert response.status_code == 503
+
+
+def test_oauth_callback_rejects_state_mismatch(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configure_fake_oauth(monkeypatch, OAuthIdentity("GOOGLE", "g-1", "new@example.com", "new"))
+    begin_oauth(client)
+
+    response = client.get(
+        "/api/auth/oauth/google/callback?code=valid-code&state=wrong",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert "oauth_error=google" in response.headers["location"]
+    assert "reason=state" in response.headers["location"]
+    assert "Max-Age=0" in response.headers["set-cookie"]
+
+
+def test_returning_social_user_receives_existing_login_cookie(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = seed_user(db)
+    now = utc_now()
+    db.add(UserSocialAccount(
+        user_id=user.id,
+        provider="GOOGLE",
+        provider_user_id="g-returning",
+        provider_email="old@example.com",
+        created_at=now,
+        updated_at=now,
+    ))
+    db.commit()
+    configure_fake_oauth(
+        monkeypatch,
+        OAuthIdentity("GOOGLE", "g-returning", "updated@example.com", "user"),
+    )
+    state_value = begin_oauth(client)
+
+    response = client.get(
+        f"/api/auth/oauth/google/callback?code=valid-code&state={state_value}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert get_settings().AUTH_COOKIE_NAME in response.headers["set-cookie"]
+    assert db.get(User, user.id).last_login_at is not None
+
+
+@pytest.mark.parametrize("active,deleted", [(False, False), (False, True)])
+def test_disabled_social_user_is_not_logged_in(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    active: bool,
+    deleted: bool,
+) -> None:
+    user = seed_user(db, active=active, deleted=deleted)
+    now = utc_now()
+    db.add(UserSocialAccount(
+        user_id=user.id,
+        provider="NAVER",
+        provider_user_id="n-disabled",
+        created_at=now,
+        updated_at=now,
+    ))
+    db.commit()
+    configure_fake_oauth(monkeypatch, OAuthIdentity("NAVER", "n-disabled", "user@example.com", "user"))
+    state_value = begin_oauth(client, "naver")
+
+    response = client.get(
+        f"/api/auth/oauth/naver/callback?code=valid-code&state={state_value}",
+        follow_redirects=False,
+    )
+
+    assert "oauth_error=naver" in response.headers["location"]
+    assert get_settings().AUTH_COOKIE_NAME not in response.headers.get("set-cookie", "")
+
+
+def test_new_social_user_gets_pending_cookie_without_user_creation(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configure_fake_oauth(monkeypatch, OAuthIdentity("KAKAO", "k-new", "new@example.com", "new-user"))
+    state_value = begin_oauth(client, "kakao")
+
+    response = client.get(
+        f"/api/auth/oauth/kakao/callback?code=valid-code&state={state_value}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"].endswith("/register?social=kakao")
+    assert "flowlink_oauth_pending" in response.headers["set-cookie"]
+    assert db.query(User).count() == 0
+
+
+def test_social_callback_does_not_auto_link_existing_email(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seed_user(db, email="same@example.com")
+    configure_fake_oauth(monkeypatch, OAuthIdentity("GOOGLE", "g-new", "same@example.com", "same"))
+    state_value = begin_oauth(client)
+
+    response = client.get(
+        f"/api/auth/oauth/google/callback?code=valid-code&state={state_value}",
+        follow_redirects=False,
+    )
+
+    assert "reason=conflict" in response.headers["location"]
+    assert db.query(UserSocialAccount).count() == 0
+
+
+def test_social_callback_does_not_auto_link_verified_existing_email(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = seed_user(db, email="same@example.com")
+    configure_fake_oauth(
+        monkeypatch,
+        OAuthIdentity("KAKAO", "k-verified", "same@example.com", "same", email_verified=True),
+    )
+    state_value = begin_oauth(client, "kakao")
+
+    response = client.get(
+        f"/api/auth/oauth/kakao/callback?code=valid-code&state={state_value}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert "reason=conflict" in response.headers["location"]
+    assert get_settings().AUTH_COOKIE_NAME not in response.headers.get("set-cookie", "")
+    assert db.query(UserSocialAccount).count() == 0
+    assert db.get(User, user.id).last_login_at is None
+
+
+def test_social_callback_rejects_new_provider_user_without_email(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configure_fake_oauth(monkeypatch, OAuthIdentity("KAKAO", "k-no-email", None, "kakao"))
+    state_value = begin_oauth(client, "kakao")
+
+    response = client.get(
+        f"/api/auth/oauth/kakao/callback?code=valid-code&state={state_value}",
+        follow_redirects=False,
+    )
+
+    assert "oauth_error=kakao" in response.headers["location"]
+    assert db.query(User).count() == 0
+
+
+def test_complete_social_registration_creates_both_rows_and_login_cookie(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configure_fake_oauth(monkeypatch, OAuthIdentity("NAVER", "n-new", "naver@example.com", "naver"))
+    state_value = begin_oauth(client, "naver")
+    client.get(
+        f"/api/auth/oauth/naver/callback?code=valid-code&state={state_value}",
+        follow_redirects=False,
+    )
+
+    response = client.post(
+        "/api/auth/oauth/complete",
+        json={"nickname": "naver-user", "terms_agreed": True, "privacy_agreed": True},
+    )
+
+    assert response.status_code == 201
+    user = db.query(User).one()
+    social = db.query(UserSocialAccount).one()
+    assert user.password_hash is None
+    assert social.user_id == user.id
+    assert social.provider == "NAVER"
+    assert get_settings().AUTH_COOKIE_NAME in response.headers["set-cookie"]
+    assert "flowlink_oauth_pending=" in response.headers["set-cookie"]
+    assert "Max-Age=0" in response.headers["set-cookie"]
+
+
+def test_complete_social_registration_requires_pending_cookie(client: TestClient) -> None:
+    response = client.post(
+        "/api/auth/oauth/complete",
+        json={"nickname": "new-user", "terms_agreed": True, "privacy_agreed": True},
+    )
+
+    assert response.status_code == 401
+
+
+def test_complete_social_registration_rejects_tampered_pending_cookie(client: TestClient) -> None:
+    client.cookies.set("flowlink_oauth_pending", "not-a-valid-token", path="/api/auth/oauth")
+
+    response = client.post(
+        "/api/auth/oauth/complete",
+        json={"nickname": "new-user", "terms_agreed": True, "privacy_agreed": True},
+    )
+
+    assert response.status_code == 401
+
+
+def test_complete_social_registration_rejects_expired_pending_cookie(client: TestClient) -> None:
+    settings = get_settings()
+    expired = jwt.encode(
+        {
+            "aud": "flowlink-oauth-pending",
+            "exp": utc_now() - timedelta(seconds=1),
+            "provider": "GOOGLE",
+            "provider_user_id": "g-expired",
+            "provider_email": "expired@example.com",
+        },
+        settings.JWT_SECRET_KEY,
+        algorithm=settings.JWT_ALGORITHM,
+    )
+    client.cookies.set("flowlink_oauth_pending", expired, path="/api/auth/oauth")
+
+    response = client.post(
+        "/api/auth/oauth/complete",
+        json={"nickname": "new-user", "terms_agreed": True, "privacy_agreed": True},
+    )
+
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize("field", ["terms_agreed", "privacy_agreed"])
+def test_complete_social_registration_requires_agreements(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    configure_fake_oauth(monkeypatch, OAuthIdentity("GOOGLE", "g-new", "new@example.com", "new"))
+    state_value = begin_oauth(client)
+    client.get(
+        f"/api/auth/oauth/google/callback?code=valid-code&state={state_value}",
+        follow_redirects=False,
+    )
+    body = {"nickname": "new-user", "terms_agreed": True, "privacy_agreed": True}
+    body[field] = False
+
+    response = client.post("/api/auth/oauth/complete", json=body)
+
+    assert response.status_code == 400
 
 
 @pytest.mark.parametrize("new_password", ["abcdefgh", "12345678", "abc1234"])
