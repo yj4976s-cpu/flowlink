@@ -1,5 +1,6 @@
 .root { position: relative; }
 .trigger { min-height: 38px; padding: 0 11px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface-soft); color: var(--color-text-muted); display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 800; cursor: pointer; }
+.daruIcon { flex: 0 0 auto; color: var(--color-primary); }
 .trigger:hover, .trigger[aria-expanded="true"] { border-color: color-mix(in srgb, var(--color-primary) 38%, var(--color-border)); background: var(--color-primary-soft); color: var(--color-primary); }
 .menu { position: absolute; z-index: 75; top: calc(100% + 9px); right: 0; width: min(300px, calc(100vw - 28px)); padding: 9px; border: 1px solid var(--color-border); border-radius: 16px; background: var(--color-surface-elevated); box-shadow: var(--shadow-floating); animation: menuIn 180ms ease-out both; }
 .menu > strong { padding: 8px 10px 9px; color: var(--color-text); display: block; font-size: 13px; }
