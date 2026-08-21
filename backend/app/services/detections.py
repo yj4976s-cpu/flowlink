@@ -133,8 +133,13 @@ def _complete_with_result(
 ) -> DetectionEvent:
     now = utc_now()
     objects: list[DetectedObject] = []
+    rendered_media_path: Path | None = None
 
     try:
+        if event.source_type == "VIDEO" and result.rendered_video:
+            rendered_media_path = media_path.with_name(f"{media_path.stem}-result.mp4")
+            rendered_media_path.write_bytes(result.rendered_video)
+            event.result_media_url = rendered_media_path.relative_to(media_path.parents[3]).as_posix()
         for prediction in result.detections:
             class_code = prediction.class_code.strip().upper()
             object_class = get_active_object_class_by_code(db, class_code)
@@ -176,6 +181,8 @@ def _complete_with_result(
         db.commit()
     except Exception:
         db.rollback()
+        if rendered_media_path is not None:
+            rendered_media_path.unlink(missing_ok=True)
         _mark_failed(db, event=event, message="AI detection results could not be saved")
         raise
 

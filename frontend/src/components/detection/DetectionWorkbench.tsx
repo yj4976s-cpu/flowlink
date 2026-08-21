@@ -15,6 +15,7 @@ import {
   deleteMyDetection,
   getMyDetection,
   listMyDetections,
+  resolveDetectionMediaUrl,
   uploadDetectionImage,
   uploadDetectionVideo,
 } from "@/lib/detectionApi";
@@ -57,6 +58,7 @@ const VIDEO_MAX_BYTES = 100 * 1024 * 1024;
 const VIDEO_MAX_SECONDS = 30;
 const VIDEO_REPORT_FRAME_MAX_WIDTH = 960;
 const VIDEO_REPORT_FRAME_TIMEOUT_MS = 8000;
+const REPORT_CROP_PADDING_RATIO = 0.08;
 const HISTORY_PAGE_SIZE = 8;
 const RESULT_PAGE_SIZE = 4;
 const CTA_PAGE_SIZE = 4;
@@ -168,7 +170,33 @@ function closeImageSource(source: ImageBitmap | HTMLImageElement) {
   if ("close" in source) source.close();
 }
 
-async function prepareCitizenReportImage(file: File) {
+function getReportCropRect(
+  bbox: DetectionBBox,
+  mediaWidth: number,
+  mediaHeight: number,
+  sourceWidth: number,
+  sourceHeight: number,
+) {
+  if (mediaWidth <= 0 || mediaHeight <= 0 || sourceWidth <= 0 || sourceHeight <= 0) return null;
+  const scaleX = sourceWidth / mediaWidth;
+  const scaleY = sourceHeight / mediaHeight;
+  const paddingX = Math.max(2, bbox.width * scaleX * REPORT_CROP_PADDING_RATIO);
+  const paddingY = Math.max(2, bbox.height * scaleY * REPORT_CROP_PADDING_RATIO);
+  const left = Math.max(0, bbox.x * scaleX - paddingX);
+  const top = Math.max(0, bbox.y * scaleY - paddingY);
+  const right = Math.min(sourceWidth, (bbox.x + bbox.width) * scaleX + paddingX);
+  const bottom = Math.min(sourceHeight, (bbox.y + bbox.height) * scaleY + paddingY);
+  const width = right - left;
+  const height = bottom - top;
+  return width >= 1 && height >= 1 ? { left, top, width, height } : null;
+}
+
+async function prepareCitizenReportImage(
+  file: File,
+  bbox: DetectionBBox,
+  mediaWidth: number,
+  mediaHeight: number,
+) {
   if (!imageTypes.has(file.type)) {
     throw new Error("발견 제보에는 JPG, PNG, WebP 이미지만 첨부할 수 있습니다.");
   }
@@ -179,27 +207,38 @@ async function prepareCitizenReportImage(file: File) {
     const sourceHeight = image.height;
     if (!sourceWidth || !sourceHeight) throw new Error("이미지 크기를 확인하지 못했습니다.");
 
-    if (file.size <= CITIZEN_REPORT_IMAGE_MAX_BYTES) return file;
-
     const canvas = document.createElement("canvas");
     const context = canvas.getContext("2d");
     if (!context) throw new Error("이미지를 변환하지 못했습니다.");
+
+    const crop = getReportCropRect(bbox, mediaWidth, mediaHeight, sourceWidth, sourceHeight);
+    if (!crop) throw new Error("탐지된 물건 영역을 확인하지 못했습니다.");
 
     const qualities = [0.86, 0.78, 0.7, 0.62];
     const maxEdges = [REPORT_IMAGE_INITIAL_MAX_EDGE, 1440, 1280, 1120, REPORT_IMAGE_MIN_MAX_EDGE];
 
     for (const maxEdge of maxEdges) {
-      const scale = Math.min(1, maxEdge / Math.max(sourceWidth, sourceHeight));
-      canvas.width = Math.max(1, Math.round(sourceWidth * scale));
-      canvas.height = Math.max(1, Math.round(sourceHeight * scale));
+      const scale = Math.min(1, maxEdge / Math.max(crop.width, crop.height));
+      canvas.width = Math.max(1, Math.round(crop.width * scale));
+      canvas.height = Math.max(1, Math.round(crop.height * scale));
       context.clearRect(0, 0, canvas.width, canvas.height);
-      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      context.drawImage(
+        image,
+        crop.left,
+        crop.top,
+        crop.width,
+        crop.height,
+        0,
+        0,
+        canvas.width,
+        canvas.height,
+      );
 
       for (const quality of qualities) {
         const blob = await canvasToBlob(canvas, "image/jpeg", quality);
         if (blob && blob.size <= CITIZEN_REPORT_IMAGE_MAX_BYTES) {
           const baseName = file.name.replace(/\.[^.]+$/, "") || "detection-report";
-          return new File([blob], `${baseName}-report.jpg`, { type: "image/jpeg" });
+          return new File([blob], `${baseName}-object.jpg`, { type: "image/jpeg" });
         }
       }
     }
@@ -262,22 +301,24 @@ async function captureVideoReportFrame(videoFile: File, object: DetectionObject)
     video.currentTime = targetSeconds;
     await waitForVideoEvent(video, "seeked", VIDEO_REPORT_FRAME_TIMEOUT_MS);
 
-    const scale = Math.min(1, VIDEO_REPORT_FRAME_MAX_WIDTH / video.videoWidth);
-    const width = Math.max(1, Math.round(video.videoWidth * scale));
-    const height = Math.max(1, Math.round(video.videoHeight * scale));
+    const crop = getReportCropRect(object.bbox, video.videoWidth, video.videoHeight, video.videoWidth, video.videoHeight);
+    if (!crop) return null;
+    const scale = Math.min(1, VIDEO_REPORT_FRAME_MAX_WIDTH / crop.width);
+    const width = Math.max(1, Math.round(crop.width * scale));
+    const height = Math.max(1, Math.round(crop.height * scale));
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
 
     const context = canvas.getContext("2d");
     if (!context) return null;
-    context.drawImage(video, 0, 0, width, height);
+    context.drawImage(video, crop.left, crop.top, crop.width, crop.height, 0, 0, width, height);
 
     const blob = await canvasToBlob(canvas, "image/jpeg", 0.86);
     if (!blob) return null;
 
     const timestampMs = Math.round(targetSeconds * 1000);
-    return new File([blob], `flowlink-video-frame-${timestampMs}.jpg`, { type: "image/jpeg" });
+    return new File([blob], `flowlink-video-object-${timestampMs}.jpg`, { type: "image/jpeg" });
   } catch {
     return null;
   } finally {
@@ -1056,10 +1097,22 @@ export function DetectionWorkbench() {
     }
   };
 
-  const openWebcamReport = (candidate: WebcamReportCandidate) => {
+  const openWebcamReport = async (candidate: WebcamReportCandidate) => {
     const classCode = getReportableClassCode(candidate.object.class_code);
     if (!classCode) return;
-    const reportPreviewUrl = URL.createObjectURL(candidate.image);
+    let croppedImage: File | null = null;
+    let imageError = "";
+    try {
+      croppedImage = await prepareCitizenReportImage(
+        candidate.image,
+        candidate.object.bbox,
+        candidate.frame.media_width,
+        candidate.frame.media_height,
+      );
+    } catch {
+      imageError = "탐지된 물건 이미지를 잘라내지 못했습니다. 다시 탐지해 주세요.";
+    }
+    const reportPreviewUrl = croppedImage ? URL.createObjectURL(croppedImage) : "";
     revokeReportPreviewUrl();
     reportPreviewUrlRef.current = reportPreviewUrl;
     setWebcamReportCandidate({
@@ -1067,14 +1120,14 @@ export function DetectionWorkbench() {
       objectClassCode: classCode,
       objectClassName: candidate.object.class_name_ko ?? reportableClassNames[classCode] ?? candidate.object.label,
       confidence: candidate.object.confidence,
-      bbox: candidate.object.bbox,
-      mediaWidth: candidate.frame.media_width,
-      mediaHeight: candidate.frame.media_height,
-      image: candidate.image,
+      bbox: null,
+      mediaWidth: null,
+      mediaHeight: null,
+      image: croppedImage,
       previewUrl: reportPreviewUrl,
       capturedAt: candidate.capturedAt,
     });
-    setWebcamReportError("");
+    setWebcamReportError(imageError);
     setWebcamReportSuccess(null);
   };
 
@@ -1089,7 +1142,13 @@ export function DetectionWorkbench() {
 
     if (sourceType === "image" && sourceFile) {
       try {
-        image = await prepareCitizenReportImage(sourceFile);
+        if (!sourceEvent.media_width || !sourceEvent.media_height) throw new Error("탐지 이미지 크기가 없습니다.");
+        image = await prepareCitizenReportImage(
+          sourceFile,
+          object.bbox,
+          sourceEvent.media_width,
+          sourceEvent.media_height,
+        );
       } catch {
         imageError = "이미지를 발견 제보용으로 준비하지 못했습니다. 이미지 없이 제보하거나 더 작은 이미지를 선택해주세요.";
       }
@@ -1106,9 +1165,9 @@ export function DetectionWorkbench() {
       objectClassCode: classCode,
       objectClassName: object.class_name_ko || reportableClassNames[classCode],
       confidence: object.confidence,
-      bbox: object.bbox,
-      mediaWidth: sourceEvent.media_width,
-      mediaHeight: sourceEvent.media_height,
+      bbox: null,
+      mediaWidth: null,
+      mediaHeight: null,
       image,
       previewUrl: reportPreviewUrl,
       capturedAt: sourceEvent.processing_completed_at ?? sourceEvent.created_at,
@@ -1178,6 +1237,9 @@ export function DetectionWorkbench() {
     : currentEvent?.detected_objects.length ?? 0;
   const displayedSourceType = tab === "webcam" ? "WEBCAM" : currentEvent?.source_type ?? (tab === "image" ? "IMAGE" : "VIDEO");
   const displayedSourceTypeLabel = sourceTypeLabels[displayedSourceType] ?? displayedSourceType;
+  const detectedVideoUrl = currentEvent?.source_type === "VIDEO"
+    ? resolveDetectionMediaUrl(currentEvent.result_media_url || currentEvent.original_media_url)
+    : "";
 
   return (
     <main className={styles.page}>
@@ -1229,10 +1291,22 @@ export function DetectionWorkbench() {
                     accept={tab === "image" ? "image/jpeg,image/png,image/webp" : "video/mp4"}
                     onChange={handleFileChange}
                   />
-                  {previewUrl && file ? (
+                  {(previewUrl && file) || detectedVideoUrl ? (
                     <div className={styles.dropzonePreview}>
                       {tab === "image" ? (
                         <ImageOverlay previewUrl={previewUrl} event={currentEvent} />
+                      ) : detectedVideoUrl ? (
+                        <div className={`${styles.previewFrame} ${styles.detectedVideoFrame}`}>
+                          <video
+                            src={detectedVideoUrl}
+                            controls
+                            playsInline
+                            preload="metadata"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            브라우저가 MP4 영상 재생을 지원하지 않습니다.
+                          </video>
+                        </div>
                       ) : (
                         <div className={`${styles.previewFrame} ${styles.videoPreviewFrame}`}>
                           {videoThumbnailUrl ? (
@@ -1248,8 +1322,8 @@ export function DetectionWorkbench() {
                         </div>
                       )}
                       <div className={styles.previewMeta}>
-                        <strong>{file.name}</strong>
-                        <span>{formatBytes(file.size)} · 클릭해서 파일 교체</span>
+                        <strong>{file?.name ?? "탐지 결과 영상"}</strong>
+                        <span>{file ? `${formatBytes(file.size)} · 클릭해서 파일 교체` : "저장된 탐지 결과"}</span>
                       </div>
                     </div>
                   ) : (

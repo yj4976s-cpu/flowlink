@@ -58,11 +58,36 @@ class YoloRuntime:
                 raise YoloRuntimeUnavailableError("YOLO detection model is unavailable") from exc
         return self._parse_result(model, results[0] if results else None, image.width, image.height)
 
-    def track_video(self, video_path: Path, *, fps: float, media_width: int, media_height: int) -> list[YoloTrackPrediction]:
+    def track_video(
+        self,
+        video_path: Path,
+        *,
+        fps: float,
+        media_width: int,
+        media_height: int,
+        rendered_video_path: Path | None = None,
+    ) -> list[YoloTrackPrediction]:
         model = self._get_model()
         tracked: dict[tuple[str, int | None], YoloTrackPrediction] = {}
+        writer = None
         with self._inference_lock:
             try:
+                if rendered_video_path is not None:
+                    import cv2
+
+                    for codec in ("avc1", "mp4v"):
+                        candidate = cv2.VideoWriter(
+                            str(rendered_video_path),
+                            cv2.VideoWriter_fourcc(*codec),
+                            fps,
+                            (media_width, media_height),
+                        )
+                        if candidate.isOpened():
+                            writer = candidate
+                            break
+                        candidate.release()
+                    if writer is None:
+                        raise RuntimeError("Rendered video writer could not be opened")
                 results = model.track(
                     source=str(video_path),
                     tracker="bytetrack.yaml",
@@ -73,6 +98,8 @@ class YoloRuntime:
                     verbose=False,
                 )
                 for frame_index, result in enumerate(results):
+                    if writer is not None:
+                        writer.write(result.plot())
                     frame_seen_ms = int(round((frame_index / fps) * 1000))
                     for prediction in self._parse_track_result(
                         model,
@@ -99,6 +126,9 @@ class YoloRuntime:
                         )
             except Exception as exc:
                 raise YoloRuntimeUnavailableError("YOLO video tracking model is unavailable") from exc
+            finally:
+                if writer is not None:
+                    writer.release()
         return sorted(
             tracked.values(),
             key=lambda prediction: (

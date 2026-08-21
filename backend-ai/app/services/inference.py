@@ -87,7 +87,13 @@ class ImageInferenceService:
             ],
         )
 
-    def analyze_video_file(self, video_path: Path, *, content_type: str) -> VideoInferenceResponse:
+    def analyze_video_file(
+        self,
+        video_path: Path,
+        *,
+        content_type: str,
+        rendered_video_path: Path | None = None,
+    ) -> VideoInferenceResponse:
         settings = get_settings()
         if content_type not in VIDEO_CONTENT_TYPES:
             raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Unsupported media type")
@@ -101,12 +107,14 @@ class ImageInferenceService:
 
         started_at = perf_counter()
         try:
-            tracks = self.runtime.track_video(
-                video_path,
-                fps=metadata["fps"],
-                media_width=metadata["media_width"],
-                media_height=metadata["media_height"],
-            )
+            tracking_options = {
+                "fps": metadata["fps"],
+                "media_width": metadata["media_width"],
+                "media_height": metadata["media_height"],
+            }
+            if rendered_video_path is not None:
+                tracking_options["rendered_video_path"] = rendered_video_path
+            tracks = self.runtime.track_video(video_path, **tracking_options)
         except YoloRuntimeUnavailableError as exc:
             raise InferenceModelUnavailableError("AI model is unavailable") from exc
         inference_ms = (perf_counter() - started_at) * 1000

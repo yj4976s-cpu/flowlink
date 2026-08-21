@@ -234,6 +234,17 @@
     var(--color-surface-soft);
 }
 
+.detectedVideoFrame {
+  background: #05080b;
+}
+
+.detectedVideoFrame video {
+  height: 100%;
+  max-height: none;
+  object-fit: contain;
+  pointer-events: auto;
+}
+
 .videoPreviewFrame::after {
   position: absolute;
   inset: 0;

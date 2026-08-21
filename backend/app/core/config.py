@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlparse
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     COPILOT_ADMIN_RATE_LIMIT: int = 60
     COPILOT_MAX_OUTPUT_TOKENS: int = 1200
     COPILOT_PROVIDER_COOLDOWN_SECONDS: int = 30
+
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def use_psycopg_driver(cls, value: object) -> object:
+        if isinstance(value, str) and value.startswith("postgresql://"):
+            return value.replace("postgresql://", "postgresql+psycopg://", 1)
+        return value
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":

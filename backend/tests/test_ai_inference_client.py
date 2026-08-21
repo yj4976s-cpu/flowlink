@@ -68,5 +68,5 @@ def test_ai_inference_client_uses_video_timeout(tmp_path: Path, monkeypatch) -> 
 
     client.infer_video_file(video_path)
 
-    assert captured["url"] == "http://ai-service/api/inference/videos"
+    assert captured["url"] == "http://ai-service/api/inference/videos?render=true"
     assert captured["timeout"] == 90

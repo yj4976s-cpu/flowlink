@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
+from zipfile import BadZipFile, ZipFile
 
 import httpx
 from PIL import Image
@@ -103,6 +104,7 @@ class AIInferenceVideoResult:
     fps: float
     inference_ms: float
     tracks: list[AIInferenceVideoTrack]
+    rendered_video: bytes | None = None
 
 
 class AIInferenceClient:
@@ -134,7 +136,7 @@ class AIInferenceClient:
         try:
             with media_path.open("rb") as payload:
                 response = httpx.post(
-                    f"{self.base_url}/api/inference/videos",
+                    f"{self.base_url}/api/inference/videos?render=true",
                     headers={"X-Internal-API-Key": self.internal_api_key},
                     files={"file": (media_path.name, payload, "video/mp4")},
                     timeout=self.video_timeout_seconds,
@@ -150,8 +152,14 @@ class AIInferenceClient:
             raise AIInferenceRejectedError("AI inference request was rejected")
 
         try:
-            parsed = AIInferenceVideoResponse.model_validate(response.json())
-        except (ValueError, ValidationError) as exc:
+            if response.headers.get("content-type", "").split(";", 1)[0] == "application/zip":
+                with ZipFile(BytesIO(response.content)) as bundle:
+                    parsed = AIInferenceVideoResponse.model_validate_json(bundle.read("result.json"))
+                    rendered_video = bundle.read("result.mp4")
+            else:
+                parsed = AIInferenceVideoResponse.model_validate(response.json())
+                rendered_video = None
+        except (BadZipFile, KeyError, ValueError, ValidationError) as exc:
             raise AIInferenceUnavailableError("AI inference service returned an invalid response") from exc
 
         return AIInferenceVideoResult(
@@ -178,6 +186,7 @@ class AIInferenceClient:
                 )
                 for track in parsed.tracks
             ],
+            rendered_video=rendered_video,
         )
 
     def infer_image(self, image: Image.Image) -> AIInferenceResult:
