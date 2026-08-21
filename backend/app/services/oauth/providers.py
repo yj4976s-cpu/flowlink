@@ -168,6 +168,7 @@ class KakaoOAuthProvider(OAuthProvider):
                 "response_type": "code",
                 "state": state,
                 "scope": "account_email,profile_nickname",
+                "prompt": "login",
             }
         )
 
