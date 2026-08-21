@@ -135,8 +135,10 @@ export function DaruStage() {
       .filter((element) => !stage.contains(element) && element.offsetParent !== null)
       .map((element) => element.getBoundingClientRect());
     const overlaps = (left: number, top: number) => blockers.some((item) => left < item.right + 14 && left + rect.width > item.left - 14 && top < item.bottom + 14 && top + rect.height > item.top - 14);
-    const minLeft = mobile ? 12 : 16;
-    const maxLeft = window.innerWidth - rect.width - (mobile ? 12 : 16);
+    const viewportMargin = mobile ? 12 : 16;
+    const horizontalRange = mobile ? DARU_GROUNDED_ROAMING_CONFIG.mobileRange : DARU_GROUNDED_ROAMING_CONFIG.desktopRange;
+    const minLeft = Math.max(viewportMargin, rect.left - horizontalRange / 2);
+    const maxLeft = Math.min(window.innerWidth - rect.width - viewportMargin, rect.left + horizontalRange / 2);
     const minTravelDistance = mobile ? DARU_GROUNDED_ROAMING_CONFIG.mobileMinTravelDistance : DARU_GROUNDED_ROAMING_CONFIG.desktopMinTravelDistance;
     const groundInset = mobile ? DARU_GROUNDED_ROAMING_CONFIG.mobileGroundInset : DARU_GROUNDED_ROAMING_CONFIG.desktopGroundInset;
     const primaryGround = Math.max(88, window.innerHeight - rect.height - groundInset);
@@ -152,7 +154,7 @@ export function DaruStage() {
       const fallbackLefts = [minLeft, maxLeft].sort((leftA, leftB) => Math.abs(leftB - rect.left) - Math.abs(leftA - rect.left));
       for (const groundTop of groundLanes) {
         for (const left of fallbackLefts) {
-          if (Math.abs(left - rect.left) >= 28 && !overlaps(left, groundTop)) return { x: left - baseLeft, y: groundTop - baseTop };
+          if (Math.abs(left - rect.left) >= minTravelDistance && !overlaps(left, groundTop)) return { x: left - baseLeft, y: groundTop - baseTop };
         }
       }
     }
@@ -248,18 +250,19 @@ export function DaruStage() {
   }, [action, cue, dragging, guideOpen, mode, occluded, pageVisible, pathname, reducedMotion, roaming]);
 
   useEffect(() => {
-    if (!pageVisible || reducedMotion || userPaused || mode !== "active" || occluded || guideOpen || dragging || roaming) return;
+    if (!pageVisible || reducedMotion || userPaused || mode !== "active" || occluded || guideOpen || dragging || roaming || action === "wave") return;
     const delay = nextRoamDelayRef.current ?? (3000 + Math.random() * 4000);
     nextRoamDelayRef.current = null;
     const timer = window.setTimeout(() => {
       const target = chooseSafeDestination();
       const distance = Math.abs(target.x - position.x);
-      if (distance < 28) {
-        nextRoamDelayRef.current = window.matchMedia("(max-width: 600px)").matches ? 900 : null;
+      const mobile = window.matchMedia("(max-width: 600px)").matches;
+      const minTravelDistance = mobile ? DARU_GROUNDED_ROAMING_CONFIG.mobileMinTravelDistance : DARU_GROUNDED_ROAMING_CONFIG.desktopMinTravelDistance;
+      if (distance < minTravelDistance) {
+        nextRoamDelayRef.current = mobile ? 900 : null;
         setRoamRetry((current) => current + 1);
         return;
       }
-      const mobile = window.matchMedia("(max-width: 600px)").matches;
       const speed = mobile ? DARU_GROUNDED_ROAMING_CONFIG.mobileSpeed : DARU_GROUNDED_ROAMING_CONFIG.desktopSpeed;
       const duration = Math.min(12000, Math.max(mobile ? 1600 : 2600, distance / speed * 1000));
       const nextFacing = target.x < position.x ? "left" : "right";
@@ -281,7 +284,7 @@ export function DaruStage() {
       }
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [chooseSafeDestination, dragging, facing, guideOpen, mode, occluded, pageVisible, position.x, position.y, reducedMotion, roamRetry, roaming, userPaused]);
+  }, [action, chooseSafeDestination, dragging, facing, guideOpen, mode, occluded, pageVisible, position.x, position.y, reducedMotion, roamRetry, roaming, userPaused]);
 
   useEffect(() => {
     if (!roaming) return;
@@ -323,6 +326,7 @@ export function DaruStage() {
       suppressClickRef.current = false;
       return;
     }
+    if (roaming || locomotion === "turn" || locomotion === "start_walk" || locomotion === "walk") freezeRoaming();
     cue("wave", { source: "direct" });
     playOneShot("CLICK", 520);
   };
