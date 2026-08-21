@@ -293,6 +293,7 @@ export function DaruStage() {
       suppressClickRef.current = false;
       return;
     }
+    cue("wave", { source: "direct" });
     playOneShot("CLICK", 520);
   };
 
