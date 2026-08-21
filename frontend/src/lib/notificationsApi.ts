@@ -66,11 +66,11 @@ async function requestJson<T>(
   return response.json() as Promise<T>;
 }
 
-export function listNotifications(filter: NotificationFilter, signal?: AbortSignal) {
+export function listNotifications(filter: NotificationFilter, signal?: AbortSignal, limit = 20) {
   return requestJson<NotificationResponse[]>(
     buildApiUrl("/api/notifications", {
       skip: 0,
-      limit: 20,
+      limit,
       unread_only: filter === "unread",
     }),
     getListFallbackMessage,
