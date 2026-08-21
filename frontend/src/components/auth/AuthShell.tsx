@@ -5,9 +5,10 @@ import { useRouter } from "next/navigation";
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import { FlowLinkLogo } from "@/components/common/FlowLinkLogo";
 import { Icon } from "@/components/common/Icon";
+import { DaruSettings } from "@/components/mascot";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { useTheme } from "@/components/theme/ThemeProvider";
-import { AuthApiError, getCurrentUser, getOAuthStartUrl, login, register, SocialAuthProvider } from "@/lib/authApi";
+import { AuthApiError, completeSocialRegistration, getCurrentUser, getOAuthStartUrl, login, register, SocialAuthProvider } from "@/lib/authApi";
 
 type AuthMode = "login" | "register";
 type AuthPortal = "default" | "admin";
@@ -84,7 +85,7 @@ const passwordMismatchMessage = "비밀번호가 일치하지 않습니다.";
 
 function getPasswordConditions(password: string) {
   return [
-    { label: "8~128자", met: password.length >= 8 && password.length <= 128 },
+    { label: "8자 이상", met: password.length >= 8 && password.length <= 128 },
     { label: "영문 포함", met: /[A-Za-z]/.test(password) },
     { label: "숫자 포함", met: /[0-9]/.test(password) },
   ];
@@ -278,7 +279,7 @@ function PasswordConditions({ password }: { password: string }) {
         {conditions.map((condition) => (
           <li key={condition.label} className={hasInput && condition.met ? "is-met" : "is-neutral"}>
             <span className="auth-condition-icon" aria-hidden="true">
-              {hasInput && condition.met ? <Icon name="check" size={15} /> : <i />}
+              {hasInput && condition.met ? <Icon name="check" size={17} /> : <i />}
             </span>
             <span>{condition.label}</span>
             <span className="sr-only">{hasInput && condition.met ? "완료" : "미완료"}</span>
@@ -356,6 +357,18 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
   const [passwordShakeKey, setPasswordShakeKey] = useState(0);
   const [confirmShakeKey, setConfirmShakeKey] = useState(0);
   const [pendingSocialProvider, setPendingSocialProvider] = useState<SocialProvider | null>(null);
+  const [socialRegistrationProvider, setSocialRegistrationProvider] = useState<SocialProvider | null>(null);
+
+  useEffect(() => {
+    if (isLogin) return;
+    const provider = new URLSearchParams(window.location.search).get("social");
+    if (provider === "google" || provider === "naver" || provider === "kakao") {
+      const frame = requestAnimationFrame(() => setSocialRegistrationProvider(provider));
+      return () => cancelAnimationFrame(frame);
+    }
+  }, [isLogin]);
+
+  const isSocialRegistration = !isLogin && socialRegistrationProvider !== null;
 
   useEffect(() => {
     if (!isLogin) return;
@@ -381,18 +394,22 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
     const email = String(data.get("email") ?? "").trim();
     const password = String(data.get("password") ?? "");
 
-    if (!email) nextErrors.email = "이메일을 입력해주세요.";
-    else if (!emailPattern.test(email)) nextErrors.email = "올바른 이메일 형식을 입력해주세요.";
-    if (!password) nextErrors.password = isLogin ? "비밀번호를 입력해주세요." : passwordPolicyMessage;
+    if (!isSocialRegistration) {
+      if (!email) nextErrors.email = "이메일을 입력해주세요.";
+      else if (!emailPattern.test(email)) nextErrors.email = "올바른 이메일 형식을 입력해주세요.";
+      if (!password) nextErrors.password = isLogin ? "비밀번호를 입력해주세요." : passwordPolicyMessage;
+    }
 
     if (!isLogin) {
       const nickname = String(data.get("nickname") ?? "").trim();
       const confirm = String(data.get("password-confirm") ?? "");
       if (!nickname) nextErrors.nickname = "닉네임을 입력해주세요.";
       else if (nickname.length < 2) nextErrors.nickname = "닉네임은 2자 이상 입력해주세요.";
-      if (!passwordPattern.test(password)) nextErrors.password = passwordPolicyMessage;
-      if (!confirm) nextErrors["password-confirm"] = "비밀번호를 한 번 더 입력해주세요.";
-      else if (password !== confirm) nextErrors["password-confirm"] = passwordMismatchMessage;
+      if (!isSocialRegistration) {
+        if (!passwordPattern.test(password)) nextErrors.password = passwordPolicyMessage;
+        if (!confirm) nextErrors["password-confirm"] = "비밀번호를 한 번 더 입력해주세요.";
+        else if (password !== confirm) nextErrors["password-confirm"] = passwordMismatchMessage;
+      }
       if (data.get("terms") !== "on" || data.get("privacy") !== "on") nextErrors.agreements = "필수 항목에 동의해주세요.";
     }
     return nextErrors;
@@ -468,6 +485,12 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
     try {
       if (isLogin) {
         await login({ email, password });
+      } else if (isSocialRegistration) {
+        await completeSocialRegistration({
+          nickname: String(data.get("nickname") ?? "").trim(),
+          terms_agreed: data.get("terms") === "on",
+          privacy_agreed: data.get("privacy") === "on",
+        });
       } else {
         await register({
           email,
@@ -505,6 +528,7 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
         <FlowLinkLogo />
         <div className="auth-header-actions">
           <ThemeToggle />
+          {!isAdminPortal && <DaruSettings />}
           <Link className="auth-home-link" href="/">홈으로</Link>
         </div>
       </header>
@@ -516,14 +540,19 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
             <h1 id="auth-title">{isLogin ? "다시, 연결을 이어가세요" : <>FlowLink를 <span>시작해볼까요?</span></>}</h1>
             <p className="auth-form-description">{isLogin ? "로그인하고 신고와 발견의 진행 상황을 확인하세요." : registerScene[theme].description}</p>
 
-            {!isAdminPortal && <SocialAuthSection mode={mode} onSelect={handleSocialAuth} pendingProvider={pendingSocialProvider} />}
+            {!isAdminPortal && !isSocialRegistration && <SocialAuthSection mode={mode} onSelect={handleSocialAuth} pendingProvider={pendingSocialProvider} />}
+            {isSocialRegistration && (
+              <p className="auth-social-pending" role="status">
+                {socialProviders.find((provider) => provider.id === socialRegistrationProvider)?.label} 인증이 완료됐습니다. 닉네임과 필수 약관을 확인해주세요.
+              </p>
+            )}
 
             <div className="auth-fields">
-              <div className="auth-field">
+              {!isSocialRegistration && <div className="auth-field">
                 <label htmlFor="email">이메일</label>
                 <input id="email" name="email" type="email" inputMode="email" autoComplete="email" placeholder="name@example.com" aria-invalid={Boolean(errors.email)} aria-describedby={errors.email ? "email-error" : undefined} />
                 {errors.email && <p className="auth-error" id="email-error">{errors.email}</p>}
-              </div>
+              </div>}
               {!isLogin && (
                 <div className="auth-field">
                   <label htmlFor="nickname">닉네임</label>
@@ -531,7 +560,7 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
                   {errors.nickname && <p className="auth-error" id="nickname-error">{errors.nickname}</p>}
                 </div>
               )}
-              <PasswordField
+              {!isSocialRegistration && <PasswordField
                 id="password"
                 label="비밀번호"
                 placeholder={isLogin ? "비밀번호를 입력해주세요" : "영문·숫자 조합 8자 이상"}
@@ -548,8 +577,8 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
                 describedBy={!isLogin ? "password-conditions" : undefined}
               >
                 {!isLogin && <PasswordConditions password={password} />}
-              </PasswordField>
-              {!isLogin && <PasswordField id="password-confirm" label="비밀번호 확인" placeholder="비밀번호를 한 번 더 입력해주세요" error={errors["password-confirm"]} autoComplete="new-password" maxLength={128} onChange={handleConfirmChange} onBlur={handleConfirmBlur} value={passwordConfirm} valid={passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password} shakeKey={confirmShakeKey} describedBy={passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password ? "password-confirm-success" : undefined}>{passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password && <p className="auth-password-success" id="password-confirm-success"><Icon name="check" size={15} />비밀번호와 일치해요</p>}</PasswordField>}
+              </PasswordField>}
+              {!isLogin && !isSocialRegistration && <PasswordField id="password-confirm" label="비밀번호 확인" placeholder="비밀번호를 한 번 더 입력해주세요" error={errors["password-confirm"]} autoComplete="new-password" maxLength={128} onChange={handleConfirmChange} onBlur={handleConfirmBlur} value={passwordConfirm} valid={passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password} shakeKey={confirmShakeKey} describedBy={passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password ? "password-confirm-success" : undefined}>{passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password && <p className="auth-password-success" id="password-confirm-success"><Icon name="check" size={15} />비밀번호와 일치해요</p>}</PasswordField>}
             </div>
 
             {!isLogin && (
@@ -562,7 +591,7 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
             )}
 
             <button className="button button-primary auth-submit" type="submit" disabled={isSubmitting || isCheckingSession}>
-              {isCheckingSession ? "로그인 확인 중..." : isSubmitting ? (isLogin ? "로그인 확인 중..." : "가입 중...") : (isAdminPortal ? "운영 허브 로그인" : isLogin ? "로그인" : "FlowLink 시작하기")}
+              {isCheckingSession ? "로그인 확인 중..." : isSubmitting ? (isLogin ? "로그인 확인 중..." : "가입 중...") : (isAdminPortal ? "운영 허브 로그인" : isLogin ? "로그인" : isSocialRegistration ? "소셜 가입 완료" : "FlowLink 시작하기")}
             </button>
             {submitMessage && <p className={`auth-submit-message${roleMismatch ? " is-error" : ""}`} role={roleMismatch ? "alert" : "status"}>{submitMessage}</p>}
             {isAdminPortal ? <p className="auth-switch"><Link href="/login">일반 로그인으로 돌아가기</Link></p> : <p className="auth-switch">{isLogin ? "계정이 없으신가요?" : "이미 계정이 있으신가요?"} <Link href={isLogin ? "/register" : "/login"}>{isLogin ? "회원가입" : "로그인"}</Link></p>}

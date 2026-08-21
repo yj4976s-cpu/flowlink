@@ -55,11 +55,22 @@ def _delete_private_cookie(response: Response, key: str) -> None:
     )
 
 
-def _error_redirect(provider: str, error: str) -> RedirectResponse:
+def _error_redirect(
+    provider: str,
+    error: str,
+    *,
+    provider_step: str | None = None,
+    provider_detail: str | None = None,
+) -> RedirectResponse:
     safe_error = error if error in {"denied", "state", "provider", "email", "conflict", "account"} else "provider"
-    url = f"{get_settings().FRONTEND_URL.rstrip('/')}/login?" + urlencode(
-        {"oauth_error": provider.lower(), "reason": safe_error}
-    )
+    params = {"oauth_error": provider.lower(), "reason": safe_error}
+    safe_provider_steps = {"token", "response", "id_token", "verification", "nonce", "issuer", "profile", "email"}
+    if safe_error == "provider" and provider_step in safe_provider_steps:
+        params["provider_step"] = provider_step
+    safe_provider_details = {"audience", "signature", "expired", "clock", "invalid"}
+    if provider_step == "verification" and provider_detail in safe_provider_details:
+        params["provider_detail"] = provider_detail
+    url = f"{get_settings().FRONTEND_URL.rstrip('/')}/login?" + urlencode(params)
     return RedirectResponse(url, status_code=status.HTTP_302_FOUND)
 
 
@@ -111,8 +122,26 @@ def oauth_callback(
     except HTTPException as exc:
         reason = "state" if exc.status_code in {400, 401} else "conflict" if exc.status_code == 409 else "account"
         response = _error_redirect(provider_name, reason)
-    except OAuthProviderError:
-        response = _error_redirect(provider_name, "provider")
+    except OAuthProviderError as exc:
+        error_message = str(exc)
+        provider_step = {
+            "Provider token exchange failed": "token",
+            "Invalid provider token response": "response",
+            "Provider profile request failed": "profile",
+            "Invalid provider profile response": "profile",
+            "Google ID token is missing": "id_token",
+            "Google nonce verification failed": "nonce",
+            "Google issuer verification failed": "issuer",
+            "Google subject is missing": "profile",
+            "A verified Google email is required": "email",
+        }.get(error_message, "verification" if error_message.startswith("Google ID token verification failed:") else "response")
+        provider_detail = error_message.partition(":")[2] if provider_step == "verification" else None
+        response = _error_redirect(
+            provider_name,
+            "provider",
+            provider_step=provider_step,
+            provider_detail=provider_detail,
+        )
     else:
         if result.login is not None:
             response = RedirectResponse(get_settings().FRONTEND_URL.rstrip("/") + "/", status_code=302)

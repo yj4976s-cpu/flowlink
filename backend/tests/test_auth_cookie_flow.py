@@ -613,6 +613,30 @@ def test_social_callback_does_not_auto_link_existing_email(
     assert db.query(UserSocialAccount).count() == 0
 
 
+def test_social_callback_links_verified_provider_email_to_active_user(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = seed_user(db, email="same@example.com")
+    configure_fake_oauth(
+        monkeypatch,
+        OAuthIdentity("KAKAO", "k-verified", "same@example.com", "same", email_verified=True),
+    )
+    state_value = begin_oauth(client, "kakao")
+
+    response = client.get(
+        f"/api/auth/oauth/kakao/callback?code=valid-code&state={state_value}",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == get_settings().FRONTEND_URL.rstrip("/") + "/"
+    assert get_settings().AUTH_COOKIE_NAME in response.headers["set-cookie"]
+    account = db.query(UserSocialAccount).one()
+    assert account.user_id == user.id
+    assert account.provider == "KAKAO"
+    assert account.provider_user_id == "k-verified"
+
+
 def test_social_callback_rejects_new_provider_user_without_email(
     client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:

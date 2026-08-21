@@ -36,7 +36,7 @@ def test_google_fetch_identity_verifies_claims_and_pkce(
     monkeypatch.setattr(provider, "_post_token", fake_post)
     monkeypatch.setattr(
         "app.services.oauth.providers.google_id_token.verify_oauth2_token",
-        lambda token, request, audience: {
+        lambda token, request, audience, **kwargs: {
             "iss": "https://accounts.google.com",
             "aud": audience,
             "exp": 9999999999,

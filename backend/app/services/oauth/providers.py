@@ -12,6 +12,7 @@ from google.oauth2 import id_token as google_id_token
 from app.core.config import Settings, get_settings
 
 HTTP_TIMEOUT_SECONDS = 10.0
+GOOGLE_CLOCK_SKEW_SECONDS = 30
 
 
 class OAuthProviderError(Exception):
@@ -24,6 +25,7 @@ class OAuthIdentity:
     provider_user_id: str
     email: str | None
     suggested_nickname: str
+    email_verified: bool = False
 
 
 class OAuthProvider(ABC):
@@ -121,9 +123,21 @@ class GoogleOAuthProvider(OAuthProvider):
                 raw_id_token,
                 google_requests.Request(),
                 self.settings.GOOGLE_CLIENT_ID,
+                clock_skew_in_seconds=GOOGLE_CLOCK_SKEW_SECONDS,
             )
         except (ValueError, TypeError) as exc:
-            raise OAuthProviderError("Google ID token verification failed") from exc
+            message = str(exc).lower()
+            if "audience" in message:
+                reason = "audience"
+            elif "signature" in message or "certificate" in message:
+                reason = "signature"
+            elif "expired" in message:
+                reason = "expired"
+            elif "too early" in message or "issued at" in message or "iat" in message:
+                reason = "clock"
+            else:
+                reason = "invalid"
+            raise OAuthProviderError(f"Google ID token verification failed:{reason}") from exc
         if claims.get("nonce") != nonce:
             raise OAuthProviderError("Google nonce verification failed")
         if claims.get("iss") not in {"accounts.google.com", "https://accounts.google.com"}:
@@ -134,7 +148,7 @@ class GoogleOAuthProvider(OAuthProvider):
             raise OAuthProviderError("Google subject is missing")
         if not isinstance(email, str) or not email or claims.get("email_verified") is not True:
             raise OAuthProviderError("A verified Google email is required")
-        return OAuthIdentity("GOOGLE", provider_user_id, email, _nickname(email, "Google user"))
+        return OAuthIdentity("GOOGLE", provider_user_id, email, _nickname(email, "Google user"), True)
 
 
 class KakaoOAuthProvider(OAuthProvider):
@@ -181,7 +195,12 @@ class KakaoOAuthProvider(OAuthProvider):
         if not isinstance(account, dict):
             account = {}
         email = account.get("email")
-        if account.get("is_email_valid") is False or account.get("is_email_verified") is False:
+        email_verified = (
+            isinstance(email, str)
+            and account.get("is_email_valid") is True
+            and account.get("is_email_verified") is True
+        )
+        if not email_verified:
             email = None
         properties = profile.get("properties")
         nickname = properties.get("nickname") if isinstance(properties, dict) else None
@@ -190,6 +209,7 @@ class KakaoOAuthProvider(OAuthProvider):
         return OAuthIdentity(
             "KAKAO", str(provider_user_id), email if isinstance(email, str) else None,
             nickname if isinstance(nickname, str) and nickname.strip() else _nickname(email, "Kakao user"),
+            email_verified,
         )
 
 

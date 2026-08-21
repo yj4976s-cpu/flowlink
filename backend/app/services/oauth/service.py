@@ -98,8 +98,35 @@ def process_oauth_identity(db: Session, identity: OAuthIdentity) -> OAuthCallbac
             detail="A verified provider email is required",
         )
     email = normalize_email(identity.email)
-    if get_user_by_email(db, email) is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+    existing_user = get_user_by_email(db, email)
+    if existing_user is not None:
+        if not identity.email_verified:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+        if not existing_user.active or existing_user.deleted_at is not None:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is unavailable")
+        now = utc_now()
+        db.add(
+            UserSocialAccount(
+                user_id=existing_user.id,
+                provider=identity.provider,
+                provider_user_id=identity.provider_user_id,
+                provider_email=email,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        existing_user.last_login_at = now
+        try:
+            db.flush()
+            access_token, expires_in = create_access_token(existing_user.id, existing_user.role)
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Social account already registered") from exc
+        db.refresh(existing_user)
+        return OAuthCallbackResult(
+            LoginResult(access_token, expires_in, user_response(existing_user)), None
+        )
     pending_token = _encode_purpose_token(
         {
             "provider": identity.provider,
