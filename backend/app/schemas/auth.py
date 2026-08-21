@@ -36,6 +36,17 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class OAuthCompleteRequest(BaseModel):
+    nickname: str = Field(min_length=2, max_length=50)
+    terms_agreed: bool
+    privacy_agreed: bool
+
+    @field_validator("nickname", mode="before")
+    @classmethod
+    def strip_oauth_nickname(cls, value: str) -> str:
+        return value.strip() if isinstance(value, str) else value
+
+
 class NicknameUpdateRequest(BaseModel):
     nickname: str = Field(min_length=2, max_length=50)
 

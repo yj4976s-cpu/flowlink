@@ -3,13 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/common/Icon";
 import { useDaru } from "./DaruProvider";
+import { DaruIcon } from "./DaruIcon";
 import type { DaruMode } from "./types";
 import styles from "./DaruSettings.module.css";
 
 const options: Array<{ value: DaruMode; label: string; description: string }> = [
-  { value: "active", label: "함께하기", description: "서비스 상황에 맞춰 다루가 반응해요." },
-  { value: "quiet", label: "조용히 있기", description: "말풍선 없이 필요한 움직임만 보여요." },
-  { value: "hidden", label: "퇴근하기", description: "다루를 화면에서 숨겨요." },
+  { value: "active", label: "출근하기", description: "다루가 곁에서 함께 움직이며 도와줘요" },
+  { value: "quiet", label: "잠깐 쉬기", description: "다루가 자리를 지키며 조용히 쉬어요" },
+  { value: "hidden", label: "퇴근하기", description: "다루가 오늘은 화면에서 퇴근해요" },
 ];
 
 export function DaruSettings() {
@@ -40,7 +41,7 @@ export function DaruSettings() {
   return (
     <div className={styles.root} ref={rootRef}>
       <button ref={triggerRef} className={styles.trigger} type="button" aria-label="다루 표시 설정" aria-haspopup="menu" aria-expanded={open} aria-controls="daru-settings-menu" onClick={() => setOpen((current) => !current)}>
-        <Icon name="spark" size={18} /><span>다루</span>
+        <DaruIcon className={styles.daruIcon} /><span>다루</span>
       </button>
       {open && <div className={styles.menu} id="daru-settings-menu" role="menu" aria-label="다루 표시 모드">
         <strong>다루 표시 모드</strong>

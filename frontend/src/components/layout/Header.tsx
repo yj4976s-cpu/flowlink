@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { FlowLinkLogo } from "@/components/common/FlowLinkLogo";
 import { Icon } from "@/components/common/Icon";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { NotificationToastHost } from "@/components/notifications/NotificationToastHost";
+import { NotificationCenter } from "@/components/notifications/NotificationCenter";
 import { DaruSettings } from "@/components/mascot";
 import { AuthUser, getCurrentUser, logout as logoutRequest } from "@/lib/authApi";
 
@@ -113,6 +114,7 @@ export function Header() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [notificationOpen, setNotificationOpen] = useState(false);
   const [logoutConfirm, setLogoutConfirm] = useState(false);
   const [logoutPending, setLogoutPending] = useState(false);
   const [logoutError, setLogoutError] = useState("");
@@ -182,6 +184,14 @@ export function Header() {
   }, [profileOpen, logoutConfirm]);
 
   const closeMenu = () => { setOpen(false); setLogoutConfirm(false); setLogoutError(""); setOpenNavGroup(null); };
+  const changeNotificationOpen = useCallback((nextOpen: boolean) => {
+    setNotificationOpen(nextOpen);
+    if (nextOpen) {
+      setProfileOpen(false);
+      setLogoutConfirm(false);
+      setLogoutError("");
+    }
+  }, []);
   const isAdmin = currentUser?.role === "ADMIN";
   const navigation = isAdmin ? adminNavigation : userNavigation;
   const handleLogout = async () => {
@@ -192,6 +202,7 @@ export function Header() {
       await logoutRequest();
       setCurrentUser(null);
       setProfileOpen(false);
+      setNotificationOpen(false);
       closeMenu();
       if (pathname === "/detect") {
         router.replace(`/login?next=${encodeURIComponent(pathname)}`);
@@ -251,24 +262,26 @@ export function Header() {
           <ThemeToggle />
           <DaruSettings />
           {authResolved && (currentUser ? (
-            <div className="profile-menu-wrap" ref={profileRef}>
-              <button className="profile-trigger" type="button" aria-haspopup="menu" aria-expanded={profileOpen} onClick={() => { setProfileOpen((value) => !value); setLogoutConfirm(false); setLogoutError(""); }}>
-                <span className="profile-avatar" aria-hidden="true"><Icon name="user" size={17} /></span>
-                <span>{currentUser.nickname}님</span>
-                <span className={`profile-chevron${profileOpen ? " is-open" : ""}`}><Icon name="chevron" size={16} /></span>
-              </button>
-              <div className={`profile-dropdown${profileOpen ? " is-open" : ""}`} role="menu" aria-hidden={!profileOpen}>
-                <div className="profile-dropdown-user">
-                  <strong>{currentUser.nickname}님</strong>
-                  <span>{currentUser.email}</span>
+            <>
+              {!isAdmin && <NotificationCenter key={currentUser.id} userId={currentUser.id} open={notificationOpen} onOpenChange={changeNotificationOpen} />}
+              <div className="profile-menu-wrap" ref={profileRef}>
+                <button className="profile-trigger" type="button" aria-haspopup="menu" aria-expanded={profileOpen} onClick={() => { setProfileOpen((value) => !value); setNotificationOpen(false); setLogoutConfirm(false); setLogoutError(""); }}>
+                  <span className="profile-avatar" aria-hidden="true"><Icon name="user" size={17} /></span>
+                  <span>{currentUser.nickname}님</span>
+                  <span className={`profile-chevron${profileOpen ? " is-open" : ""}`}><Icon name="chevron" size={16} /></span>
+                </button>
+                <div className={`profile-dropdown${profileOpen ? " is-open" : ""}`} role="menu" aria-hidden={!profileOpen}>
+                  <div className="profile-dropdown-user">
+                    <strong>{currentUser.nickname}님</strong>
+                    <span>{currentUser.email}</span>
+                  </div>
+                  <div className="profile-dropdown-links">
+                    <Link href={isAdmin ? "/admin" : "/mypage"} role="menuitem" onClick={() => setProfileOpen(false)}><Icon name="user" size={18} />{isAdmin ? "관리자 정보" : "마이페이지"}</Link>
+                  </div>
+                  <button ref={logoutTriggerRef} type="button" role="menuitem" onClick={requestLogout}><Icon name="logout" size={18} />로그아웃</button>
                 </div>
-                <div className="profile-dropdown-links">
-                  <Link href={isAdmin ? "/admin" : "/mypage"} role="menuitem" onClick={() => setProfileOpen(false)}><Icon name="user" size={18} />{isAdmin ? "관리자 정보" : "마이페이지"}</Link>
-                  {!isAdmin && <Link href="/notifications" role="menuitem" onClick={() => setProfileOpen(false)}><Icon name="bell" size={18} />알림</Link>}
-                </div>
-                <button ref={logoutTriggerRef} type="button" role="menuitem" onClick={requestLogout}><Icon name="logout" size={18} />로그아웃</button>
               </div>
-            </div>
+            </>
           ) : (
             <Link className="login-link" href="/login">로그인</Link>
           ))}
@@ -280,7 +293,7 @@ export function Header() {
             aria-label={open ? "메뉴 닫기" : "메뉴 열기"}
             aria-expanded={open}
             aria-controls="mobile-menu"
-            onClick={() => setOpen((value) => !value)}
+            onClick={() => { setOpen((value) => !value); setNotificationOpen(false); setProfileOpen(false); }}
           >
             <Icon name={open ? "close" : "menu"} />
           </button>

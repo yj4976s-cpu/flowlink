@@ -2,9 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Icon, type IconName } from "@/components/common/Icon";
+import { Icon } from "@/components/common/Icon";
 import { useDaru } from "@/components/mascot";
 import type { AuthUser } from "@/lib/authApi";
+import { getNotificationDestination } from "@/lib/notificationRouting";
 import { listNotifications, markNotificationRead, NotificationsApiError, type NotificationResponse } from "@/lib/notificationsApi";
 import styles from "./NotificationToastHost.module.css";
 
@@ -12,24 +13,8 @@ export const NOTIFICATION_POLL_INTERVAL_MS = 5000;
 const TOAST_VISIBLE_MS = 10000;
 const TOAST_LIMIT = 3;
 
-function toastMeta(notification: NotificationResponse): { label: string; icon: IconName; href: string; action: string } | null {
-  if (notification.notification_type === "MATCH_FOUND" && notification.related_type === "LOST_REPORT" && notification.related_id !== null) {
-    return { label: "매칭", icon: "match", href: `/matches?reportId=${notification.related_id}`, action: "매칭 후보 확인하기" };
-  }
-  if (notification.notification_type === "MATCH_FOUND" && notification.related_type === "MATCH_CANDIDATE") {
-    return { label: "매칭", icon: "match", href: "/matches", action: "매칭 후보 확인하기" };
-  }
-  if (notification.notification_type === "STATUS_CHANGED" && notification.related_type === "OWNERSHIP_CLAIM") {
-    return { label: "소유권 상태 변경", icon: "check", href: "/matches", action: "매칭 현황 확인하기" };
-  }
-  if (notification.notification_type === "CITIZEN_REPORT_STATUS" && notification.related_type === "CITIZEN_REPORT") {
-    return { label: "발견 제보 상태", icon: "document", href: "/mypage#my-activity", action: "내 제보 확인하기" };
-  }
-  return null;
-}
-
 function Toast({ notification, onClose, onAction }: { notification: NotificationResponse; onClose: () => void; onAction: () => void }) {
-  const meta = toastMeta(notification);
+  const meta = getNotificationDestination(notification);
   const [paused, setPaused] = useState(false);
   useEffect(() => {
     if (paused) return;
@@ -72,7 +57,7 @@ export function NotificationToastHost({ user }: { user: AuthUser | null }) {
           baselineReadyRef.current = true;
           return;
         }
-        const fresh = notifications.filter((item) => toastMeta(item) && !shownIdsRef.current.has(item.id));
+        const fresh = notifications.filter((item) => getNotificationDestination(item) && !shownIdsRef.current.has(item.id));
         fresh.forEach((item) => shownIdsRef.current.add(item.id));
         if (fresh.length) {
           setToasts((current) => [...fresh, ...current].slice(0, TOAST_LIMIT));
@@ -97,7 +82,7 @@ export function NotificationToastHost({ user }: { user: AuthUser | null }) {
   }, [cueDaru, user]);
 
   const act = async (notification: NotificationResponse) => {
-    const meta = toastMeta(notification);
+    const meta = getNotificationDestination(notification);
     if (!meta) return;
     try { await markNotificationRead(notification.id); } catch { /* Navigation remains available if read marking fails. */ }
     close(notification.id);
