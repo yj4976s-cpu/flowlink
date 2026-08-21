@@ -21,6 +21,23 @@ const socialProviders: { id: SocialProvider; label: string }[] = [
   { id: "kakao", label: "카카오" },
 ];
 
+function isSocialProvider(value: string | null): value is SocialProvider {
+  return value === "google" || value === "naver" || value === "kakao";
+}
+
+function getOAuthErrorMessage(providerValue: string | null, reason: string | null) {
+  const provider = isSocialProvider(providerValue)
+    ? socialProviders.find((item) => item.id === providerValue)?.label ?? "소셜"
+    : "소셜";
+
+  if (reason === "provider") return `${provider} 로그인 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.`;
+  if (reason === "state") return "소셜 로그인 인증 시간이 만료되었거나 인증 정보가 올바르지 않습니다. 다시 시도해주세요.";
+  if (reason === "conflict") return "이미 같은 이메일로 가입된 FlowLink 계정이 있습니다. 기존 계정으로 로그인해주세요.";
+  if (reason === "account") return "현재 이 계정으로 로그인할 수 없습니다. 계정 상태를 확인해주세요.";
+  if (reason === "denied") return "소셜 로그인이 취소되었습니다.";
+  return "소셜 로그인 중 문제가 발생했습니다. 다시 시도해주세요.";
+}
+
 function SocialProviderMark({ provider }: { provider: SocialProvider }) {
   if (provider === "google") {
     return (
@@ -351,6 +368,7 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isCheckingSession, setIsCheckingSession] = useState(isLogin);
   const [submitMessage, setSubmitMessage] = useState("");
+  const [submitError, setSubmitError] = useState(false);
   const [roleMismatch, setRoleMismatch] = useState(false);
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
@@ -362,11 +380,22 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
   useEffect(() => {
     if (isLogin) return;
     const provider = new URLSearchParams(window.location.search).get("social");
-    if (provider === "google" || provider === "naver" || provider === "kakao") {
+    if (isSocialProvider(provider)) {
       const frame = requestAnimationFrame(() => setSocialRegistrationProvider(provider));
       return () => cancelAnimationFrame(frame);
     }
   }, [isLogin]);
+
+  useEffect(() => {
+    if (!isLogin || isAdminPortal) return;
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has("oauth_error")) return;
+    const frame = requestAnimationFrame(() => {
+      setSubmitError(true);
+      setSubmitMessage(getOAuthErrorMessage(params.get("oauth_error"), params.get("reason")));
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [isAdminPortal, isLogin]);
 
   const isSocialRegistration = !isLogin && socialRegistrationProvider !== null;
 
@@ -452,12 +481,14 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
   const handleSocialAuth = (provider: SocialProvider) => {
     const providerLabel = socialProviders.find((item) => item.id === provider)?.label ?? provider;
     setRoleMismatch(false);
+    setSubmitError(false);
     setPendingSocialProvider(provider);
     setSubmitMessage(`${providerLabel} 인증 페이지로 이동하고 있습니다.`);
     try {
       window.location.assign(getOAuthStartUrl(provider));
     } catch (error) {
       setPendingSocialProvider(null);
+      setSubmitError(true);
       setSubmitMessage(error instanceof AuthApiError ? error.message : "소셜 인증을 시작하지 못했습니다.");
     }
   };
@@ -465,6 +496,7 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSubmitMessage("");
+    setSubmitError(false);
     setRoleMismatch(false);
     const nextErrors = validate(event.currentTarget);
     setErrors(nextErrors);
@@ -504,6 +536,7 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
       const currentUser = await getCurrentUser();
       if (isAdminPortal && currentUser.role !== "ADMIN") {
         setRoleMismatch(true);
+        setSubmitError(true);
         setSubmitMessage("일반 사용자 계정입니다. FlowLink 사용자 서비스에서 이용해주세요.");
         return;
       }
@@ -511,11 +544,16 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
       router.replace(currentUser.role === "ADMIN" ? "/admin" : isLogin ? getSafeNextPath() : "/");
       router.refresh();
     } catch (error) {
-      const message = error instanceof AuthApiError && error.status === 401
+      const socialRegistrationExpired = isSocialRegistration && error instanceof AuthApiError && error.status === 401;
+      const message = socialRegistrationExpired
+        ? "소셜 인증 시간이 만료되었습니다. 아래 간편 가입에서 다시 인증해주세요."
+        : error instanceof AuthApiError && error.status === 401
         ? "이메일 또는 비밀번호를 확인해주세요."
         : error instanceof AuthApiError
         ? error.message
         : "인증 요청 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
+      if (socialRegistrationExpired) setSocialRegistrationProvider(null);
+      setSubmitError(true);
       setSubmitMessage(message);
     } finally {
       setIsSubmitting(false);
@@ -593,7 +631,7 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
             <button className="button button-primary auth-submit" type="submit" disabled={isSubmitting || isCheckingSession}>
               {isCheckingSession ? "로그인 확인 중..." : isSubmitting ? (isLogin ? "로그인 확인 중..." : "가입 중...") : (isAdminPortal ? "운영 허브 로그인" : isLogin ? "로그인" : isSocialRegistration ? "소셜 가입 완료" : "FlowLink 시작하기")}
             </button>
-            {submitMessage && <p className={`auth-submit-message${roleMismatch ? " is-error" : ""}`} role={roleMismatch ? "alert" : "status"}>{submitMessage}</p>}
+            {submitMessage && <p className={`auth-submit-message${roleMismatch || submitError ? " is-error" : ""}`} role={roleMismatch || submitError ? "alert" : "status"}>{submitMessage}</p>}
             {isAdminPortal ? <p className="auth-switch"><Link href="/login">일반 로그인으로 돌아가기</Link></p> : <p className="auth-switch">{isLogin ? "계정이 없으신가요?" : "이미 계정이 있으신가요?"} <Link href={isLogin ? "/register" : "/login"}>{isLogin ? "회원가입" : "로그인"}</Link></p>}
             {roleMismatch && <Link className="auth-role-action" href="/">사용자 서비스로 이동</Link>}
             {isLogin && !isAdminPortal && <p className="auth-portal-link">운영자이신가요? <Link href="/admin/login">운영 허브 로그인</Link></p>}
