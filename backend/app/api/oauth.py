@@ -7,7 +7,7 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, R
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
-from app.api.auth import set_login_cookie
+from app.api.auth import set_login_cookie, should_use_secure_cookie
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.schemas.auth import OAuthCompleteRequest, UserResponse
@@ -33,23 +33,23 @@ def _provider_name(value: str) -> str:
     return provider
 
 
-def _set_private_cookie(response: Response, *, key: str, value: str, max_age: int) -> None:
+def _set_private_cookie(response: Response, request: Request, *, key: str, value: str, max_age: int) -> None:
     response.set_cookie(
         key=key,
         value=value,
         max_age=max_age,
         httponly=True,
-        secure=get_settings().auth_cookie_secure,
+        secure=should_use_secure_cookie(request),
         samesite="lax",
         path="/api/auth/oauth",
     )
 
 
-def _delete_private_cookie(response: Response, key: str) -> None:
+def _delete_private_cookie(response: Response, request: Request, key: str) -> None:
     response.delete_cookie(
         key=key,
         httponly=True,
-        secure=get_settings().auth_cookie_secure,
+        secure=should_use_secure_cookie(request),
         samesite="lax",
         path="/api/auth/oauth",
     )
@@ -75,7 +75,7 @@ def _error_redirect(
 
 
 @router.get("/{provider}/start", summary="Start OAuth login")
-def oauth_start(provider: str) -> RedirectResponse:
+def oauth_start(provider: str, request: Request) -> RedirectResponse:
     provider_name = _provider_name(provider)
     oauth_provider = get_oauth_provider(provider_name)
     if not oauth_provider.configured:
@@ -89,7 +89,7 @@ def oauth_start(provider: str) -> RedirectResponse:
         ),
         status_code=status.HTTP_302_FOUND,
     )
-    _set_private_cookie(response, key=STATE_COOKIE_NAME, value=start.cookie_token, max_age=STATE_TTL_SECONDS)
+    _set_private_cookie(response, request, key=STATE_COOKIE_NAME, value=start.cookie_token, max_age=STATE_TTL_SECONDS)
     return response
 
 
@@ -106,7 +106,7 @@ def oauth_callback(
     provider_name = _provider_name(provider)
     if provider_error or not code:
         response = _error_redirect(provider_name, "denied")
-        _delete_private_cookie(response, STATE_COOKIE_NAME)
+        _delete_private_cookie(response, request, STATE_COOKIE_NAME)
         return response
     try:
         state_payload = verify_oauth_state(state_cookie, state_value, provider_name)
@@ -155,11 +155,12 @@ def oauth_callback(
             assert result.pending_token is not None
             _set_private_cookie(
                 response,
+                request,
                 key=PENDING_COOKIE_NAME,
                 value=result.pending_token,
                 max_age=PENDING_TTL_SECONDS,
             )
-    _delete_private_cookie(response, STATE_COOKIE_NAME)
+    _delete_private_cookie(response, request, STATE_COOKIE_NAME)
     return response
 
 
@@ -173,5 +174,5 @@ def oauth_complete(
 ) -> UserResponse:
     result = complete_social_registration(db, pending_cookie, payload)
     set_login_cookie(response, request, result.access_token, result.expires_in)
-    _delete_private_cookie(response, PENDING_COOKIE_NAME)
+    _delete_private_cookie(response, request, PENDING_COOKIE_NAME)
     return result.user
