@@ -18,6 +18,12 @@ type RegisterRequest = LoginRequest & {
   privacy_agreed: boolean;
 };
 
+type SocialRegisterRequest = {
+  nickname: string;
+  terms_agreed: boolean;
+  privacy_agreed: boolean;
+};
+
 export type SocialAuthProvider = "google" | "naver" | "kakao";
 
 export class AuthApiError extends Error {
@@ -88,6 +94,15 @@ export async function login(payload: LoginRequest) {
 
 export async function register(payload: RegisterRequest) {
   const result = await request<AuthUser>("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  window.dispatchEvent(new CustomEvent("flowlink:auth-changed", { detail: result }));
+  return result;
+}
+
+export async function completeSocialRegistration(payload: SocialRegisterRequest) {
+  const result = await request<AuthUser>("/api/auth/oauth/complete", {
     method: "POST",
     body: JSON.stringify(payload),
   });

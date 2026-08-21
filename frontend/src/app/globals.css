@@ -451,6 +451,7 @@ html[data-theme="night"] .auth-visual { background-image: url("/flowlink-river-n
 .auth-email-divider { margin-top: 16px; color: var(--color-text-muted); display: flex; align-items: center; gap: 12px; font-size: 11px; font-weight: 600; }
 .auth-email-divider::before, .auth-email-divider::after { content: ""; height: 1px; flex: 1; background: var(--color-border); }
 .auth-email-divider span { flex: 0 0 auto; }
+.auth-social-pending { margin: -2px 0 21px; padding: 13px 15px; border: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--color-border)); border-radius: 12px; color: var(--color-text); background: var(--color-primary-soft); font-size: 13px; line-height: 1.55; }
 .auth-page-register .auth-social { margin-bottom: 17px; }
 .auth-page-register .auth-social-button { min-height: 44px; }
 .auth-page-register .auth-email-divider { margin-top: 13px; }

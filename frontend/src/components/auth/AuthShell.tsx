@@ -7,7 +7,7 @@ import { FlowLinkLogo } from "@/components/common/FlowLinkLogo";
 import { Icon } from "@/components/common/Icon";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { useTheme } from "@/components/theme/ThemeProvider";
-import { AuthApiError, getCurrentUser, getOAuthStartUrl, login, register, SocialAuthProvider } from "@/lib/authApi";
+import { AuthApiError, completeSocialRegistration, getCurrentUser, getOAuthStartUrl, login, register, SocialAuthProvider } from "@/lib/authApi";
 
 type AuthMode = "login" | "register";
 type AuthPortal = "default" | "admin";
@@ -19,6 +19,23 @@ const socialProviders: { id: SocialProvider; label: string }[] = [
   { id: "naver", label: "네이버" },
   { id: "kakao", label: "카카오" },
 ];
+
+function isSocialProvider(value: string | null): value is SocialProvider {
+  return value === "google" || value === "naver" || value === "kakao";
+}
+
+function getOAuthErrorMessage(providerValue: string | null, reason: string | null) {
+  const provider = isSocialProvider(providerValue)
+    ? socialProviders.find((item) => item.id === providerValue)?.label ?? "소셜"
+    : "소셜";
+
+  if (reason === "provider") return `${provider} 로그인 중 문제가 발생했습니다. 잠시 후 다시 시도해주세요.`;
+  if (reason === "state") return "소셜 로그인 인증 시간이 만료되었거나 인증 정보가 올바르지 않습니다. 다시 시도해주세요.";
+  if (reason === "conflict") return "이미 같은 이메일로 가입된 FlowLink 계정이 있습니다. 기존 계정으로 로그인해주세요.";
+  if (reason === "account") return "현재 이 계정으로 로그인할 수 없습니다. 계정 상태를 확인해주세요.";
+  if (reason === "denied") return "소셜 로그인이 취소되었습니다.";
+  return "소셜 로그인 중 문제가 발생했습니다. 다시 시도해주세요.";
+}
 
 function SocialProviderMark({ provider }: { provider: SocialProvider }) {
   if (provider === "google") {
@@ -350,12 +367,36 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isCheckingSession, setIsCheckingSession] = useState(isLogin);
   const [submitMessage, setSubmitMessage] = useState("");
+  const [submitError, setSubmitError] = useState(false);
   const [roleMismatch, setRoleMismatch] = useState(false);
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
   const [passwordShakeKey, setPasswordShakeKey] = useState(0);
   const [confirmShakeKey, setConfirmShakeKey] = useState(0);
   const [pendingSocialProvider, setPendingSocialProvider] = useState<SocialProvider | null>(null);
+  const [socialRegistrationProvider, setSocialRegistrationProvider] = useState<SocialProvider | null>(null);
+
+  useEffect(() => {
+    if (isLogin) return;
+    const provider = new URLSearchParams(window.location.search).get("social");
+    if (isSocialProvider(provider)) {
+      const frame = requestAnimationFrame(() => setSocialRegistrationProvider(provider));
+      return () => cancelAnimationFrame(frame);
+    }
+  }, [isLogin]);
+
+  useEffect(() => {
+    if (!isLogin || isAdminPortal) return;
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has("oauth_error")) return;
+    const frame = requestAnimationFrame(() => {
+      setSubmitError(true);
+      setSubmitMessage(getOAuthErrorMessage(params.get("oauth_error"), params.get("reason")));
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [isAdminPortal, isLogin]);
+
+  const isSocialRegistration = !isLogin && socialRegistrationProvider !== null;
 
   useEffect(() => {
     if (!isLogin) return;
@@ -381,18 +422,22 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
     const email = String(data.get("email") ?? "").trim();
     const password = String(data.get("password") ?? "");
 
-    if (!email) nextErrors.email = "이메일을 입력해주세요.";
-    else if (!emailPattern.test(email)) nextErrors.email = "올바른 이메일 형식을 입력해주세요.";
-    if (!password) nextErrors.password = isLogin ? "비밀번호를 입력해주세요." : passwordPolicyMessage;
+    if (!isSocialRegistration) {
+      if (!email) nextErrors.email = "이메일을 입력해주세요.";
+      else if (!emailPattern.test(email)) nextErrors.email = "올바른 이메일 형식을 입력해주세요.";
+      if (!password) nextErrors.password = isLogin ? "비밀번호를 입력해주세요." : passwordPolicyMessage;
+    }
 
     if (!isLogin) {
       const nickname = String(data.get("nickname") ?? "").trim();
       const confirm = String(data.get("password-confirm") ?? "");
       if (!nickname) nextErrors.nickname = "닉네임을 입력해주세요.";
       else if (nickname.length < 2) nextErrors.nickname = "닉네임은 2자 이상 입력해주세요.";
-      if (!passwordPattern.test(password)) nextErrors.password = passwordPolicyMessage;
-      if (!confirm) nextErrors["password-confirm"] = "비밀번호를 한 번 더 입력해주세요.";
-      else if (password !== confirm) nextErrors["password-confirm"] = passwordMismatchMessage;
+      if (!isSocialRegistration) {
+        if (!passwordPattern.test(password)) nextErrors.password = passwordPolicyMessage;
+        if (!confirm) nextErrors["password-confirm"] = "비밀번호를 한 번 더 입력해주세요.";
+        else if (password !== confirm) nextErrors["password-confirm"] = passwordMismatchMessage;
+      }
       if (data.get("terms") !== "on" || data.get("privacy") !== "on") nextErrors.agreements = "필수 항목에 동의해주세요.";
     }
     return nextErrors;
@@ -435,12 +480,14 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
   const handleSocialAuth = (provider: SocialProvider) => {
     const providerLabel = socialProviders.find((item) => item.id === provider)?.label ?? provider;
     setRoleMismatch(false);
+    setSubmitError(false);
     setPendingSocialProvider(provider);
     setSubmitMessage(`${providerLabel} 인증 페이지로 이동하고 있습니다.`);
     try {
       window.location.assign(getOAuthStartUrl(provider));
     } catch (error) {
       setPendingSocialProvider(null);
+      setSubmitError(true);
       setSubmitMessage(error instanceof AuthApiError ? error.message : "소셜 인증을 시작하지 못했습니다.");
     }
   };
@@ -448,6 +495,7 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSubmitMessage("");
+    setSubmitError(false);
     setRoleMismatch(false);
     const nextErrors = validate(event.currentTarget);
     setErrors(nextErrors);
@@ -468,6 +516,12 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
     try {
       if (isLogin) {
         await login({ email, password });
+      } else if (isSocialRegistration) {
+        await completeSocialRegistration({
+          nickname: String(data.get("nickname") ?? "").trim(),
+          terms_agreed: data.get("terms") === "on",
+          privacy_agreed: data.get("privacy") === "on",
+        });
       } else {
         await register({
           email,
@@ -481,6 +535,7 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
       const currentUser = await getCurrentUser();
       if (isAdminPortal && currentUser.role !== "ADMIN") {
         setRoleMismatch(true);
+        setSubmitError(true);
         setSubmitMessage("일반 사용자 계정입니다. FlowLink 사용자 서비스에서 이용해주세요.");
         return;
       }
@@ -488,11 +543,16 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
       router.replace(currentUser.role === "ADMIN" ? "/admin" : isLogin ? getSafeNextPath() : "/");
       router.refresh();
     } catch (error) {
-      const message = error instanceof AuthApiError && error.status === 401
+      const socialRegistrationExpired = isSocialRegistration && error instanceof AuthApiError && error.status === 401;
+      const message = socialRegistrationExpired
+        ? "소셜 인증 시간이 만료되었습니다. 아래 간편 가입에서 다시 인증해주세요."
+        : error instanceof AuthApiError && error.status === 401
         ? "이메일 또는 비밀번호를 확인해주세요."
         : error instanceof AuthApiError
         ? error.message
         : "인증 요청 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
+      if (socialRegistrationExpired) setSocialRegistrationProvider(null);
+      setSubmitError(true);
       setSubmitMessage(message);
     } finally {
       setIsSubmitting(false);
@@ -516,14 +576,19 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
             <h1 id="auth-title">{isLogin ? "다시, 연결을 이어가세요" : <>FlowLink를 <span>시작해볼까요?</span></>}</h1>
             <p className="auth-form-description">{isLogin ? "로그인하고 신고와 발견의 진행 상황을 확인하세요." : registerScene[theme].description}</p>
 
-            {!isAdminPortal && <SocialAuthSection mode={mode} onSelect={handleSocialAuth} pendingProvider={pendingSocialProvider} />}
+            {!isAdminPortal && !isSocialRegistration && <SocialAuthSection mode={mode} onSelect={handleSocialAuth} pendingProvider={pendingSocialProvider} />}
+            {isSocialRegistration && (
+              <p className="auth-social-pending" role="status">
+                {socialProviders.find((provider) => provider.id === socialRegistrationProvider)?.label} 인증이 완료됐습니다. 닉네임과 필수 약관을 확인해주세요.
+              </p>
+            )}
 
             <div className="auth-fields">
-              <div className="auth-field">
+              {!isSocialRegistration && <div className="auth-field">
                 <label htmlFor="email">이메일</label>
                 <input id="email" name="email" type="email" inputMode="email" autoComplete="email" placeholder="name@example.com" aria-invalid={Boolean(errors.email)} aria-describedby={errors.email ? "email-error" : undefined} />
                 {errors.email && <p className="auth-error" id="email-error">{errors.email}</p>}
-              </div>
+              </div>}
               {!isLogin && (
                 <div className="auth-field">
                   <label htmlFor="nickname">닉네임</label>
@@ -531,7 +596,7 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
                   {errors.nickname && <p className="auth-error" id="nickname-error">{errors.nickname}</p>}
                 </div>
               )}
-              <PasswordField
+              {!isSocialRegistration && <PasswordField
                 id="password"
                 label="비밀번호"
                 placeholder={isLogin ? "비밀번호를 입력해주세요" : "영문·숫자 조합 8자 이상"}
@@ -548,8 +613,8 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
                 describedBy={!isLogin ? "password-conditions" : undefined}
               >
                 {!isLogin && <PasswordConditions password={password} />}
-              </PasswordField>
-              {!isLogin && <PasswordField id="password-confirm" label="비밀번호 확인" placeholder="비밀번호를 한 번 더 입력해주세요" error={errors["password-confirm"]} autoComplete="new-password" maxLength={128} onChange={handleConfirmChange} onBlur={handleConfirmBlur} value={passwordConfirm} valid={passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password} shakeKey={confirmShakeKey} describedBy={passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password ? "password-confirm-success" : undefined}>{passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password && <p className="auth-password-success" id="password-confirm-success"><Icon name="check" size={15} />비밀번호와 일치해요</p>}</PasswordField>}
+              </PasswordField>}
+              {!isLogin && !isSocialRegistration && <PasswordField id="password-confirm" label="비밀번호 확인" placeholder="비밀번호를 한 번 더 입력해주세요" error={errors["password-confirm"]} autoComplete="new-password" maxLength={128} onChange={handleConfirmChange} onBlur={handleConfirmBlur} value={passwordConfirm} valid={passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password} shakeKey={confirmShakeKey} describedBy={passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password ? "password-confirm-success" : undefined}>{passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password && <p className="auth-password-success" id="password-confirm-success"><Icon name="check" size={15} />비밀번호와 일치해요</p>}</PasswordField>}
             </div>
 
             {!isLogin && (
@@ -562,9 +627,9 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
             )}
 
             <button className="button button-primary auth-submit" type="submit" disabled={isSubmitting || isCheckingSession}>
-              {isCheckingSession ? "로그인 확인 중..." : isSubmitting ? (isLogin ? "로그인 확인 중..." : "가입 중...") : (isAdminPortal ? "운영 허브 로그인" : isLogin ? "로그인" : "FlowLink 시작하기")}
+              {isCheckingSession ? "로그인 확인 중..." : isSubmitting ? (isLogin ? "로그인 확인 중..." : "가입 중...") : (isAdminPortal ? "운영 허브 로그인" : isLogin ? "로그인" : isSocialRegistration ? "소셜 가입 완료" : "FlowLink 시작하기")}
             </button>
-            {submitMessage && <p className={`auth-submit-message${roleMismatch ? " is-error" : ""}`} role={roleMismatch ? "alert" : "status"}>{submitMessage}</p>}
+            {submitMessage && <p className={`auth-submit-message${roleMismatch || submitError ? " is-error" : ""}`} role={roleMismatch || submitError ? "alert" : "status"}>{submitMessage}</p>}
             {isAdminPortal ? <p className="auth-switch"><Link href="/login">일반 로그인으로 돌아가기</Link></p> : <p className="auth-switch">{isLogin ? "계정이 없으신가요?" : "이미 계정이 있으신가요?"} <Link href={isLogin ? "/register" : "/login"}>{isLogin ? "회원가입" : "로그인"}</Link></p>}
             {roleMismatch && <Link className="auth-role-action" href="/">사용자 서비스로 이동</Link>}
             {isLogin && !isAdminPortal && <p className="auth-portal-link">운영자이신가요? <Link href="/admin/login">운영 허브 로그인</Link></p>}
