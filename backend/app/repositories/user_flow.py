@@ -23,6 +23,7 @@ from app.models import (
     OwnershipClaim,
     ProcessingHistory,
     User,
+    UserSocialAccount,
 )
 
 KST = ZoneInfo("Asia/Seoul")
@@ -134,6 +135,19 @@ def get_user_by_id(db: Session, user_id: int) -> User | None:
 def get_user_by_email(db: Session, email: str) -> User | None:
     statement = select(User).where(func.lower(User.email) == email.lower())
     return db.scalar(statement)
+
+
+def get_social_account(db: Session, provider: str, provider_user_id: str) -> UserSocialAccount | None:
+    statement = select(UserSocialAccount).options(joinedload(UserSocialAccount.user)).where(
+        UserSocialAccount.provider == provider,
+        UserSocialAccount.provider_user_id == provider_user_id,
+    )
+    return db.scalar(statement)
+
+
+def list_social_accounts_for_user(db: Session, user_id: int) -> Sequence[UserSocialAccount]:
+    statement = select(UserSocialAccount).where(UserSocialAccount.user_id == user_id).order_by(UserSocialAccount.id)
+    return db.scalars(statement).all()
 
 
 def get_object_class_by_code(db: Session, code: str) -> ObjectClass | None:

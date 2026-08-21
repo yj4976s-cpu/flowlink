@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     SUPABASE_STORAGE_BUCKET: str = ""
     FRONTEND_URL: str = DEFAULT_FRONTEND_URL
     KAKAO_REST_API_KEY: str = ""
+    KAKAO_CLIENT_SECRET: str = ""
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    NAVER_CLIENT_ID: str = ""
+    NAVER_CLIENT_SECRET: str = ""
+    OAUTH_BACKEND_BASE_URL: str = "http://localhost:8000"
     AI_SERVICE_URL: str = "http://127.0.0.1:8001"
     AI_INTERNAL_API_KEY: str = ""
     AI_SERVICE_TIMEOUT_SECONDS: float = 30.0
@@ -42,6 +48,7 @@ class Settings(BaseSettings):
     CHAT_MODEL_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-3.6-flash"
+    GEMINI_FALLBACK_MODEL: str = ""
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4o-mini"
     OPENAI_BASE_URL: str = "https://api.openai.com/v1"

@@ -18,6 +18,14 @@ type RegisterRequest = LoginRequest & {
   privacy_agreed: boolean;
 };
 
+type SocialRegisterRequest = {
+  nickname: string;
+  terms_agreed: boolean;
+  privacy_agreed: boolean;
+};
+
+export type SocialAuthProvider = "google" | "naver" | "kakao";
+
 export class AuthApiError extends Error {
   constructor(message: string, readonly status?: number) {
     super(message);
@@ -45,6 +53,10 @@ function getApiBaseUrl() {
   const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
   if (!baseUrl) throw new AuthApiError("API 서버 주소가 설정되지 않았습니다.");
   return baseUrl.replace(/\/+$/, "");
+}
+
+export function getOAuthStartUrl(provider: SocialAuthProvider) {
+  return `${getApiBaseUrl()}/api/auth/oauth/${provider}/start`;
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -82,6 +94,15 @@ export async function login(payload: LoginRequest) {
 
 export async function register(payload: RegisterRequest) {
   const result = await request<AuthUser>("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  window.dispatchEvent(new CustomEvent("flowlink:auth-changed", { detail: result }));
+  return result;
+}
+
+export async function completeSocialRegistration(payload: SocialRegisterRequest) {
+  const result = await request<AuthUser>("/api/auth/oauth/complete", {
     method: "POST",
     body: JSON.stringify(payload),
   });

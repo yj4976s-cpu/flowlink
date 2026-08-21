@@ -437,6 +437,24 @@ html[data-theme="night"] .auth-visual { background-image: url("/flowlink-river-n
 .auth-moment-label { display: inline-block; animation: auth-moment-in .19s ease-out both; }
 .auth-form h1 { margin: 0; font-family: var(--font-editorial), Batang, serif; font-size: clamp(31px, 3vw, 42px); line-height: 1.35; letter-spacing: -.035em; font-weight: 600; }
 .auth-form-description { min-height: 48px; margin: 14px 0 27px; color: var(--color-text-muted); font-size: 14px; line-height: 1.7; }
+.auth-social { margin: -2px 0 21px; }
+.auth-social h2 { margin: 0 0 10px; color: var(--color-text); font-size: 13px; font-weight: 700; letter-spacing: -.01em; }
+.auth-social-buttons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+.auth-social-button { min-width: 0; min-height: 46px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: 12px; color: var(--color-text); background: var(--color-surface); display: inline-flex; align-items: center; justify-content: center; gap: 9px; font: inherit; font-size: 13px; font-weight: 700; white-space: nowrap; cursor: pointer; box-shadow: 0 3px 10px color-mix(in srgb, var(--color-text) 4%, transparent); transition: transform .16s ease, border-color .16s ease, background-color .16s ease, box-shadow .16s ease; }
+.auth-social-button:hover { transform: translateY(-1px); border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border)); background: var(--color-surface-soft); box-shadow: 0 7px 16px color-mix(in srgb, var(--color-text) 8%, transparent); }
+.auth-social-button:active { transform: translateY(0); box-shadow: 0 2px 7px color-mix(in srgb, var(--color-text) 5%, transparent); }
+.auth-social-button:focus-visible { outline: 0; border-color: var(--color-primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 20%, transparent); }
+.auth-social-button:disabled { cursor: wait; opacity: .58; transform: none; box-shadow: none; }
+.auth-social-mark { width: 18px; height: 18px; flex: 0 0 18px; display: block; }
+.auth-social-mark-naver { border-radius: 4px; color: #fff; background: #03c75a; display: grid; place-items: center; font-family: Arial, sans-serif; font-size: 11px; font-weight: 900; line-height: 1; }
+.auth-social-mark-kakao { padding: 2px; border-radius: 50%; fill: #191919; background: #fee500; }
+.auth-email-divider { margin-top: 16px; color: var(--color-text-muted); display: flex; align-items: center; gap: 12px; font-size: 11px; font-weight: 600; }
+.auth-email-divider::before, .auth-email-divider::after { content: ""; height: 1px; flex: 1; background: var(--color-border); }
+.auth-email-divider span { flex: 0 0 auto; }
+.auth-social-pending { margin: -2px 0 21px; padding: 13px 15px; border: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--color-border)); border-radius: 12px; color: var(--color-text); background: var(--color-primary-soft); font-size: 13px; line-height: 1.55; }
+.auth-page-register .auth-social { margin-bottom: 17px; }
+.auth-page-register .auth-social-button { min-height: 44px; }
+.auth-page-register .auth-email-divider { margin-top: 13px; }
 .auth-fields { display: grid; gap: 17px; }
 .auth-page-register .auth-fields { gap: 13px; }
 .auth-field { min-width: 0; display: grid; gap: 8px; }
@@ -461,12 +479,12 @@ html[data-theme="night"] .auth-visual { background-image: url("/flowlink-river-n
 .auth-password-guide > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 11px; }
 .auth-password-guide > div span { font-weight: 700; }
 .auth-password-guide > div b { color: var(--color-text-muted); font-size: 10px; font-weight: 800; }
-.auth-password-guide.is-complete > div b { color: var(--color-success); }
+.auth-password-guide.is-complete > div b { color: color-mix(in srgb, var(--color-success) 60%, var(--color-text)); }
 .auth-password-guide ul { margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 7px 13px; list-style: none; }
-.auth-password-guide li { display: inline-flex; align-items: center; gap: 5px; color: var(--color-text-muted); font-size: 10px; }
-.auth-password-guide li.is-met { color: var(--color-success); }
-.auth-condition-icon { width: 15px; height: 15px; display: inline-grid; place-items: center; }
-.auth-condition-icon i { width: 6px; height: 6px; border: 1px solid var(--color-text-muted); border-radius: 50%; opacity: .58; }
+.auth-password-guide li { display: inline-flex; align-items: center; gap: 6px; color: color-mix(in srgb, var(--color-text) 82%, var(--color-text-muted)); font-size: 14px; font-weight: 600; line-height: 1.4; }
+.auth-password-guide li.is-met { color: color-mix(in srgb, var(--color-success) 60%, var(--color-text)); }
+.auth-condition-icon { width: 18px; height: 18px; display: inline-grid; flex: 0 0 18px; place-items: center; }
+.auth-condition-icon i { width: 8px; height: 8px; border: 1.5px solid currentColor; border-radius: 50%; opacity: .72; }
 .auth-password-guide li.is-met .auth-condition-icon { animation: auth-condition-complete 180ms ease-out both; }
 .auth-password-success { margin: -1px 0 0; color: var(--color-success); display: inline-flex; align-items: center; gap: 5px; font-size: 11px; line-height: 1.45; }
 .auth-password-field.is-shaking { animation: auth-password-shake 280ms ease-out both; }
@@ -499,8 +517,10 @@ html[data-theme="night"] .auth-visual::after { background: linear-gradient(90deg
 html[data-theme="night"] .auth-detection { border-color: rgba(151,163,194,.4); background: rgba(8,13,27,.44); }
 
 @media (prefers-reduced-motion: reduce) {
+  .auth-social-button,
   .auth-password-guide li.is-met .auth-condition-icon,
   .auth-password-field.is-shaking { animation: none; }
+  .auth-social-button { transition: none; }
 }
 
 html[data-theme="dawn"] .auth-register-visual { background-image: url("/flowlink-auth-register-dawn-shoe.png"); background-position: 58% center; }
@@ -658,6 +678,8 @@ html[data-theme="night"] .auth-register-copy-card { background: linear-gradient(
 
 @media (max-width: 430px) {
   .auth-header { width: calc(100% - 28px); }
+  .auth-social-buttons { grid-template-columns: 1fr; gap: 8px; }
+  .auth-social-button, .auth-page-register .auth-social-button { min-height: 46px; }
   .auth-header .brand { gap: 6px; font-size: 18px; }.auth-header .brand-mark { width: 28px; }
   .auth-header-actions { gap: 7px; }.auth-header .theme-option { min-width: 35px; height: 32px; }.auth-home-link { font-size: 11px; }
   .auth-visual { min-height: 210px; }.auth-page-register .auth-visual { min-height: 220px; }
