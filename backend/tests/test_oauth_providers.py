@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import parse_qs, urlparse
+
 import pytest
 
 from app.core.config import Settings
@@ -21,6 +23,37 @@ def oauth_settings() -> Settings:
         NAVER_CLIENT_SECRET="naver-secret",
         OAUTH_BACKEND_BASE_URL="https://api.flowlink.example",
     )
+
+
+def test_only_kakao_authorization_url_forces_login_prompt() -> None:
+    settings = oauth_settings()
+    google_query = parse_qs(
+        urlparse(
+            GoogleOAuthProvider(settings).authorization_url(
+                state="state", nonce="nonce", code_challenge="challenge"
+            )
+        ).query
+    )
+    kakao_url = urlparse(
+        KakaoOAuthProvider(settings).authorization_url(
+            state="state", nonce="nonce", code_challenge=None
+        )
+    )
+    kakao_query = parse_qs(kakao_url.query)
+    naver_query = parse_qs(
+        urlparse(
+            NaverOAuthProvider(settings).authorization_url(
+                state="state", nonce="nonce", code_challenge=None
+            )
+        ).query
+    )
+
+    assert kakao_url.scheme == "https"
+    assert kakao_url.netloc == "kauth.kakao.com"
+    assert kakao_url.path == "/oauth/authorize"
+    assert kakao_query["prompt"] == ["login"]
+    assert "prompt" not in google_query
+    assert "prompt" not in naver_query
 
 
 def test_google_fetch_identity_verifies_claims_and_pkce(
