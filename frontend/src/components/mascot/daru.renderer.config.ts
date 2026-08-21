@@ -27,6 +27,8 @@ export const DARU_GROUNDED_ROAMING_CONFIG = {
   mobileGroundInset: 14,
   desktopRange: 520,
   mobileRange: 180,
+  desktopMinTravelDistance: 120,
+  mobileMinTravelDistance: 76,
   stridePx: DARU_WALK_STRIDE_PX,
   normalCycleMs: DARU_NORMAL_WALK_CYCLE_MS,
   startWalkMs: 170,
