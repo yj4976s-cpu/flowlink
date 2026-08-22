@@ -1,8 +1,10 @@
 from collections.abc import Iterator
+from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import BigInteger, create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -12,7 +14,7 @@ from app.core.security import utc_now
 from app.db.session import Base, get_db
 from app.main import app
 from app.models import DaruGameStat, User
-from app.services.daru_game import calculate_detection_power, calculate_speed_score, is_better, rank_for, validate_result
+from app.services.daru_game import calculate_detection_power, calculate_speed_score, is_better, rank_for, submit_result, validate_result
 
 
 @compiles(BigInteger, "sqlite")
@@ -116,4 +118,53 @@ def test_partial_result_keeps_points_without_creating_official_record(client: Te
 
 def test_partial_result_rejects_clear_bonus_and_impossible_points() -> None:
     with pytest.raises(ValueError):
-        validate_result("EASY", completed=False, within_time_limit=False, matched_pairs=3, attempts=4, max_combo=2, hints_used=1, earned_points=600)
+        validate_result("EASY", completed=False, within_time_limit=False, matched_pairs=3, attempts=4, elapsed_seconds=120, max_combo=2, hints_used=1, earned_points=600)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"within_time_limit": True, "elapsed_seconds": 121},
+        {"within_time_limit": False, "elapsed_seconds": 119},
+        {"max_combo": 11},
+        {"attempts": 9},
+        {"completed": True, "matched_pairs": 9},
+        {"completed": False, "within_time_limit": True, "matched_pairs": 9},
+        {"earned_points": 9999},
+    ],
+)
+def test_result_validation_rejects_cross_field_contradictions(overrides: dict[str, object]) -> None:
+    payload = {"completed": True, "within_time_limit": True, "matched_pairs": 10, "attempts": 10, "elapsed_seconds": 90, "max_combo": 5, "hints_used": 0, "earned_points": 1300}
+    payload.update(overrides)
+    with pytest.raises(ValueError):
+        validate_result("EASY", **payload)
+
+
+def test_first_result_unique_race_reloads_and_updates_existing_record() -> None:
+    existing = DaruGameStat(
+        id=10,
+        user_id=1,
+        difficulty="EASY",
+        best_detection_power=80,
+        best_attempts=15,
+        best_elapsed_seconds=100,
+        best_combo=4,
+        best_hints_used=1,
+        total_daru_points=500,
+        play_count=1,
+        best_achieved_at=utc_now(),
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    session = Mock(spec=Session)
+    session.scalar.side_effect = [None, existing]
+    session.commit.side_effect = [IntegrityError("insert", {}, Exception("unique")), None]
+
+    stat, improved = submit_result(session, user_id=1, difficulty="EASY", completed=True, within_time_limit=True, matched_pairs=10, attempts=10, elapsed_seconds=90, max_combo=5, hints_used=0, earned_points=1300)
+
+    assert stat is existing
+    assert improved is True
+    assert stat.total_daru_points == 1800
+    assert stat.play_count == 2
+    session.rollback.assert_called_once()
+    assert session.commit.call_count == 2

@@ -4,6 +4,7 @@ import math
 from datetime import datetime
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.security import utc_now
@@ -50,7 +51,7 @@ def maximum_pair_points(matched_pairs: int) -> int:
     return sum(100 + min(max(0, combo - 1) * 25, 100) for combo in range(1, matched_pairs + 1))
 
 
-def validate_result(difficulty: str, *, completed: bool, within_time_limit: bool, matched_pairs: int, attempts: int, max_combo: int, hints_used: int, earned_points: int) -> None:
+def validate_result(difficulty: str, *, completed: bool, within_time_limit: bool, matched_pairs: int, attempts: int, elapsed_seconds: int, max_combo: int, hints_used: int, earned_points: int) -> None:
     config = DIFFICULTY_CONFIG[difficulty]
     pairs = config["pairs"]
     if not 0 <= hints_used <= 2 or not 0 <= matched_pairs <= pairs or attempts < matched_pairs or max_combo > matched_pairs:
@@ -59,6 +60,10 @@ def validate_result(difficulty: str, *, completed: bool, within_time_limit: bool
         raise ValueError("Completed game must contain every pair")
     if not completed and within_time_limit:
         raise ValueError("Partial game cannot be an official result")
+    if within_time_limit and elapsed_seconds > config["time_limit_seconds"]:
+        raise ValueError("Result exceeds the difficulty time limit")
+    if not within_time_limit and elapsed_seconds < config["time_limit_seconds"]:
+        raise ValueError("Overtime result is below the difficulty time limit")
     minimum_points = matched_pairs * 100 + (config["clear_bonus"] if completed else 0)
     maximum_points = maximum_pair_points(matched_pairs) + (config["clear_bonus"] if completed else 0)
     if not minimum_points <= earned_points <= maximum_points:
@@ -71,29 +76,45 @@ def is_better(power: int, hints_used: int, attempts: int, elapsed: int, current:
     return candidate_key < current_key
 
 
+def _apply_result(stat: DaruGameStat, *, eligible: bool, power: int, attempts: int, elapsed_seconds: int, max_combo: int, hints_used: int, earned_points: int, now: datetime) -> bool:
+    improved = eligible and is_better(power, hints_used, attempts, elapsed_seconds, stat)
+    stat.total_daru_points += earned_points
+    stat.play_count += 1
+    stat.updated_at = now
+    if improved:
+        stat.best_detection_power = power
+        stat.best_attempts = attempts
+        stat.best_elapsed_seconds = elapsed_seconds
+        stat.best_combo = max_combo
+        stat.best_hints_used = hints_used
+        stat.best_achieved_at = now
+    return improved
+
+
 def submit_result(db: Session, *, user_id: int, difficulty: str, completed: bool, within_time_limit: bool, matched_pairs: int, attempts: int, elapsed_seconds: int, max_combo: int, hints_used: int, earned_points: int) -> tuple[DaruGameStat, bool]:
-    validate_result(difficulty, completed=completed, within_time_limit=within_time_limit, matched_pairs=matched_pairs, attempts=attempts, max_combo=max_combo, hints_used=hints_used, earned_points=earned_points)
+    validate_result(difficulty, completed=completed, within_time_limit=within_time_limit, matched_pairs=matched_pairs, attempts=attempts, elapsed_seconds=elapsed_seconds, max_combo=max_combo, hints_used=hints_used, earned_points=earned_points)
     eligible = completed and within_time_limit
     power = calculate_detection_power(difficulty, attempts, elapsed_seconds, max_combo, within_time_limit)
     now = utc_now()
     stat = db.scalar(select(DaruGameStat).where(DaruGameStat.user_id == user_id, DaruGameStat.difficulty == difficulty).with_for_update())
-    if stat is None:
+    inserting = stat is None
+    if inserting:
         stat = DaruGameStat(user_id=user_id, difficulty=difficulty, best_detection_power=power if eligible else 0, best_attempts=attempts if eligible else None, best_elapsed_seconds=elapsed_seconds if eligible else None, best_combo=max_combo if eligible else 0, best_hints_used=hints_used if eligible else None, total_daru_points=earned_points, play_count=1, best_achieved_at=now if eligible else None, created_at=now, updated_at=now)
         db.add(stat)
         improved = eligible
     else:
-        improved = eligible and is_better(power, hints_used, attempts, elapsed_seconds, stat)
-        stat.total_daru_points += earned_points
-        stat.play_count += 1
-        stat.updated_at = now
-        if improved:
-            stat.best_detection_power = power
-            stat.best_attempts = attempts
-            stat.best_elapsed_seconds = elapsed_seconds
-            stat.best_combo = max_combo
-            stat.best_hints_used = hints_used
-            stat.best_achieved_at = now
-    db.commit()
+        improved = _apply_result(stat, eligible=eligible, power=power, attempts=attempts, elapsed_seconds=elapsed_seconds, max_combo=max_combo, hints_used=hints_used, earned_points=earned_points, now=now)
+    try:
+        db.commit()
+    except IntegrityError:
+        if not inserting:
+            raise
+        db.rollback()
+        stat = db.scalar(select(DaruGameStat).where(DaruGameStat.user_id == user_id, DaruGameStat.difficulty == difficulty).with_for_update())
+        if stat is None:
+            raise
+        improved = _apply_result(stat, eligible=eligible, power=power, attempts=attempts, elapsed_seconds=elapsed_seconds, max_combo=max_combo, hints_used=hints_used, earned_points=earned_points, now=now)
+        db.commit()
     db.refresh(stat)
     return stat, improved
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { getDaruLeaderboard } from "@/lib/daruGameApi";
 import { DIFFICULTY_CONFIG } from "./game.config";
 import type { GameDifficulty, LeaderboardEntry } from "./game.types";
@@ -17,19 +17,21 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [myEntry, setMyEntry] = useState<LeaderboardEntry | null>(null);
   const [loading, setLoading] = useState(true);
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const response = await getDaruLeaderboard(DIFFICULTY_CONFIG[difficulty].key);
-      setEntries(response.entries); setMyEntry(response.my_entry);
-    } catch { setEntries([]); setMyEntry(null); }
-    finally { setLoading(false); }
-  }, [difficulty]);
   useEffect(() => {
     if (preview) return;
-    const frame = window.requestAnimationFrame(() => { void load(); });
-    return () => window.cancelAnimationFrame(frame);
-  }, [load, preview, refreshKey]);
+    const controller = new AbortController();
+    const frame = window.requestAnimationFrame(() => {
+      setLoading(true);
+      void getDaruLeaderboard(DIFFICULTY_CONFIG[difficulty].key, controller.signal)
+        .then((response) => { setEntries(response.entries); setMyEntry(response.my_entry); })
+        .catch((error: unknown) => {
+          if (error instanceof DOMException && error.name === "AbortError") return;
+          setEntries([]); setMyEntry(null);
+        })
+        .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    });
+    return () => { window.cancelAnimationFrame(frame); controller.abort(); };
+  }, [difficulty, preview, refreshKey]);
 
   const visibleEntries = preview?.entries ?? entries;
   const visibleMyEntry = preview?.myEntry ?? myEntry;
