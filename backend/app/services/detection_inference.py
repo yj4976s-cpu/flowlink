@@ -30,6 +30,7 @@ class DetectionInferenceResult:
     media_width: int | None
     media_height: int | None
     detections: list[DetectionPrediction]
+    rendered_video: bytes | None = None
 
 
 class DetectionInferenceUnavailableError(RuntimeError):
@@ -167,6 +168,7 @@ class DetectionInferenceService:
             media_width=result.media_width,
             media_height=result.media_height,
             detections=detections,
+            rendered_video=result.rendered_video,
         )
 
 

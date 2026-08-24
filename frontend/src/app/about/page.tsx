@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { ServiceFlow } from "@/components/about/ServiceFlow";
+import { DaruAboutProfile } from "@/components/about/DaruAboutProfile";
 import { Icon } from "@/components/common/Icon";
 import { Footer } from "@/components/layout/Footer";
 import { Header } from "@/components/layout/Header";
@@ -65,7 +66,7 @@ export default function AboutPage() {
         <ServiceFlow />
 
         <section id="daru" className="info-notice info-notice-accent" aria-labelledby="daru-about-title">
-          <div className="info-notice-icon"><Icon name="user" size={28} /></div>
+          <div className="info-notice-icon info-notice-daru-profile"><DaruAboutProfile /></div>
           <div>
             <p className="info-eyebrow">MEET DARU</p>
             <h2 id="daru-about-title">다루와 FlowLink</h2>

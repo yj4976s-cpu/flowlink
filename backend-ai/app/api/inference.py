@@ -1,8 +1,11 @@
 from typing import Annotated
+from io import BytesIO
+import json
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from zipfile import ZIP_DEFLATED, ZipFile
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import get_settings
@@ -37,22 +40,34 @@ async def infer_video(
     _: Annotated[None, Depends(require_internal_api_key)],
     service: Annotated[ImageInferenceService, Depends(get_inference_service)],
     file: Annotated[UploadFile, File(description="추론할 MP4 영상")],
-) -> VideoInferenceResponse:
+    render: Annotated[bool, Query()] = False,
+) -> VideoInferenceResponse | Response:
     content_type = file.content_type or ""
     if content_type not in VIDEO_CONTENT_TYPES:
         raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Unsupported media type")
 
     video_path = await _save_temp_video(file)
+    rendered_path = video_path.with_name(f"{video_path.stem}-detected.mp4") if render else None
     try:
-        return await run_in_threadpool(
-            service.analyze_video_file,
-            video_path,
-            content_type=content_type,
-        )
+        analyze_options = {"content_type": content_type}
+        if rendered_path is not None:
+            analyze_options["rendered_video_path"] = rendered_path
+        result = await run_in_threadpool(service.analyze_video_file, video_path, **analyze_options)
+        if not render:
+            return result
+        if rendered_path is None or not rendered_path.exists() or rendered_path.stat().st_size == 0:
+            raise InferenceModelUnavailableError("Rendered video was not created")
+        archive = BytesIO()
+        with ZipFile(archive, "w", compression=ZIP_DEFLATED) as bundle:
+            bundle.writestr("result.json", json.dumps(result.model_dump(mode="json")))
+            bundle.write(rendered_path, "result.mp4")
+        return Response(content=archive.getvalue(), media_type="application/zip")
     except InferenceModelUnavailableError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI model is unavailable") from exc
     finally:
         video_path.unlink(missing_ok=True)
+        if rendered_path is not None:
+            rendered_path.unlink(missing_ok=True)
 
 
 async def _save_temp_video(file: UploadFile) -> Path:
