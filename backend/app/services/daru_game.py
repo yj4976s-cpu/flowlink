@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import math
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -21,6 +21,8 @@ GAME_RUN_MAX_AGE = timedelta(hours=24)
 GAME_RUN_ELAPSED_TOLERANCE_SECONDS = 10
 GAME_RUN_TRANSITION_ALLOWANCE_SECONDS = 2
 GAME_RUN_NETWORK_ALLOWANCE_SECONDS = 30
+CURRENT_SCORE_VERSION = 2
+SCORE_TENTH = Decimal("0.1")
 
 
 class GameRunNotFoundError(ValueError):
@@ -65,29 +67,46 @@ def _lock_and_consume_game_run(db: Session, *, run_id: UUID, user_id: int, diffi
     return run
 
 
-def _round_like_javascript(value: float) -> int:
-    return math.floor(value + 0.5)
+def _round_to_tenth(value: Decimal) -> Decimal:
+    return value.quantize(SCORE_TENTH, rounding=ROUND_HALF_UP)
+
+
+def calculate_memory_accuracy(pair_count: int, attempts: int) -> Decimal:
+    if attempts <= 0:
+        return Decimal("0")
+    extra_attempt_ratio = Decimal(attempts - pair_count) / Decimal(pair_count)
+    return max(Decimal("0"), min(Decimal("100"), Decimal("100") - extra_attempt_ratio * Decimal("50")))
+
+
+def calculate_hint_score(hints_used: int) -> Decimal:
+    return max(Decimal("0"), min(Decimal("100"), Decimal("100") - Decimal(hints_used * 50)))
 
 
 def calculate_speed_score(elapsed_seconds: int, benchmark_seconds: int, time_limit_seconds: int, within_time_limit: bool = True) -> float:
-    if not within_time_limit:
+    if not within_time_limit or elapsed_seconds > time_limit_seconds:
         return 0
     elapsed = max(1, elapsed_seconds)
+    half_benchmark = benchmark_seconds * 0.5
+    if elapsed <= half_benchmark:
+        return 100
     if elapsed <= benchmark_seconds:
-        return max(0, min(100, 80 + 20 * (1 - elapsed / benchmark_seconds)))
+        progress = (elapsed - half_benchmark) / half_benchmark
+        return max(0, min(100, 100 - 20 * progress))
     overtime_ratio = (elapsed - benchmark_seconds) / (time_limit_seconds - benchmark_seconds)
     return max(40, min(100, 80 - 40 * overtime_ratio))
 
 
-def calculate_detection_power(difficulty: str, attempts: int, elapsed_seconds: int, max_combo: int, within_time_limit: bool = True) -> int:
+def calculate_detection_power(difficulty: str, attempts: int, elapsed_seconds: int, max_combo: int, hints_used: int, within_time_limit: bool = True) -> Decimal:
     config = DIFFICULTY_CONFIG[difficulty]
-    memory = min(1, config["pairs"] / attempts) * 100 if attempts > 0 else 0
-    speed = calculate_speed_score(elapsed_seconds, config["speed_benchmark_seconds"], config["time_limit_seconds"], within_time_limit)
-    combo = min(1, max_combo / config["combo_target"]) * 100
-    return max(0, min(100, _round_like_javascript(memory * 0.60 + speed * 0.25 + combo * 0.15)))
+    memory = calculate_memory_accuracy(config["pairs"], attempts)
+    speed = Decimal(str(calculate_speed_score(elapsed_seconds, config["speed_benchmark_seconds"], config["time_limit_seconds"], within_time_limit)))
+    combo = min(Decimal("1"), Decimal(max_combo) / Decimal(config["combo_target"])) * Decimal("100")
+    hint = calculate_hint_score(hints_used)
+    power = memory * Decimal("0.50") + speed * Decimal("0.25") + combo * Decimal("0.15") + hint * Decimal("0.10")
+    return max(Decimal("0.0"), min(Decimal("100.0"), _round_to_tenth(power)))
 
 
-def rank_for(power: int) -> str:
+def rank_for(power: Decimal | float | int) -> str:
     if power >= 80: return "S"
     if power >= 65: return "A"
     if power >= 50: return "B"
@@ -117,18 +136,21 @@ def validate_result(difficulty: str, *, completed: bool, within_time_limit: bool
         raise ValueError("Invalid earned Daru points")
 
 
-def is_better(power: int, hints_used: int, attempts: int, elapsed: int, current: DaruGameStat) -> bool:
-    current_key = (-(current.best_detection_power), current.best_hints_used if current.best_hints_used is not None else 2**31, current.best_attempts or 2**31, current.best_elapsed_seconds or 2**31)
-    candidate_key = (-power, hints_used, attempts, elapsed)
+def is_better(power: Decimal, attempts: int, elapsed: int, current: DaruGameStat) -> bool:
+    if current.score_version != CURRENT_SCORE_VERSION or current.best_attempts is None:
+        return True
+    current_key = (-current.best_detection_power, current.best_attempts, current.best_elapsed_seconds or 2**31)
+    candidate_key = (-power, attempts, elapsed)
     return candidate_key < current_key
 
 
-def _apply_result(stat: DaruGameStat, *, eligible: bool, power: int, attempts: int, elapsed_seconds: int, max_combo: int, hints_used: int, earned_points: int, now: datetime) -> bool:
-    improved = eligible and is_better(power, hints_used, attempts, elapsed_seconds, stat)
+def _apply_result(stat: DaruGameStat, *, eligible: bool, power: Decimal, attempts: int, elapsed_seconds: int, max_combo: int, hints_used: int, earned_points: int, now: datetime) -> bool:
+    improved = eligible and is_better(power, attempts, elapsed_seconds, stat)
     stat.total_daru_points += earned_points
     stat.play_count += 1
     stat.updated_at = now
     if improved:
+        stat.score_version = CURRENT_SCORE_VERSION
         stat.best_detection_power = power
         stat.best_attempts = attempts
         stat.best_elapsed_seconds = elapsed_seconds
@@ -141,13 +163,13 @@ def _apply_result(stat: DaruGameStat, *, eligible: bool, power: int, attempts: i
 def submit_result(db: Session, *, run_id: UUID, user_id: int, difficulty: str, completed: bool, within_time_limit: bool, matched_pairs: int, attempts: int, elapsed_seconds: int, max_combo: int, hints_used: int, earned_points: int) -> tuple[DaruGameStat, bool]:
     validate_result(difficulty, completed=completed, within_time_limit=within_time_limit, matched_pairs=matched_pairs, attempts=attempts, elapsed_seconds=elapsed_seconds, max_combo=max_combo, hints_used=hints_used, earned_points=earned_points)
     eligible = completed and within_time_limit
-    power = calculate_detection_power(difficulty, attempts, elapsed_seconds, max_combo, within_time_limit)
+    power = calculate_detection_power(difficulty, attempts, elapsed_seconds, max_combo, hints_used, within_time_limit)
     now = utc_now()
     _lock_and_consume_game_run(db, run_id=run_id, user_id=user_id, difficulty=difficulty, elapsed_seconds=elapsed_seconds, now=now)
     stat = db.scalar(select(DaruGameStat).where(DaruGameStat.user_id == user_id, DaruGameStat.difficulty == difficulty).with_for_update())
     inserting = stat is None
     if inserting:
-        stat = DaruGameStat(user_id=user_id, difficulty=difficulty, best_detection_power=power if eligible else 0, best_attempts=attempts if eligible else None, best_elapsed_seconds=elapsed_seconds if eligible else None, best_combo=max_combo if eligible else 0, best_hints_used=hints_used if eligible else None, total_daru_points=earned_points, play_count=1, best_achieved_at=now if eligible else None, created_at=now, updated_at=now)
+        stat = DaruGameStat(user_id=user_id, difficulty=difficulty, best_detection_power=power if eligible else Decimal("0.0"), score_version=CURRENT_SCORE_VERSION, best_attempts=attempts if eligible else None, best_elapsed_seconds=elapsed_seconds if eligible else None, best_combo=max_combo if eligible else 0, best_hints_used=hints_used if eligible else None, total_daru_points=earned_points, play_count=1, best_achieved_at=now if eligible else None, created_at=now, updated_at=now)
         db.add(stat)
         improved = eligible
     else:
@@ -170,7 +192,7 @@ def submit_result(db: Session, *, run_id: UUID, user_id: int, difficulty: str, c
 
 
 def ranking_query(difficulty: str):
-    return select(DaruGameStat, User.nickname).join(User, User.id == DaruGameStat.user_id).where(DaruGameStat.difficulty == difficulty, DaruGameStat.best_attempts.is_not(None), User.role == "USER", User.active.is_(True), User.deleted_at.is_(None)).order_by(DaruGameStat.best_detection_power.desc(), DaruGameStat.best_hints_used.asc(), DaruGameStat.best_attempts.asc(), DaruGameStat.best_elapsed_seconds.asc(), DaruGameStat.best_achieved_at.asc())
+    return select(DaruGameStat, User.nickname).join(User, User.id == DaruGameStat.user_id).where(DaruGameStat.difficulty == difficulty, DaruGameStat.score_version == CURRENT_SCORE_VERSION, DaruGameStat.best_attempts.is_not(None), User.role == "USER", User.active.is_(True), User.deleted_at.is_(None)).order_by(DaruGameStat.best_detection_power.desc(), DaruGameStat.best_attempts.asc(), DaruGameStat.best_elapsed_seconds.asc(), DaruGameStat.best_achieved_at.asc())
 
 
 def leaderboard_rank(db: Session, stat: DaruGameStat) -> int | None:

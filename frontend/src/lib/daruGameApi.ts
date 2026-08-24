@@ -5,7 +5,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) throw new Error(`Daru game API failed (${response.status})`);
   return response.json() as Promise<T>;
 }
-export interface GameRecord { difficulty: ApiGameDifficulty; best_detection_power: number; best_attempts: number | null; best_elapsed_seconds: number | null; best_combo: number; best_hints_used: number | null; total_daru_points: number; play_count: number; best_achieved_at: string | null; rank: "S" | "A" | "B" | "C"; }
+export interface GameRecord { difficulty: ApiGameDifficulty; best_detection_power: number; score_version: number; best_attempts: number | null; best_elapsed_seconds: number | null; best_combo: number; best_hints_used: number | null; total_daru_points: number; play_count: number; best_achieved_at: string | null; rank: "S" | "A" | "B" | "C"; }
 export function createDaruGameRun(difficulty: ApiGameDifficulty) { return request<{ run_id: string; difficulty: ApiGameDifficulty; started_at: string }>("/api/daru-game/runs", { method: "POST", body: JSON.stringify({ difficulty }) }); }
 export function getDaruGameRecords(signal?: AbortSignal) { return request<GameRecord[]>("/api/daru-game/me", { signal }); }
 export function submitDaruGameResult(payload: { run_id: string; difficulty: ApiGameDifficulty; completed: boolean; within_time_limit: boolean; matched_pairs: number; attempts: number; elapsed_seconds: number; max_combo: number; hints_used: number; earned_daru_points: number }) { return request<{ record: GameRecord; is_new_best: boolean; leaderboard_rank: number | null }>("/api/daru-game/results", { method: "POST", body: JSON.stringify(payload) }); }

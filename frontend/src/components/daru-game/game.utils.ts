@@ -33,28 +33,49 @@ function clampPercent(value: number) {
   return Math.min(100, Math.max(0, value));
 }
 
-export function calculateDetectionMetrics(difficulty: GameDifficulty, elapsedSeconds: number, attempts: number, maxCombo: number): DetectionMetrics {
+export function roundToTenth(value: number) {
+  return Math.floor(value * 10 + 0.5 + Number.EPSILON) / 10;
+}
+
+export function formatMemoryScore(value: number) {
+  return roundToTenth(value).toFixed(1);
+}
+
+export function calculateMemoryAccuracy(pairCount: number, attempts: number) {
+  if (attempts <= 0) return 0;
+  const extraAttemptRatio = (attempts - pairCount) / pairCount;
+  return clampPercent(100 - extraAttemptRatio * 50);
+}
+
+export function calculateHintScore(hintsUsed: number) {
+  return clampPercent(100 - hintsUsed * 50);
+}
+
+export function calculateDetectionMetrics(difficulty: GameDifficulty, elapsedSeconds: number, attempts: number, maxCombo: number, hintsUsed: number, withinTimeLimit = true): DetectionMetrics {
   const config = DIFFICULTY_CONFIG[difficulty];
-  const memoryEfficiency = attempts > 0 ? clampPercent((config.pairCount / attempts) * 100) : 0;
-  const speedScore = calculateSpeedScore(elapsedSeconds, config.speedBenchmarkSeconds, config.timeLimitSeconds);
+  const memoryAccuracy = calculateMemoryAccuracy(config.pairCount, attempts);
+  const speedScore = calculateSpeedScore(elapsedSeconds, config.speedBenchmarkSeconds, config.timeLimitSeconds, withinTimeLimit);
   const comboScore = clampPercent((maxCombo / config.comboTarget) * 100);
-  const detectionPower = Math.round(memoryEfficiency * DETECTION_POWER_WEIGHTS.memory + speedScore * DETECTION_POWER_WEIGHTS.speed + comboScore * DETECTION_POWER_WEIGHTS.combo);
-  return { memoryEfficiency: Math.round(memoryEfficiency), speedScore: Math.round(speedScore), comboScore: Math.round(comboScore), detectionPower: clampPercent(detectionPower) };
+  const hintScore = calculateHintScore(hintsUsed);
+  const detectionPower = roundToTenth(memoryAccuracy * DETECTION_POWER_WEIGHTS.memory + speedScore * DETECTION_POWER_WEIGHTS.speed + comboScore * DETECTION_POWER_WEIGHTS.combo + hintScore * DETECTION_POWER_WEIGHTS.hint);
+  return { memoryAccuracy: roundToTenth(memoryAccuracy), speedScore: roundToTenth(speedScore), comboScore: roundToTenth(comboScore), hintScore: roundToTenth(hintScore), detectionPower: clampPercent(detectionPower) };
 }
 
 export function calculateSpeedScore(elapsedSeconds: number, benchmarkSeconds: number, timeLimitSeconds: number, withinTimeLimit = true) {
-  if (!withinTimeLimit) return 0;
+  if (!withinTimeLimit || elapsedSeconds > timeLimitSeconds) return 0;
   const elapsed = Math.max(1, elapsedSeconds);
-  if (elapsed <= benchmarkSeconds) return clampPercent(80 + 20 * (1 - elapsed / benchmarkSeconds));
+  const halfBenchmark = benchmarkSeconds * 0.5;
+  if (elapsed <= halfBenchmark) return 100;
+  if (elapsed <= benchmarkSeconds) {
+    const progress = (elapsed - halfBenchmark) / halfBenchmark;
+    return clampPercent(100 - 20 * progress);
+  }
   const overtimeRatio = (elapsed - benchmarkSeconds) / (timeLimitSeconds - benchmarkSeconds);
   return Math.min(100, Math.max(40, 80 - 40 * overtimeRatio));
 }
 
-export function calculateDetectionMetricsWithEligibility(difficulty: GameDifficulty, elapsedSeconds: number, attempts: number, maxCombo: number, withinTimeLimit: boolean): DetectionMetrics {
-  const metrics = calculateDetectionMetrics(difficulty, elapsedSeconds, attempts, maxCombo);
-  if (withinTimeLimit) return metrics;
-  const detectionPower = Math.round(metrics.memoryEfficiency * DETECTION_POWER_WEIGHTS.memory + metrics.comboScore * DETECTION_POWER_WEIGHTS.combo);
-  return { ...metrics, speedScore: 0, detectionPower: clampPercent(detectionPower) };
+export function calculateDetectionMetricsWithEligibility(difficulty: GameDifficulty, elapsedSeconds: number, attempts: number, maxCombo: number, hintsUsed: number, withinTimeLimit: boolean): DetectionMetrics {
+  return calculateDetectionMetrics(difficulty, elapsedSeconds, attempts, maxCombo, hintsUsed, withinTimeLimit);
 }
 
 export function getGameRank(detectionPower: number): GameRank {

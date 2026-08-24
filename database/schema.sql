@@ -710,8 +710,11 @@ CREATE TABLE public.daru_game_stats (
     difficulty VARCHAR(10) NOT NULL
         CHECK (difficulty IN ('EASY', 'NORMAL', 'HARD')),
 
-    best_detection_power SMALLINT NOT NULL DEFAULT 0
+    best_detection_power NUMERIC(4,1) NOT NULL DEFAULT 0.0
         CHECK (best_detection_power BETWEEN 0 AND 100),
+
+    score_version INTEGER NOT NULL DEFAULT 2
+        CHECK (score_version IN (1, 2)),
 
     best_hints_used SMALLINT
         CHECK (
@@ -1018,8 +1021,8 @@ CREATE INDEX idx_notifications_unread
 CREATE INDEX idx_daru_game_stats_ranking
     ON public.daru_game_stats (
         difficulty,
+        score_version,
         best_detection_power DESC,
-        best_hints_used ASC,
         best_attempts ASC,
         best_elapsed_seconds ASC,
         best_achieved_at ASC

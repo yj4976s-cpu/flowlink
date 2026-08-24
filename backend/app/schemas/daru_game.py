@@ -33,7 +33,8 @@ class DaruGameResultInput(BaseModel):
 
 class DaruGameRecord(BaseModel):
     difficulty: Difficulty
-    best_detection_power: int
+    best_detection_power: float
+    score_version: int
     best_attempts: int | None
     best_elapsed_seconds: int | None
     best_combo: int
@@ -53,7 +54,7 @@ class DaruGameResultResponse(BaseModel):
 class DaruLeaderboardEntry(BaseModel):
     rank: int
     nickname: str
-    best_detection_power: int
+    best_detection_power: float
     best_attempts: int
     best_elapsed_seconds: int
     best_combo: int

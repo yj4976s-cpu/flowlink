@@ -111,7 +111,7 @@ export function DaruGame() {
         try { runId = (await createDaruGameRun(DIFFICULTY_CONFIG[nextDifficulty].key)).run_id; }
         catch { runFailed = true; }
       }
-      resetState(nextDifficulty); const record = bestRecords[nextDifficulty]; setPreviousBestPower(record?.best_attempts == null ? null : record.best_detection_power); runIdRef.current = runId;
+      resetState(nextDifficulty); const record = bestRecords[nextDifficulty]; setPreviousBestPower(record?.score_version !== 2 || record.best_attempts == null ? null : record.best_detection_power); runIdRef.current = runId;
       if (runFailed) setRecordStatus("failed");
       setDifficulty(nextDifficulty); setCards(createGameDeck(nextDifficulty)); setPhase("preview");
     } finally {
@@ -162,14 +162,15 @@ export function DaruGame() {
   useEffect(() => {
     if (phase !== "playing" || !difficulty || matchedPairIds.length !== DIFFICULTY_CONFIG[difficulty].pairCount || completionAnnouncedRef.current) return;
     completionAnnouncedRef.current = true; clearHintTimer(); clearFeedbackTimer(); const finalElapsed = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
-    const finalMetrics = calculateDetectionMetricsWithEligibility(difficulty, finalElapsed, attempts, maxCombo, withinTimeLimit);
-    const storedBest = Number.parseInt(localStorage.getItem(BEST_RECORD_STORAGE_KEYS[difficulty]) ?? "-1", 10); const guestBest = withinTimeLimit && (!Number.isFinite(storedBest) || finalMetrics.detectionPower > storedBest);
+    const hintsUsed = DIFFICULTY_CONFIG[difficulty].hintCount - hintsRemaining;
+    const finalMetrics = calculateDetectionMetricsWithEligibility(difficulty, finalElapsed, attempts, maxCombo, hintsUsed, withinTimeLimit);
+    const storedBest = Number.parseFloat(localStorage.getItem(BEST_RECORD_STORAGE_KEYS[difficulty]) ?? "-1"); const guestBest = withinTimeLimit && (!Number.isFinite(storedBest) || finalMetrics.detectionPower > storedBest);
     const guestPreviousBest = !currentUser && Number.isFinite(storedBest) && storedBest >= 0 ? storedBest : null;
     if (!currentUser && guestBest) localStorage.setItem(BEST_RECORD_STORAGE_KEYS[difficulty], String(finalMetrics.detectionPower));
     const finalPoints = daruPoints + DIFFICULTY_CONFIG[difficulty].clearBonus;
     setElapsedSeconds(finalElapsed); setDaruPoints(finalPoints); setMetrics(finalMetrics); setRank(getGameRank(finalMetrics.detectionPower)); setNewBest(!currentUser && guestBest); setFeedback(null);
     completionTimerRef.current = window.setTimeout(() => { completionTimerRef.current = null; if (!currentUser) setPreviousBestPower(guestPreviousBest); setPhase("finished"); cue("happy", { source: "direct" }); submitResult(true, withinTimeLimit, finalElapsed, finalPoints); }, 380);
-  }, [attempts, clearFeedbackTimer, clearHintTimer, cue, currentUser, daruPoints, difficulty, matchedPairIds.length, maxCombo, phase, setPhase, startedAt, submitResult, withinTimeLimit]);
+  }, [attempts, clearFeedbackTimer, clearHintTimer, cue, currentUser, daruPoints, difficulty, hintsRemaining, matchedPairIds.length, maxCombo, phase, setPhase, startedAt, submitResult, withinTimeLimit]);
   const finishPartial = () => { clearHintTimer(); const finalElapsed = Math.max(1, Math.floor((Date.now() - startedAt) / 1000)); setElapsedSeconds(finalElapsed); setPhase("partial"); submitResult(false, false, finalElapsed, daruPoints); };
   const handleFlip = (card: GameCard) => {
     if (phase !== "playing" || locked || hintActive || matchedPairIds.includes(card.pairId) || flippedIds.includes(card.id) || flippedIds.length >= 2) return;
@@ -192,14 +193,14 @@ export function DaruGame() {
   const previewSecondsRemaining = Math.max(1, Math.ceil(previewProgress * DIFFICULTY_CONFIG[difficulty].previewSeconds));
   return <section className={styles.game} data-phase={phase} aria-labelledby="active-game-title">
     <header className={styles.gameHeader}><div><span>{DIFFICULTY_CONFIG[difficulty].label}</span><h1 id="active-game-title">다루 카드 찾기</h1></div><button className={styles.changeButton} type="button" onClick={chooseDifficulty}>나가기</button></header>
-    <GameStatus timeRemaining={timeRemaining} attempts={attempts} foundPairs={matchedPairIds.length} pairCount={DIFFICULTY_CONFIG[difficulty].pairCount} combo={combo} daruPoints={daruPoints} hintsRemaining={hintsRemaining} hintActive={hintActive} onHint={useHint} />
-    {hintActive && <div className={styles.hintProgress} role="status" aria-live="polite"><span>💡 카드를 잘 기억해둬! <b>{hintRemainingSeconds}초</b></span><progress max="1" value={hintProgress} aria-label={`힌트 공개 ${hintRemainingSeconds}초 남음`} /></div>}
-    {phase === "preview" && <div className={styles.memoryGuide}>
+    <div className={styles.memoryGuide} data-preview={phase === "preview" || undefined}>
       <div className={styles.memoryGuideDaru}><Image key={theme} src={DARU_MEMORY_GUIDE_ASSETS[theme]} alt="돋보기로 카드를 살펴보는 다루" fill sizes="(max-width: 720px) 58px, 76px" priority unoptimized /></div>
-      <div className={styles.memoryGuideCopy}><strong>카드를 잘 기억해둬!</strong><span>잠시 후 카드가 뒤집혀요.</span></div>
-      <div className={styles.memoryGuideActions}><span className={styles.memoryCountdown} aria-label={`기억 시간 ${previewSecondsRemaining}초 남음`}>{String(previewSecondsRemaining).padStart(2, "0")}초</span><button className="button button-primary" type="button" onClick={beginFlipping}>바로 시작</button></div>
-      <progress className={styles.memoryProgress} max={1} value={previewProgress} aria-label="카드 기억 시간 진행률" />
-    </div>}
+      <div className={styles.memoryGuideCopy}><span className={styles.guideEyebrow}>DARU MISSION GUIDE</span><strong>{phase === "preview" ? "카드를 잘 기억해둬!" : "좋아, 짝을 찾아볼까?"}</strong><span>{phase === "preview" ? "잠시 후 카드가 뒤집혀요." : "같은 그림의 카드를 찾아보세요."}</span></div>
+      {phase === "preview" ? <div className={styles.memoryGuideActions}><span><small>기억 시간</small><b className={styles.memoryCountdown} aria-label={`기억 시간 ${previewSecondsRemaining}초 남음`}>{String(previewSecondsRemaining).padStart(2, "0")}초</b></span><button className="button button-primary" type="button" onClick={beginFlipping}>바로 시작</button></div> : <span className={styles.missionLive}>MISSION</span>}
+      <progress className={styles.memoryProgress} max={1} value={phase === "preview" ? previewProgress : 1} aria-label={phase === "preview" ? "카드 기억 시간 진행률" : "게임 진행 중"} />
+    </div>
+    <GameStatus timeRemaining={timeRemaining} timeLimit={DIFFICULTY_CONFIG[difficulty].timeLimitSeconds} isPreview={phase === "preview"} attempts={attempts} foundPairs={matchedPairIds.length} pairCount={DIFFICULTY_CONFIG[difficulty].pairCount} combo={combo} daruPoints={daruPoints} hintsRemaining={hintsRemaining} hintActive={hintActive} onHint={useHint} />
+    {hintActive && <div className={styles.hintProgress} role="status" aria-live="polite"><span>카드를 잘 기억해둬! <b>{hintRemainingSeconds}초</b></span><progress max="1" value={hintProgress} aria-label={`힌트 공개 ${hintRemainingSeconds}초 남음`} /></div>}
     <div className={styles.boardStage} data-complete={phase === "finished" || phase === "partial" || undefined} data-dimmed={phase === "time-over" || undefined}>
       <MemoryBoard cards={cards} difficulty={difficulty} theme={theme} phase={phase} flippedIds={flippedIds} matchedPairIds={matchedPairIds} locked={locked} hintActive={hintActive} onFlip={handleFlip} />
       {feedback && <DaruMatchFeedback feedback={feedback} />}

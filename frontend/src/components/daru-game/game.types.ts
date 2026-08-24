@@ -36,9 +36,10 @@ export interface GameResultData {
 }
 
 export interface DetectionMetrics {
-  memoryEfficiency: number;
+  memoryAccuracy: number;
   speedScore: number;
   comboScore: number;
+  hintScore: number;
   detectionPower: number;
 }
 

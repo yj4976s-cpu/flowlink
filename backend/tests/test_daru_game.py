@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from datetime import timedelta
+from decimal import Decimal
 from unittest.mock import Mock
 from uuid import UUID, uuid4
 
@@ -17,7 +18,7 @@ from app.core.security import utc_now
 from app.db.session import Base, get_db
 from app.main import app
 from app.models import DaruGameRun, DaruGameStat, User
-from app.services.daru_game import calculate_detection_power, calculate_speed_score, game_run_lock_query, is_better, rank_for, submit_result, validate_result
+from app.services.daru_game import CURRENT_SCORE_VERSION, _round_to_tenth, calculate_detection_power, calculate_hint_score, calculate_memory_accuracy, calculate_speed_score, game_run_lock_query, is_better, rank_for, ranking_query, submit_result, validate_result
 
 
 @compiles(BigInteger, "sqlite")
@@ -63,16 +64,72 @@ def client(db: Session) -> Iterator[TestClient]:
 
 
 def test_detection_power_uses_each_difficulty_config() -> None:
-    assert calculate_detection_power("EASY", 10, 90, 5) == 95
-    assert calculate_detection_power("NORMAL", 20, 150, 7) == 83
-    assert calculate_detection_power("HARD", 24, 240, 9) == 95
+    assert calculate_detection_power("EASY", 10, 90, 5, 0) == Decimal("95.0")
+    assert calculate_detection_power("NORMAL", 20, 150, 7, 1) == Decimal("83.8")
+    assert calculate_detection_power("HARD", 24, 240, 9, 2) == Decimal("85.0")
 
 
 def test_speed_score_is_continuous_and_overtime_is_zero() -> None:
-    assert calculate_speed_score(45, 90, 120) == 90
+    assert calculate_speed_score(45, 90, 120) == 100
     assert calculate_speed_score(90, 90, 120) == 80
     assert calculate_speed_score(120, 90, 120) == 40
+    assert calculate_speed_score(121, 90, 120) == 0
     assert calculate_speed_score(130, 90, 120, within_time_limit=False) == 0
+
+
+@pytest.mark.parametrize(
+    ("pairs", "attempts", "expected"),
+    [
+        (10, 10, "100"), (10, 15, "75"), (10, 20, "50"), (10, 25, "25"), (10, 30, "0"),
+        (16, 24, "75"), (16, 32, "50"), (16, 48, "0"),
+        (24, 36, "75"), (24, 48, "50"), (24, 72, "0"),
+    ],
+)
+def test_memory_accuracy_uses_linear_extra_attempt_penalty(pairs: int, attempts: int, expected: str) -> None:
+    assert calculate_memory_accuracy(pairs, attempts) == Decimal(expected)
+
+
+@pytest.mark.parametrize(("hints_used", "expected"), [(0, "100"), (1, "50"), (2, "0")])
+def test_hint_score_is_part_of_detection_power(hints_used: int, expected: str) -> None:
+    assert calculate_hint_score(hints_used) == Decimal(expected)
+
+
+@pytest.mark.parametrize(
+    ("difficulty", "half", "benchmark", "limit"),
+    [("EASY", 45, 90, 120), ("NORMAL", 75, 150, 210), ("HARD", 120, 240, 330)],
+)
+def test_speed_score_boundaries_for_every_difficulty(difficulty: str, half: int, benchmark: int, limit: int) -> None:
+    config = {"EASY": (90, 120), "NORMAL": (150, 210), "HARD": (240, 330)}[difficulty]
+    assert config == (benchmark, limit)
+    assert calculate_speed_score(half, benchmark, limit) == 100
+    assert calculate_speed_score(benchmark, benchmark, limit) == 80
+    assert calculate_speed_score(limit, benchmark, limit) == 40
+    assert calculate_speed_score(limit + 1, benchmark, limit, within_time_limit=False) == 0
+
+
+def test_easy_speed_score_midpoints() -> None:
+    assert calculate_speed_score(67, 90, 120) == pytest.approx(90.2222222)
+    assert calculate_speed_score(68, 90, 120) == pytest.approx(89.7777778)
+    assert calculate_speed_score(105, 90, 120) == 60
+
+
+@pytest.mark.parametrize(
+    ("difficulty", "attempts", "elapsed", "combo", "hints", "expected"),
+    [
+        ("EASY", 15, 80, 4, 0, "80.6"),
+        ("NORMAL", 24, 180, 5, 1, "68.2"),
+        ("HARD", 36, 270, 6, 2, "64.2"),
+    ],
+)
+def test_v2_representative_detection_scores(difficulty: str, attempts: int, elapsed: int, combo: int, hints: int, expected: str) -> None:
+    assert calculate_detection_power(difficulty, attempts, elapsed, combo, hints) == Decimal(expected)
+
+
+def test_v2_supabase_reference_sample_is_exactly_ninety() -> None:
+    assert calculate_memory_accuracy(10, 14) == Decimal("80")
+    assert calculate_speed_score(1, 90, 120) == 100
+    assert calculate_hint_score(0) == Decimal("100")
+    assert calculate_detection_power("EASY", 14, 1, 5, 0) == Decimal("90.0")
 
 
 @pytest.mark.parametrize(("power", "rank"), [(80, "S"), (79, "A"), (65, "A"), (64, "B"), (50, "B"), (49, "C")])
@@ -80,12 +137,27 @@ def test_rank_thresholds(power: int, rank: str) -> None:
     assert rank_for(power) == rank
 
 
+@pytest.mark.parametrize(("power", "rank"), [(Decimal("80.0"), "S"), (Decimal("79.9"), "A"), (Decimal("65.0"), "A"), (Decimal("64.9"), "B")])
+def test_decimal_rank_thresholds(power: Decimal, rank: str) -> None:
+    assert rank_for(power) == rank
+
+
+def test_score_rounding_uses_one_decimal_half_up() -> None:
+    assert _round_to_tenth(Decimal("87.64")) == Decimal("87.6")
+    assert _round_to_tenth(Decimal("92.05")) == Decimal("92.1")
+
+
 def test_best_record_tie_breaks_by_attempts_then_elapsed_time() -> None:
-    current = DaruGameStat(best_detection_power=95, best_hints_used=1, best_attempts=20, best_elapsed_seconds=80)
-    assert is_better(95, 0, 22, 90, current) is True
-    assert is_better(95, 1, 18, 90, current) is True
-    assert is_better(95, 1, 20, 75, current) is True
-    assert is_better(95, 2, 10, 60, current) is False
+    current = DaruGameStat(best_detection_power=Decimal("95.0"), score_version=2, best_hints_used=1, best_attempts=20, best_elapsed_seconds=80)
+    assert is_better(Decimal("95.1"), 22, 90, current) is True
+    assert is_better(Decimal("95.0"), 18, 90, current) is True
+    assert is_better(Decimal("95.0"), 20, 75, current) is True
+    assert is_better(Decimal("94.9"), 10, 60, current) is False
+
+
+def test_best_record_does_not_use_hints_as_a_separate_tie_break() -> None:
+    current = DaruGameStat(best_detection_power=Decimal("90.0"), score_version=2, best_hints_used=2, best_attempts=18, best_elapsed_seconds=75)
+    assert is_better(Decimal("90.0"), 18, 75, current) is False
 
 
 def test_result_accumulates_points_and_keeps_better_record(client: TestClient, db: Session) -> None:
@@ -112,6 +184,67 @@ def test_leaderboard_orders_detection_then_attempts_then_time(client: TestClient
     assert [entry["nickname"] for entry in response.json()["entries"]] == ["다루탐정", "빠른다루"]
 
 
+def test_v2_ranking_orders_score_attempts_elapsed_then_achieved_at(db: Session) -> None:
+    now = utc_now()
+    users = [add_user(db, index, nickname) for index, nickname in enumerate(["점수우선", "낮은점수", "시도우선", "시간우선", "달성우선"], 1)]
+    rows = [
+        (users[0], "90.5", 2, 20, 100, now - timedelta(minutes=5)),
+        (users[1], "90.4", 0, 10, 50, now - timedelta(minutes=10)),
+        (users[2], "90.5", 0, 18, 110, now - timedelta(minutes=8)),
+        (users[3], "90.5", 2, 18, 90, now - timedelta(minutes=4)),
+        (users[4], "90.5", 1, 18, 90, now - timedelta(minutes=9)),
+    ]
+    for user, score, hints, attempts, elapsed, achieved in rows:
+        db.add(DaruGameStat(user_id=user.id, difficulty="EASY", best_detection_power=Decimal(score), score_version=2, best_attempts=attempts, best_elapsed_seconds=elapsed, best_combo=5, best_hints_used=hints, total_daru_points=0, play_count=1, best_achieved_at=achieved, created_at=now, updated_at=now))
+    db.commit()
+    assert [nickname for _stat, nickname in db.execute(ranking_query("EASY")).all()] == ["달성우선", "시간우선", "시도우선", "점수우선", "낮은점수"]
+
+
+def test_v1_record_is_hidden_until_first_v2_official_result(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    legacy = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=Decimal("99.0"), score_version=1, best_attempts=10, best_elapsed_seconds=45, best_combo=5, best_hints_used=0, total_daru_points=500, play_count=3, best_achieved_at=now, created_at=now, updated_at=now)
+    db.add(legacy); db.commit()
+    assert client.get("/api/daru-game/leaderboard?difficulty=EASY").json()["entries"] == []
+
+    payload = {"run_id": create_run(client, db, "EASY"), "difficulty": "EASY", "completed": True, "within_time_limit": True, "matched_pairs": 10, "attempts": 15, "elapsed_seconds": 80, "max_combo": 4, "hints_used": 0, "earned_daru_points": 1300}
+    response = client.post("/api/daru-game/results", json=payload)
+    assert response.status_code == 200
+    record = response.json()["record"]
+    assert response.json()["is_new_best"] is True
+    assert record["score_version"] == CURRENT_SCORE_VERSION
+    assert record["best_detection_power"] == 80.6
+    assert record["total_daru_points"] == 1800
+    assert record["play_count"] == 4
+    assert client.get("/api/daru-game/leaderboard?difficulty=EASY").json()["entries"][0]["best_detection_power"] == 80.6
+
+
+def test_partial_result_keeps_v1_best_and_accumulates_rewards(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    legacy = DaruGameStat(user_id=1, difficulty="HARD", best_detection_power=Decimal("88.0"), score_version=1, best_attempts=30, best_elapsed_seconds=300, best_combo=7, best_hints_used=1, total_daru_points=400, play_count=2, best_achieved_at=now, created_at=now, updated_at=now)
+    db.add(legacy); db.commit()
+    response = client.post("/api/daru-game/results", json={"run_id": create_run(client, db, "HARD"), "difficulty": "HARD", "completed": False, "within_time_limit": False, "matched_pairs": 3, "attempts": 5, "elapsed_seconds": 330, "max_combo": 2, "hints_used": 2, "earned_daru_points": 325})
+    assert response.status_code == 200
+    record = response.json()["record"]
+    assert response.json()["is_new_best"] is False
+    assert record["score_version"] == 1
+    assert record["best_detection_power"] == 88.0
+    assert record["total_daru_points"] == 725
+    assert record["play_count"] == 3
+
+
+def test_me_response_exposes_legacy_version_for_client_side_best_filtering(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    db.add(DaruGameStat(user_id=1, difficulty="NORMAL", best_detection_power=Decimal("97.0"), score_version=1, best_attempts=16, best_elapsed_seconds=80, best_combo=7, best_hints_used=0, total_daru_points=900, play_count=5, best_achieved_at=now, created_at=now, updated_at=now))
+    db.commit()
+    response = client.get("/api/daru-game/me")
+    assert response.status_code == 200
+    record = response.json()[0]
+    assert record["score_version"] == 1
+    assert record["best_detection_power"] == 97.0
+    assert record["total_daru_points"] == 900
+    assert record["play_count"] == 5
+
+
 def test_guest_and_admin_cannot_save_user_ranking(client: TestClient, db: Session) -> None:
     payload = {"run_id": str(uuid4()), "difficulty": "EASY", "completed": True, "within_time_limit": True, "matched_pairs": 10, "attempts": 10, "elapsed_seconds": 90, "max_combo": 5, "hints_used": 0, "earned_daru_points": 1300}
     app.dependency_overrides.pop(get_current_user)
@@ -129,6 +262,7 @@ def test_partial_result_keeps_points_without_creating_official_record(client: Te
     assert body["leaderboard_rank"] is None
     assert body["record"]["total_daru_points"] == 325
     assert body["record"]["best_attempts"] is None
+    assert body["record"]["score_version"] == CURRENT_SCORE_VERSION
 
 
 def test_user_can_create_game_run(client: TestClient, db: Session) -> None:

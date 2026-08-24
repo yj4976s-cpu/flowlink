@@ -70,6 +70,7 @@ class DaruGameStat(Base):
     __table_args__ = (
         CheckConstraint("difficulty IN ('EASY', 'NORMAL', 'HARD')", name="ck_daru_game_stats_difficulty"),
         CheckConstraint("best_detection_power BETWEEN 0 AND 100", name="ck_daru_game_stats_detection_power"),
+        CheckConstraint("score_version IN (1, 2)", name="ck_daru_game_stats_score_version"),
         CheckConstraint("best_attempts IS NULL OR best_attempts > 0", name="ck_daru_game_stats_attempts"),
         CheckConstraint("best_elapsed_seconds IS NULL OR best_elapsed_seconds > 0", name="ck_daru_game_stats_elapsed"),
         CheckConstraint("best_combo >= 0", name="ck_daru_game_stats_combo"),
@@ -82,7 +83,8 @@ class DaruGameStat(Base):
     id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     difficulty: Mapped[str] = mapped_column(String(10), nullable=False)
-    best_detection_power: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    best_detection_power: Mapped[Decimal] = mapped_column(Numeric(4, 1), nullable=False, default=Decimal("0.0"))
+    score_version: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
     best_attempts: Mapped[int | None] = mapped_column(Integer)
     best_elapsed_seconds: Mapped[int | None] = mapped_column(Integer)
     best_combo: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
