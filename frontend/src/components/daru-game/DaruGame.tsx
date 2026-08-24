@@ -5,8 +5,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { useDaru } from "@/components/mascot";
 import { getCurrentUser, type AuthUser } from "@/lib/authApi";
-import { createDaruGameRun, getDaruGameRecords, submitDaruGameResult, type GameRecord } from "@/lib/daruGameApi";
-import { BEST_RECORD_STORAGE_KEYS, DARU_MEMORY_GUIDE_ASSETS, DIFFICULTY_CONFIG, MISMATCH_REVEAL_MS } from "./game.config";
+import { createDaruGameRun, flipDaruGameCard, getDaruGameRecords, requestDaruGameHint, startDaruGameRun, submitDaruGameResult, type GameRecord, type ServerGameMetrics } from "@/lib/daruGameApi";
+import { BEST_RECORD_STORAGE_KEYS, DARU_CARD_BACK_ASSETS, DARU_MEMORY_GUIDE_ASSETS, DIFFICULTY_CONFIG, MISMATCH_REVEAL_MS } from "./game.config";
+import { CARD_CATALOG, getCardThemeImages } from "./card.catalog";
 import type { DetectionMetrics, GameCard, GameDifficulty, GamePhase, GameRank } from "./game.types";
 import { calculateDetectionMetricsWithEligibility, calculatePairPoints, createGameDeck, getGameRank } from "./game.utils";
 import { DifficultySelector } from "./DifficultySelector";
@@ -23,6 +24,20 @@ const ACTIVE_PHASES: GamePhase[] = ["preview", "flipping", "ready", "playing", "
 const LAST_PAIR_FEEDBACK_MS = 1800;
 type SaveStatus = "idle" | "saving" | "saved" | "failed";
 
+function hiddenServerCards(positions: number[]): GameCard[] {
+  return positions.map((position) => ({ id: `server-${position}`, pairId: `hidden-${position}`, kind: "daru", image: DARU_CARD_BACK_ASSETS.day, label: "숨겨진 카드", themeImages: DARU_CARD_BACK_ASSETS }));
+}
+
+function revealServerCard(cards: GameCard[], position: number, cardId: string): GameCard[] {
+  const catalog = CARD_CATALOG.find((card) => card.id === cardId);
+  if (!catalog) throw new Error(`Unknown server card: ${cardId}`);
+  return cards.map((card, index) => index === position ? { ...card, pairId: cardId, kind: catalog.kind, image: getCardThemeImages(catalog).day, label: catalog.label, themeImages: getCardThemeImages(catalog) } : card);
+}
+
+function responseMetrics(metrics: ServerGameMetrics): DetectionMetrics {
+  return { memoryAccuracy: metrics.memory_accuracy, speedScore: metrics.speed_score, comboScore: metrics.combo_score, hintScore: metrics.hint_score, detectionPower: metrics.detection_power };
+}
+
 export function DaruGame() {
   const { theme } = useTheme();
   const { cue } = useDaru();
@@ -36,6 +51,7 @@ export function DaruGame() {
   const submitInProgressRef = useRef(false);
   const runIdRef = useRef<string | null>(null);
   const startPendingRef = useRef(false);
+  const actionPendingRef = useRef(false);
   const lastPairCueShownRef = useRef(false);
   const phaseRef = useRef<GamePhase>("lobby");
   const [phase, setPhaseState] = useState<GamePhase>("lobby");
@@ -108,12 +124,12 @@ export function DaruGame() {
     let runId: string | null = null; let runFailed = false;
     try {
       if (currentUser?.role === "USER") {
-        try { runId = (await createDaruGameRun(DIFFICULTY_CONFIG[nextDifficulty].key)).run_id; }
+        try { const response = await createDaruGameRun(DIFFICULTY_CONFIG[nextDifficulty].key); runId = response.run_id; setCards(hiddenServerCards(response.positions)); }
         catch { runFailed = true; }
       }
       resetState(nextDifficulty); const record = bestRecords[nextDifficulty]; setPreviousBestPower(record?.score_version !== 2 || record.best_attempts == null ? null : record.best_detection_power); runIdRef.current = runId;
       if (runFailed) setRecordStatus("failed");
-      setDifficulty(nextDifficulty); setCards(createGameDeck(nextDifficulty)); setPhase("preview");
+      setDifficulty(nextDifficulty); if (currentUser?.role !== "USER" || !runId) setCards(createGameDeck(nextDifficulty)); setPhase("preview");
     } finally {
       startPendingRef.current = false; setStartPending(false);
     }
@@ -129,9 +145,9 @@ export function DaruGame() {
   }, [beginFlipping, clearSequenceTimer, difficulty, phase]);
   useEffect(() => {
     if (phase === "flipping") { sequenceTimerRef.current = window.setTimeout(() => { setReadyCue("READY"); setPhase("ready"); }, 650); return clearSequenceTimer; }
-    if (phase === "ready") { sequenceTimerRef.current = window.setTimeout(() => { setReadyCue("GO!"); setStartedAt(Date.now()); setPhase("playing"); }, 700); return clearSequenceTimer; }
+    if (phase === "ready") { sequenceTimerRef.current = window.setTimeout(() => { void (async () => { const runId = runIdRef.current; if (currentUser?.role === "USER" && runId) { try { await startDaruGameRun(runId); } catch { setRecordStatus("failed"); return; } } setReadyCue("GO!"); setStartedAt(Date.now()); setPhase("playing"); })(); }, 700); return clearSequenceTimer; }
     if (phase === "playing" && readyCue === "GO!") { sequenceTimerRef.current = window.setTimeout(() => setReadyCue(null), 500); return clearSequenceTimer; }
-  }, [clearSequenceTimer, phase, readyCue, setPhase]);
+  }, [clearSequenceTimer, currentUser, phase, readyCue, setPhase]);
   useEffect(() => {
     if (phase !== "playing" || startedAt === 0 || !difficulty) return;
     const update = () => {
@@ -145,20 +161,31 @@ export function DaruGame() {
     const previous = document.body.style.overflow; document.body.style.overflow = "hidden"; return () => { document.body.style.overflow = previous; };
   }, [phase]);
 
-  const useHint = () => {
-    if (!difficulty || phase !== "playing" || hintActive || hintsRemaining <= 0) return;
-    const duration = DIFFICULTY_CONFIG[difficulty].hintRevealSeconds; const deadline = performance.now() + duration * 1000;
-    setHintsRemaining((value) => value - 1); setFlippedIds([]); setHintActive(true); setHintRemainingSeconds(duration); setHintProgress(1);
+  const beginHintPresentation = (duration: number) => {
+    const deadline = performance.now() + duration * 1000;
+    setFlippedIds([]); setHintActive(true); setHintRemainingSeconds(duration); setHintProgress(1);
     hintIntervalRef.current = window.setInterval(() => { const remainingMs = Math.max(0, deadline - performance.now()); setHintRemainingSeconds(Math.max(1, Math.ceil(remainingMs / 1000))); setHintProgress(remainingMs / (duration * 1000)); }, 100);
     hintTimerRef.current = window.setTimeout(clearHintTimer, duration * 1000);
   };
-  const submitResult = useCallback((completed: boolean, eligible: boolean, finalElapsed: number, finalPoints: number) => {
+  const useHint = () => {
+    if (!difficulty || phase !== "playing" || hintActive || hintsRemaining <= 0) return;
+    const duration = DIFFICULTY_CONFIG[difficulty].hintRevealSeconds;
+    const runId = runIdRef.current;
+    if (currentUser?.role === "USER" && runId) {
+      if (actionPendingRef.current) return;
+      actionPendingRef.current = true; setLocked(true);
+      void requestDaruGameHint(runId).then((response) => { setCards((current) => response.cards.reduce((next, card) => revealServerCard(next, card.position, card.card_id), current)); setHintsRemaining(response.hints_remaining); beginHintPresentation(duration); }).catch(() => setRecordStatus("failed")).finally(() => { actionPendingRef.current = false; setLocked(false); });
+      return;
+    }
+    setHintsRemaining((value) => value - 1); beginHintPresentation(duration);
+  };
+  const submitResult = useCallback((finishPartial = false) => {
     if (currentUser?.role !== "USER" || submitInProgressRef.current || !difficulty) return;
     const runId = runIdRef.current;
     if (!runId) { setRecordStatus("failed"); return; }
     submitInProgressRef.current = true; setRecordStatus("saving");
-    void submitDaruGameResult({ run_id: runId, difficulty: DIFFICULTY_CONFIG[difficulty].key, completed, within_time_limit: eligible, matched_pairs: matchedPairIds.length, attempts, elapsed_seconds: finalElapsed, max_combo: maxCombo, hints_used: DIFFICULTY_CONFIG[difficulty].hintCount - hintsRemaining, earned_daru_points: finalPoints }).then((response) => { setNewBest(response.is_new_best); setLeaderboardRank(response.leaderboard_rank); setPersonalBestPower(response.record.best_detection_power); setBestRecords((records) => ({ ...records, [difficulty]: response.record })); setRecordStatus("saved"); if (response.is_new_best) setLeaderboardRefresh((value) => value + 1); }).catch(() => setRecordStatus("failed"));
-  }, [attempts, currentUser, difficulty, hintsRemaining, matchedPairIds.length, maxCombo]);
+    void submitDaruGameResult({ run_id: runId, finish_partial: finishPartial }).then((response) => { const authoritative = response.metrics; setMetrics(responseMetrics(authoritative)); setRank(getGameRank(authoritative.detection_power)); setAttempts(authoritative.attempts); setMaxCombo(authoritative.max_combo); setHintsRemaining(DIFFICULTY_CONFIG[difficulty].hintCount - authoritative.hints_used); setElapsedSeconds(authoritative.elapsed_seconds); setDaruPoints(authoritative.earned_daru_points); setWithinTimeLimit(authoritative.within_time_limit); setNewBest(response.is_new_best); setLeaderboardRank(response.leaderboard_rank); setPersonalBestPower(response.record.best_detection_power); setBestRecords((records) => ({ ...records, [difficulty]: response.record })); setRecordStatus("saved"); if (response.is_new_best) setLeaderboardRefresh((value) => value + 1); }).catch(() => setRecordStatus("failed"));
+  }, [currentUser, difficulty]);
   useEffect(() => {
     if (phase !== "playing" || !difficulty || matchedPairIds.length !== DIFFICULTY_CONFIG[difficulty].pairCount || completionAnnouncedRef.current) return;
     completionAnnouncedRef.current = true; clearHintTimer(); clearFeedbackTimer(); const finalElapsed = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
@@ -169,11 +196,32 @@ export function DaruGame() {
     if (!currentUser && guestBest) localStorage.setItem(BEST_RECORD_STORAGE_KEYS[difficulty], String(finalMetrics.detectionPower));
     const finalPoints = daruPoints + DIFFICULTY_CONFIG[difficulty].clearBonus;
     setElapsedSeconds(finalElapsed); setDaruPoints(finalPoints); setMetrics(finalMetrics); setRank(getGameRank(finalMetrics.detectionPower)); setNewBest(!currentUser && guestBest); setFeedback(null);
-    completionTimerRef.current = window.setTimeout(() => { completionTimerRef.current = null; if (!currentUser) setPreviousBestPower(guestPreviousBest); setPhase("finished"); cue("happy", { source: "direct" }); submitResult(true, withinTimeLimit, finalElapsed, finalPoints); }, 380);
+    completionTimerRef.current = window.setTimeout(() => { completionTimerRef.current = null; if (!currentUser) setPreviousBestPower(guestPreviousBest); setPhase("finished"); cue("happy", { source: "direct" }); submitResult(false); }, 380);
   }, [attempts, clearFeedbackTimer, clearHintTimer, cue, currentUser, daruPoints, difficulty, hintsRemaining, matchedPairIds.length, maxCombo, phase, setPhase, startedAt, submitResult, withinTimeLimit]);
-  const finishPartial = () => { clearHintTimer(); const finalElapsed = Math.max(1, Math.floor((Date.now() - startedAt) / 1000)); setElapsedSeconds(finalElapsed); setPhase("partial"); submitResult(false, false, finalElapsed, daruPoints); };
+  const finishPartial = () => { clearHintTimer(); const finalElapsed = Math.max(1, Math.floor((Date.now() - startedAt) / 1000)); setElapsedSeconds(finalElapsed); setPhase("partial"); submitResult(true); };
   const handleFlip = (card: GameCard) => {
     if (phase !== "playing" || locked || hintActive || matchedPairIds.includes(card.pairId) || flippedIds.includes(card.id) || flippedIds.length >= 2) return;
+    const runId = runIdRef.current;
+    if (currentUser?.role === "USER" && runId) {
+      if (actionPendingRef.current) return;
+      const position = cards.findIndex((candidate) => candidate.id === card.id);
+      if (position < 0) return;
+      actionPendingRef.current = true; setLocked(true);
+      void flipDaruGameCard(runId, position).then((response) => {
+        setCards((current) => revealServerCard(current, response.card.position, response.card.card_id));
+        setAttempts(response.attempts); setCombo(response.current_combo); setMaxCombo(response.max_combo); setDaruPoints(response.earned_daru_points);
+        if (response.matched === null) { setFlippedIds([card.id]); return; }
+        const firstId = flippedIds[0]; setFlippedIds([firstId, card.id]);
+        if (response.matched) {
+          const remaining = DIFFICULTY_CONFIG[difficulty!].pairCount - response.matched_pairs;
+          setMatchedPairIds((current) => [...current, response.card.card_id]); setFlippedIds([]); clearFeedbackTimer();
+          if (remaining > 0 && (remaining !== 1 || !lastPairCueShownRef.current)) { const isLastPair = remaining === 1; const message: MatchFeedbackData["message"] = isLastPair ? "거의 다 찾았어!" : response.current_combo >= 3 ? "감 잡았네!" : response.current_combo === 2 ? "좋은데!" : "찾았다!"; if (isLastPair) lastPairCueShownRef.current = true; setFeedback({ id: Date.now(), message, combo: response.current_combo, points: response.points_awarded, remainingPairs: remaining }); feedbackTimerRef.current = window.setTimeout(() => { setFeedback(null); feedbackTimerRef.current = null; }, isLastPair ? LAST_PAIR_FEEDBACK_MS : 1100); }
+          return;
+        }
+        mismatchTimerRef.current = window.setTimeout(() => { setFlippedIds([]); mismatchTimerRef.current = null; }, MISMATCH_REVEAL_MS);
+      }).catch(() => setRecordStatus("failed")).finally(() => { actionPendingRef.current = false; setLocked(false); });
+      return;
+    }
     if (flippedIds.length === 0) { setFlippedIds([card.id]); return; }
     const firstCard = cards.find((candidate) => candidate.id === flippedIds[0]); if (!firstCard) { setFlippedIds([card.id]); return; }
     setAttempts((current) => current + 1); setFlippedIds([firstCard.id, card.id]);

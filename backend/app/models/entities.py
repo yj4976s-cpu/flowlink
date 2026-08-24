@@ -102,13 +102,24 @@ class DaruGameRun(Base):
     __tablename__ = "daru_game_runs"
     __table_args__ = (
         CheckConstraint("difficulty IN ('EASY', 'NORMAL', 'HARD')", name="ck_daru_game_runs_difficulty"),
+        CheckConstraint("attempts >= 0 AND matched_pairs >= 0 AND current_combo >= 0 AND max_combo >= current_combo AND hints_used BETWEEN 0 AND 2 AND earned_daru_points >= 0 AND (first_position IS NULL OR first_position >= 0)", name="ck_daru_game_runs_authoritative_state"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     difficulty: Mapped[str] = mapped_column(String(10), nullable=False)
     started_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    play_started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     consumed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    deck_state: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    first_position: Mapped[int | None] = mapped_column(Integer)
+    matched_positions: Mapped[list[int]] = mapped_column(JSON, nullable=False, default=list)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    matched_pairs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    current_combo: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_combo: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    hints_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    earned_daru_points: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
 
     user: Mapped[User] = relationship(back_populates="daru_game_runs")
 

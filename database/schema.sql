@@ -765,12 +765,23 @@ CREATE TABLE public.daru_game_runs (
         CHECK (difficulty IN ('EASY', 'NORMAL', 'HARD')),
 
     started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    play_started_at TIMESTAMPTZ,
     consumed_at TIMESTAMPTZ,
+    deck_state JSONB NOT NULL DEFAULT '[]'::JSONB,
+    first_position INTEGER,
+    matched_positions JSONB NOT NULL DEFAULT '[]'::JSONB,
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    matched_pairs INTEGER NOT NULL DEFAULT 0 CHECK (matched_pairs >= 0),
+    current_combo INTEGER NOT NULL DEFAULT 0 CHECK (current_combo >= 0),
+    max_combo INTEGER NOT NULL DEFAULT 0 CHECK (max_combo >= current_combo),
+    hints_used INTEGER NOT NULL DEFAULT 0 CHECK (hints_used BETWEEN 0 AND 2),
+    earned_daru_points BIGINT NOT NULL DEFAULT 0 CHECK (earned_daru_points >= 0),
 
     CHECK (
         consumed_at IS NULL
         OR consumed_at >= started_at
-    )
+    ),
+    CHECK (first_position IS NULL OR first_position >= 0)
 );
 
 ALTER TABLE public.daru_game_runs

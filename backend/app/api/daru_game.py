@@ -1,4 +1,6 @@
 from typing import Annotated
+from decimal import Decimal
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -7,8 +9,8 @@ from sqlalchemy.orm import Session
 from app.core.auth import get_optional_current_user, require_user
 from app.db.session import get_db
 from app.models import DaruGameStat, User
-from app.schemas.daru_game import DaruGameRecord, DaruGameResultInput, DaruGameResultResponse, DaruGameRunInput, DaruGameRunResponse, DaruLeaderboardEntry, DaruLeaderboardResponse, Difficulty
-from app.services.daru_game import GameRunConflictError, GameRunNotFoundError, create_game_run, leaderboard_rank, rank_for, ranking_query, submit_result
+from app.schemas.daru_game import DaruGameCardReveal, DaruGameFlipInput, DaruGameFlipResponse, DaruGameHintResponse, DaruGameMetrics, DaruGameRecord, DaruGameResultInput, DaruGameResultResponse, DaruGameRunInput, DaruGameRunResponse, DaruLeaderboardEntry, DaruLeaderboardResponse, Difficulty
+from app.services.daru_game import GameRunConflictError, GameRunNotFoundError, create_game_run, flip_card, leaderboard_rank, rank_for, ranking_query, start_gameplay, submit_result, use_game_hint
 
 router = APIRouter(prefix="/api/daru-game", tags=["daru-game"])
 
@@ -20,20 +22,42 @@ def record_response(stat: DaruGameStat) -> DaruGameRecord:
 @router.post("/runs", response_model=DaruGameRunResponse, status_code=201)
 def create_run(payload: DaruGameRunInput, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> DaruGameRunResponse:
     run = create_game_run(db, user_id=current_user.id, difficulty=payload.difficulty)
-    return DaruGameRunResponse(run_id=run.id, difficulty=run.difficulty, started_at=run.started_at)
+    return DaruGameRunResponse(run_id=run.id, difficulty=run.difficulty, started_at=run.started_at, positions=list(range(len(run.deck_state))))
+
+
+def _run_error(exc: ValueError) -> HTTPException:
+    if isinstance(exc, GameRunNotFoundError): return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, GameRunConflictError): return HTTPException(status_code=409, detail=str(exc))
+    return HTTPException(status_code=422, detail=str(exc))
+
+
+@router.post("/runs/{run_id}/start", status_code=204)
+def start_run(run_id: UUID, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> None:
+    try: start_gameplay(db, run_id=run_id, user_id=current_user.id)
+    except ValueError as exc: raise _run_error(exc) from exc
+
+
+@router.post("/runs/{run_id}/flip", response_model=DaruGameFlipResponse)
+def flip_run_card(run_id: UUID, payload: DaruGameFlipInput, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> DaruGameFlipResponse:
+    try: run, matched, points_awarded = flip_card(db, run_id=run_id, user_id=current_user.id, position=payload.position)
+    except ValueError as exc: raise _run_error(exc) from exc
+    return DaruGameFlipResponse(card=DaruGameCardReveal(position=payload.position, card_id=run.deck_state[payload.position]), matched=matched, matched_positions=list(run.matched_positions), attempts=run.attempts, matched_pairs=run.matched_pairs, current_combo=run.current_combo, max_combo=run.max_combo, earned_daru_points=run.earned_daru_points, points_awarded=points_awarded)
+
+
+@router.post("/runs/{run_id}/hint", response_model=DaruGameHintResponse)
+def hint_run(run_id: UUID, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> DaruGameHintResponse:
+    try: run = use_game_hint(db, run_id=run_id, user_id=current_user.id)
+    except ValueError as exc: raise _run_error(exc) from exc
+    return DaruGameHintResponse(hints_used=run.hints_used, hints_remaining=2 - run.hints_used, cards=[DaruGameCardReveal(position=index, card_id=card_id) for index, card_id in enumerate(run.deck_state)])
 
 
 @router.post("/results", response_model=DaruGameResultResponse)
 def create_result(payload: DaruGameResultInput, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> DaruGameResultResponse:
     try:
-        stat, improved = submit_result(db, run_id=payload.run_id, user_id=current_user.id, difficulty=payload.difficulty, completed=payload.completed, within_time_limit=payload.within_time_limit, matched_pairs=payload.matched_pairs, attempts=payload.attempts, elapsed_seconds=payload.elapsed_seconds, max_combo=payload.max_combo, hints_used=payload.hints_used, earned_points=payload.earned_daru_points)
-    except GameRunNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except GameRunConflictError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        stat, improved, metrics = submit_result(db, run_id=payload.run_id, user_id=current_user.id, finish_partial=payload.finish_partial)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return DaruGameResultResponse(record=record_response(stat), is_new_best=improved, leaderboard_rank=leaderboard_rank(db, stat))
+        raise _run_error(exc) from exc
+    return DaruGameResultResponse(record=record_response(stat), is_new_best=improved, leaderboard_rank=leaderboard_rank(db, stat), metrics=DaruGameMetrics(**{key: float(value) if isinstance(value, Decimal) else value for key, value in metrics.items()}))
 
 
 @router.get("/leaderboard", response_model=DaruLeaderboardResponse)
