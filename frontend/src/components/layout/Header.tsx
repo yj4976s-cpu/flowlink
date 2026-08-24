@@ -31,6 +31,7 @@ const userNavigation: readonly NavigationItem[] = [
   { label: "물건 확인", href: "/detect" },
   { label: "커뮤니티", href: "/community" },
   { label: "내 진행 상황", href: "/mypage" },
+  { label: "다루 놀이터", href: "/daru-game" },
 ];
 
 const adminNavigation: readonly NavigationItem[] = [

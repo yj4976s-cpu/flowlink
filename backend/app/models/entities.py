@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from uuid import UUID
 
-from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -41,6 +42,8 @@ class User(Base):
     community_comments: Mapped[list[CommunityComment]] = relationship(back_populates="user")
     copilot_conversations: Mapped[list[CopilotConversation]] = relationship(back_populates="user")
     social_accounts: Mapped[list[UserSocialAccount]] = relationship(back_populates="user", passive_deletes=True)
+    daru_game_stats: Mapped[list[DaruGameStat]] = relationship(back_populates="user", passive_deletes=True)
+    daru_game_runs: Mapped[list[DaruGameRun]] = relationship(back_populates="user", passive_deletes=True)
 
 
 class UserSocialAccount(Base):
@@ -60,6 +63,52 @@ class UserSocialAccount(Base):
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
 
     user: Mapped[User] = relationship(back_populates="social_accounts")
+
+
+class DaruGameStat(Base):
+    __tablename__ = "daru_game_stats"
+    __table_args__ = (
+        CheckConstraint("difficulty IN ('EASY', 'NORMAL', 'HARD')", name="ck_daru_game_stats_difficulty"),
+        CheckConstraint("best_detection_power BETWEEN 0 AND 100", name="ck_daru_game_stats_detection_power"),
+        CheckConstraint("best_attempts IS NULL OR best_attempts > 0", name="ck_daru_game_stats_attempts"),
+        CheckConstraint("best_elapsed_seconds IS NULL OR best_elapsed_seconds > 0", name="ck_daru_game_stats_elapsed"),
+        CheckConstraint("best_combo >= 0", name="ck_daru_game_stats_combo"),
+        CheckConstraint("best_hints_used IS NULL OR best_hints_used BETWEEN 0 AND 2", name="ck_daru_game_stats_hints"),
+        CheckConstraint("total_daru_points >= 0", name="ck_daru_game_stats_points"),
+        CheckConstraint("play_count >= 0", name="ck_daru_game_stats_play_count"),
+        UniqueConstraint("user_id", "difficulty", name="uq_daru_game_stats_user_difficulty"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    difficulty: Mapped[str] = mapped_column(String(10), nullable=False)
+    best_detection_power: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    best_attempts: Mapped[int | None] = mapped_column(Integer)
+    best_elapsed_seconds: Mapped[int | None] = mapped_column(Integer)
+    best_combo: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    best_hints_used: Mapped[int | None] = mapped_column(Integer)
+    total_daru_points: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    play_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    best_achieved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+    user: Mapped[User] = relationship(back_populates="daru_game_stats")
+
+
+class DaruGameRun(Base):
+    __tablename__ = "daru_game_runs"
+    __table_args__ = (
+        CheckConstraint("difficulty IN ('EASY', 'NORMAL', 'HARD')", name="ck_daru_game_runs_difficulty"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    difficulty: Mapped[str] = mapped_column(String(10), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+    user: Mapped[User] = relationship(back_populates="daru_game_runs")
 
 
 class ObjectClass(Base):

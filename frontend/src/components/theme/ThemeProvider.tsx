@@ -15,11 +15,15 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setThemeState] = useState<Theme>("day");
 
   useEffect(() => {
-    const syncTheme = window.setTimeout(() => {
+    const root = document.documentElement;
+    const syncTheme = () => {
       const active = document.documentElement.dataset.theme;
       setThemeState(active === "dawn" || active === "night" ? active : "day");
-    }, 0);
-    return () => window.clearTimeout(syncTheme);
+    };
+    syncTheme();
+    const observer = new MutationObserver(syncTheme);
+    observer.observe(root, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
   }, []);
 
   const value = useMemo<ThemeContextValue>(

@@ -697,6 +697,83 @@ CREATE TABLE notifications (
 
 
 -- =========================================================
+-- DARU MEMORY 통계 및 난이도별 랭킹
+-- =========================================================
+
+CREATE TABLE public.daru_game_stats (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+
+    user_id BIGINT NOT NULL
+        REFERENCES public.users(id)
+        ON DELETE CASCADE,
+
+    difficulty VARCHAR(10) NOT NULL
+        CHECK (difficulty IN ('EASY', 'NORMAL', 'HARD')),
+
+    best_detection_power SMALLINT NOT NULL DEFAULT 0
+        CHECK (best_detection_power BETWEEN 0 AND 100),
+
+    best_hints_used SMALLINT
+        CHECK (
+            best_hints_used IS NULL
+            OR best_hints_used BETWEEN 0 AND 2
+        ),
+
+    best_attempts INTEGER
+        CHECK (
+            best_attempts IS NULL
+            OR best_attempts > 0
+        ),
+
+    best_elapsed_seconds INTEGER
+        CHECK (
+            best_elapsed_seconds IS NULL
+            OR best_elapsed_seconds > 0
+        ),
+
+    best_combo INTEGER NOT NULL DEFAULT 0
+        CHECK (best_combo >= 0),
+
+    total_daru_points BIGINT NOT NULL DEFAULT 0
+        CHECK (total_daru_points >= 0),
+
+    play_count INTEGER NOT NULL DEFAULT 0
+        CHECK (play_count >= 0),
+
+    best_achieved_at TIMESTAMPTZ,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    UNIQUE (user_id, difficulty)
+);
+
+ALTER TABLE public.daru_game_stats
+ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE public.daru_game_runs (
+    id UUID PRIMARY KEY,
+
+    user_id BIGINT NOT NULL
+        REFERENCES public.users(id)
+        ON DELETE CASCADE,
+
+    difficulty VARCHAR(10) NOT NULL
+        CHECK (difficulty IN ('EASY', 'NORMAL', 'HARD')),
+
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    consumed_at TIMESTAMPTZ,
+
+    CHECK (
+        consumed_at IS NULL
+        OR consumed_at >= started_at
+    )
+);
+
+ALTER TABLE public.daru_game_runs
+ENABLE ROW LEVEL SECURITY;
+
+-- =========================================================
 -- 12. 관리자 처리 이력
 -- 분류 수정, 회수, 승인, 반환 등의 기록
 -- =========================================================
@@ -937,6 +1014,20 @@ CREATE INDEX idx_notifications_unread
         created_at DESC
     )
     WHERE read_at IS NULL;
+
+CREATE INDEX idx_daru_game_stats_ranking
+    ON public.daru_game_stats (
+        difficulty,
+        best_detection_power DESC,
+        best_hints_used ASC,
+        best_attempts ASC,
+        best_elapsed_seconds ASC,
+        best_achieved_at ASC
+    );
+
+CREATE INDEX idx_daru_game_runs_active_user
+    ON public.daru_game_runs (user_id, started_at DESC)
+    WHERE consumed_at IS NULL;
 
 CREATE INDEX idx_processing_histories_entity
     ON processing_histories (
