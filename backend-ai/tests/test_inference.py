@@ -384,6 +384,39 @@ class FakeMultipleTrackModel:
         ]
 
 
+class FakeMovingTrackModel:
+    names = {0: "bag"}
+
+    def track(self, **kwargs):
+        return [
+            FakeTrackResult([FakeTrackBox(xyxy=[1, 2, 11, 22], confidence=0.45, class_id=0, track_id=7)]),
+            FakeTrackResult([FakeTrackBox(xyxy=[51, 2, 61, 22], confidence=0.70, class_id=0, track_id=7)]),
+            FakeTrackResult([FakeTrackBox(xyxy=[91, 2, 101, 22], confidence=0.95, class_id=0, track_id=7)]),
+        ]
+
+
+class FakeEqualDistanceConfidenceTieBreakModel:
+    names = {0: "bag"}
+
+    def track(self, **kwargs):
+        return [
+            FakeTrackResult([FakeTrackBox(xyxy=[1, 2, 11, 22], confidence=0.70, class_id=0, track_id=7)]),
+            FakeTrackResult([]),
+            FakeTrackResult([FakeTrackBox(xyxy=[71, 2, 81, 22], confidence=0.90, class_id=0, track_id=7)]),
+        ]
+
+
+class FakeEqualDistanceFrameTieBreakModel:
+    names = {0: "bag"}
+
+    def track(self, **kwargs):
+        return [
+            FakeTrackResult([FakeTrackBox(xyxy=[1, 2, 11, 22], confidence=0.80, class_id=0, track_id=7)]),
+            FakeTrackResult([]),
+            FakeTrackResult([FakeTrackBox(xyxy=[71, 2, 81, 22], confidence=0.80, class_id=0, track_id=7)]),
+        ]
+
+
 def test_yolo_runtime_tracks_video_with_bytetrack_and_aggregates_valid_tracks(tmp_path) -> None:
     video_path = tmp_path / "sample.mp4"
     video_path.write_bytes(b"fake")
@@ -400,6 +433,46 @@ def test_yolo_runtime_tracks_video_with_bytetrack_and_aggregates_valid_tracks(tm
     assert tracks[0].first_seen_ms == 0
     assert tracks[0].last_seen_ms == 100
     assert tracks[0].appearance_count == 2
+
+
+def test_yolo_runtime_uses_midpoint_frame_bbox_but_keeps_max_track_confidence(tmp_path) -> None:
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"fake")
+    runtime = YoloRuntime(model_path="fake.pt", confidence=0.5, imgsz=640)
+    runtime._model = FakeMovingTrackModel()
+
+    tracks = runtime.track_video(video_path, fps=10, media_width=100, media_height=80)
+
+    assert len(tracks) == 1
+    assert tracks[0].confidence == 0.95
+    assert tracks[0].bbox == YoloBBox(x=51.0, y=2.0, width=10.0, height=20.0)
+    assert tracks[0].first_seen_ms == 0
+    assert tracks[0].last_seen_ms == 200
+    assert tracks[0].appearance_count == 3
+
+
+def test_yolo_runtime_midpoint_tie_prefers_higher_confidence_frame(tmp_path) -> None:
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"fake")
+    runtime = YoloRuntime(model_path="fake.pt", confidence=0.5, imgsz=640)
+    runtime._model = FakeEqualDistanceConfidenceTieBreakModel()
+
+    tracks = runtime.track_video(video_path, fps=10, media_width=100, media_height=80)
+
+    assert tracks[0].confidence == 0.90
+    assert tracks[0].bbox == YoloBBox(x=71.0, y=2.0, width=10.0, height=20.0)
+
+
+def test_yolo_runtime_midpoint_tie_prefers_earlier_frame_after_confidence(tmp_path) -> None:
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"fake")
+    runtime = YoloRuntime(model_path="fake.pt", confidence=0.5, imgsz=640)
+    runtime._model = FakeEqualDistanceFrameTieBreakModel()
+
+    tracks = runtime.track_video(video_path, fps=10, media_width=100, media_height=80)
+
+    assert tracks[0].confidence == 0.80
+    assert tracks[0].bbox == YoloBBox(x=1.0, y=2.0, width=10.0, height=20.0)
 
 
 def test_yolo_runtime_drops_untracked_detections_and_keeps_distinct_track_ids(tmp_path) -> None:

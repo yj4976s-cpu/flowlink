@@ -1,5 +1,4 @@
 from io import BytesIO
-import logging
 from pathlib import Path
 from uuid import uuid4
 
@@ -12,19 +11,13 @@ from app.core.config import get_settings
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 ALLOWED_IMAGE_FORMATS = {"JPEG": (".jpg", "JPEG"), "PNG": (".png", "PNG"), "WEBP": (".webp", "WEBP")}
 SUPABASE_UPLOAD_TIMEOUT_SECONDS = 20.0
-logger = logging.getLogger(__name__)
-
-
-def _valid_supabase_service_key(value: str) -> bool:
-    key = value.strip()
-    return bool(key and "<" not in key and ">" not in key and len(key.split(".")) == 3)
 
 
 def _supabase_configured() -> bool:
     settings = get_settings()
     return bool(
         settings.SUPABASE_URL.strip()
-        and _valid_supabase_service_key(settings.SUPABASE_SERVICE_ROLE_KEY)
+        and settings.SUPABASE_SERVICE_ROLE_KEY.strip()
         and settings.SUPABASE_STORAGE_BUCKET.strip()
     )
 
@@ -54,12 +47,6 @@ async def _upload_to_supabase(object_key: str, payload: bytes, content_type: str
             response = await client.post(upload_url, content=payload, headers=headers)
         response.raise_for_status()
     except httpx.HTTPError as exc:
-        response = getattr(exc, "response", None)
-        logger.error(
-            "Supabase image upload failed: status=%s response=%s",
-            getattr(response, "status_code", None),
-            getattr(response, "text", "")[:500],
-        )
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Image storage upload failed") from exc
 
     return _supabase_public_url(object_key)

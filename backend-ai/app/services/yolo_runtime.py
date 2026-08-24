@@ -38,6 +38,12 @@ class YoloTrackPrediction:
     appearance_count: int
 
 
+@dataclass(frozen=True)
+class YoloTrackObservation:
+    prediction: YoloTrackPrediction
+    frame_index: int
+
+
 class YoloRuntimeUnavailableError(RuntimeError):
     pass
 
@@ -70,7 +76,7 @@ class YoloRuntime:
         rendered_video_path: Path | None = None,
     ) -> list[YoloTrackPrediction]:
         model = self._get_model()
-        tracked: dict[tuple[str, int | None], YoloTrackPrediction] = {}
+        observations: dict[tuple[str, int | None], list[YoloTrackObservation]] = {}
         writer = None
         intermediate_video_path: Path | None = None
         frames_written = 0
@@ -120,18 +126,8 @@ class YoloRuntime:
                         if prediction.track_id is None:
                             continue
                         key = (prediction.model_label, prediction.track_id)
-                        previous = tracked.get(key)
-                        if previous is None:
-                            tracked[key] = prediction
-                            continue
-                        tracked[key] = YoloTrackPrediction(
-                            model_label=previous.model_label,
-                            confidence=max(previous.confidence, prediction.confidence),
-                            bbox=prediction.bbox if prediction.confidence >= previous.confidence else previous.bbox,
-                            track_id=previous.track_id,
-                            first_seen_ms=min(previous.first_seen_ms, prediction.first_seen_ms),
-                            last_seen_ms=max(previous.last_seen_ms, prediction.last_seen_ms),
-                            appearance_count=previous.appearance_count + 1,
+                        observations.setdefault(key, []).append(
+                            YoloTrackObservation(prediction=prediction, frame_index=frame_index)
                         )
             except Exception as exc:
                 tracking_error = exc
@@ -155,7 +151,7 @@ class YoloRuntime:
                     if intermediate_video_path is not None:
                         intermediate_video_path.unlink(missing_ok=True)
         return sorted(
-            tracked.values(),
+            _aggregate_track_observations(observations),
             key=lambda prediction: (
                 prediction.first_seen_ms,
                 prediction.track_id if prediction.track_id is not None else 10**12,
@@ -339,3 +335,37 @@ def _transcode_h264_mp4(input_path: Path, output_path: Path) -> None:
         raise RuntimeError("FFmpeg H.264 conversion failed")
     if not output_path.exists() or output_path.stat().st_size == 0:
         raise RuntimeError("FFmpeg did not create a rendered video")
+
+
+def _aggregate_track_observations(
+    observations_by_track: dict[tuple[str, int | None], list[YoloTrackObservation]],
+) -> list[YoloTrackPrediction]:
+    predictions: list[YoloTrackPrediction] = []
+    for observations in observations_by_track.values():
+        if not observations:
+            continue
+        seen_ms_values = [observation.prediction.first_seen_ms for observation in observations]
+        first_seen_ms = min(seen_ms_values)
+        last_seen_ms = max(seen_ms_values)
+        midpoint_ms = (first_seen_ms + last_seen_ms) / 2
+        max_confidence = max(observation.prediction.confidence for observation in observations)
+        representative = min(
+            observations,
+            key=lambda observation: (
+                abs(observation.prediction.first_seen_ms - midpoint_ms),
+                -observation.prediction.confidence,
+                observation.frame_index,
+            ),
+        ).prediction
+        predictions.append(
+            YoloTrackPrediction(
+                model_label=representative.model_label,
+                confidence=max_confidence,
+                bbox=representative.bbox,
+                track_id=representative.track_id,
+                first_seen_ms=first_seen_ms,
+                last_seen_ms=last_seen_ms,
+                appearance_count=len(observations),
+            )
+        )
+    return predictions
