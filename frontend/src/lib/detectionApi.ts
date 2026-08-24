@@ -23,6 +23,8 @@ export type DetectionEvent = {
   source_type: "IMAGE" | "VIDEO";
   status: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED";
   purpose: "USER_ANALYSIS" | "OPERATION";
+  original_media_url: string;
+  result_media_url: string | null;
   media_width: number | null;
   media_height: number | null;
   created_at: string;
@@ -70,6 +72,15 @@ function buildApiUrl(path: string, params?: Record<string, string | number | und
     if (normalized) url.searchParams.set(key, normalized);
   });
   return url.toString();
+}
+
+export function resolveDetectionMediaUrl(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  if (!trimmed) return "";
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  const relative = trimmed.replace(/^\/+/, "");
+  const path = relative.startsWith("uploads/") ? `/${relative}` : `/uploads/${relative}`;
+  return new URL(path, `${getApiBaseUrl()}/`).toString();
 }
 
 function getFallbackMessage(status: number) {
