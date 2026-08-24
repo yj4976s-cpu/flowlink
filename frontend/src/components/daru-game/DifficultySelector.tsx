@@ -21,7 +21,7 @@ function PawMark() {
   );
 }
 
-export function DifficultySelector({ onSelect }: { onSelect: (difficulty: GameDifficulty) => void }) {
+export function DifficultySelector({ onSelect, startDisabled = false, startPending = false }: { onSelect: (difficulty: GameDifficulty) => void | Promise<void>; startDisabled?: boolean; startPending?: boolean }) {
   const { theme } = useTheme();
   const previewTimerRef = useRef<number | null>(null);
   const [selected, setSelected] = useState<GameDifficulty>("easy");
@@ -54,7 +54,7 @@ export function DifficultySelector({ onSelect }: { onSelect: (difficulty: GameDi
       </div>
       <div className={styles.compactDifficulty} aria-label="난이도 선택">
         {(Object.entries(DIFFICULTY_CONFIG) as [GameDifficulty, (typeof DIFFICULTY_CONFIG)[GameDifficulty]][]).map(([key, config]) => (
-          <button key={key} className={styles.difficultyOption} type="button" aria-pressed={selected === key} onClick={() => setSelected(key)}>
+          <button key={key} className={styles.difficultyOption} type="button" aria-pressed={selected === key} disabled={startPending} onClick={() => setSelected(key)}>
             <span className={styles.difficultyHeading}><small>{config.key === "NORMAL" ? "MEDIUM" : config.key}</small><strong>{config.label}</strong></span>
             <span className={styles.difficultyPair}><b>{config.pairCount}</b><em>쌍</em></span>
             <span className={styles.difficultyMeta}>총 {config.cardCount}장 · 목표 {config.speedBenchmarkSeconds}초</span>
@@ -63,9 +63,9 @@ export function DifficultySelector({ onSelect }: { onSelect: (difficulty: GameDi
           </button>
         ))}
       </div>
-      <button className={`button button-primary ${styles.startButton}`} type="button" onClick={() => onSelect(selectedConfig.key.toLowerCase() as GameDifficulty)}>
-        <strong>{selectedConfig.label}으로 시작</strong>
-        <span>{selectedConfig.pairCount}쌍 · 목표 시간 {selectedConfig.speedBenchmarkSeconds}초</span>
+      <button className={`button button-primary ${styles.startButton}`} type="button" disabled={startDisabled || startPending} aria-busy={startPending || undefined} onClick={() => onSelect(selectedConfig.key.toLowerCase() as GameDifficulty)}>
+        <strong>{startPending ? "게임 준비 중…" : startDisabled ? "로그인 상태 확인 중…" : `${selectedConfig.label}으로 시작`}</strong>
+        <span>{startPending ? "기록 저장 준비를 확인하고 있어요" : `${selectedConfig.pairCount}쌍 · 목표 시간 ${selectedConfig.speedBenchmarkSeconds}초`}</span>
       </button>
     </section>
   );
