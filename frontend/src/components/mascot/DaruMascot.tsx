@@ -29,7 +29,7 @@ export function DaruMascot({ action, mode, message, reducedMotion, dragging, gui
     <div className={styles.mascot} data-action={action} data-mode={mode} data-dragging={dragging || undefined} data-reduced-motion={reducedMotion || undefined}>
       {mode === "active" && action !== "idle" && !guideOpen && <p className={styles.bubble} role="status">{label}</p>}
       <button className={styles.character} type="button" aria-label="다루와 상호작용하거나 끌어서 이동하기" onClick={onInteract} onPointerEnter={onHover} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerCancel}>
-        <DaruCharacter state={rendererState} />
+        <DaruCharacter state={rendererState} action={action} />
       </button>
       <button className={styles.guideTrigger} type="button" aria-label="다루 안내 열기" aria-expanded={guideOpen} aria-controls="daru-guide-panel" onClick={onGuide}>i</button>
     </div>

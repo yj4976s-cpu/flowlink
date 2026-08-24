@@ -60,7 +60,7 @@ function waitForImage(image: HTMLImageElement) {
 }
 
 export async function loadThemedDaruImageSrc(src: string, theme: DaruRhythm) {
-  if (theme !== "night" || isPreGeneratedThemeAsset(src, theme)) return src;
+  if (theme === "day" || isPreGeneratedThemeAsset(src, theme)) return src;
   const key = `${theme}:${src}`;
   const cached = themedImageCache.get(key);
   if (cached) return cached;
@@ -83,8 +83,16 @@ export async function loadThemedDaruImageSrc(src: string, theme: DaruRhythm) {
         const green = data[offset + 1];
         const blue = data[offset + 2];
         if (!isScarfBlue(red, green, blue, data[offset + 3], x, y, canvas.width, canvas.height)) continue;
-        data[offset] = Math.min(255, Math.round(blue * 0.68));
-        data[offset + 1] = Math.round(green * 0.55);
+        const shade = Math.max(red, green, blue) / 255;
+        if (theme === "dawn") {
+          data[offset] = Math.round(255 * shade);
+          data[offset + 1] = Math.round(95 * shade);
+          data[offset + 2] = Math.round(45 * shade);
+        } else {
+          data[offset] = Math.round(139 * shade);
+          data[offset + 1] = Math.round(92 * shade);
+          data[offset + 2] = Math.round(246 * shade);
+        }
       }
     }
     context.putImageData(pixels, 0, 0);

@@ -23,7 +23,7 @@ CREATE TABLE users (
 
     email VARCHAR(255) NOT NULL,
 
-    password_hash TEXT NOT NULL
+    password_hash TEXT
         CHECK (BTRIM(password_hash) <> ''),
 
     nickname VARCHAR(50) NOT NULL
@@ -51,6 +51,37 @@ CREATE TABLE users (
 
 CREATE UNIQUE INDEX uq_users_email_lower
     ON users (LOWER(email));
+
+
+-- =========================================================
+-- 1-1. 사용자 소셜 계정
+-- provider 이메일이 아닌 provider identity로 계정을 식별
+-- =========================================================
+
+CREATE TABLE user_social_accounts (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+
+    user_id BIGINT NOT NULL
+        REFERENCES users(id) ON DELETE CASCADE,
+
+    provider VARCHAR(20) NOT NULL
+        CHECK (provider IN ('GOOGLE', 'NAVER', 'KAKAO')),
+
+    provider_user_id VARCHAR(255) NOT NULL
+        CHECK (BTRIM(provider_user_id) <> ''),
+
+    provider_email VARCHAR(255),
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT uq_user_social_accounts_provider_identity
+        UNIQUE (provider, provider_user_id),
+    CONSTRAINT uq_user_social_accounts_user_provider
+        UNIQUE (user_id, provider)
+);
+
+ALTER TABLE user_social_accounts ENABLE ROW LEVEL SECURITY;
 
 
 -- =========================================================
@@ -738,6 +769,11 @@ CREATE TABLE processing_histories (
 
 CREATE TRIGGER trg_users_updated_at
 BEFORE UPDATE ON users
+FOR EACH ROW
+EXECUTE FUNCTION flowlink_set_updated_at();
+
+CREATE TRIGGER trg_user_social_accounts_updated_at
+BEFORE UPDATE ON user_social_accounts
 FOR EACH ROW
 EXECUTE FUNCTION flowlink_set_updated_at();
 
