@@ -1,4 +1,5 @@
-import { DARU_CARD_ASSETS, DETECTED_ITEMS, DETECTION_POWER_WEIGHTS, DIFFICULTY_CONFIG, EASY_ITEM_KEYS, POINT_CONFIG, RANK_THRESHOLDS } from "./game.config";
+import { CARD_CATALOG, CARD_IDS_BY_DIFFICULTY, getCardThemeImages } from "./card.catalog";
+import { DETECTION_POWER_WEIGHTS, DIFFICULTY_CONFIG, POINT_CONFIG, RANK_THRESHOLDS } from "./game.config";
 import type { DaruGameTheme, DetectionMetrics, GameCard, GameDifficulty, GameRank } from "./game.types";
 
 export function shuffleCards(cards: GameCard[], random = Math.random) {
@@ -11,26 +12,13 @@ export function shuffleCards(cards: GameCard[], random = Math.random) {
 }
 
 export function createGameDeck(difficulty: GameDifficulty, random = Math.random) {
-  const config = DIFFICULTY_CONFIG[difficulty];
-  const itemKeys = difficulty === "easy" ? EASY_ITEM_KEYS : DETECTED_ITEMS.map((item) => item.key);
-  const pairs: Omit<GameCard, "id">[] = [];
-
-  for (let index = 0; index < config.daruCount; index += 1) {
-    const asset = DARU_CARD_ASSETS[index];
-    pairs.push({
-      pairId: `daru-${asset.key}`,
-      kind: "daru",
-      image: asset.images.day,
-      label: asset.label,
-      themeImages: asset.images,
-    });
-  }
-
-  for (const key of itemKeys.slice(0, config.itemCount)) {
-    const item = DETECTED_ITEMS.find((candidate) => candidate.key === key);
-    if (!item) continue;
-    pairs.push({ pairId: `item-${item.key}`, kind: "detected-item", image: `icon:${item.icon}`, label: item.label, icon: item.icon });
-  }
+  const catalogById = new Map(CARD_CATALOG.map((card) => [card.id, card]));
+  const pairs: Omit<GameCard, "id">[] = CARD_IDS_BY_DIFFICULTY[difficulty].map((cardId) => {
+    const card = catalogById.get(cardId);
+    if (!card) throw new Error(`Unknown daru memory card: ${cardId}`);
+    const themeImages = getCardThemeImages(card);
+    return { pairId: card.id, kind: card.kind, image: themeImages.day, label: card.label, themeImages };
+  });
 
   const cards = pairs.flatMap((pair) => [0, 1].map((copy) => ({ ...pair, id: `${pair.pairId}-${copy}` })));
   return shuffleCards(cards, random);
@@ -83,5 +71,5 @@ export function formatElapsedTime(totalSeconds: number) {
 }
 
 export function resolveDaruCardImage(card: GameCard, theme: DaruGameTheme) {
-  return card.themeImages?.[theme] ?? card.image;
+  return card.themeImages[theme];
 }

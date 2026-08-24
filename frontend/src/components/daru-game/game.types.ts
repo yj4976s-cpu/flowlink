@@ -1,17 +1,21 @@
-import type { IconName } from "@/components/common/Icon";
-
 export type GameDifficulty = "easy" | "normal" | "hard";
 export type ApiGameDifficulty = "EASY" | "NORMAL" | "HARD";
 export type CardKind = "daru" | "detected-item";
 export type GamePhase = "lobby" | "preview" | "flipping" | "ready" | "playing" | "time-over" | "finished" | "partial";
 export type DaruGameTheme = "dawn" | "day" | "night";
+export type CardId =
+  | "greeting" | "excited" | "heart" | "thumbs-up" | "sleeping" | "sulky" | "shy" | "search"
+  | "coastal-cleanup" | "splash" | "branch-play" | "plastic-sort" | "umbrella-found" | "shoe-found"
+  | "backpack-found" | "proud" | "umbrella" | "shoe" | "backpack" | "ball" | "can"
+  | "plastic-bag" | "plastic-bottle" | "styrofoam";
 
 export type DaruThemeAssets = Record<DaruGameTheme, string>;
 
-export interface DaruCardAsset {
-  key: string;
+export interface CardCatalogEntry {
+  id: CardId;
+  kind: CardKind;
   label: string;
-  images: DaruThemeAssets;
+  filename: string;
 }
 
 export interface GameCard {
@@ -20,8 +24,7 @@ export interface GameCard {
   kind: CardKind;
   image: string;
   label: string;
-  icon?: IconName;
-  themeImages?: DaruThemeAssets;
+  themeImages: DaruThemeAssets;
 }
 
 export interface GameResultData {

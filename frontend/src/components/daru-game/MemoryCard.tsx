@@ -1,6 +1,5 @@
 import Image from "next/image";
 import type { CSSProperties } from "react";
-import { Icon } from "@/components/common/Icon";
 import { DARU_CARD_BACK_ASSETS } from "./game.config";
 import type { GameCard } from "./game.types";
 import { resolveDaruCardImage } from "./game.utils";
@@ -27,13 +26,8 @@ export function MemoryCard({ card, theme, flipped, matched, locked, flipDelayMs 
         </span>
         <span className={`${styles.cardFace} ${styles.cardFront}`} aria-hidden={!revealed}>
           <span className={styles.cardVisual}>
-            {card.kind === "daru" ? (
-              <Image src={resolveDaruCardImage(card, theme)} alt="" fill sizes="(max-width: 600px) 20vw, 120px" />
-            ) : card.icon ? (
-              <Icon name={card.icon} size={44} />
-            ) : null}
+            <Image src={resolveDaruCardImage(card, theme)} alt="" fill sizes="(max-width: 600px) 20vw, 120px" />
           </span>
-          <span className={styles.cardLabel}>{card.label}</span>
         </span>
       </span>
     </button>
