@@ -520,6 +520,10 @@ def test_yolo_runtime_transcodes_rendered_video_to_browser_h264(
     )
     captured: dict[str, object] = {}
 
+    def fake_fourcc(*codec):
+        captured["intermediate_codec"] = "".join(codec)
+        return 0
+
     def fake_run(command, **kwargs):
         captured["command"] = command
         captured["kwargs"] = kwargs
@@ -527,12 +531,14 @@ def test_yolo_runtime_transcodes_rendered_video_to_browser_h264(
         return subprocess.CompletedProcess(command, 0, b"", b"")
 
     monkeypatch.setitem(sys.modules, "cv2", fake_cv2)
+    fake_cv2.VideoWriter_fourcc = fake_fourcc
     monkeypatch.setattr("app.services.yolo_runtime._ffmpeg_executable", lambda: "ffmpeg")
     monkeypatch.setattr("app.services.yolo_runtime.subprocess.run", fake_run)
 
     tracks = runtime.track_video(video_path, fps=10, media_width=100, media_height=80, rendered_video_path=result_path)
 
     assert tracks
+    assert captured["intermediate_codec"] == "mp4v"
     assert result_path.read_bytes() == b"h264-yuv420p-faststart"
     assert not (tmp_path / "result-opencv.mp4").exists()
     command = captured["command"]

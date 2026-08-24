@@ -11,6 +11,8 @@ from PIL import Image
 
 from app.core.config import BACKEND_AI_DIR, REPO_ROOT, get_settings
 
+INTERMEDIATE_VIDEO_CODEC = "mp4v"
+
 
 @dataclass(frozen=True)
 class YoloBBox:
@@ -89,16 +91,15 @@ class YoloRuntime:
                     intermediate_video_path = rendered_video_path.with_name(
                         f"{rendered_video_path.stem}-opencv{rendered_video_path.suffix}"
                     )
-                    for codec in ("avc1", "mp4v"):
-                        candidate = cv2.VideoWriter(
-                            str(intermediate_video_path),
-                            cv2.VideoWriter_fourcc(*codec),
-                            fps,
-                            (media_width, media_height),
-                        )
-                        if candidate.isOpened():
-                            writer = candidate
-                            break
+                    candidate = cv2.VideoWriter(
+                        str(intermediate_video_path),
+                        cv2.VideoWriter_fourcc(*INTERMEDIATE_VIDEO_CODEC),
+                        fps,
+                        (media_width, media_height),
+                    )
+                    if candidate.isOpened():
+                        writer = candidate
+                    else:
                         candidate.release()
                     if writer is None:
                         raise RuntimeError("Rendered video writer could not be opened")

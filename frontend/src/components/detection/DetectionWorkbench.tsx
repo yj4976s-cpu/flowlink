@@ -1300,13 +1300,14 @@ export function DetectionWorkbench() {
                     onChange={handleFileChange}
                   />
                   {(previewUrl && file) || displayedVideoUrl ? (
-                    <div className={styles.dropzonePreview}>
+                    <div className={`${styles.dropzonePreview} ${tab === "video" ? styles.videoDropzonePreview : ""}`}>
                       {tab === "image" ? (
                         <ImageOverlay previewUrl={previewUrl} event={currentEvent} />
                       ) : displayedVideoUrl ? (
                         <div className={`${styles.previewFrame} ${styles.detectedVideoFrame}`}>
                           <video
                             src={displayedVideoUrl}
+                            poster={videoThumbnailUrl || undefined}
                             controls
                             playsInline
                             preload="metadata"

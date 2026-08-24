@@ -206,6 +206,14 @@
   min-height: 320px;
 }
 
+.videoDropzonePreview {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: auto;
+  min-height: 0;
+}
+
 .dropzonePreview .previewFrame {
   height: 100%;
   min-height: 320px;
@@ -243,6 +251,11 @@
   max-height: none;
   object-fit: contain;
   pointer-events: auto;
+}
+
+.videoDropzonePreview .previewFrame {
+  height: min(44vh, 390px);
+  min-height: 300px;
 }
 
 .videoPreviewFrame::after {
@@ -319,6 +332,14 @@
   background: color-mix(in srgb, var(--color-surface) 82%, transparent);
   box-shadow: var(--shadow-card);
   backdrop-filter: blur(14px);
+}
+
+.videoDropzonePreview .previewMeta {
+  position: static;
+  z-index: 1;
+  max-width: 100%;
+  align-self: flex-start;
+  box-shadow: none;
 }
 
 .previewMeta strong {
@@ -1230,8 +1251,18 @@
     min-height: 280px;
   }
 
+  .videoDropzonePreview {
+    height: auto;
+    min-height: 0;
+  }
+
   .dropzonePreview .previewFrame {
     min-height: 280px;
+  }
+
+  .videoDropzonePreview .previewFrame {
+    height: 280px;
+    min-height: 260px;
   }
 
   .previewMeta {
