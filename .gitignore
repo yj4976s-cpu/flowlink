@@ -10,6 +10,11 @@ frontend/out/
 frontend/coverage/
 frontend/npm-debug.log*
 
+# Local Daru card QA and normalization outputs
+/artifacts/
+/frontend/public/daru-memory/cards-normalized/
+/frontend/public/daru-memory/cards-normalized-test/
+
 # Python
 backend/.venv/
 backend/venv/
