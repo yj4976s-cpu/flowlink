@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -7,7 +8,18 @@ from pydantic import BaseModel, Field
 Difficulty = Literal["EASY", "NORMAL", "HARD"]
 
 
+class DaruGameRunInput(BaseModel):
+    difficulty: Difficulty
+
+
+class DaruGameRunResponse(BaseModel):
+    run_id: UUID
+    difficulty: Difficulty
+    started_at: datetime
+
+
 class DaruGameResultInput(BaseModel):
+    run_id: UUID
     difficulty: Difficulty
     completed: bool
     within_time_limit: bool

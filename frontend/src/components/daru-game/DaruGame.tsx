@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { useDaru } from "@/components/mascot";
 import { getCurrentUser, type AuthUser } from "@/lib/authApi";
-import { getDaruGameRecords, submitDaruGameResult, type GameRecord } from "@/lib/daruGameApi";
+import { createDaruGameRun, getDaruGameRecords, submitDaruGameResult, type GameRecord } from "@/lib/daruGameApi";
 import { BEST_RECORD_STORAGE_KEYS, DARU_MEMORY_GUIDE_ASSETS, DIFFICULTY_CONFIG, MISMATCH_REVEAL_MS } from "./game.config";
 import type { DetectionMetrics, GameCard, GameDifficulty, GamePhase, GameRank } from "./game.types";
 import { calculateDetectionMetricsWithEligibility, calculatePairPoints, createGameDeck, getGameRank } from "./game.utils";
@@ -34,6 +34,7 @@ export function DaruGame() {
   const hintIntervalRef = useRef<number | null>(null);
   const completionAnnouncedRef = useRef(false);
   const submitInProgressRef = useRef(false);
+  const runPromiseRef = useRef<Promise<string | null> | null>(null);
   const lastPairCueShownRef = useRef(false);
   const phaseRef = useRef<GamePhase>("lobby");
   const [phase, setPhaseState] = useState<GamePhase>("lobby");
@@ -99,8 +100,8 @@ export function DaruGame() {
     if (nextDifficulty) { const config = DIFFICULTY_CONFIG[nextDifficulty]; setTimeRemaining(config.timeLimitSeconds); setHintsRemaining(config.hintCount); }
     else { setTimeRemaining(0); setHintsRemaining(0); }
   }, [clearCompletionTimer, clearFeedbackTimer, clearHintTimer, clearMismatchTimer, clearSequenceTimer]);
-  const startGame = useCallback((nextDifficulty: GameDifficulty) => { resetState(nextDifficulty); setPreviousBestPower(bestRecords[nextDifficulty]?.best_detection_power ?? null); setDifficulty(nextDifficulty); setCards(createGameDeck(nextDifficulty)); setPhase("preview"); }, [bestRecords, resetState, setPhase]);
-  const chooseDifficulty = useCallback(() => { resetState(); setDifficulty(null); setCards([]); setPhase("lobby"); }, [resetState, setPhase]);
+  const startGame = useCallback((nextDifficulty: GameDifficulty) => { resetState(nextDifficulty); const record = bestRecords[nextDifficulty]; setPreviousBestPower(record?.best_attempts == null ? null : record.best_detection_power); runPromiseRef.current = currentUser?.role === "USER" ? createDaruGameRun(DIFFICULTY_CONFIG[nextDifficulty].key).then((run) => run.run_id).catch(() => { setRecordStatus("failed"); return null; }) : Promise.resolve(null); setDifficulty(nextDifficulty); setCards(createGameDeck(nextDifficulty)); setPhase("preview"); }, [bestRecords, currentUser, resetState, setPhase]);
+  const chooseDifficulty = useCallback(() => { resetState(); runPromiseRef.current = null; setDifficulty(null); setCards([]); setPhase("lobby"); }, [resetState, setPhase]);
 
   useEffect(() => {
     if (phase !== "preview" || !difficulty) return;
@@ -136,8 +137,10 @@ export function DaruGame() {
   };
   const submitResult = useCallback((completed: boolean, eligible: boolean, finalElapsed: number, finalPoints: number) => {
     if (currentUser?.role !== "USER" || submitInProgressRef.current || !difficulty) return;
+    const runPromise = runPromiseRef.current;
+    if (!runPromise) { setRecordStatus("failed"); return; }
     submitInProgressRef.current = true; setRecordStatus("saving");
-    void submitDaruGameResult({ difficulty: DIFFICULTY_CONFIG[difficulty].key, completed, within_time_limit: eligible, matched_pairs: matchedPairIds.length, attempts, elapsed_seconds: finalElapsed, max_combo: maxCombo, hints_used: DIFFICULTY_CONFIG[difficulty].hintCount - hintsRemaining, earned_daru_points: finalPoints }).then((response) => { setNewBest(response.is_new_best); setLeaderboardRank(response.leaderboard_rank); setPersonalBestPower(response.record.best_detection_power); setBestRecords((records) => ({ ...records, [difficulty]: response.record })); setRecordStatus("saved"); if (response.is_new_best) setLeaderboardRefresh((value) => value + 1); }).catch(() => setRecordStatus("failed"));
+    void runPromise.then((runId) => { if (!runId) throw new Error("Game run unavailable"); return submitDaruGameResult({ run_id: runId, difficulty: DIFFICULTY_CONFIG[difficulty].key, completed, within_time_limit: eligible, matched_pairs: matchedPairIds.length, attempts, elapsed_seconds: finalElapsed, max_combo: maxCombo, hints_used: DIFFICULTY_CONFIG[difficulty].hintCount - hintsRemaining, earned_daru_points: finalPoints }); }).then((response) => { setNewBest(response.is_new_best); setLeaderboardRank(response.leaderboard_rank); setPersonalBestPower(response.record.best_detection_power); setBestRecords((records) => ({ ...records, [difficulty]: response.record })); setRecordStatus("saved"); if (response.is_new_best) setLeaderboardRefresh((value) => value + 1); }).catch(() => setRecordStatus("failed"));
   }, [attempts, currentUser, difficulty, hintsRemaining, matchedPairIds.length, maxCombo]);
   useEffect(() => {
     if (phase !== "playing" || !difficulty || matchedPairIds.length !== DIFFICULTY_CONFIG[difficulty].pairCount || completionAnnouncedRef.current) return;

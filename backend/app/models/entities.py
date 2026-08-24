@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from uuid import UUID
 
-from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.dialects.postgresql import TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -42,6 +43,7 @@ class User(Base):
     copilot_conversations: Mapped[list[CopilotConversation]] = relationship(back_populates="user")
     social_accounts: Mapped[list[UserSocialAccount]] = relationship(back_populates="user", passive_deletes=True)
     daru_game_stats: Mapped[list[DaruGameStat]] = relationship(back_populates="user", passive_deletes=True)
+    daru_game_runs: Mapped[list[DaruGameRun]] = relationship(back_populates="user", passive_deletes=True)
 
 
 class UserSocialAccount(Base):
@@ -92,6 +94,21 @@ class DaruGameStat(Base):
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
 
     user: Mapped[User] = relationship(back_populates="daru_game_stats")
+
+
+class DaruGameRun(Base):
+    __tablename__ = "daru_game_runs"
+    __table_args__ = (
+        CheckConstraint("difficulty IN ('EASY', 'NORMAL', 'HARD')", name="ck_daru_game_runs_difficulty"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    difficulty: Mapped[str] = mapped_column(String(10), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+    user: Mapped[User] = relationship(back_populates="daru_game_runs")
 
 
 class ObjectClass(Base):

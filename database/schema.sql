@@ -751,6 +751,28 @@ CREATE TABLE public.daru_game_stats (
 ALTER TABLE public.daru_game_stats
 ENABLE ROW LEVEL SECURITY;
 
+CREATE TABLE public.daru_game_runs (
+    id UUID PRIMARY KEY,
+
+    user_id BIGINT NOT NULL
+        REFERENCES public.users(id)
+        ON DELETE CASCADE,
+
+    difficulty VARCHAR(10) NOT NULL
+        CHECK (difficulty IN ('EASY', 'NORMAL', 'HARD')),
+
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    consumed_at TIMESTAMPTZ,
+
+    CHECK (
+        consumed_at IS NULL
+        OR consumed_at >= started_at
+    )
+);
+
+ALTER TABLE public.daru_game_runs
+ENABLE ROW LEVEL SECURITY;
+
 -- =========================================================
 -- 12. 관리자 처리 이력
 -- 분류 수정, 회수, 승인, 반환 등의 기록
@@ -1002,6 +1024,10 @@ CREATE INDEX idx_daru_game_stats_ranking
         best_elapsed_seconds ASC,
         best_achieved_at ASC
     );
+
+CREATE INDEX idx_daru_game_runs_active_user
+    ON public.daru_game_runs (user_id, started_at DESC)
+    WHERE consumed_at IS NULL;
 
 CREATE INDEX idx_processing_histories_entity
     ON processing_histories (

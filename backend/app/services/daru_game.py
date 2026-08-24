@@ -1,21 +1,68 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.security import utc_now
-from app.models import DaruGameStat, User
+from app.models import DaruGameRun, DaruGameStat, User
 
 
 DIFFICULTY_CONFIG = {
-    "EASY": {"pairs": 10, "time_limit_seconds": 120, "speed_benchmark_seconds": 90, "combo_target": 5, "clear_bonus": 300},
-    "NORMAL": {"pairs": 16, "time_limit_seconds": 210, "speed_benchmark_seconds": 150, "combo_target": 7, "clear_bonus": 500},
-    "HARD": {"pairs": 24, "time_limit_seconds": 330, "speed_benchmark_seconds": 240, "combo_target": 9, "clear_bonus": 700},
+    "EASY": {"pairs": 10, "time_limit_seconds": 120, "speed_benchmark_seconds": 90, "combo_target": 5, "clear_bonus": 300, "preview_seconds": 5},
+    "NORMAL": {"pairs": 16, "time_limit_seconds": 210, "speed_benchmark_seconds": 150, "combo_target": 7, "clear_bonus": 500, "preview_seconds": 7},
+    "HARD": {"pairs": 24, "time_limit_seconds": 330, "speed_benchmark_seconds": 240, "combo_target": 9, "clear_bonus": 700, "preview_seconds": 9},
 }
+GAME_RUN_MAX_AGE = timedelta(hours=24)
+GAME_RUN_ELAPSED_TOLERANCE_SECONDS = 10
+GAME_RUN_TRANSITION_ALLOWANCE_SECONDS = 2
+GAME_RUN_NETWORK_ALLOWANCE_SECONDS = 30
+
+
+class GameRunNotFoundError(ValueError):
+    pass
+
+
+class GameRunConflictError(ValueError):
+    pass
+
+
+def create_game_run(db: Session, *, user_id: int, difficulty: str) -> DaruGameRun:
+    now = utc_now()
+    run = DaruGameRun(id=uuid4(), user_id=user_id, difficulty=difficulty, started_at=now)
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def game_run_lock_query(run_id: UUID):
+    return select(DaruGameRun).where(DaruGameRun.id == run_id).with_for_update()
+
+
+def _lock_and_consume_game_run(db: Session, *, run_id: UUID, user_id: int, difficulty: str, elapsed_seconds: int, now: datetime) -> DaruGameRun:
+    run = db.scalar(game_run_lock_query(run_id))
+    if run is None or run.user_id != user_id:
+        raise GameRunNotFoundError("Game run not found")
+    if run.difficulty != difficulty:
+        raise ValueError("Game run difficulty does not match result")
+    if run.consumed_at is not None:
+        raise GameRunConflictError("Game run has already been consumed")
+    started_at = run.started_at if run.started_at.tzinfo is not None else run.started_at.replace(tzinfo=UTC)
+    run_age = now - started_at
+    if run_age < timedelta(0) or run_age > GAME_RUN_MAX_AGE:
+        raise GameRunConflictError("Game run has expired")
+    if elapsed_seconds > run_age.total_seconds() + GAME_RUN_ELAPSED_TOLERANCE_SECONDS:
+        raise ValueError("Result elapsed time exceeds the server game run duration")
+    maximum_non_play_seconds = DIFFICULTY_CONFIG[difficulty]["preview_seconds"] + GAME_RUN_TRANSITION_ALLOWANCE_SECONDS + GAME_RUN_NETWORK_ALLOWANCE_SECONDS
+    if run_age.total_seconds() - elapsed_seconds > maximum_non_play_seconds:
+        raise ValueError("Result elapsed time is implausibly short for the server game run duration")
+    run.consumed_at = now
+    return run
 
 
 def _round_like_javascript(value: float) -> int:
@@ -91,11 +138,12 @@ def _apply_result(stat: DaruGameStat, *, eligible: bool, power: int, attempts: i
     return improved
 
 
-def submit_result(db: Session, *, user_id: int, difficulty: str, completed: bool, within_time_limit: bool, matched_pairs: int, attempts: int, elapsed_seconds: int, max_combo: int, hints_used: int, earned_points: int) -> tuple[DaruGameStat, bool]:
+def submit_result(db: Session, *, run_id: UUID, user_id: int, difficulty: str, completed: bool, within_time_limit: bool, matched_pairs: int, attempts: int, elapsed_seconds: int, max_combo: int, hints_used: int, earned_points: int) -> tuple[DaruGameStat, bool]:
     validate_result(difficulty, completed=completed, within_time_limit=within_time_limit, matched_pairs=matched_pairs, attempts=attempts, elapsed_seconds=elapsed_seconds, max_combo=max_combo, hints_used=hints_used, earned_points=earned_points)
     eligible = completed and within_time_limit
     power = calculate_detection_power(difficulty, attempts, elapsed_seconds, max_combo, within_time_limit)
     now = utc_now()
+    _lock_and_consume_game_run(db, run_id=run_id, user_id=user_id, difficulty=difficulty, elapsed_seconds=elapsed_seconds, now=now)
     stat = db.scalar(select(DaruGameStat).where(DaruGameStat.user_id == user_id, DaruGameStat.difficulty == difficulty).with_for_update())
     inserting = stat is None
     if inserting:
@@ -110,6 +158,8 @@ def submit_result(db: Session, *, user_id: int, difficulty: str, completed: bool
         if not inserting:
             raise
         db.rollback()
+        now = utc_now()
+        _lock_and_consume_game_run(db, run_id=run_id, user_id=user_id, difficulty=difficulty, elapsed_seconds=elapsed_seconds, now=now)
         stat = db.scalar(select(DaruGameStat).where(DaruGameStat.user_id == user_id, DaruGameStat.difficulty == difficulty).with_for_update())
         if stat is None:
             raise
