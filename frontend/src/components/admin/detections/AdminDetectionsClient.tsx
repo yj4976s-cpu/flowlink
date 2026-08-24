@@ -132,9 +132,18 @@ function Media({ src, fallbackSrc, alt, compact = false, mediaType = "IMAGE" }: 
   );
 }
 
-function eventMedia(event: DetectionEvent) { return event.result_media_url || event.original_media_url; }
+function eventMedia(event: DetectionEvent) {
+  if (event.source_type === "VIDEO") {
+    return event.result_media_url ? event.result_media_url : event.original_media_url;
+  }
+  return event.original_media_url ? event.original_media_url : event.result_media_url;
+}
 function eventImage(event: DetectionEvent) { return event.source_type === "IMAGE" ? eventMedia(event) : null; }
 function eventMediaType(event: DetectionEvent): DetectionMediaType { return event.source_type === "VIDEO" ? "VIDEO" : "IMAGE"; }
+function videoMediaLabel(event: DetectionEvent) {
+  if (event.source_type !== "VIDEO") return null;
+  return event.result_media_url ? "Bounding Box가 포함된 탐지 결과 영상입니다." : "결과 영상이 아직 생성되지 않아 업로드한 원본 영상을 표시합니다.";
+}
 function classGroup(code: string | null | undefined): ClassGroup { return classOptions.find((item) => item.value === code)?.group ?? "OTHER"; }
 function classLabel(object: DetectionObject) { const code = object.final_class_code || object.object_class; return classOptions.find((item) => item.value === code)?.label ?? object.object_class_name; }
 function effectiveClassCode(object: DetectionObject) { return object.final_class_code || object.object_class; }
@@ -655,6 +664,7 @@ export function AdminDetectionsClient() {
             </div>
             <div className={styles.mediaReview}>
               <Media src={eventMedia(selected!)} mediaType={eventMediaType(selected!)} alt={`탐지 #${selected!.id} 탐지 미디어`} />
+              {videoMediaLabel(selected!) && <p className={styles.videoMediaNotice}>{videoMediaLabel(selected!)}</p>}
               {selected!.source_type === "IMAGE" && <button type="button" ref={focusTriggerRef} onClick={() => setFocusedReview(true)}><Icon name="maximize" size={16} />확대해서 보기</button>}
             </div>
             <div className={styles.objectSelector}>

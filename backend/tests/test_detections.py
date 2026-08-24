@@ -333,6 +333,7 @@ def test_default_video_inference_uses_backend_ai_client_and_preserves_tracks(cli
             frame_count=84,
             fps=30,
             inference_ms=91.4,
+            rendered_video=b"rendered-video",
             tracks=[
                 AIInferenceVideoTrack(
                     model_label="shoe",
@@ -382,6 +383,8 @@ def test_default_video_inference_uses_backend_ai_client_and_preserves_tracks(cli
     event = db.query(DetectionEvent).one()
     job = db.query(VideoJob).one()
     assert event.status == "COMPLETED"
+    assert event.result_media_url is not None
+    assert event.result_media_url.endswith("-result.mp4")
     assert job.status == "COMPLETED"
     assert job.processing_progress == 100
 
@@ -393,7 +396,7 @@ def test_video_detection_processes_event_through_threadpool(
 ) -> None:
     user = seed_user(db, 1)
     authenticate(client, user)
-    override_inference(DetectionInferenceResult(media_width=320, media_height=180, detections=[]))
+    override_inference(DetectionInferenceResult(media_width=320, media_height=180, detections=[], rendered_video=b"rendered"))
     called = {"value": False}
 
     async def fake_run_in_threadpool(func, *args, **kwargs):
@@ -874,7 +877,7 @@ def test_video_detection_creates_video_job(client: TestClient, db: Session) -> N
     user = seed_user(db, 1)
     seed_object_class(db, 1, "BAG")
     authenticate(client, user)
-    override_inference(DetectionInferenceResult(media_width=None, media_height=None, detections=[]))
+    override_inference(DetectionInferenceResult(media_width=None, media_height=None, detections=[], rendered_video=b"rendered"))
 
     response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
 
@@ -888,6 +891,62 @@ def test_video_detection_creates_video_job(client: TestClient, db: Session) -> N
     assert job.processing_progress == 100
     assert job.processing_completed_at is not None
     assert job.error_message is None
+
+
+def test_video_detection_fails_when_rendered_result_video_is_missing(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    override_inference(DetectionInferenceResult(media_width=320, media_height=180, detections=[]))
+
+    response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
+
+    assert response.status_code == 500
+    event = db.query(DetectionEvent).one()
+    job = db.query(VideoJob).one()
+    assert event.status == "FAILED"
+    assert event.result_media_url is None
+    assert job.status == "FAILED"
+
+
+def test_video_detection_removes_rendered_result_video_when_db_save_fails(
+    client: TestClient,
+    db: Session,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = seed_user(db, 1)
+    seed_object_class(db, 1, "BAG")
+    authenticate(client, user)
+    override_inference(
+        DetectionInferenceResult(
+            media_width=320,
+            media_height=180,
+            rendered_video=b"rendered",
+            detections=[
+                DetectionPrediction(
+                    class_code="BAG",
+                    confidence=0.9,
+                    bbox=DetectionBBox(x=0, y=0, width=10, height=10),
+                )
+            ],
+        )
+    )
+
+    def fail_complete(*args, **kwargs):
+        session = args[0]
+        for detected_object in kwargs["objects"]:
+            session.add(detected_object)
+        session.flush()
+        raise RuntimeError("db failed")
+
+    monkeypatch.setattr("app.services.detections.complete_detection_event", fail_complete)
+
+    response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
+
+    assert response.status_code == 500
+    assert db.query(DetectionEvent).one().status == "FAILED"
+    assert db.query(DetectedObject).count() == 0
+    assert not list((tmp_path / "uploads").glob("detections/user/1/*-result.mp4"))
 
 
 def test_zero_detection_is_completed_without_objects(client: TestClient, db: Session) -> None:

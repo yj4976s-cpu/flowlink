@@ -1237,9 +1237,17 @@ export function DetectionWorkbench() {
     : currentEvent?.detected_objects.length ?? 0;
   const displayedSourceType = tab === "webcam" ? "WEBCAM" : currentEvent?.source_type ?? (tab === "image" ? "IMAGE" : "VIDEO");
   const displayedSourceTypeLabel = sourceTypeLabels[displayedSourceType] ?? displayedSourceType;
-  const detectedVideoUrl = currentEvent?.source_type === "VIDEO"
-    ? resolveDetectionMediaUrl(currentEvent.result_media_url || currentEvent.original_media_url)
+  const resultVideoUrl = currentEvent?.source_type === "VIDEO" && currentEvent.result_media_url
+    ? resolveDetectionMediaUrl(currentEvent.result_media_url)
     : "";
+  const originalVideoUrl = currentEvent?.source_type === "VIDEO" && currentEvent.original_media_url
+    ? resolveDetectionMediaUrl(currentEvent.original_media_url)
+    : "";
+  const displayedVideoUrl = resultVideoUrl || originalVideoUrl;
+  const displayedVideoLabel = resultVideoUrl ? "탐지 결과 영상" : "업로드한 원본 영상";
+  const displayedVideoDescription = resultVideoUrl
+    ? "Bounding Box가 포함된 결과 영상"
+    : "결과 영상이 아직 생성되지 않아 원본 영상만 표시됩니다.";
 
   return (
     <main className={styles.page}>
@@ -1291,14 +1299,14 @@ export function DetectionWorkbench() {
                     accept={tab === "image" ? "image/jpeg,image/png,image/webp" : "video/mp4"}
                     onChange={handleFileChange}
                   />
-                  {(previewUrl && file) || detectedVideoUrl ? (
+                  {(previewUrl && file) || displayedVideoUrl ? (
                     <div className={styles.dropzonePreview}>
                       {tab === "image" ? (
                         <ImageOverlay previewUrl={previewUrl} event={currentEvent} />
-                      ) : detectedVideoUrl ? (
+                      ) : displayedVideoUrl ? (
                         <div className={`${styles.previewFrame} ${styles.detectedVideoFrame}`}>
                           <video
-                            src={detectedVideoUrl}
+                            src={displayedVideoUrl}
                             controls
                             playsInline
                             preload="metadata"
@@ -1322,8 +1330,8 @@ export function DetectionWorkbench() {
                         </div>
                       )}
                       <div className={styles.previewMeta}>
-                        <strong>{file?.name ?? "탐지 결과 영상"}</strong>
-                        <span>{file ? `${formatBytes(file.size)} · 클릭해서 파일 교체` : "저장된 탐지 결과"}</span>
+                        <strong>{file?.name ?? displayedVideoLabel}</strong>
+                        <span>{file ? `${formatBytes(file.size)} · 클릭해서 파일 교체` : displayedVideoDescription}</span>
                       </div>
                     </div>
                   ) : (

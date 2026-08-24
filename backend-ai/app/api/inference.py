@@ -55,7 +55,7 @@ async def infer_video(
         result = await run_in_threadpool(service.analyze_video_file, video_path, **analyze_options)
         if not render:
             return result
-        if rendered_path is None or not rendered_path.exists():
+        if rendered_path is None or not rendered_path.exists() or rendered_path.stat().st_size == 0:
             raise InferenceModelUnavailableError("Rendered video was not created")
         archive = BytesIO()
         with ZipFile(archive, "w", compression=ZIP_DEFLATED) as bundle:

@@ -136,6 +136,8 @@ def _complete_with_result(
     rendered_media_path: Path | None = None
 
     try:
+        if event.source_type == "VIDEO" and not result.rendered_video:
+            raise DetectionProcessingError("Rendered detection video is required")
         if event.source_type == "VIDEO" and result.rendered_video:
             rendered_media_path = media_path.with_name(f"{media_path.stem}-result.mp4")
             rendered_media_path.write_bytes(result.rendered_video)

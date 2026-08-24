@@ -156,6 +156,8 @@ class AIInferenceClient:
                 with ZipFile(BytesIO(response.content)) as bundle:
                     parsed = AIInferenceVideoResponse.model_validate_json(bundle.read("result.json"))
                     rendered_video = bundle.read("result.mp4")
+                    if not rendered_video:
+                        raise ValueError("rendered result video is empty")
             else:
                 parsed = AIInferenceVideoResponse.model_validate(response.json())
                 rendered_video = None

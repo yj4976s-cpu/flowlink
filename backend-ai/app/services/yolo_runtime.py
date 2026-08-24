@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import subprocess
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from shutil import which
 from threading import Lock
 
 from PIL import Image
@@ -70,14 +72,20 @@ class YoloRuntime:
         model = self._get_model()
         tracked: dict[tuple[str, int | None], YoloTrackPrediction] = {}
         writer = None
+        intermediate_video_path: Path | None = None
+        frames_written = 0
         with self._inference_lock:
+            tracking_error: Exception | None = None
             try:
                 if rendered_video_path is not None:
                     import cv2
 
+                    intermediate_video_path = rendered_video_path.with_name(
+                        f"{rendered_video_path.stem}-opencv{rendered_video_path.suffix}"
+                    )
                     for codec in ("avc1", "mp4v"):
                         candidate = cv2.VideoWriter(
-                            str(rendered_video_path),
+                            str(intermediate_video_path),
                             cv2.VideoWriter_fourcc(*codec),
                             fps,
                             (media_width, media_height),
@@ -100,6 +108,7 @@ class YoloRuntime:
                 for frame_index, result in enumerate(results):
                     if writer is not None:
                         writer.write(result.plot())
+                        frames_written += 1
                     frame_seen_ms = int(round((frame_index / fps) * 1000))
                     for prediction in self._parse_track_result(
                         model,
@@ -125,10 +134,26 @@ class YoloRuntime:
                             appearance_count=previous.appearance_count + 1,
                         )
             except Exception as exc:
-                raise YoloRuntimeUnavailableError("YOLO video tracking model is unavailable") from exc
+                tracking_error = exc
             finally:
                 if writer is not None:
                     writer.release()
+            if tracking_error is not None:
+                if intermediate_video_path is not None:
+                    intermediate_video_path.unlink(missing_ok=True)
+                if rendered_video_path is not None:
+                    rendered_video_path.unlink(missing_ok=True)
+                raise YoloRuntimeUnavailableError("YOLO video tracking model is unavailable") from tracking_error
+            if rendered_video_path is not None:
+                try:
+                    if intermediate_video_path is None or frames_written <= 0:
+                        raise RuntimeError("Rendered video contains no frames")
+                    _transcode_h264_mp4(intermediate_video_path, rendered_video_path)
+                except Exception as exc:
+                    raise YoloRuntimeUnavailableError("YOLO video tracking model is unavailable") from exc
+                finally:
+                    if intermediate_video_path is not None:
+                        intermediate_video_path.unlink(missing_ok=True)
         return sorted(
             tracked.values(),
             key=lambda prediction: (
@@ -272,3 +297,45 @@ def get_yolo_runtime() -> YoloRuntime:
         confidence=settings.DETECTION_CONFIDENCE,
         imgsz=settings.DETECTION_IMGSZ,
     )
+
+
+def _ffmpeg_executable() -> str:
+    system_ffmpeg = which("ffmpeg")
+    if system_ffmpeg:
+        return system_ffmpeg
+    try:
+        import imageio_ffmpeg
+    except ImportError as exc:
+        raise RuntimeError("FFmpeg executable is not available") from exc
+    return imageio_ffmpeg.get_ffmpeg_exe()
+
+
+def _transcode_h264_mp4(input_path: Path, output_path: Path) -> None:
+    if not input_path.exists() or input_path.stat().st_size == 0:
+        raise RuntimeError("Rendered intermediate video was not created")
+    output_path.unlink(missing_ok=True)
+    completed = subprocess.run(
+        [
+            _ffmpeg_executable(),
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            str(input_path),
+            "-an",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ],
+        check=False,
+        capture_output=True,
+    )
+    if completed.returncode != 0:
+        output_path.unlink(missing_ok=True)
+        raise RuntimeError("FFmpeg H.264 conversion failed")
+    if not output_path.exists() or output_path.stat().st_size == 0:
+        raise RuntimeError("FFmpeg did not create a rendered video")
