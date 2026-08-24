@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session
 from app.core.auth import get_optional_current_user, require_user
 from app.db.session import get_db
 from app.models import DaruGameStat, User
-from app.schemas.daru_game import DaruGameCardReveal, DaruGameFlipInput, DaruGameFlipResponse, DaruGameHintResponse, DaruGameMetrics, DaruGameRecord, DaruGameResultInput, DaruGameResultResponse, DaruGameRunInput, DaruGameRunResponse, DaruLeaderboardEntry, DaruLeaderboardResponse, Difficulty
-from app.services.daru_game import GameRunConflictError, GameRunNotFoundError, create_game_run, flip_card, leaderboard_rank, rank_for, ranking_query, start_gameplay, submit_result, use_game_hint
+from app.schemas.daru_game import DaruGameActionInput, DaruGameFlipInput, DaruGameFlipResponse, DaruGameHintResponse, DaruGameMetrics, DaruGameRecord, DaruGameResultInput, DaruGameResultResponse, DaruGameRunInput, DaruGameRunResponse, DaruGameRunStateResponse, DaruGameStartResponse, DaruLeaderboardEntry, DaruLeaderboardResponse, Difficulty
+from app.services.daru_game import GameRunConflictError, GameRunNotFoundError, create_game_run, flip_card, game_run_state, leaderboard_rank, perform_game_action, rank_for, ranking_query, start_gameplay, submit_result, use_game_hint
 
 router = APIRouter(prefix="/api/daru-game", tags=["daru-game"])
 
@@ -31,33 +31,45 @@ def _run_error(exc: ValueError) -> HTTPException:
     return HTTPException(status_code=422, detail=str(exc))
 
 
-@router.post("/runs/{run_id}/start", status_code=204)
-def start_run(run_id: UUID, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> None:
-    try: start_gameplay(db, run_id=run_id, user_id=current_user.id)
+@router.post("/runs/{run_id}/start", response_model=DaruGameStartResponse)
+def start_run(run_id: UUID, payload: DaruGameActionInput, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> DaruGameStartResponse:
+    try: result = perform_game_action(db, run_id=run_id, user_id=current_user.id, action_id=payload.action_id, action_type="START", request_payload={}, handler=start_gameplay)
     except ValueError as exc: raise _run_error(exc) from exc
+    return DaruGameStartResponse.model_validate(result)
 
 
 @router.post("/runs/{run_id}/flip", response_model=DaruGameFlipResponse)
 def flip_run_card(run_id: UUID, payload: DaruGameFlipInput, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> DaruGameFlipResponse:
-    try: run, matched, points_awarded = flip_card(db, run_id=run_id, user_id=current_user.id, position=payload.position)
+    try: result = perform_game_action(db, run_id=run_id, user_id=current_user.id, action_id=payload.action_id, action_type="FLIP", request_payload={"position": payload.position}, handler=lambda run: flip_card(run, position=payload.position))
     except ValueError as exc: raise _run_error(exc) from exc
-    return DaruGameFlipResponse(card=DaruGameCardReveal(position=payload.position, card_id=run.deck_state[payload.position]), matched=matched, matched_positions=list(run.matched_positions), attempts=run.attempts, matched_pairs=run.matched_pairs, current_combo=run.current_combo, max_combo=run.max_combo, earned_daru_points=run.earned_daru_points, points_awarded=points_awarded)
+    return DaruGameFlipResponse.model_validate(result)
 
 
 @router.post("/runs/{run_id}/hint", response_model=DaruGameHintResponse)
-def hint_run(run_id: UUID, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> DaruGameHintResponse:
-    try: run = use_game_hint(db, run_id=run_id, user_id=current_user.id)
+def hint_run(run_id: UUID, payload: DaruGameActionInput, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> DaruGameHintResponse:
+    try: result = perform_game_action(db, run_id=run_id, user_id=current_user.id, action_id=payload.action_id, action_type="HINT", request_payload={}, handler=use_game_hint)
     except ValueError as exc: raise _run_error(exc) from exc
-    return DaruGameHintResponse(hints_used=run.hints_used, hints_remaining=2 - run.hints_used, cards=[DaruGameCardReveal(position=index, card_id=card_id) for index, card_id in enumerate(run.deck_state)])
+    return DaruGameHintResponse.model_validate(result)
 
 
 @router.post("/results", response_model=DaruGameResultResponse)
 def create_result(payload: DaruGameResultInput, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> DaruGameResultResponse:
+    def complete(run):
+        stat, improved, metrics = submit_result(db, run=run, user_id=current_user.id, finish_partial=payload.finish_partial)
+        response = DaruGameResultResponse(record=record_response(stat), is_new_best=improved, leaderboard_rank=leaderboard_rank(db, stat), metrics=DaruGameMetrics(**{key: float(value) if isinstance(value, Decimal) else value for key, value in metrics.items()}))
+        return response.model_dump(mode="json")
     try:
-        stat, improved, metrics = submit_result(db, run_id=payload.run_id, user_id=current_user.id, finish_partial=payload.finish_partial)
+        result = perform_game_action(db, run_id=payload.run_id, user_id=current_user.id, action_id=payload.action_id, action_type="COMPLETE", request_payload={"finish_partial": payload.finish_partial}, handler=complete)
     except ValueError as exc:
         raise _run_error(exc) from exc
-    return DaruGameResultResponse(record=record_response(stat), is_new_best=improved, leaderboard_rank=leaderboard_rank(db, stat), metrics=DaruGameMetrics(**{key: float(value) if isinstance(value, Decimal) else value for key, value in metrics.items()}))
+    return DaruGameResultResponse.model_validate(result)
+
+
+@router.get("/runs/{run_id}/state", response_model=DaruGameRunStateResponse)
+def run_state(run_id: UUID, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> DaruGameRunStateResponse:
+    try: result = game_run_state(db, run_id=run_id, user_id=current_user.id)
+    except ValueError as exc: raise _run_error(exc) from exc
+    return DaruGameRunStateResponse.model_validate(result)
 
 
 @router.get("/leaderboard", response_model=DaruLeaderboardResponse)

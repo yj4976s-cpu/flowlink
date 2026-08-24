@@ -22,12 +22,23 @@ class DaruGameRunResponse(BaseModel):
 class DaruGameResultInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     run_id: UUID
+    action_id: UUID
     finish_partial: bool = False
 
 
 class DaruGameFlipInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    action_id: UUID
     position: int = Field(ge=0)
+
+
+class DaruGameActionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action_id: UUID
+
+
+class DaruGameStartResponse(BaseModel):
+    play_started_at: datetime
 
 
 class DaruGameCardReveal(BaseModel):
@@ -51,6 +62,25 @@ class DaruGameHintResponse(BaseModel):
     hints_used: int
     hints_remaining: int
     cards: list[DaruGameCardReveal]
+
+
+class DaruGameRunStateResponse(BaseModel):
+    run_id: UUID
+    difficulty: Difficulty
+    status: Literal["CREATED", "PLAYING", "COMPLETED"]
+    positions: list[int]
+    play_started_at: datetime | None
+    server_now: datetime
+    attempts: int
+    matched_pairs: int
+    current_combo: int
+    max_combo: int
+    hints_used: int
+    earned_daru_points: int
+    matched_positions: list[int]
+    first_position: int | None
+    visible_cards: list[DaruGameCardReveal]
+    completion_result: dict[str, object] | None = None
 
 
 class DaruGameMetrics(BaseModel):

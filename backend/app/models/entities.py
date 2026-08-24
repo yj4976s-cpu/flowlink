@@ -5,7 +5,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, Uuid
-from sqlalchemy.dialects.postgresql import TIMESTAMP
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
@@ -111,9 +111,9 @@ class DaruGameRun(Base):
     started_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     play_started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     consumed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
-    deck_state: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    deck_state: Mapped[list[str]] = mapped_column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list)
     first_position: Mapped[int | None] = mapped_column(Integer)
-    matched_positions: Mapped[list[int]] = mapped_column(JSON, nullable=False, default=list)
+    matched_positions: Mapped[list[int]] = mapped_column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     matched_pairs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     current_combo: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -122,6 +122,22 @@ class DaruGameRun(Base):
     earned_daru_points: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
 
     user: Mapped[User] = relationship(back_populates="daru_game_runs")
+
+
+class DaruGameRunAction(Base):
+    __tablename__ = "daru_game_run_actions"
+    __table_args__ = (
+        UniqueConstraint("run_id", "action_id", name="uq_daru_game_run_actions_run_action"),
+        CheckConstraint("action_type IN ('START', 'FLIP', 'HINT', 'COMPLETE')", name="ck_daru_game_run_actions_type"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(ForeignKey("daru_game_runs.id", ondelete="CASCADE"), nullable=False)
+    action_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    action_type: Mapped[str] = mapped_column(String(10), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    response_payload: Mapped[dict[str, object]] = mapped_column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
 
 
 class ObjectClass(Base):

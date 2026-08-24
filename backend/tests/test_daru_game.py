@@ -15,7 +15,7 @@ from app.core.auth import get_current_user, get_optional_current_user
 from app.core.security import utc_now
 from app.db.session import Base, get_db
 from app.main import app
-from app.models import DaruGameRun, DaruGameStat, User
+from app.models import DaruGameRun, DaruGameRunAction, DaruGameStat, User
 from app.services.daru_game import _round_to_tenth, calculate_detection_power, calculate_hint_score, calculate_memory_accuracy, calculate_speed_score, game_run_lock_query, is_better, rank_for, ranking_query
 
 
@@ -49,6 +49,10 @@ def create_run(client: TestClient, db: Session, difficulty: str, *, age_seconds:
     run.started_at = utc_now() - timedelta(seconds=age_seconds if age_seconds is not None else default_age)
     db.commit()
     return run_id
+
+
+def action_json(**payload: object) -> dict[str, object]:
+    return {"action_id": str(uuid4()), **payload}
 
 
 @pytest.fixture
@@ -160,7 +164,7 @@ def test_best_record_does_not_use_hints_as_a_separate_tie_break() -> None:
 
 def start_authoritative_run(client: TestClient, db: Session, difficulty: str = "EASY", *, elapsed_seconds: int = 90) -> tuple[str, DaruGameRun]:
     run_id = create_run(client, db, difficulty, age_seconds=0)
-    assert client.post(f"/api/daru-game/runs/{run_id}/start").status_code == 204
+    assert client.post(f"/api/daru-game/runs/{run_id}/start", json=action_json()).status_code == 200
     run = db.get(DaruGameRun, UUID(run_id)); assert run is not None
     card_ids = list(dict.fromkeys(run.deck_state))
     run.deck_state = [card_id for card_id in card_ids for _copy in range(2)]
@@ -171,8 +175,8 @@ def start_authoritative_run(client: TestClient, db: Session, difficulty: str = "
 
 def complete_pairs(client: TestClient, run_id: str, pair_count: int) -> None:
     for pair_index in range(pair_count):
-        assert client.post(f"/api/daru-game/runs/{run_id}/flip", json={"position": pair_index * 2}).status_code == 200
-        assert client.post(f"/api/daru-game/runs/{run_id}/flip", json={"position": pair_index * 2 + 1}).status_code == 200
+        assert client.post(f"/api/daru-game/runs/{run_id}/flip", json=action_json(position=pair_index * 2)).status_code == 200
+        assert client.post(f"/api/daru-game/runs/{run_id}/flip", json=action_json(position=pair_index * 2 + 1)).status_code == 200
 
 
 def test_run_creation_returns_positions_without_deck_identity(client: TestClient, db: Session) -> None:
@@ -184,20 +188,20 @@ def test_run_creation_returns_positions_without_deck_identity(client: TestClient
 
 def test_fake_perfect_metrics_and_points_are_rejected(client: TestClient, db: Session) -> None:
     run_id, _run = start_authoritative_run(client, db)
-    payload = {"run_id": run_id, "attempts": 10, "matched_pairs": 10, "max_combo": 10, "hints_used": 0, "elapsed_seconds": 45, "earned_daru_points": 9999}
+    payload = action_json(run_id=run_id, attempts=10, matched_pairs=10, max_combo=10, hints_used=0, elapsed_seconds=45, earned_daru_points=9999)
     assert client.post("/api/daru-game/results", json=payload).status_code == 422
     assert db.scalar(select(DaruGameStat)) is None
 
 
 def test_incomplete_run_cannot_complete(client: TestClient, db: Session) -> None:
     run_id, _run = start_authoritative_run(client, db)
-    assert client.post("/api/daru-game/results", json={"run_id": run_id}).status_code == 422
+    assert client.post("/api/daru-game/results", json=action_json(run_id=run_id)).status_code == 422
 
 
 def test_server_authoritative_perfect_easy_run(client: TestClient, db: Session) -> None:
     run_id, _run = start_authoritative_run(client, db, elapsed_seconds=90)
     complete_pairs(client, run_id, 10)
-    response = client.post("/api/daru-game/results", json={"run_id": run_id})
+    response = client.post("/api/daru-game/results", json=action_json(run_id=run_id))
     assert response.status_code == 200
     metrics = response.json()["metrics"]
     assert metrics["attempts"] == 10 and metrics["matched_pairs"] == 10
@@ -209,8 +213,8 @@ def test_server_authoritative_perfect_easy_run(client: TestClient, db: Session) 
 def test_mismatch_increments_attempt_and_resets_combo(client: TestClient, db: Session) -> None:
     run_id, run = start_authoritative_run(client, db)
     run.current_combo = 3; run.max_combo = 3; db.commit()
-    client.post(f"/api/daru-game/runs/{run_id}/flip", json={"position": 0})
-    response = client.post(f"/api/daru-game/runs/{run_id}/flip", json={"position": 2})
+    client.post(f"/api/daru-game/runs/{run_id}/flip", json=action_json(position=0))
+    response = client.post(f"/api/daru-game/runs/{run_id}/flip", json=action_json(position=2))
     assert response.json()["matched"] is False
     assert response.json()["attempts"] == 1
     assert response.json()["matched_pairs"] == 0
@@ -230,27 +234,27 @@ def test_server_combo_and_point_curve(client: TestClient, db: Session, matches: 
 def test_hint_endpoint_controls_score(client: TestClient, db: Session, hint_count: int, expected_hint_score: float) -> None:
     run_id, _run = start_authoritative_run(client, db)
     for expected_used in range(1, hint_count + 1):
-        response = client.post(f"/api/daru-game/runs/{run_id}/hint")
+        response = client.post(f"/api/daru-game/runs/{run_id}/hint", json=action_json())
         assert response.status_code == 200 and response.json()["hints_used"] == expected_used
     complete_pairs(client, run_id, 10)
-    result = client.post("/api/daru-game/results", json={"run_id": run_id})
+    result = client.post("/api/daru-game/results", json=action_json(run_id=run_id))
     assert result.json()["metrics"]["hint_score"] == expected_hint_score
 
 
 def test_third_hint_is_rejected(client: TestClient, db: Session) -> None:
     run_id, _run = start_authoritative_run(client, db)
-    assert client.post(f"/api/daru-game/runs/{run_id}/hint").status_code == 200
-    assert client.post(f"/api/daru-game/runs/{run_id}/hint").status_code == 200
-    assert client.post(f"/api/daru-game/runs/{run_id}/hint").status_code == 409
+    assert client.post(f"/api/daru-game/runs/{run_id}/hint", json=action_json()).status_code == 200
+    assert client.post(f"/api/daru-game/runs/{run_id}/hint", json=action_json()).status_code == 200
+    assert client.post(f"/api/daru-game/runs/{run_id}/hint", json=action_json()).status_code == 409
 
 
 def test_completion_replay_flip_and_hint_are_rejected_without_double_points(client: TestClient, db: Session) -> None:
     run_id, _run = start_authoritative_run(client, db)
     complete_pairs(client, run_id, 10)
-    assert client.post("/api/daru-game/results", json={"run_id": run_id}).status_code == 200
-    assert client.post("/api/daru-game/results", json={"run_id": run_id}).status_code == 409
-    assert client.post(f"/api/daru-game/runs/{run_id}/flip", json={"position": 0}).status_code == 409
-    assert client.post(f"/api/daru-game/runs/{run_id}/hint").status_code == 409
+    assert client.post("/api/daru-game/results", json=action_json(run_id=run_id)).status_code == 200
+    assert client.post("/api/daru-game/results", json=action_json(run_id=run_id)).status_code == 409
+    assert client.post(f"/api/daru-game/runs/{run_id}/flip", json=action_json(position=0)).status_code == 409
+    assert client.post(f"/api/daru-game/runs/{run_id}/hint", json=action_json()).status_code == 409
     stat = db.scalar(select(DaruGameStat)); assert stat is not None
     assert stat.total_daru_points == 2050 and stat.play_count == 1
 
@@ -260,22 +264,22 @@ def test_other_user_cannot_operate_run(client: TestClient, db: Session, action: 
     run_id = create_run(client, db, "EASY", age_seconds=0)
     other = add_user(db, 2, f"other-{action}")
     app.dependency_overrides[get_current_user] = lambda: other
-    if action == "start": response = client.post(f"/api/daru-game/runs/{run_id}/start")
-    elif action == "flip": response = client.post(f"/api/daru-game/runs/{run_id}/flip", json={"position": 0})
-    elif action == "hint": response = client.post(f"/api/daru-game/runs/{run_id}/hint")
-    else: response = client.post("/api/daru-game/results", json={"run_id": run_id})
+    if action == "start": response = client.post(f"/api/daru-game/runs/{run_id}/start", json=action_json())
+    elif action == "flip": response = client.post(f"/api/daru-game/runs/{run_id}/flip", json=action_json(position=0))
+    elif action == "hint": response = client.post(f"/api/daru-game/runs/{run_id}/hint", json=action_json())
+    else: response = client.post("/api/daru-game/results", json=action_json(run_id=run_id))
     assert response.status_code == 404
 
 
 def test_difficulty_cannot_be_overridden_at_completion(client: TestClient, db: Session) -> None:
     run_id, _run = start_authoritative_run(client, db)
-    assert client.post("/api/daru-game/results", json={"run_id": run_id, "difficulty": "HARD"}).status_code == 422
+    assert client.post("/api/daru-game/results", json=action_json(run_id=run_id, difficulty="HARD")).status_code == 422
 
 
 def test_server_timestamp_controls_elapsed_and_timeout(client: TestClient, db: Session) -> None:
     run_id, _run = start_authoritative_run(client, db, elapsed_seconds=121)
     complete_pairs(client, run_id, 10)
-    response = client.post("/api/daru-game/results", json={"run_id": run_id})
+    response = client.post("/api/daru-game/results", json=action_json(run_id=run_id))
     assert response.status_code == 200
     assert response.json()["metrics"]["within_time_limit"] is False
     assert response.json()["leaderboard_rank"] is None
@@ -284,7 +288,7 @@ def test_server_timestamp_controls_elapsed_and_timeout(client: TestClient, db: S
 def test_partial_timeout_uses_server_points_without_official_record(client: TestClient, db: Session) -> None:
     run_id, _run = start_authoritative_run(client, db, elapsed_seconds=121)
     complete_pairs(client, run_id, 2)
-    response = client.post("/api/daru-game/results", json={"run_id": run_id, "finish_partial": True})
+    response = client.post("/api/daru-game/results", json=action_json(run_id=run_id, finish_partial=True))
     assert response.status_code == 200
     assert response.json()["metrics"]["earned_daru_points"] == 225
     assert response.json()["record"]["best_attempts"] is None
@@ -295,7 +299,7 @@ def test_v1_first_authoritative_v2_result_preserves_totals(client: TestClient, d
     db.add(DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=Decimal("99.0"), score_version=1, best_attempts=10, best_elapsed_seconds=45, best_combo=5, best_hints_used=0, total_daru_points=500, play_count=3, best_achieved_at=now, created_at=now, updated_at=now)); db.commit()
     run_id, _run = start_authoritative_run(client, db)
     complete_pairs(client, run_id, 10)
-    response = client.post("/api/daru-game/results", json={"run_id": run_id})
+    response = client.post("/api/daru-game/results", json=action_json(run_id=run_id))
     assert response.json()["is_new_best"] is True
     assert response.json()["record"]["score_version"] == 2
     assert response.json()["record"]["total_daru_points"] == 2550
@@ -318,38 +322,38 @@ def test_game_run_actions_lock_the_row() -> None:
 @pytest.mark.parametrize("position", [-1, 20, 999])
 def test_flip_rejects_invalid_positions(client: TestClient, db: Session, position: int) -> None:
     run_id, _run = start_authoritative_run(client, db)
-    assert client.post(f"/api/daru-game/runs/{run_id}/flip", json={"position": position}).status_code == 422
+    assert client.post(f"/api/daru-game/runs/{run_id}/flip", json=action_json(position=position)).status_code == 422
 
 
 def test_same_position_cannot_be_flipped_twice(client: TestClient, db: Session) -> None:
     run_id, _run = start_authoritative_run(client, db)
-    assert client.post(f"/api/daru-game/runs/{run_id}/flip", json={"position": 0}).status_code == 200
-    assert client.post(f"/api/daru-game/runs/{run_id}/flip", json={"position": 0}).status_code == 422
+    assert client.post(f"/api/daru-game/runs/{run_id}/flip", json=action_json(position=0)).status_code == 200
+    assert client.post(f"/api/daru-game/runs/{run_id}/flip", json=action_json(position=0)).status_code == 422
 
 
 def test_run_cannot_start_twice(client: TestClient, db: Session) -> None:
     run_id, _run = start_authoritative_run(client, db)
-    assert client.post(f"/api/daru-game/runs/{run_id}/start").status_code == 409
+    assert client.post(f"/api/daru-game/runs/{run_id}/start", json=action_json()).status_code == 409
 
 
 @pytest.mark.parametrize("action", ["flip", "hint", "complete"])
 def test_actions_require_started_run(client: TestClient, db: Session, action: str) -> None:
     run_id = create_run(client, db, "EASY", age_seconds=0)
-    if action == "flip": response = client.post(f"/api/daru-game/runs/{run_id}/flip", json={"position": 0})
-    elif action == "hint": response = client.post(f"/api/daru-game/runs/{run_id}/hint")
-    else: response = client.post("/api/daru-game/results", json={"run_id": run_id})
+    if action == "flip": response = client.post(f"/api/daru-game/runs/{run_id}/flip", json=action_json(position=0))
+    elif action == "hint": response = client.post(f"/api/daru-game/runs/{run_id}/hint", json=action_json())
+    else: response = client.post("/api/daru-game/results", json=action_json(run_id=run_id))
     assert response.status_code == 409
 
 
 def test_hint_is_rejected_mid_attempt(client: TestClient, db: Session) -> None:
     run_id, _run = start_authoritative_run(client, db)
-    client.post(f"/api/daru-game/runs/{run_id}/flip", json={"position": 0})
-    assert client.post(f"/api/daru-game/runs/{run_id}/hint").status_code == 409
+    client.post(f"/api/daru-game/runs/{run_id}/flip", json=action_json(position=0))
+    assert client.post(f"/api/daru-game/runs/{run_id}/hint", json=action_json()).status_code == 409
 
 
 def test_partial_finish_is_rejected_before_timeout(client: TestClient, db: Session) -> None:
     run_id, _run = start_authoritative_run(client, db, elapsed_seconds=30)
-    assert client.post("/api/daru-game/results", json={"run_id": run_id, "finish_partial": True}).status_code == 422
+    assert client.post("/api/daru-game/results", json=action_json(run_id=run_id, finish_partial=True)).status_code == 422
 
 
 @pytest.mark.parametrize("role,expected", [(None, 401), ("ADMIN", 403)])
@@ -359,3 +363,98 @@ def test_guest_and_admin_cannot_create_authoritative_runs(client: TestClient, db
         admin = add_user(db, 3, "admin", role=role)
         app.dependency_overrides[get_current_user] = lambda: admin
     assert client.post("/api/daru-game/runs", json={"difficulty": "EASY"}).status_code == expected
+
+
+def test_start_response_loss_retry_is_idempotent(client: TestClient, db: Session) -> None:
+    run_id = create_run(client, db, "EASY", age_seconds=0)
+    action_id = str(uuid4())
+    first = client.post(f"/api/daru-game/runs/{run_id}/start", json={"action_id": action_id})
+    started_at = db.get(DaruGameRun, UUID(run_id)).play_started_at
+    retry = client.post(f"/api/daru-game/runs/{run_id}/start", json={"action_id": action_id})
+    assert first.status_code == retry.status_code == 200
+    assert first.json() == retry.json()
+    assert db.get(DaruGameRun, UUID(run_id)).play_started_at == started_at
+
+
+def test_first_flip_response_loss_retry_is_idempotent(client: TestClient, db: Session) -> None:
+    run_id, run = start_authoritative_run(client, db)
+    action_id = str(uuid4()); payload = {"action_id": action_id, "position": 3}
+    first = client.post(f"/api/daru-game/runs/{run_id}/flip", json=payload)
+    retry = client.post(f"/api/daru-game/runs/{run_id}/flip", json=payload)
+    db.refresh(run)
+    assert first.json() == retry.json()
+    assert run.first_position == 3 and run.attempts == 0
+
+
+@pytest.mark.parametrize(("second_position", "matched"), [(1, True), (2, False)])
+def test_second_flip_response_loss_retry_changes_state_once(client: TestClient, db: Session, second_position: int, matched: bool) -> None:
+    run_id, run = start_authoritative_run(client, db)
+    client.post(f"/api/daru-game/runs/{run_id}/flip", json=action_json(position=0))
+    action_id = str(uuid4()); payload = {"action_id": action_id, "position": second_position}
+    first = client.post(f"/api/daru-game/runs/{run_id}/flip", json=payload)
+    retry = client.post(f"/api/daru-game/runs/{run_id}/flip", json=payload)
+    db.refresh(run)
+    assert first.json() == retry.json() and first.json()["matched"] is matched
+    assert run.attempts == 1
+    assert run.matched_pairs == (1 if matched else 0)
+    assert run.earned_daru_points == (100 if matched else 0)
+
+
+def test_hint_response_loss_retry_does_not_consume_twice(client: TestClient, db: Session) -> None:
+    run_id, run = start_authoritative_run(client, db)
+    payload = {"action_id": str(uuid4())}
+    first = client.post(f"/api/daru-game/runs/{run_id}/hint", json=payload)
+    retry = client.post(f"/api/daru-game/runs/{run_id}/hint", json=payload)
+    db.refresh(run)
+    assert first.json() == retry.json()
+    assert run.hints_used == 1
+
+
+def test_completion_response_loss_retry_returns_snapshot_without_double_award(client: TestClient, db: Session) -> None:
+    run_id, _run = start_authoritative_run(client, db)
+    complete_pairs(client, run_id, 10)
+    payload = {"run_id": run_id, "action_id": str(uuid4())}
+    first = client.post("/api/daru-game/results", json=payload)
+    stat = db.scalar(select(DaruGameStat)); assert stat is not None
+    totals = (stat.total_daru_points, stat.play_count, stat.best_achieved_at)
+    retry = client.post("/api/daru-game/results", json=payload)
+    db.refresh(stat)
+    assert first.status_code == retry.status_code == 200 and first.json() == retry.json()
+    assert (stat.total_daru_points, stat.play_count, stat.best_achieved_at) == totals
+    assert len(db.scalars(select(DaruGameRunAction).where(DaruGameRunAction.action_type == "COMPLETE")).all()) == 1
+
+
+def test_action_id_reuse_with_different_payload_or_type_conflicts(client: TestClient, db: Session) -> None:
+    run_id, run = start_authoritative_run(client, db)
+    action_id = str(uuid4())
+    assert client.post(f"/api/daru-game/runs/{run_id}/flip", json={"action_id": action_id, "position": 0}).status_code == 200
+    assert client.post(f"/api/daru-game/runs/{run_id}/flip", json={"action_id": action_id, "position": 1}).status_code == 409
+    assert client.post(f"/api/daru-game/runs/{run_id}/hint", json={"action_id": action_id}).status_code == 409
+    db.refresh(run)
+    assert run.first_position == 0 and run.attempts == 0 and run.hints_used == 0
+
+
+def test_state_endpoint_hides_unknown_cards_and_restores_first_and_matched_cards(client: TestClient, db: Session) -> None:
+    run_id, run = start_authoritative_run(client, db)
+    initial = client.get(f"/api/daru-game/runs/{run_id}/state").json()
+    assert initial["visible_cards"] == [] and "deck_state" not in initial
+    client.post(f"/api/daru-game/runs/{run_id}/flip", json=action_json(position=0))
+    first = client.get(f"/api/daru-game/runs/{run_id}/state").json()
+    assert first["first_position"] == 0 and first["visible_cards"] == [{"position": 0, "card_id": run.deck_state[0]}]
+    client.post(f"/api/daru-game/runs/{run_id}/flip", json=action_json(position=1))
+    matched = client.get(f"/api/daru-game/runs/{run_id}/state").json()
+    assert matched["matched_positions"] == [0, 1] and matched["matched_pairs"] == 1
+    assert {card["position"] for card in matched["visible_cards"]} == {0, 1}
+    assert len(matched["visible_cards"]) == 2
+
+
+def test_state_endpoint_is_owner_only_and_restores_completion_result(client: TestClient, db: Session) -> None:
+    run_id, _run = start_authoritative_run(client, db)
+    complete_pairs(client, run_id, 10)
+    result = client.post("/api/daru-game/results", json=action_json(run_id=run_id))
+    state = client.get(f"/api/daru-game/runs/{run_id}/state")
+    assert state.status_code == 200 and state.json()["status"] == "COMPLETED"
+    assert state.json()["completion_result"] == result.json()
+    other = add_user(db, 2, "state-other")
+    app.dependency_overrides[get_current_user] = lambda: other
+    assert client.get(f"/api/daru-game/runs/{run_id}/state").status_code == 404

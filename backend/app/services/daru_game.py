@@ -2,15 +2,17 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
+import hashlib
+import json
 import secrets
+from typing import Any, Callable
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.security import utc_now
-from app.models import DaruGameRun, DaruGameStat, User
+from app.models import DaruGameRun, DaruGameRunAction, DaruGameStat, User
 
 
 DIFFICULTY_CONFIG = {
@@ -51,27 +53,57 @@ def game_run_lock_query(run_id: UUID):
     return select(DaruGameRun).where(DaruGameRun.id == run_id).with_for_update()
 
 
-def _locked_active_run(db: Session, *, run_id: UUID, user_id: int, now: datetime | None = None) -> DaruGameRun:
+def _locked_owned_run(db: Session, *, run_id: UUID, user_id: int) -> DaruGameRun:
     run = db.scalar(game_run_lock_query(run_id))
     if run is None or run.user_id != user_id:
         raise GameRunNotFoundError("Game run not found")
-    if run.consumed_at is not None:
-        raise GameRunConflictError("Game run has already been consumed")
+
+    return run
+
+
+def _ensure_not_expired(run: DaruGameRun, now: datetime | None = None) -> None:
     current = now or utc_now()
     started_at = run.started_at if run.started_at.tzinfo is not None else run.started_at.replace(tzinfo=UTC)
     if current - started_at < timedelta(0) or current - started_at > GAME_RUN_MAX_AGE:
         raise GameRunConflictError("Game run has expired")
-    return run
 
 
-def start_gameplay(db: Session, *, run_id: UUID, user_id: int) -> DaruGameRun:
-    run = _locked_active_run(db, run_id=run_id, user_id=user_id)
+def request_fingerprint(action_type: str, payload: dict[str, object]) -> str:
+    canonical = json.dumps({"action_type": action_type, "payload": payload}, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def perform_game_action(
+    db: Session,
+    *,
+    run_id: UUID,
+    user_id: int,
+    action_id: UUID,
+    action_type: str,
+    request_payload: dict[str, object],
+    handler: Callable[[DaruGameRun], dict[str, Any]],
+) -> dict[str, Any]:
+    run = _locked_owned_run(db, run_id=run_id, user_id=user_id)
+    fingerprint = request_fingerprint(action_type, request_payload)
+    receipt = db.scalar(select(DaruGameRunAction).where(DaruGameRunAction.run_id == run_id, DaruGameRunAction.action_id == action_id))
+    if receipt is not None:
+        if receipt.action_type != action_type or receipt.request_fingerprint != fingerprint:
+            raise GameRunConflictError("Action id was already used for a different request")
+        return dict(receipt.response_payload)
+    _ensure_not_expired(run)
+    if run.consumed_at is not None:
+        raise GameRunConflictError("Game run has already been consumed")
+    response_payload = handler(run)
+    db.add(DaruGameRunAction(run_id=run.id, action_id=action_id, action_type=action_type, request_fingerprint=fingerprint, response_payload=response_payload, created_at=utc_now()))
+    db.commit()
+    return response_payload
+
+
+def start_gameplay(run: DaruGameRun) -> dict[str, Any]:
     if run.play_started_at is not None:
         raise GameRunConflictError("Game run has already started")
     run.play_started_at = utc_now()
-    db.commit()
-    db.refresh(run)
-    return run
+    return {"play_started_at": run.play_started_at.isoformat()}
 
 
 def _require_started(run: DaruGameRun) -> None:
@@ -79,8 +111,7 @@ def _require_started(run: DaruGameRun) -> None:
         raise GameRunConflictError("Game run has not started")
 
 
-def flip_card(db: Session, *, run_id: UUID, user_id: int, position: int) -> tuple[DaruGameRun, bool | None, int]:
-    run = _locked_active_run(db, run_id=run_id, user_id=user_id)
+def flip_card(run: DaruGameRun, *, position: int) -> dict[str, Any]:
     _require_started(run)
     if not 0 <= position < len(run.deck_state):
         raise ValueError("Invalid card position")
@@ -105,22 +136,31 @@ def flip_card(db: Session, *, run_id: UUID, user_id: int, position: int) -> tupl
         else:
             run.current_combo = 0
         run.first_position = None
-    db.commit()
-    db.refresh(run)
-    return run, matched, points_awarded
+    return {
+        "card": {"position": position, "card_id": run.deck_state[position]},
+        "matched": matched,
+        "matched_positions": list(run.matched_positions),
+        "attempts": run.attempts,
+        "matched_pairs": run.matched_pairs,
+        "current_combo": run.current_combo,
+        "max_combo": run.max_combo,
+        "earned_daru_points": run.earned_daru_points,
+        "points_awarded": points_awarded,
+    }
 
 
-def use_game_hint(db: Session, *, run_id: UUID, user_id: int) -> DaruGameRun:
-    run = _locked_active_run(db, run_id=run_id, user_id=user_id)
+def use_game_hint(run: DaruGameRun) -> dict[str, Any]:
     _require_started(run)
     if run.hints_used >= 2:
         raise GameRunConflictError("No hints remaining")
     if run.first_position is not None:
         raise GameRunConflictError("Cannot use a hint during an attempt")
     run.hints_used += 1
-    db.commit()
-    db.refresh(run)
-    return run
+    return {
+        "hints_used": run.hints_used,
+        "hints_remaining": 2 - run.hints_used,
+        "cards": [{"position": index, "card_id": card_id} for index, card_id in enumerate(run.deck_state)],
+    }
 
 
 def _round_to_tenth(value: Decimal) -> Decimal:
@@ -204,9 +244,8 @@ def _apply_result(stat: DaruGameStat, *, eligible: bool, power: Decimal, attempt
     return improved
 
 
-def submit_result(db: Session, *, run_id: UUID, user_id: int, finish_partial: bool = False) -> tuple[DaruGameStat, bool, dict[str, int | bool | Decimal]]:
+def submit_result(db: Session, *, run: DaruGameRun, user_id: int, finish_partial: bool = False) -> tuple[DaruGameStat, bool, dict[str, int | bool | Decimal]]:
     now = utc_now()
-    run = _locked_active_run(db, run_id=run_id, user_id=user_id, now=now)
     _require_started(run)
     config = DIFFICULTY_CONFIG[run.difficulty]
     started_at = run.play_started_at if run.play_started_at.tzinfo is not None else run.play_started_at.replace(tzinfo=UTC)
@@ -225,29 +264,15 @@ def submit_result(db: Session, *, run_id: UUID, user_id: int, finish_partial: bo
     attempts = run.attempts
     max_combo = run.max_combo
     hints_used = run.hints_used
+    db.scalar(select(User).where(User.id == user_id).with_for_update())
     stat = db.scalar(select(DaruGameStat).where(DaruGameStat.user_id == user_id, DaruGameStat.difficulty == difficulty).with_for_update())
-    inserting = stat is None
-    if inserting:
+    if stat is None:
         stat = DaruGameStat(user_id=user_id, difficulty=difficulty, best_detection_power=power if eligible else Decimal("0.0"), score_version=CURRENT_SCORE_VERSION, best_attempts=attempts if eligible else None, best_elapsed_seconds=elapsed_seconds if eligible else None, best_combo=max_combo if eligible else 0, best_hints_used=hints_used if eligible else None, total_daru_points=earned_points, play_count=1, best_achieved_at=now if eligible else None, created_at=now, updated_at=now)
         db.add(stat)
         improved = eligible
     else:
         improved = _apply_result(stat, eligible=eligible, power=power, attempts=attempts, elapsed_seconds=elapsed_seconds, max_combo=max_combo, hints_used=hints_used, earned_points=earned_points, now=now)
-    try:
-        db.commit()
-    except IntegrityError:
-        if not inserting:
-            raise
-        db.rollback()
-        now = utc_now()
-        retry_run = _locked_active_run(db, run_id=run_id, user_id=user_id, now=now)
-        retry_run.consumed_at = now
-        stat = db.scalar(select(DaruGameStat).where(DaruGameStat.user_id == user_id, DaruGameStat.difficulty == difficulty).with_for_update())
-        if stat is None:
-            raise
-        improved = _apply_result(stat, eligible=eligible, power=power, attempts=attempts, elapsed_seconds=elapsed_seconds, max_combo=max_combo, hints_used=hints_used, earned_points=earned_points, now=now)
-        db.commit()
-    db.refresh(stat)
+    db.flush()
     metrics = detection_metrics(difficulty, attempts, elapsed_seconds, max_combo, hints_used, within_time_limit)
     return stat, improved, {
         **metrics,
@@ -259,6 +284,37 @@ def submit_result(db: Session, *, run_id: UUID, user_id: int, finish_partial: bo
         "earned_daru_points": earned_points,
         "within_time_limit": within_time_limit,
         "completed": completed,
+    }
+
+
+def game_run_state(db: Session, *, run_id: UUID, user_id: int) -> dict[str, Any]:
+    run = _locked_owned_run(db, run_id=run_id, user_id=user_id)
+    visible_positions = set(run.matched_positions or [])
+    if run.first_position is not None:
+        visible_positions.add(run.first_position)
+    completion_receipt = db.scalar(
+        select(DaruGameRunAction)
+        .where(DaruGameRunAction.run_id == run.id, DaruGameRunAction.action_type == "COMPLETE")
+        .order_by(DaruGameRunAction.created_at.desc())
+    )
+    status = "COMPLETED" if run.consumed_at is not None else "PLAYING" if run.play_started_at is not None else "CREATED"
+    return {
+        "run_id": str(run.id),
+        "difficulty": run.difficulty,
+        "status": status,
+        "positions": list(range(len(run.deck_state))),
+        "play_started_at": run.play_started_at.isoformat() if run.play_started_at else None,
+        "server_now": utc_now().isoformat(),
+        "attempts": run.attempts,
+        "matched_pairs": run.matched_pairs,
+        "current_combo": run.current_combo,
+        "max_combo": run.max_combo,
+        "hints_used": run.hints_used,
+        "earned_daru_points": run.earned_daru_points,
+        "matched_positions": list(run.matched_positions or []),
+        "first_position": run.first_position,
+        "visible_cards": [{"position": position, "card_id": run.deck_state[position]} for position in sorted(visible_positions)],
+        "completion_result": dict(completion_receipt.response_payload) if completion_receipt else None,
     }
 
 
