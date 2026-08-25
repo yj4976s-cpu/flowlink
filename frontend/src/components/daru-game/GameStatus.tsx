@@ -9,7 +9,7 @@ function HintIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 16.5h7M9.5 20h5M8 13.5a6 6 0 118 0c-1.2 1-1.7 1.8-1.8 3h-4.4c-.1-1.2-.6-2-1.8-3z" /></svg>;
 }
 
-export function GameStatus({ timeRemaining, timeLimit, isPreview = false, attempts, foundPairs, pairCount, combo, daruPoints, hintsRemaining, hintActive, onHint }: { timeRemaining: number; timeLimit: number; isPreview?: boolean; attempts: number; foundPairs: number; pairCount: number; combo: number; daruPoints: number; hintsRemaining: number; hintActive: boolean; onHint: () => void }) {
+export function GameStatus({ timeRemaining, isPreview = false, attempts, foundPairs, pairCount, combo, daruPoints, hintsRemaining, hintActive, onHint }: { timeRemaining: number; timeLimit: number; isPreview?: boolean; attempts: number; foundPairs: number; pairCount: number; combo: number; daruPoints: number; hintsRemaining: number; hintActive: boolean; onHint: () => void }) {
   const timerState = timeRemaining <= 10 ? "critical" : timeRemaining <= 30 ? "warning" : "normal";
   return <section className={styles.liveHud} aria-label="실시간 게임 현황" data-timer-state={timerState}>
     <span className={styles.hudEyebrow}>LIVE GAME HUD</span>
@@ -17,7 +17,6 @@ export function GameStatus({ timeRemaining, timeLimit, isPreview = false, attemp
       <div className={styles.timerZone}>
         <dt><span className={styles.timerIcon}><ClockIcon /><i aria-hidden="true" /></span>{isPreview ? "게임 시간" : "남은 시간"}</dt>
         <dd>{formatElapsedTime(timeRemaining)}</dd>
-        <progress className={styles.timeRail} max={Math.max(1, timeLimit)} value={timeRemaining} aria-label={`${isPreview ? "게임 시간" : "남은 시간"} ${formatElapsedTime(timeRemaining)}`} />
       </div>
       <div className={styles.foundZone}>
         <dt>카드 매칭</dt><dd>{foundPairs} <span>/ {pairCount}</span></dd>
