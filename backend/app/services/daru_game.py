@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 import hashlib
@@ -40,6 +41,10 @@ class GameRunConflictError(ValueError):
     pass
 
 
+class OutdatedGameRunError(GameRunConflictError):
+    pass
+
+
 def select_card_ids(difficulty: str, randomizer: Any | None = None) -> list[str]:
     if difficulty != "HARD":
         return list(CARD_IDS_BY_DIFFICULTY[difficulty])
@@ -64,11 +69,21 @@ def game_run_lock_query(run_id: UUID):
     return select(DaruGameRun).where(DaruGameRun.id == run_id).with_for_update()
 
 
+def _ensure_current_deck_shape(run: DaruGameRun) -> None:
+    if run.consumed_at is not None:
+        return
+    expected_pairs = DIFFICULTY_CONFIG[run.difficulty]["pairs"]
+    pair_counts = Counter(run.deck_state)
+    if len(run.deck_state) != expected_pairs * 2 or len(pair_counts) != expected_pairs or any(count != 2 for count in pair_counts.values()):
+        raise OutdatedGameRunError("Game run uses an outdated deck configuration")
+
+
 def _locked_owned_run(db: Session, *, run_id: UUID, user_id: int) -> DaruGameRun:
     run = db.scalar(game_run_lock_query(run_id))
     if run is None or run.user_id != user_id:
         raise GameRunNotFoundError("Game run not found")
 
+    _ensure_current_deck_shape(run)
     return run
 
 

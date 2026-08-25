@@ -9,7 +9,9 @@ import { getCurrentUser, type AuthUser } from "@/lib/authApi";
 import { AUTH_CHANGED_EVENT } from "@/lib/authEvents";
 import { clearDaruActiveRun, loadDaruActiveRun, storeDaruActiveRun } from "@/lib/daruActiveRun";
 import { createDaruGameRun, DaruGameApiError, flipDaruGameCard, getDaruGameRecords, getDaruGameRunPreview, getDaruGameRunState, requestDaruGameHint, startDaruGameRun, submitDaruGameResult, type GameRecord, type ServerGameMetrics, type ServerGameResult, type ServerRunState } from "@/lib/daruGameApi";
-import { BEST_RECORD_STORAGE_KEYS, DARU_CARD_BACK_ASSETS, DARU_MEMORY_GUIDE_ASSETS, DIFFICULTY_CONFIG, MISMATCH_REVEAL_MS } from "./game.config";
+import { isOutdatedDeckError } from "@/lib/daruRunRecovery";
+import { DARU_CARD_BACK_ASSETS, DARU_MEMORY_GUIDE_ASSETS, DIFFICULTY_CONFIG, MISMATCH_REVEAL_MS } from "./game.config";
+import { BEST_RECORD_STORAGE_KEYS, resolveGuestBest } from "./game.storage";
 import { CARD_CATALOG, getCardThemeImages } from "./card.catalog";
 import type { DetectionMetrics, GameCard, GameDifficulty, GamePhase, GameRank } from "./game.types";
 import { calculateDetectionMetricsWithEligibility, calculatePairPoints, createGameDeck, getGameRank } from "./game.utils";
@@ -98,6 +100,7 @@ export function DaruGame() {
   const [leaderboardRefresh, setLeaderboardRefresh] = useState(0);
   const [authExpired, setAuthExpired] = useState(false);
   const [previewRetry, setPreviewRetry] = useState<{ runId: string; difficulty: GameDifficulty } | null>(null);
+  const [runRecoveryNotice, setRunRecoveryNotice] = useState<string | null>(null);
 
   const setPhase = useCallback((next: GamePhase) => { phaseRef.current = next; setPhaseState(next); }, []);
   useEffect(() => { void getCurrentUser().then(setCurrentUser).catch(() => setCurrentUser(null)).finally(() => setAuthResolved(true)); }, []);
@@ -148,6 +151,7 @@ export function DaruGame() {
   }, [clearCompletionTimer, clearFeedbackTimer, clearHintTimer, clearMismatchTimer, clearSequenceTimer]);
   const startGame = useCallback(async (nextDifficulty: GameDifficulty) => {
     if (!authResolved || startPendingRef.current || authExpiredRef.current) return;
+    setRunRecoveryNotice(null);
     startPendingRef.current = true; setStartPending(true);
     let runId: string | null = null;
     try {
@@ -251,7 +255,10 @@ export function DaruGame() {
         setCards(previewServerCards(state.positions, preview.cards)); setPhase("preview");
       } else applyRunState(state, nextDifficulty);
     }).catch((error) => {
-      if (error instanceof DaruGameApiError && [404, 409].includes(error.status)) { clearDaruActiveRun(); runIdRef.current = null; }
+      if (isOutdatedDeckError(error)) {
+        clearDaruActiveRun(); runIdRef.current = null; setRunRecoveryNotice("이전 게임은 카드 구성이 변경되어 새 게임으로 시작해야 해요.");
+      }
+      else if (error instanceof DaruGameApiError && error.status === 404) { clearDaruActiveRun(); runIdRef.current = null; }
       else { runIdRef.current = stored.runId; setRecordStatus("failed"); setPreviewRetry({ runId: stored.runId, difficulty: nextDifficulty }); }
     });
   }, [applyRunState, authResolved, currentUser, resetState, setPhase]);
@@ -285,8 +292,9 @@ export function DaruGame() {
     }
     const hintsUsed = DIFFICULTY_CONFIG[difficulty].hintCount - hintsRemaining;
     const finalMetrics = calculateDetectionMetricsWithEligibility(difficulty, finalElapsed, attempts, maxCombo, hintsUsed, withinTimeLimit);
-    const storedBest = Number.parseFloat(localStorage.getItem(BEST_RECORD_STORAGE_KEYS[difficulty]) ?? "-1"); const guestBest = !isServerGame && withinTimeLimit && (!Number.isFinite(storedBest) || finalMetrics.detectionPower > storedBest);
-    const guestPreviousBest = !isServerGame && Number.isFinite(storedBest) && storedBest >= 0 ? storedBest : null;
+    const guestBestResult = resolveGuestBest(localStorage.getItem(BEST_RECORD_STORAGE_KEYS[difficulty]), finalMetrics.detectionPower, !isServerGame && withinTimeLimit);
+    const guestBest = guestBestResult.isNewBest;
+    const guestPreviousBest = !isServerGame ? guestBestResult.previousBest : null;
     if (!isServerGame && guestBest) localStorage.setItem(BEST_RECORD_STORAGE_KEYS[difficulty], String(finalMetrics.detectionPower));
     const finalPoints = daruPoints + DIFFICULTY_CONFIG[difficulty].clearBonus;
     setElapsedSeconds(finalElapsed); setDaruPoints(finalPoints); setMetrics(finalMetrics); setRank(getGameRank(finalMetrics.detectionPower)); setNewBest(!isServerGame && guestBest); setFeedback(null);
@@ -341,7 +349,7 @@ export function DaruGame() {
   const viewLeaderboard = () => { if (startPendingRef.current || submitInProgressRef.current) return; chooseDifficulty(); window.setTimeout(() => document.getElementById("daru-leaderboard")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0); };
   useEffect(() => () => { clearMismatchTimer(); clearFeedbackTimer(); clearSequenceTimer(); clearCompletionTimer(); clearHintTimer(); }, [clearCompletionTimer, clearFeedbackTimer, clearHintTimer, clearMismatchTimer, clearSequenceTimer]);
 
-  if (phase === "lobby" || !difficulty) return <>{authExpired && <p className={styles.authRecoveryNotice} role="alert">로그인 세션이 만료되었습니다. 게임을 시작하려면 <Link href="/login?next=%2Fdaru-game">다시 로그인</Link>해 주세요.</p>}{previewRetry && !authExpired && <p className={styles.authRecoveryNotice} role="alert">카드 미리보기를 불러오지 못했어요. <button type="button" onClick={() => void retryPreview()} disabled={startPending}>다시 시도</button></p>}<DifficultySelector onSelect={startGame} startDisabled={!authResolved || Boolean(previewRetry)} startPending={startPending} />{authResolved && currentUser?.role === "USER" && <DaruLeaderboard refreshKey={leaderboardRefresh} />}</>;
+  if (phase === "lobby" || !difficulty) return <>{runRecoveryNotice && <p className={styles.authRecoveryNotice} role="status">{runRecoveryNotice}</p>}{authExpired && <p className={styles.authRecoveryNotice} role="alert">로그인 세션이 만료되었습니다. 게임을 시작하려면 <Link href="/login?next=%2Fdaru-game">다시 로그인</Link>해 주세요.</p>}{previewRetry && !authExpired && <p className={styles.authRecoveryNotice} role="alert">카드 미리보기를 불러오지 못했어요. <button type="button" onClick={() => void retryPreview()} disabled={startPending}>다시 시도</button></p>}<DifficultySelector onSelect={startGame} startDisabled={!authResolved || Boolean(previewRetry)} startPending={startPending} />{authResolved && currentUser?.role === "USER" && <DaruLeaderboard refreshKey={leaderboardRefresh} />}</>;
   const hintsUsed = DIFFICULTY_CONFIG[difficulty].hintCount - hintsRemaining;
   const previewSecondsRemaining = Math.max(1, Math.ceil(previewProgress * DIFFICULTY_CONFIG[difficulty].previewSeconds));
   return <section className={styles.game} data-phase={phase} aria-labelledby="active-game-title">

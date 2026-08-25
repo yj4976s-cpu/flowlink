@@ -3,11 +3,18 @@ import { invalidateAuthOnUnauthorized } from "@/lib/authEvents";
 function apiBase() { return (process.env.NEXT_PUBLIC_API_BASE_URL ?? "").replace(/\/+$/, ""); }
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBase()}${path}`, { ...init, credentials: "include", headers: { "Content-Type": "application/json", ...init?.headers } });
-  if (!response.ok) { invalidateAuthOnUnauthorized(response.status); throw new DaruGameApiError(response.status); }
+  if (!response.ok) {
+    invalidateAuthOnUnauthorized(response.status);
+    const payload = await response.json().catch(() => null) as { detail?: string | { code?: string; message?: string } } | null;
+    const detail = payload?.detail;
+    throw new DaruGameApiError(response.status, typeof detail === "object" ? detail.code : undefined, typeof detail === "string" ? detail : detail?.message);
+  }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
-export class DaruGameApiError extends Error { constructor(public status: number) { super(`Daru game API failed (${status})`); } }
+export class DaruGameApiError extends Error {
+  constructor(public status: number, public code?: string, message?: string) { super(message ?? `Daru game API failed (${status})`); }
+}
 function retryable(error: unknown) { return !(error instanceof DaruGameApiError) || [502, 503, 504].includes(error.status); }
 async function actionRequest<T>(path: string, payload: Record<string, unknown>): Promise<T> {
   const actionId = crypto.randomUUID();

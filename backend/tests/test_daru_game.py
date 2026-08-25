@@ -268,6 +268,65 @@ def test_created_hard_deck_has_twenty_unique_pairs_with_normal_base(client: Test
     assert len(additional) == 4 and additional <= set(HARD_ADDITIONAL_CARD_IDS)
 
 
+def legacy_hard_deck() -> list[str]:
+    return [card_id for card_id in [*NORMAL_CARD_IDS, *HARD_ADDITIONAL_CARD_IDS] for _copy in range(2)]
+
+
+def assert_outdated_deck(response) -> None:
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "OUTDATED_DECK_CONFIGURATION",
+        "message": "Game run uses an outdated deck configuration",
+    }
+
+
+def test_legacy_hard_created_run_is_rejected_by_preview_state_and_start(client: TestClient, db: Session) -> None:
+    run_id = create_run(client, db, "HARD", age_seconds=0)
+    run = db.get(DaruGameRun, UUID(run_id)); assert run is not None
+    run.deck_state = legacy_hard_deck(); db.commit()
+
+    assert_outdated_deck(client.get(f"/api/daru-game/runs/{run_id}/preview"))
+    assert_outdated_deck(client.get(f"/api/daru-game/runs/{run_id}/state"))
+    assert_outdated_deck(client.post(f"/api/daru-game/runs/{run_id}/start", json=action_json()))
+
+
+def test_legacy_hard_playing_run_is_rejected_by_flip_hint_and_complete(client: TestClient, db: Session) -> None:
+    run_id = create_run(client, db, "HARD", age_seconds=0)
+    run = db.get(DaruGameRun, UUID(run_id)); assert run is not None
+    run.deck_state = legacy_hard_deck()
+    run.play_started_at = utc_now() - timedelta(seconds=200)
+    run.matched_pairs = 20
+    db.commit()
+
+    assert_outdated_deck(client.post(f"/api/daru-game/runs/{run_id}/flip", json=action_json(position=0)))
+    assert_outdated_deck(client.post(f"/api/daru-game/runs/{run_id}/hint", json=action_json()))
+    assert_outdated_deck(client.post("/api/daru-game/results", json=action_json(run_id=run_id)))
+
+
+def test_current_length_with_invalid_pair_distribution_is_rejected(client: TestClient, db: Session) -> None:
+    run_id = create_run(client, db, "HARD", age_seconds=0)
+    run = db.get(DaruGameRun, UUID(run_id)); assert run is not None
+    run.deck_state = [*run.deck_state[:-2], run.deck_state[0], run.deck_state[0]]
+    db.commit()
+
+    assert len(run.deck_state) == 40
+    assert_outdated_deck(client.get(f"/api/daru-game/runs/{run_id}/state"))
+
+
+def test_consumed_legacy_hard_run_state_remains_available(client: TestClient, db: Session) -> None:
+    run_id = create_run(client, db, "HARD", age_seconds=0)
+    run = db.get(DaruGameRun, UUID(run_id)); assert run is not None
+    run.deck_state = legacy_hard_deck()
+    run.play_started_at = utc_now() - timedelta(seconds=240)
+    run.consumed_at = utc_now()
+    db.commit()
+
+    response = client.get(f"/api/daru-game/runs/{run_id}/state")
+    assert response.status_code == 200
+    assert response.json()["status"] == "COMPLETED"
+    assert response.json()["positions"] == list(range(48))
+
+
 def test_run_preview_is_owner_only(client: TestClient, db: Session) -> None:
     run_id = create_run(client, db, "EASY", age_seconds=0)
     other = add_user(db, 2, "preview-other")
