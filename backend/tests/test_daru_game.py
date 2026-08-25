@@ -17,7 +17,7 @@ from app.core.security import utc_now
 from app.db.session import Base, get_db
 from app.main import app
 from app.models import DaruGameRun, DaruGameRunAction, DaruGameStat, User
-from app.services.daru_game import HARD_ADDITIONAL_CARD_IDS, NORMAL_CARD_IDS, _round_to_tenth, calculate_detection_power, calculate_hint_score, calculate_memory_accuracy, calculate_speed_score, game_run_lock_query, is_better, rank_for, ranking_query, select_card_ids
+from app.services.daru_game import DIFFICULTY_CONFIG, HARD_ADDITIONAL_CARD_IDS, NORMAL_CARD_IDS, _round_to_tenth, calculate_detection_power, calculate_hint_score, calculate_memory_accuracy, calculate_speed_score, detection_metrics, game_run_lock_query, is_better, rank_for, ranking_query, select_card_ids
 
 
 @compiles(BigInteger, "sqlite")
@@ -69,7 +69,18 @@ def client(db: Session) -> Iterator[TestClient]:
 def test_detection_power_uses_each_difficulty_config() -> None:
     assert calculate_detection_power("EASY", 10, 90, 5, 0) == Decimal("95.0")
     assert calculate_detection_power("NORMAL", 20, 150, 7, 1) == Decimal("83.8")
-    assert calculate_detection_power("HARD", 20, 240, 9, 2) == Decimal("85.0")
+    assert calculate_detection_power("HARD", 20, 200, 8, 2) == Decimal("85.0")
+
+
+def test_hard_balance_config_uses_twenty_pairs_and_new_timing() -> None:
+    assert DIFFICULTY_CONFIG["HARD"] == {
+        "pairs": 20,
+        "time_limit_seconds": 280,
+        "speed_benchmark_seconds": 200,
+        "combo_target": 8,
+        "clear_bonus": 700,
+        "preview_seconds": 8,
+    }
 
 
 def test_speed_score_is_continuous_and_overtime_is_zero() -> None:
@@ -99,10 +110,10 @@ def test_hint_score_is_part_of_detection_power(hints_used: int, expected: str) -
 
 @pytest.mark.parametrize(
     ("difficulty", "half", "benchmark", "limit"),
-    [("EASY", 45, 90, 120), ("NORMAL", 75, 150, 210), ("HARD", 120, 240, 330)],
+    [("EASY", 45, 90, 120), ("NORMAL", 75, 150, 210), ("HARD", 100, 200, 280)],
 )
 def test_speed_score_boundaries_for_every_difficulty(difficulty: str, half: int, benchmark: int, limit: int) -> None:
-    config = {"EASY": (90, 120), "NORMAL": (150, 210), "HARD": (240, 330)}[difficulty]
+    config = {"EASY": (90, 120), "NORMAL": (150, 210), "HARD": (200, 280)}[difficulty]
     assert config == (benchmark, limit)
     assert calculate_speed_score(half, benchmark, limit) == 100
     assert calculate_speed_score(benchmark, benchmark, limit) == 80
@@ -117,15 +128,36 @@ def test_easy_speed_score_midpoints() -> None:
 
 
 @pytest.mark.parametrize(
+    ("elapsed", "expected"),
+    [(100, 100), (150, 90), (200, 80), (240, 60), (280, 40), (281, 0)],
+)
+def test_hard_speed_score_boundaries(elapsed: int, expected: int) -> None:
+    assert calculate_speed_score(elapsed, 200, 280) == expected
+
+
+@pytest.mark.parametrize(("combo", "expected"), [(4, "50.0"), (6, "75.0"), (8, "100.0"), (9, "100.0")])
+def test_hard_combo_target_is_eight(combo: int, expected: str) -> None:
+    assert detection_metrics("HARD", 20, 100, combo, 0, True)["combo_score"] == Decimal(expected)
+
+
+@pytest.mark.parametrize(
     ("difficulty", "attempts", "elapsed", "combo", "hints", "expected"),
     [
         ("EASY", 15, 80, 4, 0, "80.6"),
         ("NORMAL", 24, 180, 5, 1, "68.2"),
-        ("HARD", 30, 270, 6, 2, "64.2"),
+        ("HARD", 30, 270, 6, 2, "60.0"),
     ],
 )
 def test_v2_representative_detection_scores(difficulty: str, attempts: int, elapsed: int, combo: int, hints: int, expected: str) -> None:
     assert calculate_detection_power(difficulty, attempts, elapsed, combo, hints) == Decimal(expected)
+
+
+@pytest.mark.parametrize(
+    ("attempts", "elapsed", "combo", "hints", "expected"),
+    [(20, 100, 8, 0, "100.0"), (25, 150, 6, 0, "87.5"), (30, 180, 5, 1, "72.9"), (35, 200, 4, 1, "63.8")],
+)
+def test_hard_new_balance_score_samples(attempts: int, elapsed: int, combo: int, hints: int, expected: str) -> None:
+    assert calculate_detection_power("HARD", attempts, elapsed, combo, hints) == Decimal(expected)
 
 
 def test_v2_supabase_reference_sample_is_exactly_ninety() -> None:
@@ -375,6 +407,16 @@ def test_server_timestamp_controls_elapsed_and_timeout(client: TestClient, db: S
     response = client.post("/api/daru-game/results", json=action_json(run_id=run_id))
     assert response.status_code == 200
     assert response.json()["metrics"]["within_time_limit"] is False
+    assert response.json()["leaderboard_rank"] is None
+
+
+def test_hard_server_timeout_uses_new_280_second_limit(client: TestClient, db: Session) -> None:
+    run_id, _run = start_authoritative_run(client, db, "HARD", elapsed_seconds=281)
+    complete_pairs(client, run_id, 20)
+    response = client.post("/api/daru-game/results", json=action_json(run_id=run_id))
+    assert response.status_code == 200
+    assert response.json()["metrics"]["within_time_limit"] is False
+    assert response.json()["metrics"]["speed_score"] == 0.0
     assert response.json()["leaderboard_rank"] is None
 
 

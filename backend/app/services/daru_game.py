@@ -18,7 +18,7 @@ from app.models import DaruGameRun, DaruGameRunAction, DaruGameStat, User
 DIFFICULTY_CONFIG = {
     "EASY": {"pairs": 10, "time_limit_seconds": 120, "speed_benchmark_seconds": 90, "combo_target": 5, "clear_bonus": 300, "preview_seconds": 5},
     "NORMAL": {"pairs": 16, "time_limit_seconds": 210, "speed_benchmark_seconds": 150, "combo_target": 7, "clear_bonus": 500, "preview_seconds": 7},
-    "HARD": {"pairs": 20, "time_limit_seconds": 330, "speed_benchmark_seconds": 240, "combo_target": 9, "clear_bonus": 700, "preview_seconds": 9},
+    "HARD": {"pairs": 20, "time_limit_seconds": 280, "speed_benchmark_seconds": 200, "combo_target": 8, "clear_bonus": 700, "preview_seconds": 8},
 }
 EASY_CARD_IDS = ["greeting", "excited", "heart", "sleeping", "search", "umbrella", "shoe", "backpack", "ball", "can"]
 NORMAL_CARD_IDS = [*EASY_CARD_IDS, "thumbs-up", "sulky", "coastal-cleanup", "umbrella-found", "plastic-bag", "plastic-bottle"]

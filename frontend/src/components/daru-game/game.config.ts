@@ -3,7 +3,7 @@ import type { DaruThemeAssets, DifficultyConfig, GameDifficulty } from "./game.t
 export const DIFFICULTY_CONFIG: Record<GameDifficulty, DifficultyConfig> = {
   easy: { key: "EASY", label: "쉬움", description: "워밍업", cardCount: 20, pairCount: 10, daruCount: 5, itemCount: 5, timeLimitSeconds: 120, speedBenchmarkSeconds: 90, hintCount: 2, hintRevealSeconds: 4, comboTarget: 5, clearBonus: 300, previewSeconds: 5 },
   normal: { key: "NORMAL", label: "보통", description: "집중 모드", cardCount: 32, pairCount: 16, daruCount: 9, itemCount: 7, timeLimitSeconds: 210, speedBenchmarkSeconds: 150, hintCount: 2, hintRevealSeconds: 6, comboTarget: 7, clearBonus: 500, previewSeconds: 7 },
-  hard: { key: "HARD", label: "어려움", description: "풀 챌린지", cardCount: 40, pairCount: 20, daruCount: 16, itemCount: 8, timeLimitSeconds: 330, speedBenchmarkSeconds: 240, hintCount: 2, hintRevealSeconds: 8, comboTarget: 9, clearBonus: 700, previewSeconds: 9 },
+  hard: { key: "HARD", label: "어려움", description: "풀 챌린지", cardCount: 40, pairCount: 20, daruCount: 16, itemCount: 8, timeLimitSeconds: 280, speedBenchmarkSeconds: 200, hintCount: 2, hintRevealSeconds: 8, comboTarget: 8, clearBonus: 700, previewSeconds: 8 },
 };
 export const POINT_CONFIG = { pairPoint: 100, comboBonusStep: 25, maxComboBonus: 100 } as const;
 export const DETECTION_POWER_WEIGHTS = { memory: 0.5, speed: 0.25, combo: 0.15, hint: 0.1 } as const;
