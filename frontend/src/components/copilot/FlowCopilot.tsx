@@ -29,6 +29,8 @@ import {
   type CopilotSuggestion,
 } from "@/lib/copilotApi";
 import { listNotifications } from "@/lib/notificationsApi";
+import { speechVoiceId, useSpeechSynthesis } from "@/hooks/useSpeechSynthesis";
+import { CopilotSpeechButton } from "./CopilotSpeechButton";
 import { FlowBeacon } from "./FlowBeacon";
 import {
   guestContextPrompts,
@@ -86,10 +88,15 @@ type UiMessage = {
   id: string;
   role: "user" | "assistant" | "system";
   text: string;
+  speechText?: string;
   cards?: CopilotCard[];
   actions?: CopilotAction[];
   suggestions?: CopilotSuggestion[];
 };
+
+function getSpeechText(message: UiMessage) {
+  return message.speechText?.trim() || message.text;
+}
 
 function historyGroup(value: string) {
   const date = new Date(value);
@@ -232,11 +239,23 @@ export function FlowCopilot() {
   const [open, setOpen] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [autoSpeechEnabled, setAutoSpeechEnabled] = useState(false);
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [value, setValue] = useState("");
   const [loading, setLoading] = useState(false);
+  const {
+    supported: speechSupported,
+    speakingMessageId,
+    voices: speechVoices,
+    selectedVoiceId,
+    setSelectedVoice,
+    speak: speakSpeech,
+    stop: stopSpeech,
+    toggle: toggleSpeech,
+  } = useSpeechSynthesis({ voiceSelectionEnabled: user?.role === "USER" });
   const previousOpenRef = useRef(open);
   const wasLoadingRef = useRef(false);
+  const autoSpeechEnabledRef = useRef(false);
 
   useEffect(() => {
     window.dispatchEvent(new CustomEvent("flowlink:daru-occlusion", { detail: { open } }));
@@ -251,6 +270,14 @@ export function FlowCopilot() {
     if (previousOpen === open) return;
     cueDaru(open ? "alert" : "rest", { source: "service", duration: open ? 1800 : 2400 });
   }, [cueDaru, open]);
+
+  useEffect(() => {
+    if (!open) stopSpeech();
+  }, [open, stopSpeech]);
+
+  useEffect(() => {
+    stopSpeech();
+  }, [pathname, stopSpeech]);
 
   useEffect(() => {
     if (loading) cueDaru("listen", { source: "service" });
@@ -312,6 +339,34 @@ export function FlowCopilot() {
   const sessionGenerationRef = useRef(0);
   const context = pageContext(pathname);
 
+  useEffect(() => {
+    if (!authReady) return;
+    if (user?.role !== "USER") {
+      autoSpeechEnabledRef.current = false;
+      setAutoSpeechEnabled(false);
+      return;
+    }
+    let enabled = false;
+    try {
+      enabled = window.localStorage.getItem("flowlink:copilot:auto-speech") === "true";
+    } catch {
+      // Keep the safe default when storage is unavailable.
+    }
+    autoSpeechEnabledRef.current = enabled;
+    setAutoSpeechEnabled(enabled);
+  }, [authReady, user?.id, user?.role]);
+
+  const changeAutoSpeech = useCallback((enabled: boolean) => {
+    autoSpeechEnabledRef.current = enabled;
+    setAutoSpeechEnabled(enabled);
+    if (!enabled) stopSpeech();
+    try {
+      window.localStorage.setItem("flowlink:copilot:auto-speech", String(enabled));
+    } catch {
+      // The in-memory preference still works for the current session.
+    }
+  }, [stopSpeech]);
+
   const clearCooldown = useCallback(() => {
     cooldownUntilRef.current = null;
     setCooldownRemaining(0);
@@ -330,6 +385,7 @@ export function FlowCopilot() {
   }, []);
 
   const resetSessionUi = useCallback(() => {
+    stopSpeech();
     setMessages([]);
     setValue("");
     setUnread(0);
@@ -352,7 +408,7 @@ export function FlowCopilot() {
     setDeleteError("");
     setDeleteBusy(false);
     clearCooldown();
-  }, [clearCooldown]);
+  }, [clearCooldown, stopSpeech]);
 
   const closeConversationMenu = useCallback(
     (conversationPublicId: string | null) => {
@@ -609,6 +665,7 @@ export function FlowCopilot() {
     }
   };
   const newConversation = () => {
+    stopSpeech();
     abortRef.current?.abort();
     setLoading(false);
     setMessages([]);
@@ -621,6 +678,7 @@ export function FlowCopilot() {
     clearCooldown();
   };
   const resumeConversation = async (id: string) => {
+    stopSpeech();
     abortRef.current?.abort();
     setLoading(false);
     setMemoryLoading(true);
@@ -640,6 +698,7 @@ export function FlowCopilot() {
           id: `stored-${message.id}`,
           role: message.role === "USER" ? "user" : "assistant",
           text: message.content,
+          speechText: message.speech_text ?? undefined,
           cards: message.cards,
           actions: message.actions,
           suggestions: message.suggestions,
@@ -698,17 +757,19 @@ export function FlowCopilot() {
       if (activeConversation !== conversationId) return;
       if (response.conversation_public_id)
         setConversationId(response.conversation_public_id);
-      setMessages((current) => [
-        ...current,
-        {
-          id: createClientId(),
-          role: "assistant",
-          text: response.message,
-          cards: response.cards,
-          actions: response.actions,
-          suggestions: response.suggestions.slice(0, 5),
-        },
-      ]);
+      const assistantMessage: UiMessage = {
+        id: createClientId(),
+        role: "assistant",
+        text: response.message,
+        speechText: response.speech_text ?? undefined,
+        cards: response.cards,
+        actions: response.actions,
+        suggestions: response.suggestions.slice(0, 5),
+      };
+      setMessages((current) => [...current, assistantMessage]);
+      if (user?.role === "USER" && autoSpeechEnabledRef.current) {
+        speakSpeech(assistantMessage.id, getSpeechText(assistantMessage));
+      }
       void refreshMemory().catch(() => undefined);
       setShowExamples(false);
       setUnread(0);
@@ -1293,6 +1354,39 @@ export function FlowCopilot() {
                 {role === "ADMIN" ? "Operations Copilot · ADMIN" : modeTitle}
               </span>
             </div>
+            {role === "USER" && (
+              <div className={styles.speechSettings}>
+                <label className={styles.autoSpeechToggle} title={!speechSupported ? "이 브라우저에서는 음성 안내를 지원하지 않아요." : undefined}>
+                  <span aria-hidden="true">🔊</span>
+                  <span>음성 안내</span>
+                  <input
+                    type="checkbox"
+                    checked={autoSpeechEnabled}
+                    disabled={!speechSupported}
+                    aria-label="새 답변 자동 음성 안내"
+                    onChange={(event) => changeAutoSpeech(event.target.checked)}
+                  />
+                  <i aria-hidden="true" />
+                  <b aria-hidden="true">{autoSpeechEnabled ? "ON" : "OFF"}</b>
+                </label>
+                <label className={styles.voiceSelectLabel}>
+                  <span>목소리</span>
+                  <select
+                    value={selectedVoiceId ?? ""}
+                    disabled={!speechSupported || speechVoices.length === 0}
+                    aria-label="한국어 음성 선택"
+                    onChange={(event) => setSelectedVoice(event.target.value || null)}
+                  >
+                    <option value="">기본 한국어</option>
+                    {speechVoices.map((voice) => (
+                      <option key={speechVoiceId(voice)} value={speechVoiceId(voice)}>
+                        {voice.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            )}
             <button
               type="button"
               aria-label="FlowLink AI 닫기"
@@ -1600,13 +1694,22 @@ export function FlowCopilot() {
                     data-role={message.role}
                     key={message.id}
                   >
-                    <span>
-                      {message.role === "user"
-                        ? "나"
-                        : message.role === "assistant"
-                          ? "FlowLink AI"
-                          : "연결 안내"}
-                    </span>
+                    <div className={styles.messageMeta}>
+                      <span>
+                        {message.role === "user"
+                          ? "나"
+                          : message.role === "assistant"
+                            ? "FlowLink AI"
+                            : "연결 안내"}
+                      </span>
+                      {message.role === "assistant" && (
+                        <CopilotSpeechButton
+                          speaking={speakingMessageId === message.id}
+                          unsupported={!speechSupported}
+                          onClick={() => toggleSpeech(message.id, getSpeechText(message))}
+                        />
+                      )}
+                    </div>
                     <p>{message.text}</p>
                     {message.cards?.map((card, index) => (
                       <Card card={card} key={`${message.id}-${index}`} />

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -47,7 +48,7 @@ FlowLink는 AI 탐지→발견물→시민 분실 신고→규칙 기반 자동 
 AI detection confidence는 이미지 객체 분류 신뢰도이며, match score는 신고 조건 유사도 점수다. 둘을 절대 확률처럼 섞지 않는다.
 발견물이 사용자 소유라고 확정하지 말고 '유사한 후보이며 추가 확인이 필요하다'고 표현한다.
 권한 없는 개인정보, 보관 상세 위치, 관리자 내부 메모를 노출하지 않는다. FlowLink 범위 밖 질문은 범위를 짧게 설명한다.
-마지막 답변은 JSON 객체만 출력한다: {"message":string,"cards":[],"actions":[],"suggestions":[]}.
+마지막 답변은 JSON 객체만 출력한다: {"message":string,"speech_text":string,"cards":[],"actions":[],"suggestions":[]}.
 cards type은 MATCH, ANALYSIS, STATUS, TIMELINE, EVIDENCE, SYSTEM_NOTICE, COMMUNITY만 허용하며 필드는 title, subtitle, score, confidence, status, details, entity_id다.
 중요한 개인화 답변은 가능하면 답변→근거(EVIDENCE)→행동 순서로 구성한다. EVIDENCE에는 도구에서 실제 확인된 신고·발견물·매칭·분석 식별자와 근거만 넣고 추측을 넣지 않는다.
 신고 진행 상태를 설명할 때는 실제 완료된 단계와 현재 단계만 TIMELINE details에 넣고 미래 완료를 예측하지 않는다.
@@ -56,6 +57,11 @@ cards type은 MATCH, ANALYSIS, STATUS, TIMELINE, EVIDENCE, SYSTEM_NOTICE, COMMUN
 현재 context의 page와 entity_id가 있으면 짧은 후속 질문도 해당 entity 기준으로 해석하되, 도구 결과 없이 값을 만들어내지 않는다.
 actions type은 NAVIGATE 또는 ASK만 허용한다. NAVIGATE target은 서버가 허용한 FlowLink 경로만 사용한다. ASK target은 후속 질문 문장이다.
 suggestions는 현재 답변과 직접 관련된 후속 질문만 id와 message로 최대 5개 제안한다. 관련 질문이 적으면 억지로 채우지 않는다."""
+
+
+SPEECH_TEXT_PROMPT = """최종 JSON 객체에는 다음 필드를 함께 출력한다:
+{"message":"화면에 표시할 전체 답변","speech_text":"음성으로 읽을 짧은 핵심 안내","cards":[],"actions":[],"suggestions":[]}.
+speech_text는 음성 안내 전용으로 1~2개의 짧고 자연스러운 한국어 문장으로 작성한다. message를 그대로 복사하지 말고 핵심 결과, 현재 상태, 다음 행동만 요약한다. URL, Markdown, 버튼 이름 목록, 내부 DB ID나 entity ID, 불필요한 개인정보와 내부 시스템 정보, cards/actions/suggestions 전체, 긴 수치 목록은 포함하지 않는다. PERSONAL은 사용자가 알아야 할 결과와 다음 행동을, OPERATIONS는 운영 핵심 상태와 필요한 조치만 요약한다."""
 
 
 TEAM_MEMBERS = [
@@ -125,12 +131,28 @@ def _mode(user: User | None) -> str:
     return "OPERATIONS" if user and user.role == "ADMIN" else "PERSONAL" if user else "GUIDE"
 
 
-def _presentation(response: CopilotResponse) -> dict[str, list[dict[str, object]]]:
+def _presentation(response: CopilotResponse) -> dict[str, object]:
     return {
+        "speech_text": response.speech_text,
         "cards": [item.model_dump(mode="json") for item in response.cards],
         "actions": [item.model_dump(mode="json") for item in response.actions],
         "suggestions": [item.model_dump(mode="json") for item in response.suggestions],
     }
+
+
+def _normalize_speech_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = " ".join(value.split()).strip()
+    return normalized[:500] or None
+
+
+def _local_speech_text(message: str) -> str | None:
+    value = re.sub(r"https?://\S+|www\.\S+", "", message)
+    value = re.sub(r"[`*_#>\[\]()]", " ", value)
+    value = re.sub(r"\b(?:entity|ID)\s*[:#]?\s*[A-Za-z0-9_-]+\b", "", value, flags=re.IGNORECASE)
+    sentences = [part.strip(" -\n\t") for part in re.split(r"(?<=[.!?。])\s+|\n+", value) if part.strip(" -\n\t")]
+    return _normalize_speech_text(" ".join(sentences[:2]))
 
 
 def _team_role_response(text: str, user: User | None) -> CopilotResponse | None:
@@ -169,6 +191,7 @@ def _team_role_response(text: str, user: User | None) -> CopilotResponse | None:
 
     return CopilotResponse(
         message="\n\n".join(lines),
+        speech_text="FlowLink 팀의 담당 업무를 정리했습니다. 화면에서 역할별 내용을 확인해 주세요.",
         cards=[],
         actions=[],
         suggestions=[
@@ -200,7 +223,8 @@ def _local_greeting_response(user: User) -> CopilotResponse:
             CopilotSuggestion(id="my-matches", message="내 매칭 결과 알려줘"),
             CopilotSuggestion(id="my-reports", message="내 분실 신고 상태 알려줘"),
         ]
-    return CopilotResponse(message=message, cards=[], actions=[], suggestions=suggestions, mode=_mode(user), provider="flowlink", model="local-greeting")
+    speech_text = "안녕하세요. 필요한 운영 정보를 말씀해 주세요." if user.role == "ADMIN" else "안녕하세요. 무엇을 도와드릴까요?"
+    return CopilotResponse(message=message, speech_text=speech_text, cards=[], actions=[], suggestions=suggestions, mode=_mode(user), provider="flowlink", model="local-greeting")
 
 
 def rate_limited_fallback_response(user: User) -> CopilotResponse:
@@ -224,6 +248,7 @@ def rate_limited_fallback_response(user: User) -> CopilotResponse:
         suggestions=suggestions,
         mode=_mode(user),
         provider="flowlink",
+        speech_text="음성 안내 연결이 잠시 불안정합니다. 잠시 후 다시 질문해 주세요.",
         model="local-rate-limit",
     )
 
@@ -390,7 +415,7 @@ def _guest_response(db: Session, request: CopilotRequest) -> CopilotResponse:
 
 def create_copilot_briefing(db: Session, current_user: User) -> CopilotResponse:
     if current_user.role == "ADMIN":
-        return CopilotResponse(message="운영 현황은 질문을 통해 현재 데이터를 안전하게 조회할 수 있어요.", mode="OPERATIONS", provider="flowlink", model="briefing", actions=[CopilotAction(type="NAVIGATE", label="운영 대시보드", target="/admin")])
+        return CopilotResponse(message="운영 현황은 질문을 통해 현재 데이터를 안전하게 조회할 수 있어요.", speech_text="운영 현황은 질문을 통해 안전하게 확인할 수 있습니다.", mode="OPERATIONS", provider="flowlink", model="briefing", actions=[CopilotAction(type="NAVIGATE", label="운영 대시보드", target="/admin")])
     reports = list(list_lost_reports_for_user(db, current_user.id, skip=0, limit=10))
     matches = list(list_matches_for_user(db, current_user.id, skip=0, limit=10))
     notifications = list(list_notifications_for_user(db, current_user.id, skip=0, limit=20, unread_only=True))
@@ -408,7 +433,7 @@ def create_copilot_briefing(db: Session, current_user: User) -> CopilotResponse:
     summary = f"새 매칭 {new_matches}건 · 진행 중인 신고 {active_reports}건"
     message = f"새로 확인할 내용이 있어요.\n{summary}" if new_matches else f"현재 새로 확인할 매칭 결과는 없어요.\n{summary}"
     actions = [CopilotAction(type="NAVIGATE", label="내 신고", target="/mypage"), CopilotAction(type="NAVIGATE", label="내 매칭", target="/matches"), CopilotAction(type="NAVIGATE", label="발견물 찾기", target="/found-items")]
-    return CopilotResponse(message=message, cards=cards[:2], actions=actions, suggestions=[], mode="PERSONAL", provider="flowlink", model="briefing",)
+    return CopilotResponse(message=message, speech_text=_local_speech_text(message), cards=cards[:2], actions=actions, suggestions=[], mode="PERSONAL", provider="flowlink", model="briefing",)
 
 
 def _decode_response_object(raw: str) -> dict | None:
@@ -475,7 +500,8 @@ def _safe_response(raw: str, *, user: User | None, model: str, provider: str) ->
         except (ValueError, TypeError):
             continue
     message = str(data.get("message") or "답변을 생성하지 못했습니다.")[:4000]
-    return CopilotResponse(message=message, cards=cards, actions=actions, suggestions=suggestions, mode=_mode(user), provider=provider, model=model)
+    speech_text = _normalize_speech_text(data.get("speech_text"))
+    return CopilotResponse(message=message, speech_text=speech_text, cards=cards, actions=actions, suggestions=suggestions, mode=_mode(user), provider=provider, model=model)
 
 
 async def create_copilot_response(db: Session, request: CopilotRequest, current_user: User | None) -> CopilotResponse:
@@ -484,7 +510,10 @@ async def create_copilot_response(db: Session, request: CopilotRequest, current_
     conversation = None
     current_text = request.messages[-1].content
     if current_user is None:
-        return _guest_response(db, request)
+        response = _guest_response(db, request)
+        if response.speech_text is None:
+            response.speech_text = _local_speech_text(response.message)
+        return response
     if current_user:
         conversation = get_or_create(
             db, current_user, request.conversation_public_id, current_text,
@@ -496,6 +525,8 @@ async def create_copilot_response(db: Session, request: CopilotRequest, current_
         db.commit()
         team_response = _team_role_response(current_text, current_user)
         if team_response is not None:
+            if team_response.speech_text is None:
+                team_response.speech_text = _local_speech_text(team_response.message)
             save_message(db, conversation, "ASSISTANT", team_response.message, presentation=_presentation(team_response))
             db.commit()
             team_response.conversation_public_id = conversation.public_id
@@ -503,6 +534,8 @@ async def create_copilot_response(db: Session, request: CopilotRequest, current_
             return team_response
         if _tool_free_greeting(current_text):
             response = _local_greeting_response(current_user)
+            if response.speech_text is None:
+                response.speech_text = _local_speech_text(response.message)
             save_message(db, conversation, "ASSISTANT", response.message, presentation=_presentation(response))
             db.commit()
             response.conversation_public_id = conversation.public_id
@@ -521,18 +554,16 @@ async def create_copilot_response(db: Session, request: CopilotRequest, current_
         )
         result = await provider.generate(
             messages=input_items,
-            instructions=f"{SYSTEM_PROMPT}\n현재 context: {context}",
+            instructions=f"{SYSTEM_PROMPT}\n{SPEECH_TEXT_PROMPT}\n현재 context: {context}",
             tools=tool_definitions_for_message(current_user.role if current_user else None, current_text),
             execute=lambda name, arguments: execute_tool(db, current_user, name, arguments),
         )
     except ProviderNotConfiguredError:
         response = rate_limited_fallback_response(current_user)
+        if response.speech_text is None:
+            response.speech_text = "음성 안내 연결이 잠시 불안정합니다. 잠시 후 다시 질문해 주세요."
         if conversation is not None:
-            presentation = {
-                "cards": [item.model_dump(mode="json") for item in response.cards],
-                "actions": [item.model_dump(mode="json") for item in response.actions],
-                "suggestions": [item.model_dump(mode="json") for item in response.suggestions],
-            }
+            presentation = _presentation(response)
             save_message(db, conversation, "ASSISTANT", response.message, presentation=presentation)
             db.commit()
             response.conversation_public_id = conversation.public_id
@@ -540,12 +571,10 @@ async def create_copilot_response(db: Session, request: CopilotRequest, current_
         return response
     except ProviderResponseError as exc:
         response = rate_limited_fallback_response(current_user)
+        if response.speech_text is None:
+            response.speech_text = "음성 안내 연결이 잠시 불안정합니다. 잠시 후 다시 질문해 주세요."
         if conversation is not None:
-            presentation = {
-                "cards": [item.model_dump(mode="json") for item in response.cards],
-                "actions": [item.model_dump(mode="json") for item in response.actions],
-                "suggestions": [item.model_dump(mode="json") for item in response.suggestions],
-            }
+            presentation = _presentation(response)
             save_message(db, conversation, "ASSISTANT", response.message, presentation=presentation)
             db.commit()
             response.conversation_public_id = conversation.public_id
@@ -558,11 +587,7 @@ async def create_copilot_response(db: Session, request: CopilotRequest, current_
         return response
     response = _safe_response(result.text, user=current_user, model=result.model, provider=result.provider)
     if conversation:
-        presentation = {
-            "cards": [item.model_dump(mode="json") for item in response.cards],
-            "actions": [item.model_dump(mode="json") for item in response.actions],
-            "suggestions": [item.model_dump(mode="json") for item in response.suggestions],
-        }
+        presentation = _presentation(response)
         save_message(db, conversation, "ASSISTANT", response.message, presentation=presentation)
         db.commit()
         response.conversation_public_id = conversation.public_id

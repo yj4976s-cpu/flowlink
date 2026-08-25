@@ -2,10 +2,10 @@ export type CopilotMode = "GUIDE" | "PERSONAL" | "OPERATIONS";
 export type CopilotCard = { type: "MATCH" | "ANALYSIS" | "STATUS" | "TIMELINE" | "EVIDENCE" | "SYSTEM_NOTICE" | "COMMUNITY"; title: string; subtitle?: string | null; score?: number | null; confidence?: number | null; status?: string | null; details: string[]; entity_id?: number | null };
 export type CopilotAction = { type: "NAVIGATE" | "ASK"; label: string; target: string };
 export type CopilotSuggestion = { id: string; message: string };
-export type CopilotResponse = { message: string; cards: CopilotCard[]; actions: CopilotAction[]; suggestions: CopilotSuggestion[]; mode: CopilotMode; provider: string; model: string; conversation_public_id?: string | null };
+export type CopilotResponse = { message: string; speech_text?: string | null; cards: CopilotCard[]; actions: CopilotAction[]; suggestions: CopilotSuggestion[]; mode: CopilotMode; provider: string; model: string; conversation_public_id?: string | null };
 export type CopilotHistoryMessage = { role: "user" | "assistant"; content: string };
 export type CopilotConversationSummary = { public_id: string; title: string; context_type: string; context_entity_id?: number | null; last_message_at: string };
-export type CopilotStoredMessage = { id: number; role: "USER" | "ASSISTANT"; content: string; cards: CopilotCard[]; actions: CopilotAction[]; suggestions: CopilotSuggestion[]; created_at: string };
+export type CopilotStoredMessage = { id: number; role: "USER" | "ASSISTANT"; content: string; speech_text?: string | null; cards: CopilotCard[]; actions: CopilotAction[]; suggestions: CopilotSuggestion[]; created_at: string };
 export type CopilotConversationDetail = CopilotConversationSummary & { messages: CopilotStoredMessage[] };
 
 export class CopilotApiError extends Error {
