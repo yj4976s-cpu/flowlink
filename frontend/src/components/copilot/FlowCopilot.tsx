@@ -240,6 +240,7 @@ export function FlowCopilot() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [autoSpeechEnabled, setAutoSpeechEnabled] = useState(false);
+  const speechPreferenceUserId = user?.role === "USER" ? user.id : null;
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [value, setValue] = useState("");
   const [loading, setLoading] = useState(false);
@@ -252,7 +253,10 @@ export function FlowCopilot() {
     speak: speakSpeech,
     stop: stopSpeech,
     toggle: toggleSpeech,
-  } = useSpeechSynthesis({ voiceSelectionEnabled: user?.role === "USER" });
+  } = useSpeechSynthesis({
+    voiceSelectionEnabled: speechPreferenceUserId !== null,
+    voiceStorageUserId: speechPreferenceUserId,
+  });
   const previousOpenRef = useRef(open);
   const wasLoadingRef = useRef(false);
   const autoSpeechEnabledRef = useRef(false);
@@ -341,31 +345,38 @@ export function FlowCopilot() {
 
   useEffect(() => {
     if (!authReady) return;
-    if (user?.role !== "USER") {
+    if (speechPreferenceUserId === null) {
       autoSpeechEnabledRef.current = false;
       setAutoSpeechEnabled(false);
       return;
     }
     let enabled = false;
     try {
-      enabled = window.localStorage.getItem("flowlink:copilot:auto-speech") === "true";
+      enabled = window.localStorage.getItem(
+        `flowlink:copilot:auto-speech:${speechPreferenceUserId}`,
+      ) === "true";
     } catch {
       // Keep the safe default when storage is unavailable.
     }
     autoSpeechEnabledRef.current = enabled;
     setAutoSpeechEnabled(enabled);
-  }, [authReady, user?.id, user?.role]);
+  }, [authReady, speechPreferenceUserId]);
 
   const changeAutoSpeech = useCallback((enabled: boolean) => {
     autoSpeechEnabledRef.current = enabled;
     setAutoSpeechEnabled(enabled);
     if (!enabled) stopSpeech();
     try {
-      window.localStorage.setItem("flowlink:copilot:auto-speech", String(enabled));
+      if (speechPreferenceUserId !== null) {
+        window.localStorage.setItem(
+          `flowlink:copilot:auto-speech:${speechPreferenceUserId}`,
+          String(enabled),
+        );
+      }
     } catch {
       // The in-memory preference still works for the current session.
     }
-  }, [stopSpeech]);
+  }, [speechPreferenceUserId, stopSpeech]);
 
   const clearCooldown = useCallback(() => {
     cooldownUntilRef.current = null;

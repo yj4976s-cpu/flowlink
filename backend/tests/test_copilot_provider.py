@@ -107,6 +107,7 @@ def test_local_fallback_and_admin_briefing_include_speech_text() -> None:
     fallback = rate_limited_fallback_response(Mock(role="USER"))
     briefing = create_copilot_briefing(Mock(), Mock(role="ADMIN"))
     assert fallback.speech_text
+    assert fallback.speech_text == "지금은 답변을 불러오기 어렵습니다. 잠시 후 다시 질문해 주세요."
     assert briefing.speech_text
 
 
@@ -219,6 +220,7 @@ def test_rate_limited_provider_uses_safe_local_fallback(monkeypatch: pytest.Monk
     assert response.provider == "flowlink"
     assert response.model == "local-rate-limit"
     assert response.conversation_public_id == "conversation-id"
+    assert response.speech_text == "지금은 답변을 불러오기 어렵습니다. 잠시 후 다시 질문해 주세요."
     assert "quota 20" not in response.message
 
 
@@ -237,6 +239,7 @@ def test_general_provider_failure_uses_safe_local_fallback(monkeypatch: pytest.M
     assert response.provider == "flowlink"
     assert response.model == "local-rate-limit"
     assert response.conversation_public_id == "conversation-id"
+    assert response.speech_text == "지금은 답변을 불러오기 어렵습니다. 잠시 후 다시 질문해 주세요."
     assert "upstream failed" not in response.message
 
 

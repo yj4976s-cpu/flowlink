@@ -4,6 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 const VOICE_STORAGE_KEY = "flowlink:copilot:voice";
 
+function voiceStorageKey(userId: string | number) {
+  return `${VOICE_STORAGE_KEY}:${userId}`;
+}
+
 function speechAvailable() {
   return typeof window !== "undefined"
     && "speechSynthesis" in window
@@ -34,7 +38,13 @@ function koreanVoices(voices: SpeechSynthesisVoice[]) {
   });
 }
 
-export function useSpeechSynthesis({ voiceSelectionEnabled = false } = {}) {
+export function useSpeechSynthesis({
+  voiceSelectionEnabled = false,
+  voiceStorageUserId = null,
+}: {
+  voiceSelectionEnabled?: boolean;
+  voiceStorageUserId?: string | number | null;
+} = {}) {
   const [supported, setSupported] = useState(false);
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
@@ -108,12 +118,14 @@ export function useSpeechSynthesis({ voiceSelectionEnabled = false } = {}) {
     selectedVoiceIdRef.current = nextId;
     setSelectedVoiceId(nextId);
     try {
-      if (nextId) window.localStorage.setItem(VOICE_STORAGE_KEY, nextId);
-      else window.localStorage.removeItem(VOICE_STORAGE_KEY);
+      if (voiceStorageUserId === null) return;
+      const storageKey = voiceStorageKey(voiceStorageUserId);
+      if (nextId) window.localStorage.setItem(storageKey, nextId);
+      else window.localStorage.removeItem(storageKey);
     } catch {
       // The in-memory selection remains usable when storage is unavailable.
     }
-  }, [stop]);
+  }, [stop, voiceStorageUserId]);
 
   useEffect(() => {
     if (!speechAvailable()) return;
@@ -141,7 +153,8 @@ export function useSpeechSynthesis({ voiceSelectionEnabled = false } = {}) {
 
   useEffect(() => {
     voiceSelectionEnabledRef.current = voiceSelectionEnabled;
-    if (!voiceSelectionEnabled) {
+    if (!voiceSelectionEnabled || voiceStorageUserId === null) {
+      savedVoiceIdRef.current = null;
       selectedVoiceIdRef.current = null;
       const resetFrame = window.requestAnimationFrame(() => {
         stop();
@@ -151,7 +164,7 @@ export function useSpeechSynthesis({ voiceSelectionEnabled = false } = {}) {
     }
     let savedVoiceId: string | null = null;
     try {
-      savedVoiceId = window.localStorage.getItem(VOICE_STORAGE_KEY);
+      savedVoiceId = window.localStorage.getItem(voiceStorageKey(voiceStorageUserId));
     } catch {
       // Fall back to the browser's Korean voice when storage is unavailable.
     }
@@ -166,7 +179,7 @@ export function useSpeechSynthesis({ voiceSelectionEnabled = false } = {}) {
       setSelectedVoiceId(nextSelectedId);
     });
     return () => window.cancelAnimationFrame(restoreFrame);
-  }, [stop, voiceSelectionEnabled]);
+  }, [stop, voiceSelectionEnabled, voiceStorageUserId]);
 
   useEffect(() => stop, [stop]);
 

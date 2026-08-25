@@ -17,6 +17,8 @@ from app.services.copilot_memory import get_or_create, model_history, save_messa
 
 logger = logging.getLogger(__name__)
 
+PROVIDER_FALLBACK_SPEECH_TEXT = "지금은 답변을 불러오기 어렵습니다. 잠시 후 다시 질문해 주세요."
+
 ALLOWED_PATHS = {"/", "/guide", "/login", "/detect", "/found-items", "/map", "/lost-reports/new", "/matches", "/mypage", "/notifications", "/community", "/admin", "/admin/detections", "/admin/ownership-claims", "/admin/found-items", "/admin/map"}
 
 PAGE_CONTEXT_PATHS = {
@@ -248,7 +250,7 @@ def rate_limited_fallback_response(user: User) -> CopilotResponse:
         suggestions=suggestions,
         mode=_mode(user),
         provider="flowlink",
-        speech_text="음성 안내 연결이 잠시 불안정합니다. 잠시 후 다시 질문해 주세요.",
+        speech_text=PROVIDER_FALLBACK_SPEECH_TEXT,
         model="local-rate-limit",
     )
 
@@ -561,7 +563,7 @@ async def create_copilot_response(db: Session, request: CopilotRequest, current_
     except ProviderNotConfiguredError:
         response = rate_limited_fallback_response(current_user)
         if response.speech_text is None:
-            response.speech_text = "음성 안내 연결이 잠시 불안정합니다. 잠시 후 다시 질문해 주세요."
+            response.speech_text = PROVIDER_FALLBACK_SPEECH_TEXT
         if conversation is not None:
             presentation = _presentation(response)
             save_message(db, conversation, "ASSISTANT", response.message, presentation=presentation)
@@ -572,7 +574,7 @@ async def create_copilot_response(db: Session, request: CopilotRequest, current_
     except ProviderResponseError as exc:
         response = rate_limited_fallback_response(current_user)
         if response.speech_text is None:
-            response.speech_text = "음성 안내 연결이 잠시 불안정합니다. 잠시 후 다시 질문해 주세요."
+            response.speech_text = PROVIDER_FALLBACK_SPEECH_TEXT
         if conversation is not None:
             presentation = _presentation(response)
             save_message(db, conversation, "ASSISTANT", response.message, presentation=presentation)
