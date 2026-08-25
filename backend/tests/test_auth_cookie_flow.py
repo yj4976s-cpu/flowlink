@@ -266,6 +266,21 @@ def test_login_sets_httponly_cookie_without_exposing_access_token(client: TestCl
     assert f"Max-Age={settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60}" in set_cookie
 
 
+def test_login_cookie_uses_eight_hour_policy(client: TestClient, db: Session) -> None:
+    settings = get_settings()
+    original_minutes = settings.ACCESS_TOKEN_EXPIRE_MINUTES
+    settings.ACCESS_TOKEN_EXPIRE_MINUTES = 480
+    try:
+        seed_user(db)
+        response = login(client)
+    finally:
+        settings.ACCESS_TOKEN_EXPIRE_MINUTES = original_minutes
+
+    assert response.status_code == 200
+    assert response.json()["expires_in"] == 480 * 60
+    assert "Max-Age=28800" in response.headers["set-cookie"]
+
+
 def test_login_failure_does_not_set_cookie(client: TestClient, db: Session) -> None:
     settings = get_settings()
     seed_user(db)
@@ -474,8 +489,9 @@ def configure_fake_oauth(monkeypatch: pytest.MonkeyPatch, identity: OAuthIdentit
     )
 
 
-def begin_oauth(client: TestClient, provider: str = "google") -> str:
-    response = client.get(f"/api/auth/oauth/{provider}/start", follow_redirects=False)
+def begin_oauth(client: TestClient, provider: str = "google", next_path: str | None = None) -> str:
+    suffix = f"?next={next_path}" if next_path else ""
+    response = client.get(f"/api/auth/oauth/{provider}/start{suffix}", follow_redirects=False)
     assert response.status_code == 302
     assert "flowlink_oauth_state" in response.headers["set-cookie"]
     return response.headers["location"].split("state=", 1)[1]
@@ -548,6 +564,57 @@ def test_returning_social_user_receives_existing_login_cookie(
     assert response.status_code == 302
     assert get_settings().AUTH_COOKIE_NAME in response.headers["set-cookie"]
     assert db.get(User, user.id).last_login_at is not None
+
+
+@pytest.mark.parametrize(
+    ("provider", "provider_name", "provider_user_id"),
+    [("google", "GOOGLE", "g-ttl"), ("kakao", "KAKAO", "k-ttl"), ("naver", "NAVER", "n-ttl")],
+)
+def test_social_providers_share_eight_hour_login_cookie_policy(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+    provider_name: str,
+    provider_user_id: str,
+) -> None:
+    user = seed_user(db)
+    now = utc_now()
+    db.add(UserSocialAccount(user_id=user.id, provider=provider_name, provider_user_id=provider_user_id, created_at=now, updated_at=now))
+    db.commit()
+    configure_fake_oauth(monkeypatch, OAuthIdentity(provider_name, provider_user_id, "user@example.com", "user"))
+    state_value = begin_oauth(client, provider)
+
+    response = client.get(f"/api/auth/oauth/{provider}/callback?code=valid-code&state={state_value}", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert "Max-Age=28800" in response.headers["set-cookie"]
+
+
+def test_returning_social_user_resumes_safe_relative_path(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = seed_user(db)
+    now = utc_now()
+    db.add(UserSocialAccount(user_id=user.id, provider="KAKAO", provider_user_id="k-resume", created_at=now, updated_at=now))
+    db.commit()
+    configure_fake_oauth(monkeypatch, OAuthIdentity("KAKAO", "k-resume", "user@example.com", "user"))
+    state_value = begin_oauth(client, "kakao", "/daru-game")
+    response = client.get(f"/api/auth/oauth/kakao/callback?code=valid-code&state={state_value}", follow_redirects=False)
+    assert response.headers["location"].endswith("/daru-game")
+
+
+def test_oauth_start_rejects_protocol_relative_next_path(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = seed_user(db)
+    now = utc_now()
+    db.add(UserSocialAccount(user_id=user.id, provider="GOOGLE", provider_user_id="g-safe", created_at=now, updated_at=now))
+    db.commit()
+    configure_fake_oauth(monkeypatch, OAuthIdentity("GOOGLE", "g-safe", "user@example.com", "user"))
+    state_value = begin_oauth(client, "google", "//evil.example")
+    response = client.get(f"/api/auth/oauth/google/callback?code=valid-code&state={state_value}", follow_redirects=False)
+    assert response.headers["location"].endswith("/")
 
 
 @pytest.mark.parametrize("active,deleted", [(False, False), (False, True)])

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.auth import get_current_user, get_optional_current_user
+from app.core.config import get_settings
 from app.core.security import utc_now
 from app.db.session import Base, get_db
 from app.main import app
@@ -363,6 +364,24 @@ def test_guest_and_admin_cannot_create_authoritative_runs(client: TestClient, db
         admin = add_user(db, 3, "admin", role=role)
         app.dependency_overrides[get_current_user] = lambda: admin
     assert client.post("/api/daru-game/runs", json={"difficulty": "EASY"}).status_code == expected
+
+
+def test_creating_authenticated_run_renews_login_cookie(client: TestClient, db: Session) -> None:
+    response = client.post("/api/daru-game/runs", json={"difficulty": "HARD"})
+    settings = get_settings()
+    set_cookie = response.headers["set-cookie"]
+    assert response.status_code == 201
+    assert settings.ACCESS_TOKEN_EXPIRE_MINUTES == 480
+    assert f"{settings.AUTH_COOKIE_NAME}=" in set_cookie
+    assert "Max-Age=28800" in set_cookie
+    assert "HttpOnly" in set_cookie and "SameSite=lax" in set_cookie
+
+
+def test_state_rejects_expired_active_run(client: TestClient, db: Session) -> None:
+    run_id = create_run(client, db, "EASY", age_seconds=24 * 60 * 60 + 1)
+    response = client.get(f"/api/daru-game/runs/{run_id}/state")
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Game run has expired"
 
 
 def test_start_response_loss_retry_is_idempotent(client: TestClient, db: Session) -> None:

@@ -289,6 +289,8 @@ def submit_result(db: Session, *, run: DaruGameRun, user_id: int, finish_partial
 
 def game_run_state(db: Session, *, run_id: UUID, user_id: int) -> dict[str, Any]:
     run = _locked_owned_run(db, run_id=run_id, user_id=user_id)
+    if run.consumed_at is None:
+        _ensure_not_expired(run)
     visible_positions = set(run.matched_positions or [])
     if run.first_position is not None:
         visible_positions.add(run.first_position)

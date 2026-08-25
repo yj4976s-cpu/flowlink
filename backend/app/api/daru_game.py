@@ -2,11 +2,13 @@ from typing import Annotated
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_optional_current_user, require_user
+from app.core.security import create_access_token
+from app.api.auth import set_login_cookie
 from app.db.session import get_db
 from app.models import DaruGameStat, User
 from app.schemas.daru_game import DaruGameActionInput, DaruGameFlipInput, DaruGameFlipResponse, DaruGameHintResponse, DaruGameMetrics, DaruGameRecord, DaruGameResultInput, DaruGameResultResponse, DaruGameRunInput, DaruGameRunResponse, DaruGameRunStateResponse, DaruGameStartResponse, DaruLeaderboardEntry, DaruLeaderboardResponse, Difficulty
@@ -20,8 +22,10 @@ def record_response(stat: DaruGameStat) -> DaruGameRecord:
 
 
 @router.post("/runs", response_model=DaruGameRunResponse, status_code=201)
-def create_run(payload: DaruGameRunInput, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> DaruGameRunResponse:
+def create_run(payload: DaruGameRunInput, response: Response, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> DaruGameRunResponse:
     run = create_game_run(db, user_id=current_user.id, difficulty=payload.difficulty)
+    access_token, expires_in = create_access_token(current_user.id, current_user.role)
+    set_login_cookie(response, access_token, expires_in)
     return DaruGameRunResponse(run_id=run.id, difficulty=run.difficulty, started_at=run.started_at, positions=list(range(len(run.deck_state))))
 
 

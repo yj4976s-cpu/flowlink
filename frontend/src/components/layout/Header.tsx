@@ -10,6 +10,7 @@ import { NotificationToastHost } from "@/components/notifications/NotificationTo
 import { NotificationCenter } from "@/components/notifications/NotificationCenter";
 import { DaruSettings } from "@/components/mascot";
 import { AuthUser, getCurrentUser, logout as logoutRequest } from "@/lib/authApi";
+import { AUTH_CHANGED_EVENT } from "@/lib/authEvents";
 
 type NavigationItem = {
   label: string;
@@ -140,6 +141,21 @@ export function Header() {
     return () => {
       active = false;
     };
+  }, []);
+
+  useEffect(() => {
+    const syncAuth = (event: Event) => {
+      const user = (event as CustomEvent<AuthUser | null>).detail;
+      setCurrentUser(user);
+      setAuthResolved(true);
+      if (!user) {
+        setProfileOpen(false);
+        setNotificationOpen(false);
+        setLogoutConfirm(false);
+      }
+    };
+    window.addEventListener(AUTH_CHANGED_EVENT, syncAuth);
+    return () => window.removeEventListener(AUTH_CHANGED_EVENT, syncAuth);
   }, []);
 
   useEffect(() => {

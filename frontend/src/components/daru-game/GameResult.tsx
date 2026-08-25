@@ -1,5 +1,5 @@
 import Image from "next/image";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { DARU_CLEAR_ASSETS } from "./game.config";
 import type { DaruGameTheme, DetectionMetrics, GameRank } from "./game.types";
@@ -15,14 +15,9 @@ export function GameResult({ rank, metrics, daruPoints, elapsedSeconds, attempts
   const { theme } = useTheme();
   const activeTheme = previewTheme ?? theme;
   const stageRef = useRef<HTMLElement>(null);
-  const [displayedPower, setDisplayedPower] = useState(0);
   useEffect(() => {
     stageRef.current?.focus();
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) { const frame = window.requestAnimationFrame(() => setDisplayedPower(metrics.detectionPower)); return () => window.cancelAnimationFrame(frame); }
-    const startedAt = performance.now(); let frame = 0;
-    const update = (now: number) => { const progress = Math.min(1, (now - startedAt) / 650); setDisplayedPower(roundToTenth(metrics.detectionPower * progress)); if (progress < 1) frame = window.requestAnimationFrame(update); };
-    frame = window.requestAnimationFrame(update); return () => window.cancelAnimationFrame(frame);
-  }, [metrics.detectionPower]);
+  }, []);
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -40,7 +35,7 @@ export function GameResult({ rank, metrics, daruPoints, elapsedSeconds, attempts
     <div className={styles.clearDaru} aria-hidden="true">{previewTheme ? <Image src={DARU_CLEAR_ASSETS[previewTheme]} alt="" fill sizes="190px" priority style={{ opacity: 1 }} /> : <><Image className={styles.daruDawn} src={DARU_CLEAR_ASSETS.dawn} alt="" fill sizes="190px" priority /><Image className={styles.daruDay} src={DARU_CLEAR_ASSETS.day} alt="" fill sizes="190px" priority /><Image className={styles.daruNight} src={DARU_CLEAR_ASSETS.night} alt="" fill sizes="190px" priority /></>}</div>
     <h2 id="game-result-title">{newBest ? newBestTitle : "다루와 전부 찾았어요!"}</h2><p className={styles.rankMessage}>{newBest ? newBestMessage : withinTimeLimit ? RANK_MESSAGES[rank] : "시간 초과 후 완주했어요. 공식 랭킹에는 반영되지 않아요."}</p>
     {newBest && <div className={styles.newBestRibbon} aria-label="새로운 최고 기록"><span aria-hidden="true">♛</span> NEW BEST</div>}
-    <div className={styles.rankSummary}><strong>{rank} RANK</strong><span>메모리 점수 <b>{formatMemoryScore(displayedPower)}</b></span></div>
+    <div className={styles.rankSummary}><strong>{rank} RANK</strong><span>메모리 점수 <b>{formatMemoryScore(metrics.detectionPower)}</b></span></div>
     <dl className={styles.resultMetrics}><div><dt>기억 정확도</dt><dd>{formatMemoryScore(metrics.memoryAccuracy)}</dd></div><div><dt>플레이 속도</dt><dd>{formatMemoryScore(metrics.speedScore)}</dd></div><div><dt>최고 콤보</dt><dd>{formatMemoryScore(metrics.comboScore)}</dd><small>{maxCombo}콤보</small></div><div><dt>힌트 절약</dt><dd>{formatMemoryScore(metrics.hintScore)}</dd><small>{hintsUsed}회 사용</small></div></dl>
     <div className={styles.resultMeta}><p><strong>{formatElapsedTime(elapsedSeconds)}</strong><span>플레이 시간 · {attempts}회 시도</span></p><p><span>이번 판 획득</span><strong>+{daruPoints.toLocaleString("ko-KR")}P</strong></p></div>
     {newBest && <div className={styles.bestComparison}><span>♛ {previousBestPower === null || previousBestPower === undefined ? "첫 최고 기록" : <>이전 최고 <b>{formatMemoryScore(previousBestPower)}</b> <i aria-hidden="true">→</i></>}</span><strong>현재 {formatMemoryScore(metrics.detectionPower)}</strong>{improvement !== null && improvement > 0 && <em>+{formatMemoryScore(improvement)}</em>}</div>}

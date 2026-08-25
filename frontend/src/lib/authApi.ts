@@ -1,3 +1,6 @@
+import { clearDaruActiveRun } from "@/lib/daruActiveRun";
+import { invalidateAuthOnUnauthorized, publishAuthChange } from "@/lib/authEvents";
+
 export type AuthUser = {
   id: number;
   email: string;
@@ -55,8 +58,10 @@ function getApiBaseUrl() {
   return baseUrl.replace(/\/+$/, "");
 }
 
-export function getOAuthStartUrl(provider: SocialAuthProvider) {
-  return `${getApiBaseUrl()}/api/auth/oauth/${provider}/start`;
+export function getOAuthStartUrl(provider: SocialAuthProvider, nextPath = "/") {
+  const url = new URL(`${getApiBaseUrl()}/api/auth/oauth/${provider}/start`);
+  url.searchParams.set("next", nextPath);
+  return url.toString();
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -77,6 +82,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       // Keep the safe fallback when the server does not return JSON.
     }
+    invalidateAuthOnUnauthorized(response.status);
     throw new AuthApiError(message, response.status);
   }
 
@@ -88,7 +94,7 @@ export async function login(payload: LoginRequest) {
     method: "POST",
     body: JSON.stringify(payload),
   });
-  window.dispatchEvent(new CustomEvent("flowlink:auth-changed", { detail: result.user }));
+  publishAuthChange(result.user);
   return result;
 }
 
@@ -97,7 +103,7 @@ export async function register(payload: RegisterRequest) {
     method: "POST",
     body: JSON.stringify(payload),
   });
-  window.dispatchEvent(new CustomEvent("flowlink:auth-changed", { detail: result }));
+  publishAuthChange(result);
   return result;
 }
 
@@ -106,7 +112,7 @@ export async function completeSocialRegistration(payload: SocialRegisterRequest)
     method: "POST",
     body: JSON.stringify(payload),
   });
-  window.dispatchEvent(new CustomEvent("flowlink:auth-changed", { detail: result }));
+  publishAuthChange(result);
   return result;
 }
 
@@ -116,7 +122,8 @@ export function getCurrentUser() {
 
 export async function logout() {
   const result = await request<{ message: string }>("/api/auth/logout", { method: "POST" });
-  window.dispatchEvent(new CustomEvent("flowlink:auth-changed", { detail: null }));
+  clearDaruActiveRun();
+  publishAuthChange(null);
   return result;
 }
 
