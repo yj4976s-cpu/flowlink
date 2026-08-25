@@ -12,6 +12,8 @@ frontend/npm-debug.log*
 
 # Local Daru card QA and normalization outputs
 /artifacts/
+/frontend/qa-results/
+/frontend/scripts/normalize-daru-cards.ps1
 /frontend/public/daru-memory/cards-normalized/
 /frontend/public/daru-memory/cards-normalized-test/
 
