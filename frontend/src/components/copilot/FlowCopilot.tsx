@@ -407,6 +407,7 @@ export function FlowCopilot() {
 
   const resetSessionUi = useCallback(() => {
     stopSpeech();
+    setRatePanelMessageId(null);
     setMessages([]);
     setValue("");
     setUnread(0);
@@ -687,6 +688,7 @@ export function FlowCopilot() {
   };
   const newConversation = () => {
     stopSpeech();
+    setRatePanelMessageId(null);
     abortRef.current?.abort();
     setLoading(false);
     setMessages([]);
@@ -700,6 +702,7 @@ export function FlowCopilot() {
   };
   const resumeConversation = async (id: string) => {
     stopSpeech();
+    setRatePanelMessageId(null);
     abortRef.current?.abort();
     setLoading(false);
     setMemoryLoading(true);
