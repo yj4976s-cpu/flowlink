@@ -292,7 +292,16 @@ export function DaruGame() {
     setElapsedSeconds(finalElapsed); setDaruPoints(finalPoints); setMetrics(finalMetrics); setRank(getGameRank(finalMetrics.detectionPower)); setNewBest(!isServerGame && guestBest); setFeedback(null);
     completionTimerRef.current = window.setTimeout(() => { completionTimerRef.current = null; setPreviousBestPower(guestPreviousBest); setPhase("finished"); cue("happy", { source: "direct" }); }, 380);
   }, [attempts, clearFeedbackTimer, clearHintTimer, cue, daruPoints, difficulty, hintsRemaining, matchedPairIds.length, maxCombo, phase, setPhase, startedAt, submitResult, withinTimeLimit]);
-  const finishPartial = () => { clearHintTimer(); const finalElapsed = Math.max(1, Math.floor((Date.now() - startedAt) / 1000)); setElapsedSeconds(finalElapsed); setPhase("partial"); submitResult(true); };
+  const finishPartial = () => {
+    clearHintTimer();
+    if (runIdRef.current) {
+      submitResult(true);
+      return;
+    }
+    const finalElapsed = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
+    setElapsedSeconds(finalElapsed);
+    setPhase("partial");
+  };
   const handleFlip = (card: GameCard) => {
     if (phase !== "playing" || locked || hintActive || matchedPairIds.includes(card.pairId) || flippedIds.includes(card.id) || flippedIds.length >= 2) return;
     const runId = runIdRef.current;
@@ -354,7 +363,7 @@ export function DaruGame() {
       {phase === "flipping" && <div className={styles.waveCue} aria-live="polite"><span>그럼, 시작해볼까?</span><i aria-hidden="true" /></div>}
       {readyCue && <div className={styles.readyCue} aria-live="assertive">{readyCue}</div>}
     </div>
-    {phase === "time-over" && <TimeOverDialog onContinue={() => setPhase("playing")} onFinish={finishPartial} />}
+    {phase === "time-over" && recordStatus !== "saving" && <TimeOverDialog onContinue={() => setPhase("playing")} onFinish={finishPartial} />}
     {phase === "finished" && metrics && <GameResult rank={rank} metrics={metrics} daruPoints={daruPoints} elapsedSeconds={elapsedSeconds} attempts={attempts} maxCombo={maxCombo} hintsUsed={hintsUsed} withinTimeLimit={withinTimeLimit} newBest={newBest} leaderboardRank={leaderboardRank} personalBestPower={personalBestPower} previousBestPower={previousBestPower} recordStatus={currentUser?.role === "USER" ? recordStatus : currentUser?.role === "ADMIN" ? "admin" : "guest"} difficultyLabel={DIFFICULTY_CONFIG[difficulty].label} onRestart={() => startGame(difficulty)} onChangeDifficulty={chooseDifficulty} onViewLeaderboard={currentUser?.role === "USER" && withinTimeLimit ? viewLeaderboard : undefined} startPending={startPending} />}
     {phase === "partial" && <PartialResult matchedPairs={matchedPairIds.length} pairCount={DIFFICULTY_CONFIG[difficulty].pairCount} maxCombo={maxCombo} daruPoints={daruPoints} elapsedSeconds={elapsedSeconds} recordStatus={currentUser?.role === "USER" ? recordStatus : currentUser?.role === "ADMIN" ? "admin" : "guest"} onRestart={() => startGame(difficulty)} onChangeDifficulty={chooseDifficulty} startPending={startPending} />}
   </section>;
