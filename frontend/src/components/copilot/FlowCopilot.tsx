@@ -240,6 +240,7 @@ export function FlowCopilot() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [autoSpeechEnabled, setAutoSpeechEnabled] = useState(false);
+  const [ratePanelMessageId, setRatePanelMessageId] = useState<string | null>(null);
   const speechPreferenceUserId = user?.role === "USER" ? user.id : null;
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [value, setValue] = useState("");
@@ -281,11 +282,15 @@ export function FlowCopilot() {
   }, [cueDaru, open]);
 
   useEffect(() => {
-    if (!open) stopSpeech();
+    if (!open) {
+      stopSpeech();
+      setRatePanelMessageId(null);
+    }
   }, [open, stopSpeech]);
 
   useEffect(() => {
     stopSpeech();
+    setRatePanelMessageId(null);
   }, [pathname, stopSpeech]);
 
   useEffect(() => {
@@ -1729,6 +1734,8 @@ export function FlowCopilot() {
                           onResume={resumeSpeech}
                           onStop={stopSpeech}
                           onRateChange={setSpeechRate}
+                          ratePanelOpen={ratePanelMessageId === message.id}
+                          onRatePanelOpenChange={(nextOpen) => setRatePanelMessageId(nextOpen ? message.id : null)}
                         />
                       )}
                     </div>

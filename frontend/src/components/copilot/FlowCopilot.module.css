@@ -429,29 +429,123 @@
   flex-wrap: wrap;
   gap: 4px;
 }
-.speechRateSelect {
+.speechRateControl {
+  position: relative;
+  display: inline-flex;
+}
+.speechRateButton {
   height: 24px;
-  padding: 2px 18px 2px 6px;
+  padding: 2px 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: 999px;
   background: var(--color-surface);
-  color: var(--color-text-muted);
+  color: var(--color-primary);
   font: inherit;
   font-size: 9px;
   font-weight: 750;
   cursor: pointer;
 }
-.speechRateSelect:hover:not(:disabled) {
+.speechRateButton:hover:not(:disabled),
+.speechRateButton[aria-expanded="true"] {
   border-color: var(--color-primary);
+  background: var(--color-primary-soft);
   color: var(--color-primary);
 }
-.speechRateSelect:focus-visible {
+.speechRateButton:focus-visible,
+.speechRateOption:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
-.speechRateSelect:disabled {
+.speechRateButton:disabled {
   cursor: default;
   opacity: .42;
+}
+.speechRateGauge {
+  position: relative;
+  width: 11px;
+  height: 11px;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+}
+.speechRateGauge::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  width: 4px;
+  height: 1.5px;
+  border-radius: 999px;
+  background: currentColor;
+  transform: rotate(-38deg);
+  transform-origin: left center;
+}
+.speechRateAdjust {
+  width: 12px;
+  height: 12px;
+  overflow: visible;
+  fill: var(--color-surface);
+  stroke: currentColor;
+  stroke-width: 1.25;
+  stroke-linecap: round;
+}
+.speechRatePanel {
+  position: fixed;
+  z-index: 190;
+  width: 104px;
+  padding: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: var(--shadow-card);
+  display: grid;
+  gap: 2px;
+}
+.speechRatePanelTitle {
+  padding: 2px 9px 4px;
+  color: var(--color-text-muted);
+  font-size: 9px;
+  font-weight: 750;
+}
+.speechRateOption {
+  position: relative;
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 22px 4px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.speechRateOption:hover {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+.speechRateOption[data-selected="true"] {
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  color: var(--color-primary);
+  font-weight: 800;
+}
+.speechRateOption > span {
+  position: absolute;
+  right: 9px;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: transparent;
+  transform: translateY(-50%);
+}
+.speechRateOption[data-selected="true"] > span {
+  background: var(--color-primary);
 }
 .message > p {
   max-width: 92%;
