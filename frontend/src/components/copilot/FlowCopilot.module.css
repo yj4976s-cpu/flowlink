@@ -209,6 +209,105 @@
   background: var(--color-surface-soft);
   color: var(--color-text);
 }
+.speechSettings {
+  width: 116px;
+  display: grid;
+  gap: 4px;
+}
+.autoSpeechToggle {
+  position: relative;
+  min-height: 30px;
+  padding: 4px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  font-weight: 750;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.autoSpeechToggle > input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.autoSpeechToggle > i {
+  position: relative;
+  width: 24px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--color-border);
+  transition: background 0.18s ease;
+}
+.autoSpeechToggle > i::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-surface-elevated);
+  content: "";
+  transition: transform 0.18s ease;
+}
+.autoSpeechToggle > b {
+  min-width: 18px;
+  font-size: 8px;
+  text-align: center;
+}
+.autoSpeechToggle:has(input:checked) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.autoSpeechToggle > input:checked + i {
+  background: var(--color-primary);
+}
+.autoSpeechToggle > input:checked + i::after {
+  transform: translateX(10px);
+}
+.autoSpeechToggle:focus-within {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.autoSpeechToggle:has(input:disabled) {
+  cursor: default;
+  opacity: .45;
+}
+.voiceSelectLabel {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-muted);
+  font-size: 8px;
+  font-weight: 750;
+}
+.voiceSelectLabel > select {
+  min-width: 0;
+  height: 24px;
+  padding: 2px 18px 2px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 8px;
+  text-overflow: ellipsis;
+}
+.voiceSelectLabel > select:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+.voiceSelectLabel > select:disabled {
+  opacity: .45;
+}
 .messages {
   min-height: 0;
   overflow-y: auto;
@@ -277,10 +376,50 @@
   gap: 6px;
   justify-items: start;
 }
-.message > span {
+.messageMeta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.message[data-role="user"] .messageMeta {
+  justify-content: flex-end;
+}
+.messageMeta > span {
   color: var(--color-text-muted);
   font-size: 9px;
   font-weight: 800;
+}
+.speechButton {
+  min-height: 24px;
+  padding: 2px 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: 9px;
+  font-weight: 750;
+  cursor: pointer;
+}
+.speechButton:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+.speechButton:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.speechButton[aria-pressed="true"] {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.speechButton:disabled {
+  cursor: default;
+  opacity: .42;
 }
 .message > p {
   max-width: 92%;

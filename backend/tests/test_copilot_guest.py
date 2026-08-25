@@ -79,6 +79,7 @@ def test_guest_team_roles_does_not_call_provider(db: Session, monkeypatch: pytes
     assert "유진설" in response.message
     assert "조정화" in response.message
     assert "Roboflow" in response.message
+    assert response.speech_text
 
 
 def test_guest_dataset_team_role_filters_members(db: Session, monkeypatch: pytest.MonkeyPatch) -> None:

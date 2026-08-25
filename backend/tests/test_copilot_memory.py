@@ -31,13 +31,25 @@ def test_lazy_create_restore_and_presentation(db: Session) -> None:
     conversation = get_or_create(db, owner, None, "내 매칭을 확인해줘", "GENERAL", None)
     first = save_message(db, conversation, "USER", "내 매칭을 확인해줘", client_id="client-1")
     assert save_message(db, conversation, "USER", "중복", client_id="client-1").id == first.id
-    save_message(db, conversation, "ASSISTANT", "확인했어요", presentation={"cards": [{"type": "MATCH", "title": "가방", "details": [], "entity_id": 7}], "actions": [], "suggestions": []})
+    save_message(db, conversation, "ASSISTANT", "확인했어요", presentation={"speech_text": "매칭 후보를 확인했습니다.", "cards": [{"type": "MATCH", "title": "가방", "details": [], "entity_id": 7}], "actions": [], "suggestions": []})
     db.commit()
 
     restored = detail(db, owner, conversation.public_id)
     assert restored and [message.role for message in restored.messages] == ["USER", "ASSISTANT"]
     assert restored.messages[1].cards[0].entity_id == 7
+    assert restored.messages[1].speech_text == "매칭 후보를 확인했습니다."
     assert len(model_history(db, conversation)) == 2
+
+
+def test_legacy_presentation_without_speech_text_restores_as_none(db: Session) -> None:
+    owner = user(db, 1, "legacy@example.com")
+    conversation = get_or_create(db, owner, None, "이전 대화", "GENERAL", None)
+    save_message(db, conversation, "ASSISTANT", "이전 답변", presentation={"cards": [], "actions": [], "suggestions": []})
+    db.commit()
+
+    restored = detail(db, owner, conversation.public_id)
+    assert restored is not None
+    assert restored.messages[0].speech_text is None
 
 
 def test_owner_scope_rename_order_and_soft_delete(db: Session) -> None:
