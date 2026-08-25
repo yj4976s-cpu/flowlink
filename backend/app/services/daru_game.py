@@ -106,6 +106,16 @@ def start_gameplay(run: DaruGameRun) -> dict[str, Any]:
     return {"play_started_at": run.play_started_at.isoformat()}
 
 
+def game_run_preview(db: Session, *, run_id: UUID, user_id: int) -> dict[str, Any]:
+    run = _locked_owned_run(db, run_id=run_id, user_id=user_id)
+    _ensure_not_expired(run)
+    if run.consumed_at is not None:
+        raise GameRunConflictError("Game run has already been consumed")
+    if run.play_started_at is not None:
+        raise GameRunConflictError("Game run has already started")
+    return {"cards": [{"position": position, "card_id": card_id} for position, card_id in enumerate(run.deck_state)]}
+
+
 def _require_started(run: DaruGameRun) -> None:
     if run.play_started_at is None:
         raise GameRunConflictError("Game run has not started")

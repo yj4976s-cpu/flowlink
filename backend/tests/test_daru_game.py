@@ -187,6 +187,39 @@ def test_run_creation_returns_positions_without_deck_identity(client: TestClient
     assert "deck_state" not in response.json()
 
 
+@pytest.mark.parametrize(("difficulty", "card_count"), [("EASY", 20), ("NORMAL", 32), ("HARD", 48)])
+def test_created_run_preview_returns_full_owner_deck(client: TestClient, db: Session, difficulty: str, card_count: int) -> None:
+    run_id = create_run(client, db, difficulty, age_seconds=0)
+    run = db.get(DaruGameRun, UUID(run_id)); assert run is not None
+    response = client.get(f"/api/daru-game/runs/{run_id}/preview")
+    assert response.status_code == 200
+    assert response.json()["cards"] == [{"position": position, "card_id": card_id} for position, card_id in enumerate(run.deck_state)]
+    assert len(response.json()["cards"]) == card_count
+    state = client.get(f"/api/daru-game/runs/{run_id}/state").json()
+    assert state["visible_cards"] == [] and "deck_state" not in state
+
+
+def test_run_preview_is_owner_only(client: TestClient, db: Session) -> None:
+    run_id = create_run(client, db, "EASY", age_seconds=0)
+    other = add_user(db, 2, "preview-other")
+    app.dependency_overrides[get_current_user] = lambda: other
+    assert client.get(f"/api/daru-game/runs/{run_id}/preview").status_code == 404
+
+
+def test_run_preview_is_rejected_after_start(client: TestClient, db: Session) -> None:
+    run_id = create_run(client, db, "EASY", age_seconds=0)
+    assert client.get(f"/api/daru-game/runs/{run_id}/preview").status_code == 200
+    assert client.post(f"/api/daru-game/runs/{run_id}/start", json=action_json()).status_code == 200
+    assert client.get(f"/api/daru-game/runs/{run_id}/preview").status_code == 409
+
+
+def test_run_preview_is_rejected_for_consumed_run(client: TestClient, db: Session) -> None:
+    run_id = create_run(client, db, "EASY", age_seconds=0)
+    run = db.get(DaruGameRun, UUID(run_id)); assert run is not None
+    run.consumed_at = utc_now(); db.commit()
+    assert client.get(f"/api/daru-game/runs/{run_id}/preview").status_code == 409
+
+
 def test_fake_perfect_metrics_and_points_are_rejected(client: TestClient, db: Session) -> None:
     run_id, _run = start_authoritative_run(client, db)
     payload = action_json(run_id=run_id, attempts=10, matched_pairs=10, max_combo=10, hints_used=0, elapsed_seconds=45, earned_daru_points=9999)

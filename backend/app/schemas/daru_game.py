@@ -46,6 +46,10 @@ class DaruGameCardReveal(BaseModel):
     card_id: str
 
 
+class DaruGamePreviewResponse(BaseModel):
+    cards: list[DaruGameCardReveal]
+
+
 class DaruGameFlipResponse(BaseModel):
     card: DaruGameCardReveal
     matched: bool | None

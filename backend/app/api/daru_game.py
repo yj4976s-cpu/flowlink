@@ -11,8 +11,8 @@ from app.core.security import create_access_token
 from app.api.auth import set_login_cookie
 from app.db.session import get_db
 from app.models import DaruGameStat, User
-from app.schemas.daru_game import DaruGameActionInput, DaruGameFlipInput, DaruGameFlipResponse, DaruGameHintResponse, DaruGameMetrics, DaruGameRecord, DaruGameResultInput, DaruGameResultResponse, DaruGameRunInput, DaruGameRunResponse, DaruGameRunStateResponse, DaruGameStartResponse, DaruLeaderboardEntry, DaruLeaderboardResponse, Difficulty
-from app.services.daru_game import GameRunConflictError, GameRunNotFoundError, create_game_run, flip_card, game_run_state, leaderboard_rank, perform_game_action, rank_for, ranking_query, start_gameplay, submit_result, use_game_hint
+from app.schemas.daru_game import DaruGameActionInput, DaruGameFlipInput, DaruGameFlipResponse, DaruGameHintResponse, DaruGameMetrics, DaruGamePreviewResponse, DaruGameRecord, DaruGameResultInput, DaruGameResultResponse, DaruGameRunInput, DaruGameRunResponse, DaruGameRunStateResponse, DaruGameStartResponse, DaruLeaderboardEntry, DaruLeaderboardResponse, Difficulty
+from app.services.daru_game import GameRunConflictError, GameRunNotFoundError, create_game_run, flip_card, game_run_preview, game_run_state, leaderboard_rank, perform_game_action, rank_for, ranking_query, start_gameplay, submit_result, use_game_hint
 
 router = APIRouter(prefix="/api/daru-game", tags=["daru-game"])
 
@@ -54,6 +54,13 @@ def hint_run(run_id: UUID, payload: DaruGameActionInput, current_user: Annotated
     try: result = perform_game_action(db, run_id=run_id, user_id=current_user.id, action_id=payload.action_id, action_type="HINT", request_payload={}, handler=use_game_hint)
     except ValueError as exc: raise _run_error(exc) from exc
     return DaruGameHintResponse.model_validate(result)
+
+
+@router.get("/runs/{run_id}/preview", response_model=DaruGamePreviewResponse)
+def run_preview(run_id: UUID, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> DaruGamePreviewResponse:
+    try: result = game_run_preview(db, run_id=run_id, user_id=current_user.id)
+    except ValueError as exc: raise _run_error(exc) from exc
+    return DaruGamePreviewResponse.model_validate(result)
 
 
 @router.post("/results", response_model=DaruGameResultResponse)
