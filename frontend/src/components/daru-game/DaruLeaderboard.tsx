@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { getDaruLeaderboard } from "@/lib/daruGameApi";
 import { DIFFICULTY_CONFIG } from "./game.config";
 import type { GameDifficulty, LeaderboardEntry } from "./game.types";
-import { formatElapsedTime } from "./game.utils";
+import { formatElapsedTime, formatMemoryScore } from "./game.utils";
 import styles from "./DaruGame.module.css";
 
 interface LeaderboardPreview {
@@ -39,8 +39,9 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
   const mineInTop = visibleMyEntry && visibleEntries.some((entry) => entry.is_me);
   return <section id="daru-leaderboard" className={styles.leaderboard} aria-labelledby="leaderboard-title">
     <h2 id="leaderboard-title">🏆 다루 메모리 랭킹</h2>
+    <p className={styles.rankingCriteria}><strong>메모리 점수</strong> 기억 50% · 속도 25% · 콤보 15% · 힌트 절약 10%<span>동점: 시도 횟수 → 플레이 시간</span></p>
     <div className={styles.leaderboardTabs}>{(Object.keys(DIFFICULTY_CONFIG) as GameDifficulty[]).map((key) => <button type="button" key={key} aria-pressed={difficulty === key} onClick={() => setDifficulty(key)}>{DIFFICULTY_CONFIG[key].label}</button>)}</div>
-    {visibleLoading ? <p className={styles.rankingNotice}>랭킹을 불러오는 중이에요.</p> : visibleEntries.length === 0 ? <p className={styles.rankingNotice}>아직 기록이 없어요.<br />첫 기록을 남겨보세요!</p> : <ol className={styles.rankingList}>{visibleEntries.map((entry) => <li key={`${entry.rank}-${entry.nickname}`} data-me={entry.is_me || undefined}><b className={entry.rank <= 3 ? styles.rankingMedal : undefined}>{entry.rank <= 3 ? ["🥇", "🥈", "🥉"][entry.rank - 1] : entry.rank}</b><span><strong>{entry.nickname}</strong><small>힌트 {entry.best_hints_used}회 · {entry.best_attempts}회 · {formatElapsedTime(entry.best_elapsed_seconds)}</small></span><em>{entry.best_detection_power}</em></li>)}</ol>}
-    {!mineInTop && visibleMyEntry && <div className={styles.myRanking}><span>내 기록 · {visibleMyEntry.rank}위</span><strong>메모리 점수 {visibleMyEntry.best_detection_power} · 힌트 {visibleMyEntry.best_hints_used}회 · {visibleMyEntry.best_attempts}회 · {formatElapsedTime(visibleMyEntry.best_elapsed_seconds)}</strong></div>}
+    {visibleLoading ? <p className={styles.rankingNotice}>랭킹을 불러오는 중이에요.</p> : visibleEntries.length === 0 ? <p className={styles.rankingNotice}>아직 v2 공식 기록이 없어요.<br />첫 기록을 남겨보세요!</p> : <ol className={styles.rankingList}>{visibleEntries.map((entry) => <li key={`${entry.rank}-${entry.nickname}`} data-me={entry.is_me || undefined}><b className={entry.rank <= 3 ? styles.rankingMedal : undefined}>{entry.rank <= 3 ? ["🥇", "🥈", "🥉"][entry.rank - 1] : entry.rank}</b><span><strong>{entry.nickname}</strong><small>힌트 {entry.best_hints_used}회 · {entry.best_attempts}회 · {formatElapsedTime(entry.best_elapsed_seconds)}</small></span><em>{formatMemoryScore(entry.best_detection_power)}</em></li>)}</ol>}
+    {!mineInTop && visibleMyEntry && <div className={styles.myRanking}><span>내 기록 · {visibleMyEntry.rank}위</span><strong>메모리 점수 {formatMemoryScore(visibleMyEntry.best_detection_power)} · 힌트 {visibleMyEntry.best_hints_used}회 · {visibleMyEntry.best_attempts}회 · {formatElapsedTime(visibleMyEntry.best_elapsed_seconds)}</strong></div>}
   </section>;
 }

@@ -75,12 +75,12 @@ def _error_redirect(
 
 
 @router.get("/{provider}/start", summary="Start OAuth login")
-def oauth_start(provider: str) -> RedirectResponse:
+def oauth_start(provider: str, next_path: Annotated[str | None, Query(alias="next")] = None) -> RedirectResponse:
     provider_name = _provider_name(provider)
     oauth_provider = get_oauth_provider(provider_name)
     if not oauth_provider.configured:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="OAuth provider not configured")
-    start = create_oauth_start(provider_name)
+    start = create_oauth_start(provider_name, next_path)
     response = RedirectResponse(
         oauth_provider.authorization_url(
             state=start.state,
@@ -144,7 +144,8 @@ def oauth_callback(
         )
     else:
         if result.login is not None:
-            response = RedirectResponse(get_settings().FRONTEND_URL.rstrip("/") + "/", status_code=302)
+            next_path = str(state_payload.get("next_path", "/"))
+            response = RedirectResponse(get_settings().FRONTEND_URL.rstrip("/") + next_path, status_code=302)
             set_login_cookie(response, result.login.access_token, result.login.expires_in)
         else:
             response = RedirectResponse(

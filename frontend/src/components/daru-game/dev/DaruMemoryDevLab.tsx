@@ -21,10 +21,10 @@ type MatchPreview = "normal" | "combo2" | "combo3" | "last";
 type RankingPreview = "top" | "mine-top" | "mine-below" | "empty";
 type ResultPreview = "normal" | "overtime";
 
-const RANK_SCORES: Record<GameRank, number> = { S: 86, A: 72, B: 58, C: 43 };
+const RANK_SCORES: Record<GameRank, number> = { S: 86.4, A: 72.3, B: 58.6, C: 43.2 };
 const BASE_RANKING: LeaderboardEntry[] = [
-  [1, "물결다루", 91, 0, 12, 67], [2, "푸른우산", 87, 0, 14, 78], [3, "다루좋아", 83, 1, 15, 84],
-  [4, "나의 다루", 80, 1, 16, 91], [5, "강물", 76, 2, 18, 100],
+  [1, "물결다루", 91.8, 0, 12, 67], [2, "푸른우산", 87.4, 0, 14, 78], [3, "다루좋아", 83.6, 1, 15, 84],
+  [4, "나의 다루", 80.2, 1, 16, 91], [5, "강물", 76.5, 2, 18, 100],
 ].map(([rank, nickname, score, hints, attempts, elapsed]) => ({ rank: Number(rank), nickname: String(nickname), best_detection_power: Number(score), best_hints_used: Number(hints), best_attempts: Number(attempts), best_elapsed_seconds: Number(elapsed), best_combo: 5, achieved_at: "2026-08-22T00:00:00Z", is_me: rank === 4 }));
 
 const createDevDeck = (difficulty: GameDifficulty) => createGameDeck(difficulty, () => 0.37);
@@ -98,11 +98,11 @@ export function DaruMemoryDevLab() {
   const ranking = useMemo(() => {
     if (rankingPreview === "empty") return { entries: [], myEntry: null };
     if (rankingPreview === "mine-top") return { entries: BASE_RANKING, myEntry: BASE_RANKING[3] };
-    if (rankingPreview === "mine-below") return { entries: BASE_RANKING.map((entry) => ({ ...entry, is_me: false })), myEntry: { ...BASE_RANKING[3], rank: 14, best_detection_power: 72, is_me: true } };
+    if (rankingPreview === "mine-below") return { entries: BASE_RANKING.map((entry) => ({ ...entry, is_me: false })), myEntry: { ...BASE_RANKING[3], rank: 14, best_detection_power: 72.1, is_me: true } };
     return { entries: BASE_RANKING.map((entry) => ({ ...entry, is_me: false })), myEntry: null };
   }, [rankingPreview]);
   const recordStatus = auth === "guest" ? "guest" : auth === "admin" ? "admin" : "saved";
-  const metrics = { memoryEfficiency: resultRank === "S" ? 94 : RANK_SCORES[resultRank], speedScore: RANK_SCORES[resultRank], comboScore: 75, detectionPower: RANK_SCORES[resultRank] };
+  const metrics = { memoryAccuracy: resultRank === "S" ? 94.5 : RANK_SCORES[resultRank], speedScore: RANK_SCORES[resultRank], comboScore: 75, hintScore: 50, detectionPower: RANK_SCORES[resultRank] };
   const resultFixture = auth === "guest" && preview === "partial-result" ? "guest-time-over" : auth === "user" && preview === "partial-result" ? "user-time-over" : auth === "guest" && preview === "result" ? "guest-clear" : auth === "user" && preview === "result" ? "user-clear" : "";
   const showResultFixture = (value: string) => {
     const userFixture = value.startsWith("user-");
@@ -129,15 +129,15 @@ export function DaruMemoryDevLab() {
       preview === "partial-result" ? <PartialResult matchedPairs={6} pairCount={10} maxCombo={3} daruPoints={725} elapsedSeconds={120} recordStatus={auth === "user" ? "saved" : auth === "admin" ? "admin" : "guest"} onRestart={() => setPreview("game")} onChangeDifficulty={() => setPreview("game")} /> :
       preview === "result" ? <GameResult rank={resultRank} metrics={metrics} daruPoints={1375} elapsedSeconds={resultPreview === "overtime" ? 145 : 66} attempts={28} maxCombo={3} hintsUsed={1} withinTimeLimit={resultPreview !== "overtime"} newBest={newBest && resultPreview === "normal"} leaderboardRank={auth === "user" && resultPreview === "normal" ? 4 : null} personalBestPower={auth === "user" ? newBest ? metrics.detectionPower : Math.max(metrics.detectionPower, 94) : null} previousBestPower={newBest ? Math.max(0, metrics.detectionPower - 3) : null} recordStatus={recordStatus} difficultyLabel="쉬움" onRestart={() => setPreview("game")} onChangeDifficulty={() => setPreview("game")} onViewLeaderboard={auth === "user" && resultPreview === "normal" ? () => setPreview("ranking") : undefined} previewTheme={theme} /> :
       <div className={styles.miniGame}>
-        <GameStatus timeRemaining={timeRemaining} attempts={attempts} foundPairs={preview === "match" && matchPreview === "last" ? DIFFICULTY_CONFIG[difficulty].pairCount - 1 : matchedPairIds.length} pairCount={DIFFICULTY_CONFIG[difficulty].pairCount} combo={combo} daruPoints={points} hintsRemaining={hintsRemaining} hintActive={hintActive} onHint={useHint} />
-        {hintActive && <div className={gameStyles.hintProgress}><span>💡 카드를 잘 기억해봐! <b>{hintRemaining}초</b></span><progress max="8" value={hintRemaining} /></div>}
+        <GameStatus timeRemaining={timeRemaining} timeLimit={30} isPreview={phase === "preview"} attempts={attempts} foundPairs={preview === "match" && matchPreview === "last" ? DIFFICULTY_CONFIG[difficulty].pairCount - 1 : matchedPairIds.length} pairCount={DIFFICULTY_CONFIG[difficulty].pairCount} combo={combo} daruPoints={points} hintsRemaining={hintsRemaining} hintActive={hintActive} onHint={useHint} />
+        {hintActive && <div className={gameStyles.hintProgress}><span>카드를 잘 기억해봐! <b>{hintRemaining}초</b></span><progress max="8" value={hintRemaining} /></div>}
         <div className={`${gameStyles.boardStage} ${styles.boardStage}`} data-dimmed={preview === "time-over" || undefined}>
           <MemoryBoard cards={cards} difficulty={difficulty} theme={theme} phase={phase === "lobby" ? "playing" : phase} flippedIds={flippedIds} matchedPairIds={matchedPairIds} locked={false} hintActive={hintActive} onFlip={flip} />
           {feedback && <DaruMatchFeedback feedback={feedback} />}
           {(phase === "ready" || phase === "flipping") && <div className={gameStyles.readyCue}>{phase === "flipping" ? "READY" : "GO!"}</div>}
         </div>
         {preview === "time-over" && <TimeOverDialog onContinue={() => { setPreview("game"); setPhase("playing"); }} onFinish={() => setPreview("partial-result")} />}
-        {phase === "finished" && <GameResult rank="S" metrics={{ memoryEfficiency: 100, speedScore: 98, comboScore: 40, detectionPower: 90 }} daruPoints={points + 300} elapsedSeconds={Math.max(1, 30 - timeRemaining)} attempts={attempts} maxCombo={combo} hintsUsed={2 - hintsRemaining} withinTimeLimit newBest recordStatus={recordStatus} leaderboardRank={auth === "user" ? 1 : null} personalBestPower={auth === "user" ? 90 : null} difficultyLabel={`DEV ${DIFFICULTY_CONFIG[difficulty].cardCount}장`} onRestart={startGame} onChangeDifficulty={() => { setPhase("lobby"); setPreview("game"); }} onViewLeaderboard={auth === "user" ? () => setPreview("ranking") : undefined} previewTheme={theme} />}
+        {phase === "finished" && <GameResult rank="S" metrics={{ memoryAccuracy: 100, speedScore: 98, comboScore: 40, hintScore: 50, detectionPower: 90.5 }} daruPoints={points + 300} elapsedSeconds={Math.max(1, 30 - timeRemaining)} attempts={attempts} maxCombo={combo} hintsUsed={2 - hintsRemaining} withinTimeLimit newBest recordStatus={recordStatus} leaderboardRank={auth === "user" ? 1 : null} personalBestPower={auth === "user" ? 90.5 : null} difficultyLabel={`DEV ${DIFFICULTY_CONFIG[difficulty].cardCount}장`} onRestart={startGame} onChangeDifficulty={() => { setPhase("lobby"); setPreview("game"); }} onViewLeaderboard={auth === "user" ? () => setPreview("ranking") : undefined} previewTheme={theme} />}
       </div>}
     </section>
     <p className={styles.safety}>DEV fixture only · API 호출 없음 · DB 저장 없음 · 실제 인증 변경 없음 · 공통 테마 설정 사용</p>

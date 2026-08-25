@@ -186,6 +186,21 @@ def test_jwt_creation_and_decode() -> None:
     assert expires_in == get_settings().ACCESS_TOKEN_EXPIRE_MINUTES * 60
 
 
+def test_default_auth_session_policy_is_eight_hours() -> None:
+    assert Settings(_env_file=None).ACCESS_TOKEN_EXPIRE_MINUTES == 480
+
+
+def test_access_token_runtime_lifetime_is_eight_hours(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = get_settings()
+    monkeypatch.setattr(settings, "ACCESS_TOKEN_EXPIRE_MINUTES", 480)
+    token, expires_in = create_access_token(user_id=123, role="USER")
+    payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+    remaining_seconds = payload["exp"] - int(utc_now().timestamp())
+
+    assert expires_in == 480 * 60
+    assert 480 * 60 - 2 <= remaining_seconds <= 480 * 60
+
+
 def test_expired_token_is_rejected() -> None:
     settings = get_settings()
     expired_token = jwt.encode(

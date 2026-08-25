@@ -485,7 +485,7 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
     setPendingSocialProvider(provider);
     setSubmitMessage(`${providerLabel} 인증 페이지로 이동하고 있습니다.`);
     try {
-      window.location.assign(getOAuthStartUrl(provider));
+      window.location.assign(getOAuthStartUrl(provider, getSafeNextPath()));
     } catch (error) {
       setPendingSocialProvider(null);
       setSubmitError(true);

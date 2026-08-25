@@ -710,8 +710,11 @@ CREATE TABLE public.daru_game_stats (
     difficulty VARCHAR(10) NOT NULL
         CHECK (difficulty IN ('EASY', 'NORMAL', 'HARD')),
 
-    best_detection_power SMALLINT NOT NULL DEFAULT 0
+    best_detection_power NUMERIC(4,1) NOT NULL DEFAULT 0.0
         CHECK (best_detection_power BETWEEN 0 AND 100),
+
+    score_version INTEGER NOT NULL DEFAULT 2
+        CHECK (score_version IN (1, 2)),
 
     best_hints_used SMALLINT
         CHECK (
@@ -762,12 +765,23 @@ CREATE TABLE public.daru_game_runs (
         CHECK (difficulty IN ('EASY', 'NORMAL', 'HARD')),
 
     started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    play_started_at TIMESTAMPTZ,
     consumed_at TIMESTAMPTZ,
+    deck_state JSONB NOT NULL DEFAULT '[]'::JSONB,
+    first_position INTEGER,
+    matched_positions JSONB NOT NULL DEFAULT '[]'::JSONB,
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    matched_pairs INTEGER NOT NULL DEFAULT 0 CHECK (matched_pairs >= 0),
+    current_combo INTEGER NOT NULL DEFAULT 0 CHECK (current_combo >= 0),
+    max_combo INTEGER NOT NULL DEFAULT 0 CHECK (max_combo >= current_combo),
+    hints_used INTEGER NOT NULL DEFAULT 0 CHECK (hints_used BETWEEN 0 AND 2),
+    earned_daru_points BIGINT NOT NULL DEFAULT 0 CHECK (earned_daru_points >= 0),
 
     CHECK (
         consumed_at IS NULL
         OR consumed_at >= started_at
-    )
+    ),
+    CHECK (first_position IS NULL OR first_position >= 0)
 );
 
 ALTER TABLE public.daru_game_runs
@@ -1018,8 +1032,8 @@ CREATE INDEX idx_notifications_unread
 CREATE INDEX idx_daru_game_stats_ranking
     ON public.daru_game_stats (
         difficulty,
+        score_version,
         best_detection_power DESC,
-        best_hints_used ASC,
         best_attempts ASC,
         best_elapsed_seconds ASC,
         best_achieved_at ASC
@@ -1028,6 +1042,21 @@ CREATE INDEX idx_daru_game_stats_ranking
 CREATE INDEX idx_daru_game_runs_active_user
     ON public.daru_game_runs (user_id, started_at DESC)
     WHERE consumed_at IS NULL;
+
+CREATE TABLE public.daru_game_run_actions (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    run_id UUID NOT NULL REFERENCES public.daru_game_runs(id) ON DELETE CASCADE,
+    action_id UUID NOT NULL,
+    action_type VARCHAR(10) NOT NULL CHECK (action_type IN ('START', 'FLIP', 'HINT', 'COMPLETE')),
+    request_fingerprint VARCHAR(64) NOT NULL,
+    response_payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_daru_game_run_actions_run_action UNIQUE (run_id, action_id)
+);
+
+ALTER TABLE public.daru_game_run_actions ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.daru_game_run_actions FROM anon, authenticated;
+REVOKE ALL ON SEQUENCE public.daru_game_run_actions_id_seq FROM anon, authenticated;
 
 CREATE INDEX idx_processing_histories_entity
     ON processing_histories (
