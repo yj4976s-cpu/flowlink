@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 import hashlib
@@ -18,12 +19,14 @@ from app.models import DaruGameRun, DaruGameRunAction, DaruGameStat, User
 DIFFICULTY_CONFIG = {
     "EASY": {"pairs": 10, "time_limit_seconds": 120, "speed_benchmark_seconds": 90, "combo_target": 5, "clear_bonus": 300, "preview_seconds": 5},
     "NORMAL": {"pairs": 16, "time_limit_seconds": 210, "speed_benchmark_seconds": 150, "combo_target": 7, "clear_bonus": 500, "preview_seconds": 7},
-    "HARD": {"pairs": 24, "time_limit_seconds": 330, "speed_benchmark_seconds": 240, "combo_target": 9, "clear_bonus": 700, "preview_seconds": 9},
+    "HARD": {"pairs": 20, "time_limit_seconds": 280, "speed_benchmark_seconds": 200, "combo_target": 8, "clear_bonus": 700, "preview_seconds": 8},
 }
+EASY_CARD_IDS = ["greeting", "excited", "heart", "sleeping", "search", "umbrella", "shoe", "backpack", "ball", "can"]
+NORMAL_CARD_IDS = [*EASY_CARD_IDS, "thumbs-up", "sulky", "coastal-cleanup", "umbrella-found", "plastic-bag", "plastic-bottle"]
+HARD_ADDITIONAL_CARD_IDS = ["shy", "splash", "branch-play", "plastic-sort", "shoe-found", "backpack-found", "proud", "styrofoam"]
 CARD_IDS_BY_DIFFICULTY = {
-    "EASY": ["greeting", "excited", "heart", "sleeping", "search", "umbrella", "shoe", "backpack", "ball", "can"],
-    "NORMAL": ["greeting", "excited", "heart", "sleeping", "search", "umbrella", "shoe", "backpack", "ball", "can", "thumbs-up", "sulky", "coastal-cleanup", "umbrella-found", "plastic-bag", "plastic-bottle"],
-    "HARD": ["greeting", "excited", "heart", "sleeping", "search", "umbrella", "shoe", "backpack", "ball", "can", "thumbs-up", "sulky", "coastal-cleanup", "umbrella-found", "plastic-bag", "plastic-bottle", "shy", "splash", "branch-play", "plastic-sort", "shoe-found", "backpack-found", "proud", "styrofoam"],
+    "EASY": EASY_CARD_IDS,
+    "NORMAL": NORMAL_CARD_IDS,
 }
 GAME_RUN_MAX_AGE = timedelta(hours=24)
 CURRENT_SCORE_VERSION = 2
@@ -38,10 +41,27 @@ class GameRunConflictError(ValueError):
     pass
 
 
+class GameRunExpiredError(GameRunConflictError):
+    pass
+
+
+class OutdatedGameRunError(GameRunConflictError):
+    pass
+
+
+def select_card_ids(difficulty: str, randomizer: Any | None = None) -> list[str]:
+    if difficulty != "HARD":
+        return list(CARD_IDS_BY_DIFFICULTY[difficulty])
+    hard_additional = list(HARD_ADDITIONAL_CARD_IDS)
+    (randomizer or secrets.SystemRandom()).shuffle(hard_additional)
+    return [*NORMAL_CARD_IDS, *hard_additional[:4]]
+
+
 def create_game_run(db: Session, *, user_id: int, difficulty: str) -> DaruGameRun:
     now = utc_now()
-    deck = [card_id for card_id in CARD_IDS_BY_DIFFICULTY[difficulty] for _copy in range(2)]
-    secrets.SystemRandom().shuffle(deck)
+    randomizer = secrets.SystemRandom()
+    deck = [card_id for card_id in select_card_ids(difficulty, randomizer) for _copy in range(2)]
+    randomizer.shuffle(deck)
     run = DaruGameRun(id=uuid4(), user_id=user_id, difficulty=difficulty, started_at=now, deck_state=deck, matched_positions=[])
     db.add(run)
     db.commit()
@@ -53,11 +73,21 @@ def game_run_lock_query(run_id: UUID):
     return select(DaruGameRun).where(DaruGameRun.id == run_id).with_for_update()
 
 
+def _ensure_current_deck_shape(run: DaruGameRun) -> None:
+    if run.consumed_at is not None:
+        return
+    expected_pairs = DIFFICULTY_CONFIG[run.difficulty]["pairs"]
+    pair_counts = Counter(run.deck_state)
+    if len(run.deck_state) != expected_pairs * 2 or len(pair_counts) != expected_pairs or any(count != 2 for count in pair_counts.values()):
+        raise OutdatedGameRunError("Game run uses an outdated deck configuration")
+
+
 def _locked_owned_run(db: Session, *, run_id: UUID, user_id: int) -> DaruGameRun:
     run = db.scalar(game_run_lock_query(run_id))
     if run is None or run.user_id != user_id:
         raise GameRunNotFoundError("Game run not found")
 
+    _ensure_current_deck_shape(run)
     return run
 
 
@@ -65,7 +95,7 @@ def _ensure_not_expired(run: DaruGameRun, now: datetime | None = None) -> None:
     current = now or utc_now()
     started_at = run.started_at if run.started_at.tzinfo is not None else run.started_at.replace(tzinfo=UTC)
     if current - started_at < timedelta(0) or current - started_at > GAME_RUN_MAX_AGE:
-        raise GameRunConflictError("Game run has expired")
+        raise GameRunExpiredError("Game run has expired")
 
 
 def request_fingerprint(action_type: str, payload: dict[str, object]) -> str:

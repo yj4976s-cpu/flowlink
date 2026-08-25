@@ -50,8 +50,6 @@ export interface DifficultyConfig {
   label: string;
   description: string;
   pairCount: number;
-  daruCount: number;
-  itemCount: number;
   cardCount: number;
   timeLimitSeconds: number;
   speedBenchmarkSeconds: number;

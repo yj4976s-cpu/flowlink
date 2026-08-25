@@ -1,5 +1,5 @@
 from collections.abc import Iterator
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -17,7 +17,7 @@ from app.core.security import utc_now
 from app.db.session import Base, get_db
 from app.main import app
 from app.models import DaruGameRun, DaruGameRunAction, DaruGameStat, User
-from app.services.daru_game import _round_to_tenth, calculate_detection_power, calculate_hint_score, calculate_memory_accuracy, calculate_speed_score, game_run_lock_query, is_better, rank_for, ranking_query
+from app.services.daru_game import DIFFICULTY_CONFIG, GAME_RUN_MAX_AGE, HARD_ADDITIONAL_CARD_IDS, NORMAL_CARD_IDS, GameRunExpiredError, _ensure_not_expired, _round_to_tenth, calculate_detection_power, calculate_hint_score, calculate_memory_accuracy, calculate_speed_score, detection_metrics, game_run_lock_query, is_better, rank_for, ranking_query, select_card_ids
 
 
 @compiles(BigInteger, "sqlite")
@@ -69,7 +69,18 @@ def client(db: Session) -> Iterator[TestClient]:
 def test_detection_power_uses_each_difficulty_config() -> None:
     assert calculate_detection_power("EASY", 10, 90, 5, 0) == Decimal("95.0")
     assert calculate_detection_power("NORMAL", 20, 150, 7, 1) == Decimal("83.8")
-    assert calculate_detection_power("HARD", 24, 240, 9, 2) == Decimal("85.0")
+    assert calculate_detection_power("HARD", 20, 200, 8, 2) == Decimal("85.0")
+
+
+def test_hard_balance_config_uses_twenty_pairs_and_new_timing() -> None:
+    assert DIFFICULTY_CONFIG["HARD"] == {
+        "pairs": 20,
+        "time_limit_seconds": 280,
+        "speed_benchmark_seconds": 200,
+        "combo_target": 8,
+        "clear_bonus": 700,
+        "preview_seconds": 8,
+    }
 
 
 def test_speed_score_is_continuous_and_overtime_is_zero() -> None:
@@ -85,7 +96,7 @@ def test_speed_score_is_continuous_and_overtime_is_zero() -> None:
     [
         (10, 10, "100"), (10, 15, "75"), (10, 20, "50"), (10, 25, "25"), (10, 30, "0"),
         (16, 24, "75"), (16, 32, "50"), (16, 48, "0"),
-        (24, 36, "75"), (24, 48, "50"), (24, 72, "0"),
+        (20, 20, "100"), (20, 30, "75"), (20, 40, "50"), (20, 50, "25"), (20, 60, "0"),
     ],
 )
 def test_memory_accuracy_uses_linear_extra_attempt_penalty(pairs: int, attempts: int, expected: str) -> None:
@@ -99,10 +110,10 @@ def test_hint_score_is_part_of_detection_power(hints_used: int, expected: str) -
 
 @pytest.mark.parametrize(
     ("difficulty", "half", "benchmark", "limit"),
-    [("EASY", 45, 90, 120), ("NORMAL", 75, 150, 210), ("HARD", 120, 240, 330)],
+    [("EASY", 45, 90, 120), ("NORMAL", 75, 150, 210), ("HARD", 100, 200, 280)],
 )
 def test_speed_score_boundaries_for_every_difficulty(difficulty: str, half: int, benchmark: int, limit: int) -> None:
-    config = {"EASY": (90, 120), "NORMAL": (150, 210), "HARD": (240, 330)}[difficulty]
+    config = {"EASY": (90, 120), "NORMAL": (150, 210), "HARD": (200, 280)}[difficulty]
     assert config == (benchmark, limit)
     assert calculate_speed_score(half, benchmark, limit) == 100
     assert calculate_speed_score(benchmark, benchmark, limit) == 80
@@ -117,15 +128,36 @@ def test_easy_speed_score_midpoints() -> None:
 
 
 @pytest.mark.parametrize(
+    ("elapsed", "expected"),
+    [(100, 100), (150, 90), (200, 80), (240, 60), (280, 40), (281, 0)],
+)
+def test_hard_speed_score_boundaries(elapsed: int, expected: int) -> None:
+    assert calculate_speed_score(elapsed, 200, 280) == expected
+
+
+@pytest.mark.parametrize(("combo", "expected"), [(4, "50.0"), (6, "75.0"), (8, "100.0"), (9, "100.0")])
+def test_hard_combo_target_is_eight(combo: int, expected: str) -> None:
+    assert detection_metrics("HARD", 20, 100, combo, 0, True)["combo_score"] == Decimal(expected)
+
+
+@pytest.mark.parametrize(
     ("difficulty", "attempts", "elapsed", "combo", "hints", "expected"),
     [
         ("EASY", 15, 80, 4, 0, "80.6"),
         ("NORMAL", 24, 180, 5, 1, "68.2"),
-        ("HARD", 36, 270, 6, 2, "64.2"),
+        ("HARD", 30, 270, 6, 2, "60.0"),
     ],
 )
 def test_v2_representative_detection_scores(difficulty: str, attempts: int, elapsed: int, combo: int, hints: int, expected: str) -> None:
     assert calculate_detection_power(difficulty, attempts, elapsed, combo, hints) == Decimal(expected)
+
+
+@pytest.mark.parametrize(
+    ("attempts", "elapsed", "combo", "hints", "expected"),
+    [(20, 100, 8, 0, "100.0"), (25, 150, 6, 0, "87.5"), (30, 180, 5, 1, "72.9"), (35, 200, 4, 1, "63.8")],
+)
+def test_hard_new_balance_score_samples(attempts: int, elapsed: int, combo: int, hints: int, expected: str) -> None:
+    assert calculate_detection_power("HARD", attempts, elapsed, combo, hints) == Decimal(expected)
 
 
 def test_v2_supabase_reference_sample_is_exactly_ninety() -> None:
@@ -187,7 +219,32 @@ def test_run_creation_returns_positions_without_deck_identity(client: TestClient
     assert "deck_state" not in response.json()
 
 
-@pytest.mark.parametrize(("difficulty", "card_count"), [("EASY", 20), ("NORMAL", 32), ("HARD", 48)])
+class FrontLoadingRandom:
+    def __init__(self, front: list[str]) -> None:
+        self.front = front
+
+    def shuffle(self, values: list[str]) -> None:
+        order = {value: index for index, value in enumerate(self.front)}
+        values.sort(key=lambda value: order.get(value, len(order)))
+
+
+def test_hard_card_selection_keeps_normal_base_and_selects_four_unique_additional_cards() -> None:
+    selected = select_card_ids("HARD", FrontLoadingRandom(["proud", "shy", "styrofoam", "splash"]))
+    assert len(selected) == 20
+    assert len(set(selected)) == 20
+    assert selected[:16] == NORMAL_CARD_IDS
+    assert selected[16:] == ["proud", "shy", "styrofoam", "splash"]
+    assert set(selected[16:]) <= set(HARD_ADDITIONAL_CARD_IDS)
+
+
+def test_hard_card_selection_can_produce_different_deterministic_subsets() -> None:
+    first = select_card_ids("HARD", FrontLoadingRandom(["shy", "splash", "branch-play", "plastic-sort"]))
+    second = select_card_ids("HARD", FrontLoadingRandom(["shoe-found", "backpack-found", "proud", "styrofoam"]))
+    assert first[16:] != second[16:]
+    assert len(set(first[16:])) == len(set(second[16:])) == 4
+
+
+@pytest.mark.parametrize(("difficulty", "card_count"), [("EASY", 20), ("NORMAL", 32), ("HARD", 40)])
 def test_created_run_preview_returns_full_owner_deck(client: TestClient, db: Session, difficulty: str, card_count: int) -> None:
     run_id = create_run(client, db, difficulty, age_seconds=0)
     run = db.get(DaruGameRun, UUID(run_id)); assert run is not None
@@ -197,6 +254,77 @@ def test_created_run_preview_returns_full_owner_deck(client: TestClient, db: Ses
     assert len(response.json()["cards"]) == card_count
     state = client.get(f"/api/daru-game/runs/{run_id}/state").json()
     assert state["visible_cards"] == [] and "deck_state" not in state
+
+
+def test_created_hard_deck_has_twenty_unique_pairs_with_normal_base(client: TestClient, db: Session) -> None:
+    run_id = create_run(client, db, "HARD", age_seconds=0)
+    run = db.get(DaruGameRun, UUID(run_id)); assert run is not None
+    counts = {card_id: run.deck_state.count(card_id) for card_id in set(run.deck_state)}
+    additional = set(counts) - set(NORMAL_CARD_IDS)
+    assert len(run.deck_state) == 40
+    assert len(counts) == 20
+    assert all(count == 2 for count in counts.values())
+    assert set(NORMAL_CARD_IDS) <= set(counts)
+    assert len(additional) == 4 and additional <= set(HARD_ADDITIONAL_CARD_IDS)
+
+
+def legacy_hard_deck() -> list[str]:
+    return [card_id for card_id in [*NORMAL_CARD_IDS, *HARD_ADDITIONAL_CARD_IDS] for _copy in range(2)]
+
+
+def assert_outdated_deck(response) -> None:
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "OUTDATED_DECK_CONFIGURATION",
+        "message": "Game run uses an outdated deck configuration",
+    }
+
+
+def test_legacy_hard_created_run_is_rejected_by_preview_state_and_start(client: TestClient, db: Session) -> None:
+    run_id = create_run(client, db, "HARD", age_seconds=0)
+    run = db.get(DaruGameRun, UUID(run_id)); assert run is not None
+    run.deck_state = legacy_hard_deck(); db.commit()
+
+    assert_outdated_deck(client.get(f"/api/daru-game/runs/{run_id}/preview"))
+    assert_outdated_deck(client.get(f"/api/daru-game/runs/{run_id}/state"))
+    assert_outdated_deck(client.post(f"/api/daru-game/runs/{run_id}/start", json=action_json()))
+
+
+def test_legacy_hard_playing_run_is_rejected_by_flip_hint_and_complete(client: TestClient, db: Session) -> None:
+    run_id = create_run(client, db, "HARD", age_seconds=0)
+    run = db.get(DaruGameRun, UUID(run_id)); assert run is not None
+    run.deck_state = legacy_hard_deck()
+    run.play_started_at = utc_now() - timedelta(seconds=200)
+    run.matched_pairs = 20
+    db.commit()
+
+    assert_outdated_deck(client.post(f"/api/daru-game/runs/{run_id}/flip", json=action_json(position=0)))
+    assert_outdated_deck(client.post(f"/api/daru-game/runs/{run_id}/hint", json=action_json()))
+    assert_outdated_deck(client.post("/api/daru-game/results", json=action_json(run_id=run_id)))
+
+
+def test_current_length_with_invalid_pair_distribution_is_rejected(client: TestClient, db: Session) -> None:
+    run_id = create_run(client, db, "HARD", age_seconds=0)
+    run = db.get(DaruGameRun, UUID(run_id)); assert run is not None
+    run.deck_state = [*run.deck_state[:-2], run.deck_state[0], run.deck_state[0]]
+    db.commit()
+
+    assert len(run.deck_state) == 40
+    assert_outdated_deck(client.get(f"/api/daru-game/runs/{run_id}/state"))
+
+
+def test_consumed_legacy_hard_run_state_remains_available(client: TestClient, db: Session) -> None:
+    run_id = create_run(client, db, "HARD", age_seconds=0)
+    run = db.get(DaruGameRun, UUID(run_id)); assert run is not None
+    run.deck_state = legacy_hard_deck()
+    run.play_started_at = utc_now() - timedelta(seconds=240)
+    run.consumed_at = utc_now()
+    db.commit()
+
+    response = client.get(f"/api/daru-game/runs/{run_id}/state")
+    assert response.status_code == 200
+    assert response.json()["status"] == "COMPLETED"
+    assert response.json()["positions"] == list(range(48))
 
 
 def test_run_preview_is_owner_only(client: TestClient, db: Session) -> None:
@@ -242,6 +370,28 @@ def test_server_authoritative_perfect_easy_run(client: TestClient, db: Session) 
     assert metrics["max_combo"] == 10 and metrics["hints_used"] == 0
     assert metrics["detection_power"] == 95.0
     assert metrics["earned_daru_points"] == 2050
+
+
+def test_server_authoritative_perfect_hard_run_uses_twenty_pairs(client: TestClient, db: Session) -> None:
+    run_id, _run = start_authoritative_run(client, db, "HARD", elapsed_seconds=240)
+    complete_pairs(client, run_id, 20)
+    response = client.post("/api/daru-game/results", json=action_json(run_id=run_id))
+    assert response.status_code == 200
+    metrics = response.json()["metrics"]
+    assert metrics["attempts"] == 20 and metrics["matched_pairs"] == 20
+    assert metrics["memory_accuracy"] == 100.0
+    assert metrics["earned_daru_points"] == 4450
+
+
+def test_hard_completion_rejects_nineteen_and_twenty_one_pairs(client: TestClient, db: Session) -> None:
+    run_id, _run = start_authoritative_run(client, db, "HARD", elapsed_seconds=240)
+    complete_pairs(client, run_id, 19)
+    assert client.post("/api/daru-game/results", json=action_json(run_id=run_id)).status_code == 422
+
+    overflow_run_id, overflow_run = start_authoritative_run(client, db, "HARD", elapsed_seconds=240)
+    overflow_run.matched_pairs = 21
+    db.commit()
+    assert client.post("/api/daru-game/results", json=action_json(run_id=overflow_run_id)).status_code == 422
 
 
 def test_mismatch_increments_attempt_and_resets_combo(client: TestClient, db: Session) -> None:
@@ -316,6 +466,16 @@ def test_server_timestamp_controls_elapsed_and_timeout(client: TestClient, db: S
     response = client.post("/api/daru-game/results", json=action_json(run_id=run_id))
     assert response.status_code == 200
     assert response.json()["metrics"]["within_time_limit"] is False
+    assert response.json()["leaderboard_rank"] is None
+
+
+def test_hard_server_timeout_uses_new_280_second_limit(client: TestClient, db: Session) -> None:
+    run_id, _run = start_authoritative_run(client, db, "HARD", elapsed_seconds=281)
+    complete_pairs(client, run_id, 20)
+    response = client.post("/api/daru-game/results", json=action_json(run_id=run_id))
+    assert response.status_code == 200
+    assert response.json()["metrics"]["within_time_limit"] is False
+    assert response.json()["metrics"]["speed_score"] == 0.0
     assert response.json()["leaderboard_rank"] is None
 
 
@@ -410,11 +570,43 @@ def test_creating_authenticated_run_renews_login_cookie(client: TestClient, db: 
     assert "HttpOnly" in set_cookie and "SameSite=lax" in set_cookie
 
 
+def assert_expired_run(response) -> None:
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"code": "RUN_EXPIRED", "message": "Game run has expired"}
+
+
+def test_state_accepts_active_run_younger_than_max_age(client: TestClient, db: Session) -> None:
+    run_id = create_run(client, db, "EASY", age_seconds=24 * 60 * 60 - 60)
+    assert client.get(f"/api/daru-game/runs/{run_id}/state").status_code == 200
+
+
+def test_expiration_boundary_preserves_strict_max_age_comparison() -> None:
+    started_at = datetime(2026, 1, 1, tzinfo=UTC)
+    run = DaruGameRun(started_at=started_at)
+    _ensure_not_expired(run, now=started_at + GAME_RUN_MAX_AGE)
+    with pytest.raises(GameRunExpiredError, match="Game run has expired"):
+        _ensure_not_expired(run, now=started_at + GAME_RUN_MAX_AGE + timedelta(microseconds=1))
+
+
 def test_state_rejects_expired_active_run(client: TestClient, db: Session) -> None:
     run_id = create_run(client, db, "EASY", age_seconds=24 * 60 * 60 + 1)
-    response = client.get(f"/api/daru-game/runs/{run_id}/state")
-    assert response.status_code == 409
-    assert response.json()["detail"] == "Game run has expired"
+    assert_expired_run(client.get(f"/api/daru-game/runs/{run_id}/state"))
+
+
+def test_expired_created_run_is_rejected_by_preview_and_start(client: TestClient, db: Session) -> None:
+    run_id = create_run(client, db, "EASY", age_seconds=24 * 60 * 60 + 1)
+    assert_expired_run(client.get(f"/api/daru-game/runs/{run_id}/preview"))
+    assert_expired_run(client.post(f"/api/daru-game/runs/{run_id}/start", json=action_json()))
+
+
+def test_expired_playing_run_is_rejected_by_flip_hint_and_complete(client: TestClient, db: Session) -> None:
+    run_id = create_run(client, db, "EASY", age_seconds=24 * 60 * 60 + 1)
+    run = db.get(DaruGameRun, UUID(run_id)); assert run is not None
+    run.play_started_at = utc_now() - timedelta(seconds=120)
+    db.commit()
+    assert_expired_run(client.post(f"/api/daru-game/runs/{run_id}/flip", json=action_json(position=0)))
+    assert_expired_run(client.post(f"/api/daru-game/runs/{run_id}/hint", json=action_json()))
+    assert_expired_run(client.post("/api/daru-game/results", json=action_json(run_id=run_id)))
 
 
 def test_start_response_loss_retry_is_idempotent(client: TestClient, db: Session) -> None:

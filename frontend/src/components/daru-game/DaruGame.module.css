@@ -72,6 +72,7 @@
 
 .game {
   width: min(100% - 32px, 1520px);
+  height: calc(100vh - 78px);
   height: calc(100dvh - 78px);
   padding: 6px 0;
   display: grid;
@@ -119,7 +120,7 @@
 .hintProgress span { display: flex; justify-content: space-between; gap: 18px; color: var(--color-text); font-size: 12px; font-weight: 800; }.hintProgress b { color: var(--color-primary); }
 .hintProgress progress { width: 100%; height: 4px; margin-top: 5px; accent-color: var(--color-primary); display: block; }
 
-.boardStage { position: relative; min-height: 0; display: grid; justify-items: center; align-items: start; transition: filter .35s ease, opacity .35s ease; }
+.boardStage { position: relative; min-height: 0; padding: 4px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; display: grid; justify-items: center; align-items: start; transition: filter .35s ease, opacity .35s ease; scrollbar-width: thin; }
 .boardStage[data-complete] { filter: blur(2px) brightness(.68); opacity: .72; pointer-events: none; }
 .boardStage[data-dimmed] { filter: brightness(.72); opacity: .72; pointer-events: none; }
 .matchBanner { position: absolute; z-index: 8; top: 5px; left: 50%; width: max-content; max-width: calc(100vw - 24px); min-height: 52px; padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--color-primary) 36%, var(--color-border)); border-radius: 16px; background: color-mix(in srgb, var(--color-surface) 94%, transparent); color: var(--color-text); box-shadow: 0 9px 24px color-mix(in srgb, var(--color-primary) 15%, transparent), var(--shadow-card); display: flex; align-items: center; gap: 10px; pointer-events: none; backdrop-filter: blur(3px); transform: translate(-50%, -38%); animation: matchBannerIn .2s .06s ease-out both, matchBannerOut .18s .9s ease-in forwards; }
@@ -138,20 +139,23 @@
 .readyCue { position: absolute; z-index: 6; inset: 0; background: color-mix(in srgb, var(--color-background) 36%, transparent); color: var(--color-primary); display: grid; place-items: center; font-size: clamp(32px, 7vw, 64px); font-weight: 900; letter-spacing: .16em; pointer-events: none; backdrop-filter: blur(1px); animation: cueFade .2s ease both; }
 
 .board {
-  width: 100%;
-  height: auto;
-  max-height: 100%;
+  --daru-card-width: 80px;
+  --daru-board-columns: 4;
+  --daru-board-gap: 8px;
+  width: max-content;
+  max-width: 100%;
   margin-inline: auto;
   display: grid;
+  grid-template-columns: repeat(var(--daru-board-columns), var(--daru-card-width));
+  grid-auto-rows: calc(var(--daru-card-width) * 5 / 4);
+  gap: var(--daru-board-gap);
 }
 
-.board[data-difficulty="easy"] { width: min(100%, clamp(500px, 46vw, 650px), calc(100dvh - 202px)); aspect-ratio: 1; grid-template-columns: repeat(5, minmax(0, 1fr)); grid-template-rows: repeat(4, minmax(0, 1fr)); gap: clamp(8px, .8vw, 12px); }
-.board[data-difficulty="normal"] { width: min(100%, clamp(720px, 64vw, 980px), calc((100dvh - 190px) * 1.6)); aspect-ratio: 8 / 5; grid-template-columns: repeat(8, minmax(0, 1fr)); grid-template-rows: repeat(4, minmax(0, 1fr)); gap: clamp(6px, .6vw, 10px); }
-.board[data-difficulty="hard"] { width: min(100%, clamp(1050px, 86vw, 1432px), calc((100dvh - 190px) * 2.4)); aspect-ratio: 12 / 5; grid-template-columns: repeat(12, minmax(0, 1fr)); grid-template-rows: repeat(4, minmax(0, 1fr)); gap: clamp(5px, .45vw, 8px); }
+.board[data-reflow] { padding-bottom: 8px; }
 
 .card {
   min-width: 0;
-  width: 100%;
+  width: var(--daru-card-width);
   aspect-ratio: 4 / 5;
   padding: 0;
   border: 0;
@@ -257,7 +261,6 @@
 @keyframes timerSpark { 50% { opacity: .28; transform: translate(1px, -1px) rotate(-38deg) scale(.72); } }
 
 @media (max-width: 1050px) {
-  .board[data-difficulty="hard"] { width: min(100%, calc((100dvh - 180px) * 2.4)); }
   .liveHud { grid-template-columns: minmax(285px, 42%) 1px minmax(0, 1fr); gap: 9px; padding-inline: 11px; }
   .primaryHud { gap: 12px; }
   .secondaryHud > div { padding-inline: 5px; }
@@ -276,9 +279,6 @@
   .secondaryHud > div { padding-inline: 3px; }
   .primaryHud dt, .secondaryHud dt { font-size: 9px; }
   .timerZone dd { font-size: 19px; }.foundZone dd { font-size: 16px; }.secondaryHud dd { font-size: 14px; }
-  .board[data-difficulty="easy"] { width: min(100%, calc(100dvh - 187px)); }
-  .board[data-difficulty="normal"] { width: min(100%, calc((100dvh - 175px) * 1.6)); }
-  .board[data-difficulty="hard"] { width: min(100%, calc((100dvh - 175px) * 2.4)); }
   .cardFront { padding: 0; }
   .cardVisual { border-radius: 8px; }
   .matchBanner { min-height: 48px; gap: 7px; padding: 7px 9px; }
@@ -434,6 +434,12 @@
 @keyframes lobbyScan { 0%, 100% { opacity: .12; transform: translateX(-50%) scale(.96); } 50% { opacity: .28; transform: translateX(-50%) scale(1.03); } }
 
 @media (max-height: 800px) and (min-width: 721px) {
+  .game { padding-block: 3px; }
+  .gameHeader h1 { font-size: 18px; }
+  .memoryGuide { min-height: 54px; margin-top: 2px; padding-block: 1px 2px; }
+  .memoryGuideDaru { width: 52px; height: 50px; }
+  .liveHud { min-height: 52px; margin-block: 3px 4px; padding-block: 10px 5px; }
+  .boardStage { padding-block: 2px; }
   .selector { padding-top: 7px; padding-bottom: 9px; }
   .lobbyHeader h1 { font-size: 31px; }.lobbyHeader p { font-size: 13px; }
   .previewBoard { height: 220px; margin-top: 8px; }
@@ -447,6 +453,15 @@
 }
 
 @media (max-width: 720px) {
+  .game { width: min(100% - 16px, 1520px); height: calc(100vh - 68px); height: calc(100dvh - 68px); padding-block: 4px; }
+  .gameHeader { gap: 10px; }.gameHeader h1 { font-size: 18px; }.changeButton { min-height: 32px; padding-inline: 13px; }
+  .memoryGuide { min-height: 56px; grid-template-columns: 52px minmax(0, 1fr) auto; gap-inline: 8px; padding-inline: 8px; }
+  .memoryGuideDaru { width: 50px; height: 50px; }
+  .memoryGuideCopy strong { font-size: 13px; }.memoryGuideCopy > span:last-child { font-size: 10px; }
+  .liveHud { min-height: 92px; margin-block: 4px; padding: 13px 8px 7px; grid-template-columns: 1fr; grid-template-rows: auto auto; gap: 5px; }
+  .hudDivider { display: none; }.primaryHud { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }.secondaryHud { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .secondaryHud > div { padding-inline: 3px; }.primaryHud dt, .secondaryHud dt { font-size: 9px; }.timerZone dd { font-size: 18px; }.foundZone dd, .secondaryHud dd { font-size: 14px; }
+  .boardStage { padding-inline: 0; }
   .selector { min-height: calc(100dvh - 68px); padding-top: 24px; }
   .lobbyHeader p { max-width: 300px; font-size: 13px; }
   .previewBoard { height: 250px; margin-top: 14px; border-radius: 22px; }
