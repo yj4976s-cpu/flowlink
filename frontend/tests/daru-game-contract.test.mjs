@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { BEST_RECORD_STORAGE_KEYS, resolveGuestBest } from "../src/components/daru-game/game.storage.ts";
-import { isOutdatedDeckError, OUTDATED_DECK_ERROR_CODE } from "../src/lib/daruRunRecovery.ts";
+import { isExpiredRunError, isOutdatedDeckError, OUTDATED_DECK_ERROR_CODE, RUN_EXPIRED_ERROR_CODE, terminalRunRecoveryReason } from "../src/lib/daruRunRecovery.ts";
 
 const OLD_HARD_KEY = "flowlink:daru-game:v2:best-detection:hard";
 
@@ -33,4 +33,17 @@ test("only the explicit outdated deck 409 is treated as a legacy run", () => {
   assert.equal(isOutdatedDeckError({ status: 409, code: OUTDATED_DECK_ERROR_CODE }), true);
   assert.equal(isOutdatedDeckError({ status: 409, code: "OTHER_CONFLICT" }), false);
   assert.equal(isOutdatedDeckError({ status: 404, code: OUTDATED_DECK_ERROR_CODE }), false);
+});
+
+test("only RUN_EXPIRED 409 is treated as an expired run", () => {
+  assert.equal(isExpiredRunError({ status: 409, code: RUN_EXPIRED_ERROR_CODE }), true);
+  assert.equal(isExpiredRunError({ status: 409, code: "OTHER_CONFLICT" }), false);
+  assert.equal(isExpiredRunError({ status: 404, code: RUN_EXPIRED_ERROR_CODE }), false);
+});
+
+test("terminal recovery is limited to outdated and expired run codes", () => {
+  assert.equal(terminalRunRecoveryReason({ status: 409, code: OUTDATED_DECK_ERROR_CODE }), "outdated-deck");
+  assert.equal(terminalRunRecoveryReason({ status: 409, code: RUN_EXPIRED_ERROR_CODE }), "expired");
+  assert.equal(terminalRunRecoveryReason({ status: 409, code: "OTHER_CONFLICT" }), null);
+  assert.equal(terminalRunRecoveryReason({ status: 404, code: RUN_EXPIRED_ERROR_CODE }), null);
 });

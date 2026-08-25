@@ -12,7 +12,7 @@ from app.api.auth import set_login_cookie
 from app.db.session import get_db
 from app.models import DaruGameStat, User
 from app.schemas.daru_game import DaruGameActionInput, DaruGameFlipInput, DaruGameFlipResponse, DaruGameHintResponse, DaruGameMetrics, DaruGamePreviewResponse, DaruGameRecord, DaruGameResultInput, DaruGameResultResponse, DaruGameRunInput, DaruGameRunResponse, DaruGameRunStateResponse, DaruGameStartResponse, DaruLeaderboardEntry, DaruLeaderboardResponse, Difficulty
-from app.services.daru_game import GameRunConflictError, GameRunNotFoundError, OutdatedGameRunError, create_game_run, flip_card, game_run_preview, game_run_state, leaderboard_rank, perform_game_action, rank_for, ranking_query, start_gameplay, submit_result, use_game_hint
+from app.services.daru_game import GameRunConflictError, GameRunExpiredError, GameRunNotFoundError, OutdatedGameRunError, create_game_run, flip_card, game_run_preview, game_run_state, leaderboard_rank, perform_game_action, rank_for, ranking_query, start_gameplay, submit_result, use_game_hint
 
 router = APIRouter(prefix="/api/daru-game", tags=["daru-game"])
 
@@ -32,6 +32,7 @@ def create_run(payload: DaruGameRunInput, response: Response, current_user: Anno
 def _run_error(exc: ValueError) -> HTTPException:
     if isinstance(exc, GameRunNotFoundError): return HTTPException(status_code=404, detail=str(exc))
     if isinstance(exc, OutdatedGameRunError): return HTTPException(status_code=409, detail={"code": "OUTDATED_DECK_CONFIGURATION", "message": str(exc)})
+    if isinstance(exc, GameRunExpiredError): return HTTPException(status_code=409, detail={"code": "RUN_EXPIRED", "message": str(exc)})
     if isinstance(exc, GameRunConflictError): return HTTPException(status_code=409, detail=str(exc))
     return HTTPException(status_code=422, detail=str(exc))
 

@@ -1,5 +1,5 @@
 from collections.abc import Iterator
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -17,7 +17,7 @@ from app.core.security import utc_now
 from app.db.session import Base, get_db
 from app.main import app
 from app.models import DaruGameRun, DaruGameRunAction, DaruGameStat, User
-from app.services.daru_game import DIFFICULTY_CONFIG, HARD_ADDITIONAL_CARD_IDS, NORMAL_CARD_IDS, _round_to_tenth, calculate_detection_power, calculate_hint_score, calculate_memory_accuracy, calculate_speed_score, detection_metrics, game_run_lock_query, is_better, rank_for, ranking_query, select_card_ids
+from app.services.daru_game import DIFFICULTY_CONFIG, GAME_RUN_MAX_AGE, HARD_ADDITIONAL_CARD_IDS, NORMAL_CARD_IDS, GameRunExpiredError, _ensure_not_expired, _round_to_tenth, calculate_detection_power, calculate_hint_score, calculate_memory_accuracy, calculate_speed_score, detection_metrics, game_run_lock_query, is_better, rank_for, ranking_query, select_card_ids
 
 
 @compiles(BigInteger, "sqlite")
@@ -570,11 +570,43 @@ def test_creating_authenticated_run_renews_login_cookie(client: TestClient, db: 
     assert "HttpOnly" in set_cookie and "SameSite=lax" in set_cookie
 
 
+def assert_expired_run(response) -> None:
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"code": "RUN_EXPIRED", "message": "Game run has expired"}
+
+
+def test_state_accepts_active_run_younger_than_max_age(client: TestClient, db: Session) -> None:
+    run_id = create_run(client, db, "EASY", age_seconds=24 * 60 * 60 - 60)
+    assert client.get(f"/api/daru-game/runs/{run_id}/state").status_code == 200
+
+
+def test_expiration_boundary_preserves_strict_max_age_comparison() -> None:
+    started_at = datetime(2026, 1, 1, tzinfo=UTC)
+    run = DaruGameRun(started_at=started_at)
+    _ensure_not_expired(run, now=started_at + GAME_RUN_MAX_AGE)
+    with pytest.raises(GameRunExpiredError, match="Game run has expired"):
+        _ensure_not_expired(run, now=started_at + GAME_RUN_MAX_AGE + timedelta(microseconds=1))
+
+
 def test_state_rejects_expired_active_run(client: TestClient, db: Session) -> None:
     run_id = create_run(client, db, "EASY", age_seconds=24 * 60 * 60 + 1)
-    response = client.get(f"/api/daru-game/runs/{run_id}/state")
-    assert response.status_code == 409
-    assert response.json()["detail"] == "Game run has expired"
+    assert_expired_run(client.get(f"/api/daru-game/runs/{run_id}/state"))
+
+
+def test_expired_created_run_is_rejected_by_preview_and_start(client: TestClient, db: Session) -> None:
+    run_id = create_run(client, db, "EASY", age_seconds=24 * 60 * 60 + 1)
+    assert_expired_run(client.get(f"/api/daru-game/runs/{run_id}/preview"))
+    assert_expired_run(client.post(f"/api/daru-game/runs/{run_id}/start", json=action_json()))
+
+
+def test_expired_playing_run_is_rejected_by_flip_hint_and_complete(client: TestClient, db: Session) -> None:
+    run_id = create_run(client, db, "EASY", age_seconds=24 * 60 * 60 + 1)
+    run = db.get(DaruGameRun, UUID(run_id)); assert run is not None
+    run.play_started_at = utc_now() - timedelta(seconds=120)
+    db.commit()
+    assert_expired_run(client.post(f"/api/daru-game/runs/{run_id}/flip", json=action_json(position=0)))
+    assert_expired_run(client.post(f"/api/daru-game/runs/{run_id}/hint", json=action_json()))
+    assert_expired_run(client.post("/api/daru-game/results", json=action_json(run_id=run_id)))
 
 
 def test_start_response_loss_retry_is_idempotent(client: TestClient, db: Session) -> None:

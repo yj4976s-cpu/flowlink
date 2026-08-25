@@ -41,6 +41,10 @@ class GameRunConflictError(ValueError):
     pass
 
 
+class GameRunExpiredError(GameRunConflictError):
+    pass
+
+
 class OutdatedGameRunError(GameRunConflictError):
     pass
 
@@ -91,7 +95,7 @@ def _ensure_not_expired(run: DaruGameRun, now: datetime | None = None) -> None:
     current = now or utc_now()
     started_at = run.started_at if run.started_at.tzinfo is not None else run.started_at.replace(tzinfo=UTC)
     if current - started_at < timedelta(0) or current - started_at > GAME_RUN_MAX_AGE:
-        raise GameRunConflictError("Game run has expired")
+        raise GameRunExpiredError("Game run has expired")
 
 
 def request_fingerprint(action_type: str, payload: dict[str, object]) -> str:

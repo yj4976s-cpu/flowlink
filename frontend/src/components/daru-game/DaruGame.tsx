@@ -9,7 +9,7 @@ import { getCurrentUser, type AuthUser } from "@/lib/authApi";
 import { AUTH_CHANGED_EVENT } from "@/lib/authEvents";
 import { clearDaruActiveRun, loadDaruActiveRun, storeDaruActiveRun } from "@/lib/daruActiveRun";
 import { createDaruGameRun, DaruGameApiError, flipDaruGameCard, getDaruGameRecords, getDaruGameRunPreview, getDaruGameRunState, requestDaruGameHint, startDaruGameRun, submitDaruGameResult, type GameRecord, type ServerGameMetrics, type ServerGameResult, type ServerRunState } from "@/lib/daruGameApi";
-import { isOutdatedDeckError } from "@/lib/daruRunRecovery";
+import { terminalRunRecoveryReason } from "@/lib/daruRunRecovery";
 import { DARU_CARD_BACK_ASSETS, DARU_MEMORY_GUIDE_ASSETS, DIFFICULTY_CONFIG, MISMATCH_REVEAL_MS } from "./game.config";
 import { BEST_RECORD_STORAGE_KEYS, resolveGuestBest } from "./game.storage";
 import { CARD_CATALOG, getCardThemeImages } from "./card.catalog";
@@ -149,6 +149,15 @@ export function DaruGame() {
     if (nextDifficulty) { const config = DIFFICULTY_CONFIG[nextDifficulty]; setTimeRemaining(config.timeLimitSeconds); setHintsRemaining(config.hintCount); }
     else { setTimeRemaining(0); setHintsRemaining(0); }
   }, [clearCompletionTimer, clearFeedbackTimer, clearHintTimer, clearMismatchTimer, clearSequenceTimer]);
+  const handleTerminalRunError = useCallback((error: unknown) => {
+    const reason = terminalRunRecoveryReason(error);
+    if (!reason) return false;
+    resetState(); clearDaruActiveRun(); runIdRef.current = null; setDifficulty(null); setCards([]); setPhase("lobby");
+    setRunRecoveryNotice(reason === "expired"
+      ? "이전 게임 시간이 만료되어 새 게임으로 시작할 수 있어요."
+      : "이전 게임은 카드 구성이 변경되어 새 게임으로 시작해야 해요.");
+    return true;
+  }, [resetState, setPhase]);
   const startGame = useCallback(async (nextDifficulty: GameDifficulty) => {
     if (!authResolved || startPendingRef.current || authExpiredRef.current) return;
     setRunRecoveryNotice(null);
@@ -163,6 +172,7 @@ export function DaruGame() {
           setCards(previewServerCards(response.positions, preview.cards)); setPreviewRetry(null);
         }
         catch (error) {
+          if (handleTerminalRunError(error)) return;
           setRecordStatus("failed");
           if (runId) setPreviewRetry({ runId, difficulty: nextDifficulty });
           if (error instanceof DaruGameApiError && error.status === 401) { authExpiredRef.current = true; setAuthExpired(true); }
@@ -174,7 +184,7 @@ export function DaruGame() {
     } finally {
       startPendingRef.current = false; setStartPending(false);
     }
-  }, [authResolved, bestRecords, currentUser, resetState, setPhase]);
+  }, [authResolved, bestRecords, currentUser, handleTerminalRunError, resetState, setPhase]);
   const retryPreview = useCallback(async () => {
     if (!previewRetry || startPendingRef.current) return;
     startPendingRef.current = true; setStartPending(true);
@@ -185,10 +195,11 @@ export function DaruGame() {
       resetState(previewRetry.difficulty); runIdRef.current = previewRetry.runId; setDifficulty(previewRetry.difficulty);
       setCards(previewServerCards(state.positions, preview.cards)); setPhase("preview");
     } catch (error) {
+      if (handleTerminalRunError(error)) return;
       setRecordStatus("failed");
       if (error instanceof DaruGameApiError && error.status === 401) { authExpiredRef.current = true; setAuthExpired(true); }
     } finally { startPendingRef.current = false; setStartPending(false); }
-  }, [previewRetry, resetState, setPhase]);
+  }, [handleTerminalRunError, previewRetry, resetState, setPhase]);
   const chooseDifficulty = useCallback(() => { if (startPendingRef.current || submitInProgressRef.current || (completionAnnouncedRef.current && Boolean(runIdRef.current))) return; resetState(); clearDaruActiveRun(); runIdRef.current = null; setDifficulty(null); setCards([]); setPhase("lobby"); }, [resetState, setPhase]);
 
   useEffect(() => {
@@ -200,9 +211,9 @@ export function DaruGame() {
   }, [beginFlipping, clearSequenceTimer, difficulty, phase]);
   useEffect(() => {
     if (phase === "flipping") { sequenceTimerRef.current = window.setTimeout(() => { setReadyCue("READY"); setPhase("ready"); }, 650); return clearSequenceTimer; }
-    if (phase === "ready") { sequenceTimerRef.current = window.setTimeout(() => { void (async () => { const runId = runIdRef.current; let authoritativeStart: number | null = null; if (currentUser?.role === "USER" && runId) { try { const response = await startDaruGameRun(runId); authoritativeStart = new Date(response.play_started_at).getTime(); } catch { try { const state = await getDaruGameRunState(runId); if (!state.play_started_at) throw new Error("Run did not start"); authoritativeStart = new Date(state.play_started_at).getTime(); } catch { setRecordStatus("failed"); return; } } } setReadyCue("GO!"); setStartedAt(authoritativeStart ?? Date.now()); setPhase("playing"); })(); }, 700); return clearSequenceTimer; }
+    if (phase === "ready") { sequenceTimerRef.current = window.setTimeout(() => { void (async () => { const runId = runIdRef.current; let authoritativeStart: number | null = null; if (currentUser?.role === "USER" && runId) { try { const response = await startDaruGameRun(runId); authoritativeStart = new Date(response.play_started_at).getTime(); } catch (error) { if (handleTerminalRunError(error)) return; try { const state = await getDaruGameRunState(runId); if (!state.play_started_at) throw new Error("Run did not start"); authoritativeStart = new Date(state.play_started_at).getTime(); } catch (recoveryError) { if (!handleTerminalRunError(recoveryError)) setRecordStatus("failed"); return; } } } setReadyCue("GO!"); setStartedAt(authoritativeStart ?? Date.now()); setPhase("playing"); })(); }, 700); return clearSequenceTimer; }
     if (phase === "playing" && readyCue === "GO!") { sequenceTimerRef.current = window.setTimeout(() => setReadyCue(null), 500); return clearSequenceTimer; }
-  }, [clearSequenceTimer, currentUser, phase, readyCue, setPhase]);
+  }, [clearSequenceTimer, currentUser, handleTerminalRunError, phase, readyCue, setPhase]);
   useEffect(() => {
     if (phase !== "playing" || startedAt === 0 || !difficulty) return;
     const update = () => {
@@ -240,8 +251,13 @@ export function DaruGame() {
     else if (state.status === "PLAYING") setPhase("playing");
   }, [applyCompletionResult, setPhase]);
   const recoverRunState = useCallback(async (runId: string, nextDifficulty: GameDifficulty) => {
-    const state = await getDaruGameRunState(runId); applyRunState(state, nextDifficulty); return state;
-  }, [applyRunState]);
+    try {
+      const state = await getDaruGameRunState(runId); applyRunState(state, nextDifficulty); return state;
+    } catch (error) {
+      if (handleTerminalRunError(error)) return null;
+      throw error;
+    }
+  }, [applyRunState, handleTerminalRunError]);
   useEffect(() => {
     if (!authResolved || currentUser?.role !== "USER" || resumeAttemptedRef.current || phaseRef.current !== "lobby") return;
     resumeAttemptedRef.current = true;
@@ -255,13 +271,11 @@ export function DaruGame() {
         setCards(previewServerCards(state.positions, preview.cards)); setPhase("preview");
       } else applyRunState(state, nextDifficulty);
     }).catch((error) => {
-      if (isOutdatedDeckError(error)) {
-        clearDaruActiveRun(); runIdRef.current = null; setRunRecoveryNotice("이전 게임은 카드 구성이 변경되어 새 게임으로 시작해야 해요.");
-      }
+      if (handleTerminalRunError(error)) return;
       else if (error instanceof DaruGameApiError && error.status === 404) { clearDaruActiveRun(); runIdRef.current = null; }
       else { runIdRef.current = stored.runId; setRecordStatus("failed"); setPreviewRetry({ runId: stored.runId, difficulty: nextDifficulty }); }
     });
-  }, [applyRunState, authResolved, currentUser, resetState, setPhase]);
+  }, [applyRunState, authResolved, currentUser, handleTerminalRunError, resetState, setPhase]);
   const useHint = () => {
     if (!difficulty || phase !== "playing" || locked || hintActive || hintsRemaining <= 0) return;
     const duration = DIFFICULTY_CONFIG[difficulty].hintRevealSeconds;
@@ -279,7 +293,7 @@ export function DaruGame() {
     const runId = runIdRef.current;
     if (!runId) { setRecordStatus("failed"); return; }
     submitInProgressRef.current = true; setLocked(true); setRecordStatus("saving");
-    void submitDaruGameResult({ run_id: runId, finish_partial: finishPartial }).then((response) => applyCompletionResult(response, difficulty)).catch(async () => { try { const state = await recoverRunState(runId, difficulty); if (!state.completion_result) { submitInProgressRef.current = false; setLocked(true); setRecordStatus("failed"); } } catch { submitInProgressRef.current = false; setLocked(true); setRecordStatus("failed"); } });
+    void submitDaruGameResult({ run_id: runId, finish_partial: finishPartial }).then((response) => applyCompletionResult(response, difficulty)).catch(async () => { try { const state = await recoverRunState(runId, difficulty); if (state && !state.completion_result) { submitInProgressRef.current = false; setLocked(true); setRecordStatus("failed"); } } catch { submitInProgressRef.current = false; setLocked(true); setRecordStatus("failed"); } });
   }, [applyCompletionResult, difficulty, recoverRunState]);
   useEffect(() => {
     if (phase !== "playing" || !difficulty || matchedPairIds.length !== DIFFICULTY_CONFIG[difficulty].pairCount || completionAnnouncedRef.current) return;
