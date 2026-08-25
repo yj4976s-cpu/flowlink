@@ -261,7 +261,6 @@
 @keyframes timerSpark { 50% { opacity: .28; transform: translate(1px, -1px) rotate(-38deg) scale(.72); } }
 
 @media (max-width: 1050px) {
-  .board[data-difficulty="hard"] { width: min(100%, calc((100dvh - 180px) * 2.4)); }
   .liveHud { grid-template-columns: minmax(285px, 42%) 1px minmax(0, 1fr); gap: 9px; padding-inline: 11px; }
   .primaryHud { gap: 12px; }
   .secondaryHud > div { padding-inline: 5px; }
@@ -280,9 +279,6 @@
   .secondaryHud > div { padding-inline: 3px; }
   .primaryHud dt, .secondaryHud dt { font-size: 9px; }
   .timerZone dd { font-size: 19px; }.foundZone dd { font-size: 16px; }.secondaryHud dd { font-size: 14px; }
-  .board[data-difficulty="easy"] { width: min(100%, calc(100dvh - 187px)); }
-  .board[data-difficulty="normal"] { width: min(100%, calc((100dvh - 175px) * 1.6)); }
-  .board[data-difficulty="hard"] { width: min(100%, calc((100dvh - 175px) * 2.4)); }
   .cardFront { padding: 0; }
   .cardVisual { border-radius: 8px; }
   .matchBanner { min-height: 48px; gap: 7px; padding: 7px 9px; }

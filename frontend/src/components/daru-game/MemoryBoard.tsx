@@ -17,7 +17,7 @@ export function MemoryBoard({ cards, difficulty, theme, phase, flippedIds, match
     const targets = {
       easy: { columns: 5, cardWidth: 120, gap: 12 },
       normal: { columns: 8, cardWidth: 108, gap: 10 },
-      hard: { columns: 12, cardWidth: 94, gap: 8 },
+      hard: { columns: 10, cardWidth: 104, gap: 8 },
     } as const;
     const target = targets[difficulty];
     const fitBoard = () => {

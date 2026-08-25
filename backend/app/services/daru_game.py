@@ -18,12 +18,14 @@ from app.models import DaruGameRun, DaruGameRunAction, DaruGameStat, User
 DIFFICULTY_CONFIG = {
     "EASY": {"pairs": 10, "time_limit_seconds": 120, "speed_benchmark_seconds": 90, "combo_target": 5, "clear_bonus": 300, "preview_seconds": 5},
     "NORMAL": {"pairs": 16, "time_limit_seconds": 210, "speed_benchmark_seconds": 150, "combo_target": 7, "clear_bonus": 500, "preview_seconds": 7},
-    "HARD": {"pairs": 24, "time_limit_seconds": 330, "speed_benchmark_seconds": 240, "combo_target": 9, "clear_bonus": 700, "preview_seconds": 9},
+    "HARD": {"pairs": 20, "time_limit_seconds": 330, "speed_benchmark_seconds": 240, "combo_target": 9, "clear_bonus": 700, "preview_seconds": 9},
 }
+EASY_CARD_IDS = ["greeting", "excited", "heart", "sleeping", "search", "umbrella", "shoe", "backpack", "ball", "can"]
+NORMAL_CARD_IDS = [*EASY_CARD_IDS, "thumbs-up", "sulky", "coastal-cleanup", "umbrella-found", "plastic-bag", "plastic-bottle"]
+HARD_ADDITIONAL_CARD_IDS = ["shy", "splash", "branch-play", "plastic-sort", "shoe-found", "backpack-found", "proud", "styrofoam"]
 CARD_IDS_BY_DIFFICULTY = {
-    "EASY": ["greeting", "excited", "heart", "sleeping", "search", "umbrella", "shoe", "backpack", "ball", "can"],
-    "NORMAL": ["greeting", "excited", "heart", "sleeping", "search", "umbrella", "shoe", "backpack", "ball", "can", "thumbs-up", "sulky", "coastal-cleanup", "umbrella-found", "plastic-bag", "plastic-bottle"],
-    "HARD": ["greeting", "excited", "heart", "sleeping", "search", "umbrella", "shoe", "backpack", "ball", "can", "thumbs-up", "sulky", "coastal-cleanup", "umbrella-found", "plastic-bag", "plastic-bottle", "shy", "splash", "branch-play", "plastic-sort", "shoe-found", "backpack-found", "proud", "styrofoam"],
+    "EASY": EASY_CARD_IDS,
+    "NORMAL": NORMAL_CARD_IDS,
 }
 GAME_RUN_MAX_AGE = timedelta(hours=24)
 CURRENT_SCORE_VERSION = 2
@@ -38,10 +40,19 @@ class GameRunConflictError(ValueError):
     pass
 
 
+def select_card_ids(difficulty: str, randomizer: Any | None = None) -> list[str]:
+    if difficulty != "HARD":
+        return list(CARD_IDS_BY_DIFFICULTY[difficulty])
+    hard_additional = list(HARD_ADDITIONAL_CARD_IDS)
+    (randomizer or secrets.SystemRandom()).shuffle(hard_additional)
+    return [*NORMAL_CARD_IDS, *hard_additional[:4]]
+
+
 def create_game_run(db: Session, *, user_id: int, difficulty: str) -> DaruGameRun:
     now = utc_now()
-    deck = [card_id for card_id in CARD_IDS_BY_DIFFICULTY[difficulty] for _copy in range(2)]
-    secrets.SystemRandom().shuffle(deck)
+    randomizer = secrets.SystemRandom()
+    deck = [card_id for card_id in select_card_ids(difficulty, randomizer) for _copy in range(2)]
+    randomizer.shuffle(deck)
     run = DaruGameRun(id=uuid4(), user_id=user_id, difficulty=difficulty, started_at=now, deck_state=deck, matched_positions=[])
     db.add(run)
     db.commit()

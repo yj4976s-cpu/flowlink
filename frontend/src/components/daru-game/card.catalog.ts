@@ -27,14 +27,15 @@ export const CARD_CATALOG: readonly CardCatalogEntry[] = [
   { id: "styrofoam", kind: "detected-item", label: "스티로폼", filename: "item-styrofoam.png" },
 ] as const;
 
-const EASY_CARD_IDS = ["greeting", "excited", "heart", "sleeping", "search", "umbrella", "shoe", "backpack", "ball", "can"] as const satisfies readonly CardId[];
-const MEDIUM_ADDITIONAL_CARD_IDS = ["thumbs-up", "sulky", "coastal-cleanup", "umbrella-found", "plastic-bag", "plastic-bottle"] as const satisfies readonly CardId[];
-const HARD_ADDITIONAL_CARD_IDS = ["shy", "splash", "branch-play", "plastic-sort", "shoe-found", "backpack-found", "proud", "styrofoam"] as const satisfies readonly CardId[];
+export const EASY_CARD_IDS = ["greeting", "excited", "heart", "sleeping", "search", "umbrella", "shoe", "backpack", "ball", "can"] as const satisfies readonly CardId[];
+export const MEDIUM_ADDITIONAL_CARD_IDS = ["thumbs-up", "sulky", "coastal-cleanup", "umbrella-found", "plastic-bag", "plastic-bottle"] as const satisfies readonly CardId[];
+export const NORMAL_CARD_IDS = [...EASY_CARD_IDS, ...MEDIUM_ADDITIONAL_CARD_IDS] as const satisfies readonly CardId[];
+export const HARD_ADDITIONAL_CARD_IDS = ["shy", "splash", "branch-play", "plastic-sort", "shoe-found", "backpack-found", "proud", "styrofoam"] as const satisfies readonly CardId[];
 
 export const CARD_IDS_BY_DIFFICULTY: Record<GameDifficulty, readonly CardId[]> = {
   easy: EASY_CARD_IDS,
-  normal: [...EASY_CARD_IDS, ...MEDIUM_ADDITIONAL_CARD_IDS],
-  hard: [...EASY_CARD_IDS, ...MEDIUM_ADDITIONAL_CARD_IDS, ...HARD_ADDITIONAL_CARD_IDS],
+  normal: NORMAL_CARD_IDS,
+  hard: [...NORMAL_CARD_IDS, ...HARD_ADDITIONAL_CARD_IDS],
 };
 
 export function getCardThemeImages(card: CardCatalogEntry): DaruThemeAssets {
