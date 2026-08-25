@@ -247,15 +247,20 @@ export function FlowCopilot() {
   const {
     supported: speechSupported,
     speakingMessageId,
+    paused: speechPaused,
     voices: speechVoices,
     selectedVoiceId,
+    speechRate,
     setSelectedVoice,
+    setSpeechRate,
     speak: speakSpeech,
+    pause: pauseSpeech,
+    resume: resumeSpeech,
     stop: stopSpeech,
-    toggle: toggleSpeech,
   } = useSpeechSynthesis({
     voiceSelectionEnabled: speechPreferenceUserId !== null,
     voiceStorageUserId: speechPreferenceUserId,
+    speechRateStorageUserId: speechPreferenceUserId,
   });
   const previousOpenRef = useRef(open);
   const wasLoadingRef = useRef(false);
@@ -1716,8 +1721,14 @@ export function FlowCopilot() {
                       {message.role === "assistant" && (
                         <CopilotSpeechButton
                           speaking={speakingMessageId === message.id}
+                          paused={speakingMessageId === message.id && speechPaused}
+                          speechRate={speechRate}
                           unsupported={!speechSupported}
-                          onClick={() => toggleSpeech(message.id, getSpeechText(message))}
+                          onSpeak={() => speakSpeech(message.id, getSpeechText(message))}
+                          onPause={pauseSpeech}
+                          onResume={resumeSpeech}
+                          onStop={stopSpeech}
+                          onRateChange={setSpeechRate}
                         />
                       )}
                     </div>

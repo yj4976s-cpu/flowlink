@@ -3,9 +3,26 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const VOICE_STORAGE_KEY = "flowlink:copilot:voice";
+const SPEECH_RATE_STORAGE_KEY = "flowlink:copilot:speech-rate";
+
+export const SPEECH_RATES = [0.8, 1, 1.2, 1.4] as const;
+export type SpeechRate = (typeof SPEECH_RATES)[number];
+
+type ActiveSpeech = {
+  messageId: string;
+  text: string;
+};
 
 function voiceStorageKey(userId: string | number) {
   return `${VOICE_STORAGE_KEY}:${userId}`;
+}
+
+function speechRateStorageKey(userId: string | number) {
+  return `${SPEECH_RATE_STORAGE_KEY}:${userId}`;
+}
+
+function validSpeechRate(value: unknown): value is SpeechRate {
+  return typeof value === "number" && SPEECH_RATES.some((rate) => rate === value);
 }
 
 function speechAvailable() {
@@ -41,25 +58,33 @@ function koreanVoices(voices: SpeechSynthesisVoice[]) {
 export function useSpeechSynthesis({
   voiceSelectionEnabled = false,
   voiceStorageUserId = null,
+  speechRateStorageUserId = null,
 }: {
   voiceSelectionEnabled?: boolean;
   voiceStorageUserId?: string | number | null;
+  speechRateStorageUserId?: string | number | null;
 } = {}) {
   const [supported, setSupported] = useState(false);
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [selectedVoiceId, setSelectedVoiceId] = useState<string | null>(null);
+  const [speechRate, setSpeechRateState] = useState<SpeechRate>(1);
   const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
   const selectedVoiceIdRef = useRef<string | null>(null);
   const savedVoiceIdRef = useRef<string | null>(null);
   const voiceSelectionEnabledRef = useRef(voiceSelectionEnabled);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const activeSpeechRef = useRef<ActiveSpeech | null>(null);
+  const pausedRef = useRef(false);
+  const speechRateRef = useRef<SpeechRate>(1);
   const generationRef = useRef(0);
 
   const stop = useCallback(() => {
     generationRef.current += 1;
     utteranceRef.current = null;
+    activeSpeechRef.current = null;
+    pausedRef.current = false;
     if (speechAvailable()) window.speechSynthesis.cancel();
     setSpeakingMessageId(null);
     setPaused(false);
@@ -73,7 +98,7 @@ export function useSpeechSynthesis({
 
     const utterance = new window.SpeechSynthesisUtterance(text);
     utterance.lang = "ko-KR";
-    utterance.rate = 1;
+    utterance.rate = speechRateRef.current;
     utterance.pitch = 1;
     const selectedVoice = voiceSelectionEnabledRef.current && selectedVoiceIdRef.current
       ? voicesRef.current.find((voice) => speechVoiceId(voice) === selectedVoiceIdRef.current)
@@ -81,22 +106,32 @@ export function useSpeechSynthesis({
     const resolvedVoice = selectedVoice ?? preferredKoreanVoice(voicesRef.current);
     if (resolvedVoice) utterance.voice = resolvedVoice;
     utteranceRef.current = utterance;
+    activeSpeechRef.current = { messageId, text };
+    pausedRef.current = false;
     setSpeakingMessageId(messageId);
     setPaused(false);
 
     const finish = () => {
       if (generationRef.current !== generation || utteranceRef.current !== utterance) return;
       utteranceRef.current = null;
+      activeSpeechRef.current = null;
+      pausedRef.current = false;
       setSpeakingMessageId(null);
       setPaused(false);
     };
     utterance.onend = finish;
     utterance.onerror = finish;
     utterance.onpause = () => {
-      if (generationRef.current === generation && utteranceRef.current === utterance) setPaused(true);
+      if (generationRef.current === generation && utteranceRef.current === utterance) {
+        pausedRef.current = true;
+        setPaused(true);
+      }
     };
     utterance.onresume = () => {
-      if (generationRef.current === generation && utteranceRef.current === utterance) setPaused(false);
+      if (generationRef.current === generation && utteranceRef.current === utterance) {
+        pausedRef.current = false;
+        setPaused(false);
+      }
     };
 
     try {
@@ -105,6 +140,43 @@ export function useSpeechSynthesis({
       finish();
     }
   }, []);
+
+  const pause = useCallback(() => {
+    if (!speechAvailable() || !utteranceRef.current || pausedRef.current) return;
+    try {
+      window.speechSynthesis.pause();
+      pausedRef.current = true;
+      setPaused(true);
+    } catch {
+      // Keep the current playback state when the browser rejects pause().
+    }
+  }, []);
+
+  const resume = useCallback(() => {
+    if (!speechAvailable() || !utteranceRef.current || !pausedRef.current) return;
+    try {
+      window.speechSynthesis.resume();
+      pausedRef.current = false;
+      setPaused(false);
+    } catch {
+      // Keep the paused state when the browser rejects resume().
+    }
+  }, []);
+
+  const setSpeechRate = useCallback((value: number) => {
+    const nextRate: SpeechRate = validSpeechRate(value) ? value : 1;
+    const activeSpeech = activeSpeechRef.current;
+    speechRateRef.current = nextRate;
+    setSpeechRateState(nextRate);
+    try {
+      if (speechRateStorageUserId !== null) {
+        window.localStorage.setItem(speechRateStorageKey(speechRateStorageUserId), String(nextRate));
+      }
+    } catch {
+      // The in-memory rate remains usable when storage is unavailable.
+    }
+    if (activeSpeech) speak(activeSpeech.messageId, activeSpeech.text);
+  }, [speak, speechRateStorageUserId]);
 
   const toggle = useCallback((messageId: string, text: string) => {
     if (speakingMessageId === messageId) stop();
@@ -181,7 +253,39 @@ export function useSpeechSynthesis({
     return () => window.cancelAnimationFrame(restoreFrame);
   }, [stop, voiceSelectionEnabled, voiceStorageUserId]);
 
+  useEffect(() => {
+    let nextRate: SpeechRate = 1;
+    if (speechRateStorageUserId !== null) {
+      try {
+        const savedRate = Number(window.localStorage.getItem(speechRateStorageKey(speechRateStorageUserId)));
+        if (validSpeechRate(savedRate)) nextRate = savedRate;
+      } catch {
+        // Use the safe default when storage is unavailable.
+      }
+    }
+    speechRateRef.current = nextRate;
+    const restoreFrame = window.requestAnimationFrame(() => {
+      stop();
+      setSpeechRateState(nextRate);
+    });
+    return () => window.cancelAnimationFrame(restoreFrame);
+  }, [speechRateStorageUserId, stop]);
+
   useEffect(() => stop, [stop]);
 
-  return { supported, speakingMessageId, paused, voices, selectedVoiceId, setSelectedVoice, speak, stop, toggle };
+  return {
+    supported,
+    speakingMessageId,
+    paused,
+    voices,
+    selectedVoiceId,
+    speechRate,
+    setSelectedVoice,
+    setSpeechRate,
+    speak,
+    pause,
+    resume,
+    stop,
+    toggle,
+  };
 }

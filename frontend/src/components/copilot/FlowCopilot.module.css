@@ -380,6 +380,7 @@
   display: flex;
   align-items: center;
   gap: 7px;
+  flex-wrap: wrap;
 }
 .message[data-role="user"] .messageMeta {
   justify-content: flex-end;
@@ -418,6 +419,37 @@
   color: var(--color-primary);
 }
 .speechButton:disabled {
+  cursor: default;
+  opacity: .42;
+}
+.speechControls {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.speechRateSelect {
+  height: 24px;
+  padding: 2px 18px 2px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: 9px;
+  font-weight: 750;
+  cursor: pointer;
+}
+.speechRateSelect:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.speechRateSelect:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.speechRateSelect:disabled {
   cursor: default;
   opacity: .42;
 }
