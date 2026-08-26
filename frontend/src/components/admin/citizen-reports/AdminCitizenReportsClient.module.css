@@ -36,6 +36,7 @@
 .summaryInfo span { font-size: 11px; }.summaryInfo strong { font-size: 13px; }.description h3, .sightings h3 { font-size: 15px; }.description p { font-size: 14px; }.sightings time, .sightings p { font-size: 11px; }.sightings strong { font-size: 13px; }
 .actionContent dt, .actionContent dd, .actionContent label > span { font-size: 11px; }.actionContent textarea, .actionContent input { font-size: 12px; }.actionGroup h3 { font-size: 13px; }.actionGroup > p { font-size: 10px; }.actions :global(.button), .actionGroup :global(.button) { min-height: 42px; font-size: 11px; }
 .page button:focus-visible, .page a:focus-visible, .page input:focus-visible, .page textarea:focus-visible { outline: 3px solid color-mix(in srgb, var(--color-secondary) 58%, transparent); outline-offset: 2px; }
+.newReportNotice { width: 100%; min-height: 44px; margin: 0 0 14px; padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--color-primary) 30%, var(--color-border)); border-radius: 14px; background: color-mix(in srgb, var(--color-primary) 8%, var(--color-surface)); color: var(--color-primary); display: flex; align-items: center; justify-content: center; gap: 8px; font: inherit; font-size: 12px; font-weight: 900; cursor: pointer; box-shadow: var(--shadow-card); }
 @keyframes loading { to { background-position: -220% 0; } } @keyframes evidenceIn { from { opacity: 0; transform: translateY(3px); } }
 
 @media (max-width: 1080px) {
