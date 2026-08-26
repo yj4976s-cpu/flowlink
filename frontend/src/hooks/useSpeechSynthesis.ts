@@ -101,6 +101,14 @@ export function splitSpeechText(text: string, maxLength = MAX_SPEECH_CHUNK_LENGT
   return chunks;
 }
 
+export function resolveManualSpeechText(messageText: string) {
+  return messageText;
+}
+
+export function resolveAutoSpeechText(messageText: string, speechText?: string | null) {
+  return speechText?.trim() || messageText;
+}
+
 export function useSpeechSynthesis({
   voiceSelectionEnabled = false,
   voiceStorageUserId = null,
