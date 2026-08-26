@@ -1,11 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { splitSpeechText } from "@/lib/copilotSpeech";
 
 const VOICE_STORAGE_KEY = "flowlink:copilot:voice";
 const SPEECH_RATE_STORAGE_KEY = "flowlink:copilot:speech-rate";
-const MAX_SPEECH_CHUNK_LENGTH = 160;
-
 export const SPEECH_RATES = [0.8, 1, 1.2, 1.4] as const;
 export type SpeechRate = (typeof SPEECH_RATES)[number];
 
@@ -54,59 +53,6 @@ function koreanVoices(voices: SpeechSynthesisVoice[]) {
     seen.add(id);
     return true;
   });
-}
-
-export function splitSpeechText(text: string, maxLength = MAX_SPEECH_CHUNK_LENGTH) {
-  const chunks: string[] = [];
-  const normalizedText = text.trim();
-  let offset = 0;
-
-  while (offset < normalizedText.length) {
-    const remainingLength = normalizedText.length - offset;
-    if (remainingLength <= maxLength) {
-      chunks.push(normalizedText.slice(offset));
-      break;
-    }
-
-    const windowEnd = offset + maxLength;
-    let chunkEnd = -1;
-
-    // Prefer the latest natural sentence or line boundary within the safe window.
-    for (let index = windowEnd - 1; index >= offset; index -= 1) {
-      if (".!?。\n\r".includes(normalizedText[index])) {
-        chunkEnd = index + 1;
-        break;
-      }
-    }
-
-    // A long sentence is split at a clause/word boundary where possible.
-    if (chunkEnd < 0) {
-      for (let index = windowEnd - 1; index >= offset; index -= 1) {
-        if (",;:，、 \t".includes(normalizedText[index])) {
-          chunkEnd = index + 1;
-          break;
-        }
-      }
-    }
-
-    if (chunkEnd <= offset) chunkEnd = windowEnd;
-    // Do not split an emoji or another UTF-16 surrogate pair at the hard limit.
-    const lastCodeUnit = normalizedText.charCodeAt(chunkEnd - 1);
-    if (lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff) chunkEnd -= 1;
-
-    chunks.push(normalizedText.slice(offset, chunkEnd));
-    offset = chunkEnd;
-  }
-
-  return chunks;
-}
-
-export function resolveManualSpeechText(messageText: string) {
-  return messageText;
-}
-
-export function resolveAutoSpeechText(messageText: string, speechText?: string | null) {
-  return speechText?.trim() || messageText;
 }
 
 export function useSpeechSynthesis({
