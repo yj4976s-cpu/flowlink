@@ -1,0 +1,104 @@
+from typing import Annotated
+from decimal import Decimal
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.core.auth import get_optional_current_user, require_user
+from app.core.security import create_access_token
+from app.api.auth import set_login_cookie
+from app.db.session import get_db
+from app.models import DaruGameStat, User
+from app.schemas.daru_game import DaruGameActionInput, DaruGameFlipInput, DaruGameFlipResponse, DaruGameHintResponse, DaruGameMetrics, DaruGamePreviewResponse, DaruGameRecord, DaruGameResultInput, DaruGameResultResponse, DaruGameRunInput, DaruGameRunResponse, DaruGameRunStateResponse, DaruGameStartResponse, DaruLeaderboardEntry, DaruLeaderboardResponse, Difficulty
+from app.services.daru_game import GameRunConflictError, GameRunExpiredError, GameRunNotFoundError, OutdatedGameRunError, create_game_run, flip_card, game_run_preview, game_run_state, leaderboard_rank, perform_game_action, rank_for, ranking_query, start_gameplay, submit_result, use_game_hint
+
+router = APIRouter(prefix="/api/daru-game", tags=["daru-game"])
+
+
+def record_response(stat: DaruGameStat) -> DaruGameRecord:
+    return DaruGameRecord(difficulty=stat.difficulty, best_detection_power=float(stat.best_detection_power), score_version=stat.score_version, best_attempts=stat.best_attempts, best_elapsed_seconds=stat.best_elapsed_seconds, best_combo=stat.best_combo, best_hints_used=stat.best_hints_used, total_daru_points=stat.total_daru_points, play_count=stat.play_count, best_achieved_at=stat.best_achieved_at, rank=rank_for(stat.best_detection_power))
+
+
+@router.post("/runs", response_model=DaruGameRunResponse, status_code=201)
+def create_run(payload: DaruGameRunInput, request: Request, response: Response, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> DaruGameRunResponse:
+    run = create_game_run(db, user_id=current_user.id, difficulty=payload.difficulty)
+    access_token, expires_in = create_access_token(current_user.id, current_user.role)
+    set_login_cookie(response, request, access_token, expires_in)
+    return DaruGameRunResponse(run_id=run.id, difficulty=run.difficulty, started_at=run.started_at, positions=list(range(len(run.deck_state))))
+
+
+def _run_error(exc: ValueError) -> HTTPException:
+    if isinstance(exc, GameRunNotFoundError): return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, OutdatedGameRunError): return HTTPException(status_code=409, detail={"code": "OUTDATED_DECK_CONFIGURATION", "message": str(exc)})
+    if isinstance(exc, GameRunExpiredError): return HTTPException(status_code=409, detail={"code": "RUN_EXPIRED", "message": str(exc)})
+    if isinstance(exc, GameRunConflictError): return HTTPException(status_code=409, detail=str(exc))
+    return HTTPException(status_code=422, detail=str(exc))
+
+
+@router.post("/runs/{run_id}/start", response_model=DaruGameStartResponse)
+def start_run(run_id: UUID, payload: DaruGameActionInput, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> DaruGameStartResponse:
+    try: result = perform_game_action(db, run_id=run_id, user_id=current_user.id, action_id=payload.action_id, action_type="START", request_payload={}, handler=start_gameplay)
+    except ValueError as exc: raise _run_error(exc) from exc
+    return DaruGameStartResponse.model_validate(result)
+
+
+@router.post("/runs/{run_id}/flip", response_model=DaruGameFlipResponse)
+def flip_run_card(run_id: UUID, payload: DaruGameFlipInput, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> DaruGameFlipResponse:
+    try: result = perform_game_action(db, run_id=run_id, user_id=current_user.id, action_id=payload.action_id, action_type="FLIP", request_payload={"position": payload.position}, handler=lambda run: flip_card(run, position=payload.position))
+    except ValueError as exc: raise _run_error(exc) from exc
+    return DaruGameFlipResponse.model_validate(result)
+
+
+@router.post("/runs/{run_id}/hint", response_model=DaruGameHintResponse)
+def hint_run(run_id: UUID, payload: DaruGameActionInput, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> DaruGameHintResponse:
+    try: result = perform_game_action(db, run_id=run_id, user_id=current_user.id, action_id=payload.action_id, action_type="HINT", request_payload={}, handler=use_game_hint)
+    except ValueError as exc: raise _run_error(exc) from exc
+    return DaruGameHintResponse.model_validate(result)
+
+
+@router.get("/runs/{run_id}/preview", response_model=DaruGamePreviewResponse)
+def run_preview(run_id: UUID, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> DaruGamePreviewResponse:
+    try: result = game_run_preview(db, run_id=run_id, user_id=current_user.id)
+    except ValueError as exc: raise _run_error(exc) from exc
+    return DaruGamePreviewResponse.model_validate(result)
+
+
+@router.post("/results", response_model=DaruGameResultResponse)
+def create_result(payload: DaruGameResultInput, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> DaruGameResultResponse:
+    def complete(run):
+        stat, improved, metrics = submit_result(db, run=run, user_id=current_user.id, finish_partial=payload.finish_partial)
+        response = DaruGameResultResponse(record=record_response(stat), is_new_best=improved, leaderboard_rank=leaderboard_rank(db, stat), metrics=DaruGameMetrics(**{key: float(value) if isinstance(value, Decimal) else value for key, value in metrics.items()}))
+        return response.model_dump(mode="json")
+    try:
+        result = perform_game_action(db, run_id=payload.run_id, user_id=current_user.id, action_id=payload.action_id, action_type="COMPLETE", request_payload={"finish_partial": payload.finish_partial}, handler=complete)
+    except ValueError as exc:
+        raise _run_error(exc) from exc
+    return DaruGameResultResponse.model_validate(result)
+
+
+@router.get("/runs/{run_id}/state", response_model=DaruGameRunStateResponse)
+def run_state(run_id: UUID, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> DaruGameRunStateResponse:
+    try: result = game_run_state(db, run_id=run_id, user_id=current_user.id)
+    except ValueError as exc: raise _run_error(exc) from exc
+    return DaruGameRunStateResponse.model_validate(result)
+
+
+@router.get("/leaderboard", response_model=DaruLeaderboardResponse)
+def leaderboard(db: Annotated[Session, Depends(get_db)], current_user: Annotated[User | None, Depends(get_optional_current_user)], difficulty: Annotated[Difficulty, Query()] = "EASY", page: Annotated[int, Query(ge=1)] = 1, page_size: Annotated[int, Query(ge=1, le=20)] = 5) -> DaruLeaderboardResponse:
+    rows = db.execute(ranking_query(difficulty)).all()
+    entries = [DaruLeaderboardEntry(rank=index, nickname=nickname, best_detection_power=float(stat.best_detection_power), best_attempts=stat.best_attempts or 0, best_elapsed_seconds=stat.best_elapsed_seconds or 0, best_combo=stat.best_combo, best_hints_used=stat.best_hints_used or 0, achieved_at=stat.best_achieved_at or stat.created_at, is_me=current_user is not None and current_user.role == "USER" and stat.user_id == current_user.id) for index, (stat, nickname) in enumerate(rows, 1)]
+    mine = next((entry for entry in entries if entry.is_me), None)
+    general_entries = entries[3:]
+    total_pages = max(1, (len(general_entries) + page_size - 1) // page_size)
+    current_page = min(page, total_pages)
+    offset = (current_page - 1) * page_size
+    next_rank_score = entries[mine.rank - 2].best_detection_power if mine and mine.rank > 1 else None
+    return DaruLeaderboardResponse(difficulty=difficulty, top_entries=entries[:3], entries=general_entries[offset:offset + page_size], my_entry=mine, next_rank_score=next_rank_score, total=len(entries), page=current_page, page_size=page_size, total_pages=total_pages)
+
+
+@router.get("/me", response_model=list[DaruGameRecord])
+def my_records(current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> list[DaruGameRecord]:
+    stats = db.scalars(select(DaruGameStat).where(DaruGameStat.user_id == current_user.id).order_by(DaruGameStat.difficulty)).all()
+    return [record_response(stat) for stat in stats]

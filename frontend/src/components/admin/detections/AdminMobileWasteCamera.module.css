@@ -1,0 +1,405 @@
+.page {
+  width: min(100% - 32px, 1180px);
+  margin: 0 auto;
+  padding: 32px 0 72px;
+  color: var(--color-text);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.header nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.header nav a {
+  color: var(--color-primary);
+}
+
+.header p {
+  margin: 18px 0 5px;
+  color: var(--color-primary);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .14em;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: clamp(34px, 6vw, 62px);
+}
+
+.header span {
+  display: block;
+  margin-top: 8px;
+  color: var(--color-text-muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.backLink {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.notice,
+.error,
+.privacyNote {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 28%, var(--color-border));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
+  color: var(--color-text);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.error {
+  margin-top: 12px;
+  border-color: color-mix(in srgb, var(--color-error) 38%, var(--color-border));
+  background: color-mix(in srgb, var(--color-error) 8%, var(--color-surface));
+  color: var(--color-error);
+  font-weight: 800;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 330px;
+  gap: 18px;
+  align-items: start;
+}
+
+.cameraPanel,
+.sidePanel {
+  border: 1px solid var(--color-border);
+  border-radius: 24px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
+.cameraPanel {
+  padding: 16px;
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 14px;
+}
+
+.controls label {
+  display: grid;
+  gap: 7px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.controls select {
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  outline: 0;
+  background: var(--color-surface-elevated);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.controls select:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 14%, transparent);
+}
+
+.controls > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.stage {
+  position: relative;
+  overflow: hidden;
+  min-height: 520px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 22%, var(--color-border));
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--color-text) 9%, var(--color-background));
+  display: grid;
+  place-items: center;
+}
+
+.stage video,
+.stage img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.empty,
+.emptySide,
+.selectedCard {
+  color: var(--color-text-muted);
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.empty {
+  position: absolute;
+  inset: 0;
+  padding: 24px;
+}
+
+.empty strong,
+.emptySide strong,
+.selectedCard strong {
+  color: var(--color-text);
+  font-size: 15px;
+}
+
+.empty span,
+.emptySide span,
+.selectedCard span {
+  max-width: 420px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.liveBadge,
+.frozenBadge {
+  position: absolute;
+  z-index: 4;
+  top: 14px;
+  left: 14px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-primary) 84%, var(--color-text));
+  color: white;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .08em;
+}
+
+.frozenBadge {
+  background: color-mix(in srgb, var(--color-accent) 88%, var(--color-text));
+}
+
+.mediaLayer {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.overlayBox {
+  position: absolute;
+  padding: 0;
+  border: 2px solid var(--color-accent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  color: var(--color-text);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.overlayBox[data-selected="true"] {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+}
+
+.overlayBox span {
+  position: absolute;
+  left: -2px;
+  top: -25px;
+  padding: 4px 7px;
+  border-radius: 8px 8px 8px 0;
+  background: var(--color-accent);
+  color: white;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.overlayBox[data-selected="true"] span {
+  background: var(--color-primary);
+}
+
+.hiddenCanvas {
+  display: none;
+}
+
+.actions {
+  margin-top: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.sidePanel {
+  position: sticky;
+  top: 90px;
+  padding: 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.sidePanel > div:first-child p {
+  margin: 0 0 4px;
+  color: var(--color-primary);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .12em;
+}
+
+.sidePanel h2 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.sidePanel > div:first-child span {
+  display: block;
+  margin-top: 6px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.candidateList {
+  display: grid;
+  gap: 8px;
+}
+
+.candidateList button,
+.selectedCard {
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  background: var(--color-surface-soft);
+}
+
+.candidateList button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 4px 10px;
+  align-items: center;
+  color: var(--color-text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.candidateList button:hover {
+  border-color: color-mix(in srgb, var(--color-primary) 34%, var(--color-border));
+  background: var(--color-primary-soft);
+}
+
+.candidateList strong {
+  font-size: 13px;
+}
+
+.candidateList span,
+.candidateList small {
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.candidateList small {
+  grid-column: 2 / -1;
+}
+
+.selectedCard {
+  justify-items: start;
+  text-align: left;
+}
+
+.selectedCard :global(.icon) {
+  color: var(--color-success);
+}
+
+.selectedCard b {
+  color: var(--color-primary);
+  font-size: 11px;
+}
+
+.privacyNote {
+  margin: 0;
+  border-color: color-mix(in srgb, var(--color-primary) 22%, var(--color-border));
+  background: var(--color-primary-soft);
+  color: var(--color-text-muted);
+}
+
+@media (max-width: 980px) {
+  .header {
+    flex-direction: column;
+  }
+
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidePanel {
+    position: static;
+  }
+}
+
+@media (max-width: 640px) {
+  .page {
+    width: calc(100% - 22px);
+    padding-top: 22px;
+  }
+
+  .controls {
+    grid-template-columns: 1fr;
+  }
+
+  .controls > div,
+  .actions {
+    justify-content: stretch;
+  }
+
+  .controls button,
+  .actions :global(.button) {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .cameraPanel {
+    padding: 10px;
+  }
+
+  .stage {
+    min-height: 420px;
+    border-radius: 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .candidateList button {
+    transition: none;
+  }
+}

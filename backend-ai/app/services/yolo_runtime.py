@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import subprocess
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from shutil import which
 from threading import Lock
 
 from PIL import Image
 
 from app.core.config import BACKEND_AI_DIR, REPO_ROOT, get_settings
+
+INTERMEDIATE_VIDEO_CODEC = "mp4v"
 
 
 @dataclass(frozen=True)
@@ -36,6 +40,12 @@ class YoloTrackPrediction:
     appearance_count: int
 
 
+@dataclass(frozen=True)
+class YoloTrackObservation:
+    prediction: YoloTrackPrediction
+    frame_index: int
+
+
 class YoloRuntimeUnavailableError(RuntimeError):
     pass
 
@@ -58,11 +68,41 @@ class YoloRuntime:
                 raise YoloRuntimeUnavailableError("YOLO detection model is unavailable") from exc
         return self._parse_result(model, results[0] if results else None, image.width, image.height)
 
-    def track_video(self, video_path: Path, *, fps: float, media_width: int, media_height: int) -> list[YoloTrackPrediction]:
+    def track_video(
+        self,
+        video_path: Path,
+        *,
+        fps: float,
+        media_width: int,
+        media_height: int,
+        rendered_video_path: Path | None = None,
+    ) -> list[YoloTrackPrediction]:
         model = self._get_model()
-        tracked: dict[tuple[str, int | None], YoloTrackPrediction] = {}
+        observations: dict[tuple[str, int | None], list[YoloTrackObservation]] = {}
+        writer = None
+        intermediate_video_path: Path | None = None
+        frames_written = 0
         with self._inference_lock:
+            tracking_error: Exception | None = None
             try:
+                if rendered_video_path is not None:
+                    import cv2
+
+                    intermediate_video_path = rendered_video_path.with_name(
+                        f"{rendered_video_path.stem}-opencv{rendered_video_path.suffix}"
+                    )
+                    candidate = cv2.VideoWriter(
+                        str(intermediate_video_path),
+                        cv2.VideoWriter_fourcc(*INTERMEDIATE_VIDEO_CODEC),
+                        fps,
+                        (media_width, media_height),
+                    )
+                    if candidate.isOpened():
+                        writer = candidate
+                    else:
+                        candidate.release()
+                    if writer is None:
+                        raise RuntimeError("Rendered video writer could not be opened")
                 results = model.track(
                     source=str(video_path),
                     tracker="bytetrack.yaml",
@@ -73,6 +113,9 @@ class YoloRuntime:
                     verbose=False,
                 )
                 for frame_index, result in enumerate(results):
+                    if writer is not None:
+                        writer.write(result.plot())
+                        frames_written += 1
                     frame_seen_ms = int(round((frame_index / fps) * 1000))
                     for prediction in self._parse_track_result(
                         model,
@@ -84,23 +127,32 @@ class YoloRuntime:
                         if prediction.track_id is None:
                             continue
                         key = (prediction.model_label, prediction.track_id)
-                        previous = tracked.get(key)
-                        if previous is None:
-                            tracked[key] = prediction
-                            continue
-                        tracked[key] = YoloTrackPrediction(
-                            model_label=previous.model_label,
-                            confidence=max(previous.confidence, prediction.confidence),
-                            bbox=prediction.bbox if prediction.confidence >= previous.confidence else previous.bbox,
-                            track_id=previous.track_id,
-                            first_seen_ms=min(previous.first_seen_ms, prediction.first_seen_ms),
-                            last_seen_ms=max(previous.last_seen_ms, prediction.last_seen_ms),
-                            appearance_count=previous.appearance_count + 1,
+                        observations.setdefault(key, []).append(
+                            YoloTrackObservation(prediction=prediction, frame_index=frame_index)
                         )
             except Exception as exc:
-                raise YoloRuntimeUnavailableError("YOLO video tracking model is unavailable") from exc
+                tracking_error = exc
+            finally:
+                if writer is not None:
+                    writer.release()
+            if tracking_error is not None:
+                if intermediate_video_path is not None:
+                    intermediate_video_path.unlink(missing_ok=True)
+                if rendered_video_path is not None:
+                    rendered_video_path.unlink(missing_ok=True)
+                raise YoloRuntimeUnavailableError("YOLO video tracking model is unavailable") from tracking_error
+            if rendered_video_path is not None:
+                try:
+                    if intermediate_video_path is None or frames_written <= 0:
+                        raise RuntimeError("Rendered video contains no frames")
+                    _transcode_h264_mp4(intermediate_video_path, rendered_video_path)
+                except Exception as exc:
+                    raise YoloRuntimeUnavailableError("YOLO video tracking model is unavailable") from exc
+                finally:
+                    if intermediate_video_path is not None:
+                        intermediate_video_path.unlink(missing_ok=True)
         return sorted(
-            tracked.values(),
+            _aggregate_track_observations(observations),
             key=lambda prediction: (
                 prediction.first_seen_ms,
                 prediction.track_id if prediction.track_id is not None else 10**12,
@@ -242,3 +294,79 @@ def get_yolo_runtime() -> YoloRuntime:
         confidence=settings.DETECTION_CONFIDENCE,
         imgsz=settings.DETECTION_IMGSZ,
     )
+
+
+def _ffmpeg_executable() -> str:
+    system_ffmpeg = which("ffmpeg")
+    if system_ffmpeg:
+        return system_ffmpeg
+    try:
+        import imageio_ffmpeg
+    except ImportError as exc:
+        raise RuntimeError("FFmpeg executable is not available") from exc
+    return imageio_ffmpeg.get_ffmpeg_exe()
+
+
+def _transcode_h264_mp4(input_path: Path, output_path: Path) -> None:
+    if not input_path.exists() or input_path.stat().st_size == 0:
+        raise RuntimeError("Rendered intermediate video was not created")
+    output_path.unlink(missing_ok=True)
+    completed = subprocess.run(
+        [
+            _ffmpeg_executable(),
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            str(input_path),
+            "-an",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ],
+        check=False,
+        capture_output=True,
+    )
+    if completed.returncode != 0:
+        output_path.unlink(missing_ok=True)
+        raise RuntimeError("FFmpeg H.264 conversion failed")
+    if not output_path.exists() or output_path.stat().st_size == 0:
+        raise RuntimeError("FFmpeg did not create a rendered video")
+
+
+def _aggregate_track_observations(
+    observations_by_track: dict[tuple[str, int | None], list[YoloTrackObservation]],
+) -> list[YoloTrackPrediction]:
+    predictions: list[YoloTrackPrediction] = []
+    for observations in observations_by_track.values():
+        if not observations:
+            continue
+        seen_ms_values = [observation.prediction.first_seen_ms for observation in observations]
+        first_seen_ms = min(seen_ms_values)
+        last_seen_ms = max(seen_ms_values)
+        midpoint_ms = (first_seen_ms + last_seen_ms) / 2
+        max_confidence = max(observation.prediction.confidence for observation in observations)
+        representative = min(
+            observations,
+            key=lambda observation: (
+                abs(observation.prediction.first_seen_ms - midpoint_ms),
+                -observation.prediction.confidence,
+                observation.frame_index,
+            ),
+        ).prediction
+        predictions.append(
+            YoloTrackPrediction(
+                model_label=representative.model_label,
+                confidence=max_confidence,
+                bbox=representative.bbox,
+                track_id=representative.track_id,
+                first_seen_ms=first_seen_ms,
+                last_seen_ms=last_seen_ms,
+                appearance_count=len(observations),
+            )
+        )
+    return predictions

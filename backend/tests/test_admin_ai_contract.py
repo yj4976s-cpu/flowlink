@@ -1,21 +1,26 @@
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from io import BytesIO
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.api.admin as admin_api
 import app.services.geocoding as geocoding_service
+from app.core.config import get_settings
 from app.core.security import hash_password
 from app.db.session import Base, get_db
 from app.main import app
 from app.models import Camera, DetectedObject, DetectionEvent, FoundItem, LostReport, MatchCandidate, Notification, ObjectClass, OwnershipClaim, ProcessingHistory, User, VideoJob
 from app.services.matching import create_match_candidates_for_found_item, reconcile_match_candidates_for_found_item
 from app.services.geocoding import Coordinates
+from app.services.detection_inference import DetectionBBox, DetectionInferenceResult, DetectionPrediction, get_inference_service
 
 
 @pytest.fixture
@@ -58,6 +63,38 @@ def login_user(client: TestClient) -> None:
     assert client.post("/api/auth/login", json={"email": "user@example.com", "password": "password123"}).status_code == 200
 
 
+class MockInferenceService:
+    def __init__(self, result: DetectionInferenceResult):
+        self.result = result
+
+    def analyze_image(self, media_path: Path) -> DetectionInferenceResult:
+        return self.result
+
+
+def jpeg_bytes(*, width: int = 160, height: int = 120) -> bytes:
+    payload = BytesIO()
+    Image.new("RGB", (width, height), color=(80, 90, 100)).save(payload, format="JPEG")
+    return payload.getvalue()
+
+
+def mobile_waste_files(content: bytes | None = None, content_type: str = "image/jpeg") -> dict[str, tuple[str, BytesIO, str]]:
+    return {"file": ("mobile-waste.jpg", BytesIO(content if content is not None else jpeg_bytes()), content_type)}
+
+
+def mobile_waste_form(camera_id: int = 1, *, x: float = 10, y: float = 12, width: float = 40, height: float = 32) -> dict[str, str]:
+    return {
+        "camera_id": str(camera_id),
+        "bbox_x": str(x),
+        "bbox_y": str(y),
+        "bbox_width": str(width),
+        "bbox_height": str(height),
+    }
+
+
+def override_mobile_waste_inference(result: DetectionInferenceResult) -> None:
+    app.dependency_overrides[get_inference_service] = lambda: MockInferenceService(result)
+
+
 def seed_detection(db: Session, *, object_id: int, event_id: int, detected_at: datetime, confidence: str = "0.8750", source_type: str = "IMAGE", include_crop: bool = True, admin_memo: str | None = None, purpose: str = "OPERATION", processing_status: str = "CONFIRMED") -> None:
     now = detected_at
     if db.get(ObjectClass, 1) is None:
@@ -78,6 +115,17 @@ def seed_waste_detection(db: Session, *, object_id: int = 30, event_id: int = 40
         db.add(ObjectClass(id=2, code="TRASH", name_ko="폐기물", group_code="WASTE", display_order=2, is_active=True, created_at=now, updated_at=now))
     db.add(DetectionEvent(id=event_id, camera_id=1, source_type="IMAGE", original_media_url="/uploads/waste.jpg", status="COMPLETED", captured_at=now, created_at=now, updated_at=now))
     db.add(DetectedObject(id=object_id, detection_event_id=event_id, object_class_id=2, processing_status=processing_status, confidence=Decimal("0.9"), bbox_x=Decimal("1"), bbox_y=Decimal("2"), bbox_width=Decimal("30"), bbox_height=Decimal("40"), cropped_image_url="/uploads/waste-crop.jpg", appearance_count=1, detected_at=now, created_at=now))
+    db.commit()
+
+
+def seed_mobile_waste_prerequisites(db: Session) -> None:
+    now = datetime(2026, 1, 2, tzinfo=UTC)
+    if db.get(Camera, 1) is None:
+        db.add(Camera(id=1, code="CAM-1", name="테스트 카메라", area_name="잠실", is_active=True, created_at=now, updated_at=now))
+    if db.get(ObjectClass, 1) is None:
+        db.add(ObjectClass(id=1, code="BAG", name_ko="가방", group_code="PERSONAL_ITEM", display_order=1, is_active=True, created_at=now, updated_at=now))
+    if db.get(ObjectClass, 2) is None:
+        db.add(ObjectClass(id=2, code="TRASH", name_ko="폐기물", group_code="WASTE", display_order=2, is_active=True, created_at=now, updated_at=now))
     db.commit()
 
 
@@ -870,6 +918,183 @@ def test_admin_collects_waste_persists_state_and_prevents_duplicate(client: Test
     item = client.get("/api/admin/detections").json()[0]["detected_objects"][0]
     assert item["follow_up_kind"] == "WASTE" and item["waste_collection_completed"] is True
     assert client.post("/api/admin/detected-objects/30/collect").status_code == 409
+
+
+def test_mobile_waste_registration_requires_admin(client: TestClient, db: Session) -> None:
+    response = client.post("/api/admin/detections/mobile-waste", data=mobile_waste_form(), files=mobile_waste_files())
+    assert response.status_code == 401
+
+    seed_user(db); login_user(client)
+    forbidden = client.post("/api/admin/detections/mobile-waste", data=mobile_waste_form(), files=mobile_waste_files())
+    assert forbidden.status_code == 403
+
+
+def test_mobile_waste_registration_rejects_invalid_camera(client: TestClient, db: Session) -> None:
+    seed_admin(db); login(client)
+    response = client.post("/api/admin/detections/mobile-waste", data=mobile_waste_form(camera_id=999), files=mobile_waste_files())
+    assert response.status_code == 422
+    assert db.query(DetectionEvent).count() == 0
+    assert db.query(DetectedObject).count() == 0
+
+
+def test_mobile_waste_registration_saves_only_selected_trash_and_collects(
+    client: TestClient,
+    db: Session,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(get_settings(), "UPLOAD_DIR", str(tmp_path / "uploads"))
+    seed_admin(db); seed_mobile_waste_prerequisites(db); login(client)
+    override_mobile_waste_inference(DetectionInferenceResult(
+        media_width=160,
+        media_height=120,
+        detections=[
+            DetectionPrediction(class_code="BAG", confidence=.99, bbox=DetectionBBox(x=70, y=20, width=35, height=35)),
+            DetectionPrediction(class_code="TRASH", confidence=.87, bbox=DetectionBBox(x=10, y=12, width=40, height=32)),
+            DetectionPrediction(class_code="TRASH", confidence=.78, bbox=DetectionBBox(x=100, y=50, width=30, height=28)),
+        ],
+    ))
+
+    response = client.post("/api/admin/detections/mobile-waste", data=mobile_waste_form(), files=mobile_waste_files())
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["processing_status"] == "CONFIRMED"
+    assert body["follow_up_kind"] == "WASTE"
+    assert body["waste_collection_completed"] is False
+    assert body["original_media_url"].startswith("detections/user/1/")
+    assert body["cropped_image_url"].endswith("-crop.jpg")
+    assert db.query(DetectionEvent).count() == 1
+    assert db.query(DetectedObject).count() == 1
+    item = db.query(DetectedObject).one()
+    assert item.object_class.code == "TRASH"
+    assert item.final_class_code == "TRASH"
+    assert item.processing_status == "CONFIRMED"
+    assert item.confidence == Decimal("0.87")
+    assert db.query(ProcessingHistory).filter_by(entity_type="DETECTED_OBJECT", entity_id=item.id, action_type="DETECTED_OBJECT_REVIEWED").count() == 1
+    upload_root = tmp_path / "uploads"
+    assert (upload_root / body["original_media_url"]).exists()
+    assert (upload_root / body["cropped_image_url"]).exists()
+
+    listed = client.get("/api/admin/detections").json()[0]["detected_objects"][0]
+    assert listed["follow_up_kind"] == "WASTE"
+    assert listed["waste_collection_completed"] is False
+
+    collected = client.post(f"/api/admin/detected-objects/{item.id}/collect")
+    assert collected.status_code == 200
+    assert collected.json()["waste_collection_completed"] is True
+    assert db.query(ProcessingHistory).filter_by(entity_type="DETECTED_OBJECT", entity_id=item.id, action_type="WASTE_COLLECTION_COMPLETED").count() == 1
+    assert client.post(f"/api/admin/detected-objects/{item.id}/collect").status_code == 409
+
+
+def test_mobile_waste_registration_rejects_personal_item_only_and_cleans_file(
+    client: TestClient,
+    db: Session,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(get_settings(), "UPLOAD_DIR", str(tmp_path / "uploads"))
+    seed_admin(db); seed_mobile_waste_prerequisites(db); login(client)
+    override_mobile_waste_inference(DetectionInferenceResult(
+        media_width=160,
+        media_height=120,
+        detections=[DetectionPrediction(class_code="BAG", confidence=.92, bbox=DetectionBBox(x=10, y=12, width=40, height=32))],
+    ))
+
+    response = client.post("/api/admin/detections/mobile-waste", data=mobile_waste_form(), files=mobile_waste_files())
+
+    assert response.status_code == 422
+    assert db.query(DetectionEvent).count() == 0
+    assert db.query(DetectedObject).count() == 0
+    assert not list((tmp_path / "uploads").glob("detections/user/1/*"))
+
+
+def test_mobile_waste_registration_rejects_low_iou_and_invalid_file(
+    client: TestClient,
+    db: Session,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(get_settings(), "UPLOAD_DIR", str(tmp_path / "uploads"))
+    seed_admin(db); seed_mobile_waste_prerequisites(db); login(client)
+    override_mobile_waste_inference(DetectionInferenceResult(
+        media_width=160,
+        media_height=120,
+        detections=[DetectionPrediction(class_code="TRASH", confidence=.82, bbox=DetectionBBox(x=90, y=70, width=30, height=25))],
+    ))
+
+    low_iou = client.post("/api/admin/detections/mobile-waste", data=mobile_waste_form(), files=mobile_waste_files())
+    invalid_type = client.post("/api/admin/detections/mobile-waste", data=mobile_waste_form(), files=mobile_waste_files(content=b"text", content_type="text/plain"))
+
+    assert low_iou.status_code == 422
+    assert invalid_type.status_code == 415
+    assert db.query(DetectionEvent).count() == 0
+    assert db.query(DetectedObject).count() == 0
+    assert not list((tmp_path / "uploads").glob("detections/user/1/*"))
+
+
+def test_mobile_waste_registration_clamps_server_prediction_bbox_and_stores_matching_crop(
+    client: TestClient,
+    db: Session,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(get_settings(), "UPLOAD_DIR", str(tmp_path / "uploads"))
+    seed_admin(db); seed_mobile_waste_prerequisites(db); login(client)
+    override_mobile_waste_inference(DetectionInferenceResult(
+        media_width=160,
+        media_height=120,
+        detections=[DetectionPrediction(class_code="TRASH", confidence=.91, bbox=DetectionBBox(x=10, y=12, width=155, height=110))],
+    ))
+
+    response = client.post(
+        "/api/admin/detections/mobile-waste",
+        data=mobile_waste_form(x=10, y=12, width=150, height=108),
+        files=mobile_waste_files(),
+    )
+
+    assert response.status_code == 201
+    item = db.query(DetectedObject).one()
+    assert item.bbox_x == Decimal("10.0000")
+    assert item.bbox_y == Decimal("12.0000")
+    assert item.bbox_width == Decimal("150.0000")
+    assert item.bbox_height == Decimal("108.0000")
+    body = response.json()
+    upload_root = tmp_path / "uploads"
+    assert (upload_root / body["original_media_url"]).exists()
+    assert (upload_root / body["cropped_image_url"]).exists()
+
+
+@pytest.mark.parametrize(
+    "bbox",
+    [
+        DetectionBBox(x=200, y=50, width=20, height=20),
+        DetectionBBox(x=10, y=12, width=float("nan"), height=32),
+        DetectionBBox(x=10, y=12, width=float("inf"), height=32),
+        DetectionBBox(x=10, y=12, width=-10, height=32),
+    ],
+)
+def test_mobile_waste_registration_rejects_invalid_server_prediction_bbox_and_cleans_file(
+    client: TestClient,
+    db: Session,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    bbox: DetectionBBox,
+) -> None:
+    monkeypatch.setattr(get_settings(), "UPLOAD_DIR", str(tmp_path / "uploads"))
+    seed_admin(db); seed_mobile_waste_prerequisites(db); login(client)
+    override_mobile_waste_inference(DetectionInferenceResult(
+        media_width=160,
+        media_height=120,
+        detections=[DetectionPrediction(class_code="TRASH", confidence=.82, bbox=bbox)],
+    ))
+
+    response = client.post("/api/admin/detections/mobile-waste", data=mobile_waste_form(), files=mobile_waste_files())
+
+    assert response.status_code == 422
+    assert db.query(DetectionEvent).count() == 0
+    assert db.query(DetectedObject).count() == 0
+    assert not list((tmp_path / "uploads").glob("detections/user/1/*"))
 
 
 def test_completed_follow_up_locks_class_and_status_but_allows_memo_and_color(client: TestClient, db: Session) -> None:

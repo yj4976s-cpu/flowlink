@@ -33,7 +33,14 @@ def _provider_name(value: str) -> str:
     return provider
 
 
-def _set_private_cookie(response: Response, request: Request, *, key: str, value: str, max_age: int) -> None:
+def _set_private_cookie(
+    response: Response,
+    request: Request,
+    *,
+    key: str,
+    value: str,
+    max_age: int,
+) -> None:
     response.set_cookie(
         key=key,
         value=value,
@@ -75,12 +82,16 @@ def _error_redirect(
 
 
 @router.get("/{provider}/start", summary="Start OAuth login")
-def oauth_start(provider: str, request: Request) -> RedirectResponse:
+def oauth_start(
+    request: Request,
+    provider: str,
+    next_path: Annotated[str | None, Query(alias="next")] = None,
+) -> RedirectResponse:
     provider_name = _provider_name(provider)
     oauth_provider = get_oauth_provider(provider_name)
     if not oauth_provider.configured:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="OAuth provider not configured")
-    start = create_oauth_start(provider_name)
+    start = create_oauth_start(provider_name, next_path)
     response = RedirectResponse(
         oauth_provider.authorization_url(
             state=start.state,
@@ -89,14 +100,20 @@ def oauth_start(provider: str, request: Request) -> RedirectResponse:
         ),
         status_code=status.HTTP_302_FOUND,
     )
-    _set_private_cookie(response, request, key=STATE_COOKIE_NAME, value=start.cookie_token, max_age=STATE_TTL_SECONDS)
+    _set_private_cookie(
+        response,
+        request,
+        key=STATE_COOKIE_NAME,
+        value=start.cookie_token,
+        max_age=STATE_TTL_SECONDS,
+    )
     return response
 
 
 @router.get("/{provider}/callback", summary="Complete OAuth provider callback")
 def oauth_callback(
-    provider: str,
     request: Request,
+    provider: str,
     db: Annotated[Session, Depends(get_db)],
     code: Annotated[str | None, Query()] = None,
     state_value: Annotated[str | None, Query(alias="state")] = None,
@@ -145,8 +162,13 @@ def oauth_callback(
         )
     else:
         if result.login is not None:
-            response = RedirectResponse(get_settings().FRONTEND_URL.rstrip("/") + "/", status_code=302)
-            set_login_cookie(response, request, result.login.access_token, result.login.expires_in)
+            next_path = str(state_payload.get("next_path", "/"))
+            response = RedirectResponse(get_settings().FRONTEND_URL.rstrip("/") + next_path, status_code=302)
+            login_expires_in = (
+                result.login.expires_in
+                or get_settings().ACCESS_TOKEN_EXPIRE_MINUTES * 60
+            )
+            set_login_cookie(response, request, result.login.access_token, login_expires_in)
         else:
             response = RedirectResponse(
                 f"{get_settings().FRONTEND_URL.rstrip('/')}/register?social={provider_name.lower()}",
@@ -173,6 +195,7 @@ def oauth_complete(
     pending_cookie: Annotated[str | None, Cookie(alias=PENDING_COOKIE_NAME)] = None,
 ) -> UserResponse:
     result = complete_social_registration(db, pending_cookie, payload)
-    set_login_cookie(response, request, result.access_token, result.expires_in)
+    login_expires_in = result.expires_in or get_settings().ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    set_login_cookie(response, request, result.access_token, login_expires_in)
     _delete_private_cookie(response, request, PENDING_COOKIE_NAME)
     return result.user

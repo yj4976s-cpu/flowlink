@@ -46,6 +46,7 @@ class CopilotSuggestion(BaseModel):
 
 class CopilotResponse(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
+    speech_text: str | None = Field(default=None, max_length=500)
     cards: list[CopilotCard] = Field(default_factory=list, max_length=5)
     actions: list[CopilotAction] = Field(default_factory=list, max_length=5)
     suggestions: list[CopilotSuggestion] = Field(default_factory=list, max_length=5)
@@ -63,6 +64,7 @@ class CopilotStoredMessage(BaseModel):
     id: int
     role: Literal["USER", "ASSISTANT"]
     content: str
+    speech_text: str | None = Field(default=None, max_length=500)
     cards: list[CopilotCard] = Field(default_factory=list)
     actions: list[CopilotAction] = Field(default_factory=list)
     suggestions: list[CopilotSuggestion] = Field(default_factory=list)

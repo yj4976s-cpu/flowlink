@@ -1,5 +1,5 @@
-import { buildApiUrl, getApiMediaBaseUrl } from "@/lib/apiBase";
 import type { CitizenReport, CitizenReportDraft, CitizenReportStatusCode, SightingDraft } from "@/types/discoveryNetwork";
+import { buildApiUrl, resolveMediaUrl } from "@/lib/apiBase";
 
 type ApiSighting = { id: number; sighted_at: string; location_name: string; description: string; image_url: string | null };
 type ApiReport = { id: number; item_category: string; item_category_name: string; color: string | null; description: string; image_url: string | null; area_name: string; found_at: string; status: string; sightings: ApiSighting[]; linked_found_item: { id: number; status: string } | null };
@@ -42,7 +42,7 @@ async function request<T>(path: string, init?: RequestInit) {
   }
   return response.json() as Promise<T>;
 }
-function imageUrl(value: string | null) { return value ? new URL(value, `${getApiMediaBaseUrl()}/`).toString() : null; }
+function imageUrl(value: string | null) { return resolveMediaUrl(value); }
 function mapReport(report: ApiReport): CitizenReport {
   const category = report.item_category_name;
   return { id: String(report.id), category, title: `${report.color ?? ""} ${category}`.trim(), color: report.color ?? "",

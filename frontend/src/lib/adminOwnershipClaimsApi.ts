@@ -1,4 +1,4 @@
-import { buildApiUrl } from "@/lib/apiBase";
+import { buildApiUrl as buildCommonApiUrl } from "@/lib/apiBase";
 
 export type AdminClaimantSummary = {
   id: number;
@@ -54,6 +54,11 @@ export class AdminOwnershipClaimsApiError extends Error {
     super(message);
     this.name = "AdminOwnershipClaimsApiError";
   }
+}
+
+
+function buildApiUrl(path: string, params?: Record<string, string | number | undefined>) {
+  return buildCommonApiUrl(path, params);
 }
 
 function getFallbackMessage(status: number) {

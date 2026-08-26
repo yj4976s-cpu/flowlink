@@ -22,6 +22,13 @@ def normalize_database_url(value: str) -> str:
     return value
 
 
+def normalize_origin(value: str) -> str:
+    parsed = urlparse(value.strip())
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}".rstrip("/")
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=BACKEND_DIR / ".env", env_file_encoding="utf-8", extra="ignore"
@@ -43,6 +50,9 @@ class Settings(BaseSettings):
     SUPABASE_SERVICE_ROLE_KEY: str = ""
     SUPABASE_STORAGE_BUCKET: str = ""
     FRONTEND_URL: str = DEFAULT_FRONTEND_URL
+    ALLOWED_FRONTEND_ORIGINS: str = ""
+    AUTH_INSECURE_HTTP_HOSTS: str = ""
+    FORWARDED_ALLOW_IPS: str = ""
     KAKAO_REST_API_KEY: str = ""
     KAKAO_CLIENT_SECRET: str = ""
     GOOGLE_CLIENT_ID: str = ""
@@ -124,6 +134,30 @@ class Settings(BaseSettings):
     @property
     def auth_cookie_secure(self) -> bool:
         return self._is_production
+
+    @property
+    def allowed_frontend_origins(self) -> list[str]:
+        origins = [normalize_origin(self.FRONTEND_URL)]
+        origins.extend(
+            normalize_origin(origin)
+            for origin in self.ALLOWED_FRONTEND_ORIGINS.split(",")
+        )
+        return [origin for index, origin in enumerate(origins) if origin and origin not in origins[:index]]
+
+    @property
+    def insecure_http_hosts(self) -> set[str]:
+        hosts: set[str] = set()
+        for raw_host in self.AUTH_INSECURE_HTTP_HOSTS.split(","):
+            host = raw_host.strip().lower().rstrip(".")
+            if not host:
+                continue
+            if host.startswith("["):
+                host = host.split("]", 1)[0].lstrip("[")
+            else:
+                host = host.rsplit(":", 1)[0]
+            if host:
+                hosts.add(host)
+        return hosts
 
 
 @lru_cache

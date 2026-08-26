@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/common/Icon";
 import {
   AdminCitizenReportsApiError,
@@ -38,6 +38,7 @@ const queueFilters: Array<{ value: QueueFilter; label: string }> = [
 ];
 const date = new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" });
 const activeReports = (items: AdminCitizenReport[]) => items.filter((report) => report.status !== "CANCELLED");
+const POLLING_INTERVAL_MS = 10000;
 
 function format(value: string) {
   const parsed = new Date(value);
@@ -85,6 +86,10 @@ export function AdminCitizenReportsClient() {
   const [foundItemId, setFoundItemId] = useState("");
   const [confirmation, setConfirmation] = useState<Confirmation>(null);
   const [mobileDetail, setMobileDetail] = useState(false);
+  const [newReportCount, setNewReportCount] = useState(0);
+  const knownReportIdsRef = useRef(new Set<number>());
+  const loadingRef = useRef(false);
+  const pollAbortRef = useRef<AbortController | null>(null);
 
   const visible = useMemo(() => filter ? reports.filter((report) => report.status !== "CANCELLED" && report.status === filter) : activeReports(reports), [filter, reports]);
   const count = (status: QueueFilter) => status ? reports.filter((report) => report.status !== "CANCELLED" && report.status === status).length : activeReports(reports).length;
@@ -96,34 +101,57 @@ export function AdminCitizenReportsClient() {
     }
   };
 
-  const load = async (signal?: AbortSignal) => {
-    setLoading(true);
-    setError("");
+  const load = useCallback(async (signal?: AbortSignal, options: { silent?: boolean } = {}) => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    if (!options.silent) {
+      setLoading(true);
+      setError("");
+    }
     try {
       const data = activeReports(await listAdminCitizenReports(undefined, signal));
+      const previousIds = knownReportIdsRef.current;
+      const incomingCount = previousIds.size && options.silent
+        ? data.filter((report) => !previousIds.has(report.id)).length
+        : 0;
+      if (incomingCount > 0) setNewReportCount((current) => current + incomingCount);
+      knownReportIdsRef.current = new Set(data.map((report) => report.id));
       setReports(data);
       setSelected((current) => current ? data.find((report) => report.id === current.id) ?? null : null);
     } catch (reason) {
-      if (!(reason instanceof DOMException && reason.name === "AbortError")) setError("발견 제보를 불러오지 못했습니다.");
+      if (!(reason instanceof DOMException && reason.name === "AbortError") && !options.silent) setError("발견 제보를 불러오지 못했습니다.");
     } finally {
-      if (!signal?.aborted) setLoading(false);
+      loadingRef.current = false;
+      if (!signal?.aborted && !options.silent) setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
-    const loadInitial = async () => {
-      try {
-        setReports(activeReports(await listAdminCitizenReports(undefined, controller.signal)));
-      } catch (reason) {
-        if (!(reason instanceof DOMException && reason.name === "AbortError")) setError("발견 제보를 불러오지 못했습니다.");
-      } finally {
-        if (!controller.signal.aborted) setLoading(false);
-      }
-    };
-    void loadInitial();
+    queueMicrotask(() => void load(controller.signal));
     return () => controller.abort();
-  }, []);
+  }, [load]);
+
+  useEffect(() => {
+    const refreshSilently = () => {
+      if (document.visibilityState !== "visible") return;
+      if (pollAbortRef.current) return;
+      const controller = new AbortController();
+      pollAbortRef.current = controller;
+      void load(controller.signal, { silent: true }).finally(() => {
+        if (pollAbortRef.current === controller) pollAbortRef.current = null;
+      });
+    };
+
+    const timer = window.setInterval(refreshSilently, POLLING_INTERVAL_MS);
+    window.addEventListener("focus", refreshSilently);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshSilently);
+      pollAbortRef.current?.abort();
+      pollAbortRef.current = null;
+    };
+  }, [load]);
 
   const resetActionState = (report: AdminCitizenReport) => {
     setMemo(report.admin_memo ?? "");
@@ -183,6 +211,12 @@ export function AdminCitizenReportsClient() {
     setMessage(success);
   };
 
+  const openLatestReport = () => {
+    setNewReportCount(0);
+    const latest = activeReports(reports)[0];
+    if (latest) void open(latest);
+  };
+
   const runAction = async (action: "REVIEW" | "CREATE" | "LINK" | "REJECT") => {
     if (!selected) return;
     setProcessing(true);
@@ -209,6 +243,13 @@ export function AdminCitizenReportsClient() {
 
   return <main className={`${styles.page} ${mobileDetail ? styles.reviewing : ""}`}>
     <header className={styles.pageHeader}><div><h1>발견 제보</h1><p>시민이 접수한 발견 정보를 확인하고 필요한 경우 발견물로 연결합니다.</p></div><button type="button" onClick={() => void load()} disabled={loading} aria-label="발견 제보 새로고침"><Icon name="refresh" size={16} />새로고침</button></header>
+
+    {newReportCount > 0 && (
+      <button type="button" className={styles.newReportNotice} onClick={openLatestReport}>
+        <Icon name="info" size={16} />
+        새 발견 제보가 {newReportCount}건 접수되었습니다. 최신 제보 확인하기
+      </button>
+    )}
 
     <nav className={styles.statusRail} aria-label="발견 제보 상태 필터">{queueFilters.map((item) => <button type="button" data-status={item.value || "ALL"} aria-current={filter === item.value ? "page" : undefined} key={item.value || "all"} onClick={() => selectFilter(item.value)}><span>{item.label}</span><b>{count(item.value)}</b></button>)}</nav>
 

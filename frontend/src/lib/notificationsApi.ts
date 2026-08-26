@@ -1,4 +1,4 @@
-import { buildApiUrl } from "@/lib/apiBase";
+import { buildApiUrl as buildCommonApiUrl } from "@/lib/apiBase";
 
 export type NotificationResponse = {
   id: number;
@@ -18,6 +18,11 @@ export class NotificationsApiError extends Error {
     super(message);
     this.name = "NotificationsApiError";
   }
+}
+
+
+function buildApiUrl(path: string, params?: Record<string, string | number | boolean | undefined>) {
+  return buildCommonApiUrl(path, params);
 }
 
 function getListFallbackMessage(status: number) {

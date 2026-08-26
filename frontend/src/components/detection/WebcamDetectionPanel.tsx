@@ -43,6 +43,12 @@ type StableDetection = {
   bestCandidate: StickyCandidate;
 };
 
+type CameraFacingMode = "environment" | "user";
+type CameraPreference = {
+  deviceId?: string;
+  facingMode?: CameraFacingMode;
+};
+
 const WEBCAM_FRAME_MAX_WIDTH = 640;
 const WEBCAM_FRAME_INTERVAL_MS = 300;
 const WEBCAM_JPEG_QUALITY = 0.8;
@@ -88,6 +94,17 @@ function getCameraErrorMessage(error: unknown) {
     if (error.name === "NotReadableError") return "다른 앱에서 카메라를 사용 중일 수 있습니다.";
   }
   return "카메라를 시작하지 못했습니다. 브라우저 권한과 연결 상태를 확인해주세요.";
+}
+
+function getCameraSupportMessage() {
+  if (typeof window === "undefined") return "";
+  if (!window.isSecureContext) {
+    return "모바일 카메라는 HTTPS 주소에서 사용할 수 있습니다. 발표 시연은 HTTPS 배포 주소에서 진행해주세요.";
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return "이 브라우저에서는 웹캠을 사용할 수 없습니다.";
+  }
+  return "";
 }
 
 function isAbortError(error: unknown) {
@@ -147,6 +164,11 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [candidates, setCandidates] = useState<StickyCandidate[]>([]);
+  const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
+  const [activeDeviceId, setActiveDeviceId] = useState("");
+  const [preferredFacingMode, setPreferredFacingMode] = useState<CameraFacingMode>("environment");
+  const [switchingCamera, setSwitchingCamera] = useState(false);
+  const [supportMessage, setSupportMessage] = useState("");
 
   const replaceCandidates = useCallback((next: StickyCandidate[]) => {
     const retainedUrls = new Set(next.map((candidate) => candidate.previewUrl));
@@ -162,6 +184,10 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
   useEffect(() => {
     reportModalOpenRef.current = reportModalOpen;
   }, [reportModalOpen]);
+
+  useEffect(() => {
+    queueMicrotask(() => setSupportMessage(getCameraSupportMessage()));
+  }, []);
 
   useEffect(() => {
     onStatusChange(cameraStatus);
@@ -198,6 +224,7 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
     onFrame(null);
     setExpanded(false);
     setCameraStatus("idle");
+    setActiveDeviceId("");
     clearCandidates();
   }, [clearCandidates, onFrame, stopDetection, stopStream]);
 
@@ -379,11 +406,32 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
     })();
   }
 
-  const startCamera = async () => {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setError("이 브라우저에서는 웹캠을 사용할 수 없습니다.");
+  const refreshCameraDevices = useCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return [];
+    try {
+      const devices = (await navigator.mediaDevices.enumerateDevices()).filter((device) => device.kind === "videoinput");
+      setCameraDevices(devices);
+      return devices;
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const buildVideoConstraints = (preference: CameraPreference): MediaTrackConstraints => ({
+    width: { ideal: 1280 },
+    height: { ideal: 720 },
+    ...(preference.deviceId
+      ? { deviceId: { exact: preference.deviceId } }
+      : { facingMode: { ideal: preference.facingMode ?? "environment" } }),
+  });
+
+  const startCamera = async (preference: CameraPreference = { facingMode: preferredFacingMode }) => {
+    const issue = getCameraSupportMessage();
+    setSupportMessage(issue);
+    if (issue) {
+      setError(issue);
       setCameraStatus("error");
-      return;
+      return false;
     }
 
     setError("");
@@ -393,11 +441,7 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          facingMode: "environment",
-        },
+        video: buildVideoConstraints(preference),
       });
       if (!mountedRef.current || requestGeneration !== cameraRequestGenerationRef.current) {
         stopStream(stream);
@@ -428,22 +472,55 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
         return;
       }
       setCameraActive(true);
+      const settings = stream.getVideoTracks()[0]?.getSettings();
+      const nextDeviceId = settings?.deviceId ?? preference.deviceId ?? "";
+      setActiveDeviceId(nextDeviceId);
+      if (preference.facingMode) setPreferredFacingMode(preference.facingMode);
+      void refreshCameraDevices();
       setCameraStatus("ready");
+      return true;
     } catch (caught) {
       if (!mountedRef.current || requestGeneration !== cameraRequestGenerationRef.current) return;
       setError(getCameraErrorMessage(caught));
       setCameraActive(false);
       setCameraStatus("error");
+      return false;
     }
   };
 
-  const startDetection = () => {
-    if (!streamRef.current || cameraStatus === "running") return;
+  const beginDetection = (force = false) => {
+    if (!streamRef.current || (!force && cameraStatus === "running")) return;
     loopGenerationRef.current += 1;
     const generation = loopGenerationRef.current;
     setError("");
     setCameraStatus("running");
     runDetectionLoop(generation);
+  };
+
+  const startDetection = () => beginDetection(false);
+
+  const switchCamera = async () => {
+    if (switchingCamera || cameraStatus === "requesting") return;
+    const devices = cameraDevices.length ? cameraDevices : await refreshCameraDevices();
+    if (devices.length < 2) return;
+
+    const wasRunning = cameraStatus === "running";
+    const currentIndex = Math.max(0, devices.findIndex((device) => device.deviceId === activeDeviceId));
+    const nextDevice = devices[(currentIndex + 1) % devices.length];
+    const fallbackFacingMode: CameraFacingMode = preferredFacingMode === "environment" ? "user" : "environment";
+
+    setSwitchingCamera(true);
+    stopDetection();
+    stopStream(streamRef.current);
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    let switched = await startCamera({ deviceId: nextDevice.deviceId });
+    if (!switched) switched = await startCamera({ facingMode: fallbackFacingMode });
+    if (switched) {
+      setPreferredFacingMode(fallbackFacingMode);
+      if (wasRunning) beginDetection(true);
+    }
+    setSwitchingCamera(false);
   };
 
   useEffect(() => {
@@ -521,10 +598,10 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
           <div className={styles.webcamEmpty}>
             <Icon name="scanLine" size={32} />
             <strong>카메라를 켜고 물건 확인을 시작해보세요.</strong>
-            <span>브라우저 권한을 허용하면 현재 화면의 프레임만 서버로 전송해 확인합니다.</span>
+            <span>{supportMessage || "브라우저 권한을 허용하면 현재 화면의 프레임만 서버로 전송해 확인합니다."}</span>
           </div>
         )}
-        {cameraStatus === "running" && <span className={styles.liveBadge}>LIVE</span>}
+        {cameraStatus === "running" && <span className={styles.liveBadge}>LIVE · 확인 중</span>}
         {frame && mediaRect && (
           <div className={styles.mediaLayer} style={getContainedMediaRectStyle(mediaRect)} aria-hidden="true">
             <div className={styles.overlay}>
@@ -568,6 +645,11 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
               물건 확인 시작
               <Icon name="scanLine" size={18} />
             </button>
+            {cameraDevices.length > 1 && (
+              <button className="button button-secondary" type="button" onClick={() => void switchCamera()} disabled={switchingCamera || cameraStatus === "requesting"}>
+                {switchingCamera ? "전환 중..." : "전·후면 전환"}
+              </button>
+            )}
             <button className="button button-secondary" type="button" onClick={cameraStatus === "running" ? stopDetection : stopCamera}>
               {cameraStatus === "running" ? "확인 일시정지" : "카메라 끄기"}
             </button>

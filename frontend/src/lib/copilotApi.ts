@@ -1,18 +1,18 @@
 import { buildApiUrl } from "@/lib/apiBase";
-
 export type CopilotMode = "GUIDE" | "PERSONAL" | "OPERATIONS";
 export type CopilotCard = { type: "MATCH" | "ANALYSIS" | "STATUS" | "TIMELINE" | "EVIDENCE" | "SYSTEM_NOTICE" | "COMMUNITY"; title: string; subtitle?: string | null; score?: number | null; confidence?: number | null; status?: string | null; details: string[]; entity_id?: number | null };
 export type CopilotAction = { type: "NAVIGATE" | "ASK"; label: string; target: string };
 export type CopilotSuggestion = { id: string; message: string };
-export type CopilotResponse = { message: string; cards: CopilotCard[]; actions: CopilotAction[]; suggestions: CopilotSuggestion[]; mode: CopilotMode; provider: string; model: string; conversation_public_id?: string | null };
+export type CopilotResponse = { message: string; speech_text?: string | null; cards: CopilotCard[]; actions: CopilotAction[]; suggestions: CopilotSuggestion[]; mode: CopilotMode; provider: string; model: string; conversation_public_id?: string | null };
 export type CopilotHistoryMessage = { role: "user" | "assistant"; content: string };
 export type CopilotConversationSummary = { public_id: string; title: string; context_type: string; context_entity_id?: number | null; last_message_at: string };
-export type CopilotStoredMessage = { id: number; role: "USER" | "ASSISTANT"; content: string; cards: CopilotCard[]; actions: CopilotAction[]; suggestions: CopilotSuggestion[]; created_at: string };
+export type CopilotStoredMessage = { id: number; role: "USER" | "ASSISTANT"; content: string; speech_text?: string | null; cards: CopilotCard[]; actions: CopilotAction[]; suggestions: CopilotSuggestion[]; created_at: string };
 export type CopilotConversationDetail = CopilotConversationSummary & { messages: CopilotStoredMessage[] };
 
 export class CopilotApiError extends Error {
   constructor(message: string, readonly status?: number, readonly retryAfterSeconds?: number) { super(message); this.name = "CopilotApiError"; }
 }
+
 
 export async function sendCopilotMessage(messages: CopilotHistoryMessage[], context: { page: string; path: string; entity_id?: number }, options?: { signal?: AbortSignal; conversationId?: string | null; clientMessageId?: string }) {
   const response = await fetch(buildApiUrl("/api/copilot/chat"), { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages, context, conversation_public_id: options?.conversationId, client_message_id: options?.clientMessageId }), signal: options?.signal });

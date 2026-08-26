@@ -45,10 +45,10 @@ def _forwarded_header_value(value: str | None) -> str | None:
 
 
 def _host_without_port(value: str | None) -> str:
-    host = _forwarded_header_value(value) or ""
+    host = (_forwarded_header_value(value) or "").lower().rstrip(".")
     if host.startswith("["):
-        return host.split("]", 1)[0].lstrip("[").lower()
-    return host.rsplit(":", 1)[0].lower()
+        return host.split("]", 1)[0].lstrip("[")
+    return host.rsplit(":", 1)[0]
 
 
 def _is_internal_http_host(host: str) -> bool:
@@ -61,26 +61,62 @@ def _is_internal_http_host(host: str) -> bool:
     return address.is_loopback or any(address in network for network in INTERNAL_HTTP_NETWORKS)
 
 
-def should_use_secure_cookie(request: Request) -> bool:
+def _is_trusted_proxy(client_host: str | None) -> bool:
+    if not client_host:
+        return False
     settings = get_settings()
-    proto = (
-        _forwarded_header_value(request.headers.get("x-forwarded-proto"))
-        or request.url.scheme
-    ).lower()
-    host = _host_without_port(
-        request.headers.get("x-forwarded-host")
-        or request.headers.get("host")
-        or request.url.hostname
-    )
-
-    if proto == "https":
-        return True
-    if settings._is_production:
-        return not (proto == "http" and _is_internal_http_host(host))
+    allowed = [entry.strip() for entry in settings.FORWARDED_ALLOW_IPS.split(",") if entry.strip()]
+    if not allowed:
+        return not settings._is_production
+    try:
+        client_address = ip_address(client_host)
+    except ValueError:
+        return client_host in allowed
+    for entry in allowed:
+        try:
+            if "/" in entry and client_address in ip_network(entry, strict=False):
+                return True
+            if client_address == ip_address(entry):
+                return True
+        except ValueError:
+            continue
     return False
 
 
-def set_login_cookie(response: Response, request: Request, access_token: str, expires_in: int) -> None:
+def should_use_secure_cookie(request: Request) -> bool:
+    settings = get_settings()
+    client_host = request.client.host if request.client else None
+    trust_forwarded = _is_trusted_proxy(client_host)
+    proto = request.url.scheme.lower()
+    host = _host_without_port(request.url.hostname)
+    if trust_forwarded:
+        proto = (
+            _forwarded_header_value(request.headers.get("x-forwarded-proto"))
+            or proto
+        ).lower()
+        host = _host_without_port(
+            request.headers.get("x-forwarded-host")
+            or request.headers.get("host")
+            or host
+        )
+
+    if proto == "https":
+        return True
+    if not settings._is_production:
+        return False
+    if proto == "http" and (
+        _is_internal_http_host(host) or host in settings.insecure_http_hosts
+    ):
+        return False
+    return True
+
+
+def set_login_cookie(
+    response: Response,
+    request: Request,
+    access_token: str,
+    expires_in: int,
+) -> None:
     settings = get_settings()
     response.set_cookie(
         key=settings.AUTH_COOKIE_NAME,

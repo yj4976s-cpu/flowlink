@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 from io import BytesIO
+from pathlib import Path
+import subprocess
+import sys
+import types
+from zipfile import ZipFile
 
 import pytest
 from fastapi.testclient import TestClient
@@ -39,13 +44,20 @@ class FailingService:
 
 
 class FakeVideoService:
-    def __init__(self) -> None:
+    def __init__(self, *, write_rendered: bool = True) -> None:
         self.calls = 0
+        self.write_rendered = write_rendered
+        self.video_paths = []
+        self.rendered_paths = []
 
-    def analyze_video_file(self, video_path, *, content_type: str) -> VideoInferenceResponse:
+    def analyze_video_file(self, video_path, *, content_type: str, rendered_video_path=None) -> VideoInferenceResponse:
         self.calls += 1
+        self.video_paths.append(video_path)
+        self.rendered_paths.append(rendered_video_path)
         assert video_path.exists()
         assert content_type == "video/mp4"
+        if rendered_video_path is not None and self.write_rendered:
+            rendered_video_path.write_bytes(b"rendered-h264-mp4")
         return VideoInferenceResponse(
             media_width=640,
             media_height=360,
@@ -225,6 +237,42 @@ def test_video_inference_streams_temp_file_and_returns_tracks(client: TestClient
     }
 
 
+def test_video_inference_render_true_returns_zip_and_cleans_temp_files(client: TestClient) -> None:
+    fake_service = FakeVideoService()
+    app.dependency_overrides[get_inference_service] = lambda: fake_service
+
+    response = client.post("/api/inference/videos?render=true", files=video_file(), headers=auth_headers())
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].split(";", 1)[0] == "application/zip"
+    assert fake_service.calls == 1
+    with ZipFile(BytesIO(response.content)) as bundle:
+        assert sorted(bundle.namelist()) == ["result.json", "result.mp4"]
+        parsed = VideoInferenceResponse.model_validate_json(bundle.read("result.json"))
+        assert bundle.read("result.mp4") == b"rendered-h264-mp4"
+    assert parsed.media_width == 640
+    assert parsed.media_height == 360
+    assert parsed.tracks[0].label == "bag"
+    assert fake_service.video_paths and not fake_service.video_paths[0].exists()
+    assert fake_service.rendered_paths and fake_service.rendered_paths[0] is not None
+    assert not fake_service.rendered_paths[0].exists()
+
+
+def test_video_inference_render_true_fails_when_render_file_is_missing_and_cleans_temp_files(
+    client: TestClient,
+) -> None:
+    fake_service = FakeVideoService(write_rendered=False)
+    app.dependency_overrides[get_inference_service] = lambda: fake_service
+
+    response = client.post("/api/inference/videos?render=true", files=video_file(), headers=auth_headers())
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "AI model is unavailable"
+    assert fake_service.video_paths and not fake_service.video_paths[0].exists()
+    assert fake_service.rendered_paths and fake_service.rendered_paths[0] is not None
+    assert not fake_service.rendered_paths[0].exists()
+
+
 def test_video_inference_rejects_invalid_uploads(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     app.dependency_overrides[get_inference_service] = lambda: FakeVideoService()
     monkeypatch.setattr(get_settings(), "VIDEO_MAX_BYTES", 4)
@@ -295,6 +343,9 @@ class FakeTrackResult:
     def __init__(self, boxes) -> None:
         self.boxes = boxes
 
+    def plot(self):
+        return b"annotated-frame"
+
 
 class FakeTrackModel:
     names = {0: "bag", 1: "trash"}
@@ -333,6 +384,39 @@ class FakeMultipleTrackModel:
         ]
 
 
+class FakeMovingTrackModel:
+    names = {0: "bag"}
+
+    def track(self, **kwargs):
+        return [
+            FakeTrackResult([FakeTrackBox(xyxy=[1, 2, 11, 22], confidence=0.45, class_id=0, track_id=7)]),
+            FakeTrackResult([FakeTrackBox(xyxy=[51, 2, 61, 22], confidence=0.70, class_id=0, track_id=7)]),
+            FakeTrackResult([FakeTrackBox(xyxy=[91, 2, 101, 22], confidence=0.95, class_id=0, track_id=7)]),
+        ]
+
+
+class FakeEqualDistanceConfidenceTieBreakModel:
+    names = {0: "bag"}
+
+    def track(self, **kwargs):
+        return [
+            FakeTrackResult([FakeTrackBox(xyxy=[1, 2, 11, 22], confidence=0.70, class_id=0, track_id=7)]),
+            FakeTrackResult([]),
+            FakeTrackResult([FakeTrackBox(xyxy=[71, 2, 81, 22], confidence=0.90, class_id=0, track_id=7)]),
+        ]
+
+
+class FakeEqualDistanceFrameTieBreakModel:
+    names = {0: "bag"}
+
+    def track(self, **kwargs):
+        return [
+            FakeTrackResult([FakeTrackBox(xyxy=[1, 2, 11, 22], confidence=0.80, class_id=0, track_id=7)]),
+            FakeTrackResult([]),
+            FakeTrackResult([FakeTrackBox(xyxy=[71, 2, 81, 22], confidence=0.80, class_id=0, track_id=7)]),
+        ]
+
+
 def test_yolo_runtime_tracks_video_with_bytetrack_and_aggregates_valid_tracks(tmp_path) -> None:
     video_path = tmp_path / "sample.mp4"
     video_path.write_bytes(b"fake")
@@ -351,6 +435,46 @@ def test_yolo_runtime_tracks_video_with_bytetrack_and_aggregates_valid_tracks(tm
     assert tracks[0].appearance_count == 2
 
 
+def test_yolo_runtime_uses_midpoint_frame_bbox_but_keeps_max_track_confidence(tmp_path) -> None:
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"fake")
+    runtime = YoloRuntime(model_path="fake.pt", confidence=0.5, imgsz=640)
+    runtime._model = FakeMovingTrackModel()
+
+    tracks = runtime.track_video(video_path, fps=10, media_width=100, media_height=80)
+
+    assert len(tracks) == 1
+    assert tracks[0].confidence == 0.95
+    assert tracks[0].bbox == YoloBBox(x=51.0, y=2.0, width=10.0, height=20.0)
+    assert tracks[0].first_seen_ms == 0
+    assert tracks[0].last_seen_ms == 200
+    assert tracks[0].appearance_count == 3
+
+
+def test_yolo_runtime_midpoint_tie_prefers_higher_confidence_frame(tmp_path) -> None:
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"fake")
+    runtime = YoloRuntime(model_path="fake.pt", confidence=0.5, imgsz=640)
+    runtime._model = FakeEqualDistanceConfidenceTieBreakModel()
+
+    tracks = runtime.track_video(video_path, fps=10, media_width=100, media_height=80)
+
+    assert tracks[0].confidence == 0.90
+    assert tracks[0].bbox == YoloBBox(x=71.0, y=2.0, width=10.0, height=20.0)
+
+
+def test_yolo_runtime_midpoint_tie_prefers_earlier_frame_after_confidence(tmp_path) -> None:
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"fake")
+    runtime = YoloRuntime(model_path="fake.pt", confidence=0.5, imgsz=640)
+    runtime._model = FakeEqualDistanceFrameTieBreakModel()
+
+    tracks = runtime.track_video(video_path, fps=10, media_width=100, media_height=80)
+
+    assert tracks[0].confidence == 0.80
+    assert tracks[0].bbox == YoloBBox(x=1.0, y=2.0, width=10.0, height=20.0)
+
+
 def test_yolo_runtime_drops_untracked_detections_and_keeps_distinct_track_ids(tmp_path) -> None:
     video_path = tmp_path / "sample.mp4"
     video_path.write_bytes(b"fake")
@@ -364,3 +488,91 @@ def test_yolo_runtime_drops_untracked_detections_and_keeps_distinct_track_ids(tm
     assert all(track.track_id is not None for track in tracks)
     assert tracks[0].appearance_count == 2
     assert tracks[1].appearance_count == 2
+
+
+class FakeVideoWriter:
+    def __init__(self, path: str) -> None:
+        self.path = Path(path)
+        self.opened = True
+
+    def isOpened(self) -> bool:
+        return self.opened
+
+    def write(self, _frame) -> None:
+        self.path.write_bytes(b"opencv-rendered-mp4")
+
+    def release(self) -> None:
+        self.opened = False
+
+
+def test_yolo_runtime_transcodes_rendered_video_to_browser_h264(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    video_path = tmp_path / "sample.mp4"
+    result_path = tmp_path / "result.mp4"
+    video_path.write_bytes(b"fake")
+    runtime = YoloRuntime(model_path="fake.pt", confidence=0.5, imgsz=640)
+    runtime._model = FakeTrackModel()
+    fake_cv2 = types.SimpleNamespace(
+        VideoWriter=lambda path, *_args: FakeVideoWriter(path),
+        VideoWriter_fourcc=lambda *_codec: 0,
+    )
+    captured: dict[str, object] = {}
+
+    def fake_fourcc(*codec):
+        captured["intermediate_codec"] = "".join(codec)
+        return 0
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        Path(command[-1]).write_bytes(b"h264-yuv420p-faststart")
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    monkeypatch.setitem(sys.modules, "cv2", fake_cv2)
+    fake_cv2.VideoWriter_fourcc = fake_fourcc
+    monkeypatch.setattr("app.services.yolo_runtime._ffmpeg_executable", lambda: "ffmpeg")
+    monkeypatch.setattr("app.services.yolo_runtime.subprocess.run", fake_run)
+
+    tracks = runtime.track_video(video_path, fps=10, media_width=100, media_height=80, rendered_video_path=result_path)
+
+    assert tracks
+    assert captured["intermediate_codec"] == "mp4v"
+    assert result_path.read_bytes() == b"h264-yuv420p-faststart"
+    assert not (tmp_path / "result-opencv.mp4").exists()
+    command = captured["command"]
+    assert command[command.index("-c:v") + 1] == "libx264"
+    assert command[command.index("-pix_fmt") + 1] == "yuv420p"
+    assert command[command.index("-movflags") + 1] == "+faststart"
+    assert captured["kwargs"]["capture_output"] is True
+
+
+def test_yolo_runtime_render_failure_cleans_intermediate_video(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    video_path = tmp_path / "sample.mp4"
+    result_path = tmp_path / "result.mp4"
+    video_path.write_bytes(b"fake")
+    runtime = YoloRuntime(model_path="fake.pt", confidence=0.5, imgsz=640)
+    runtime._model = FakeTrackModel()
+    fake_cv2 = types.SimpleNamespace(
+        VideoWriter=lambda path, *_args: FakeVideoWriter(path),
+        VideoWriter_fourcc=lambda *_codec: 0,
+    )
+
+    def fail_run(command, **kwargs):
+        return subprocess.CompletedProcess(command, 1, b"", b"failed")
+
+    monkeypatch.setitem(sys.modules, "cv2", fake_cv2)
+    monkeypatch.setattr("app.services.yolo_runtime._ffmpeg_executable", lambda: "ffmpeg")
+    monkeypatch.setattr("app.services.yolo_runtime.subprocess.run", fail_run)
+
+    from app.services.yolo_runtime import YoloRuntimeUnavailableError
+
+    with pytest.raises(YoloRuntimeUnavailableError):
+        runtime.track_video(video_path, fps=10, media_width=100, media_height=80, rendered_video_path=result_path)
+
+    assert not result_path.exists()
+    assert not (tmp_path / "result-opencv.mp4").exists()

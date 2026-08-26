@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 from app.core.config import Settings
-from app.schemas.copilot import CopilotRequest
+from app.schemas.copilot import CopilotRequest, CopilotResponse
 from app.services.copilot_providers import (
     COPILOT_MAX_TOOL_ROUNDS,
     ChatStatus,
@@ -18,7 +18,7 @@ from app.services.copilot_providers import (
     provider_cooldown,
 )
 from google.genai import types
-from app.services.copilot import _model_context, _safe_response, create_copilot_response
+from app.services.copilot import _model_context, _presentation, _safe_response, create_copilot_briefing, create_copilot_response, rate_limited_fallback_response
 
 
 @pytest.fixture(autouse=True)
@@ -78,6 +78,37 @@ def test_markdown_fenced_response_is_decoded() -> None:
     raw = '```json\n{"message":"ok","cards":[],"actions":[],"suggestions":[]}\n```'
     response = _safe_response(raw, user=Mock(role="USER"), model="test", provider="gemini")
     assert response.message == "ok"
+
+
+def test_speech_text_is_optional_normalized_and_safe() -> None:
+    without_speech = CopilotResponse(message="ok", mode="PERSONAL", provider="test", model="test")
+    assert without_speech.speech_text is None
+
+    parsed = _safe_response('{"message":"상세 답변","speech_text":"  핵심 결과입니다.   다음 행동을 확인하세요.  "}', user=Mock(role="USER"), model="test", provider="gemini")
+    assert parsed.message == "상세 답변"
+    assert parsed.speech_text == "핵심 결과입니다. 다음 행동을 확인하세요."
+
+    malformed = _safe_response('{"message":"상세 답변","speech_text":{"unexpected":true}}', user=Mock(role="USER"), model="test", provider="gemini")
+    assert malformed.message == "상세 답변"
+    assert malformed.speech_text is None
+
+    empty = _safe_response('{"message":"상세 답변","speech_text":"   "}', user=Mock(role="USER"), model="test", provider="gemini")
+    assert empty.speech_text is None
+
+
+def test_speech_text_is_limited_and_saved_in_presentation() -> None:
+    response = _safe_response(json.dumps({"message": "상세 답변", "speech_text": "가" * 700}), user=Mock(role="USER"), model="test", provider="gemini")
+    assert response.speech_text is not None
+    assert len(response.speech_text) == 500
+    assert _presentation(response)["speech_text"] == response.speech_text
+
+
+def test_local_fallback_and_admin_briefing_include_speech_text() -> None:
+    fallback = rate_limited_fallback_response(Mock(role="USER"))
+    briefing = create_copilot_briefing(Mock(), Mock(role="ADMIN"))
+    assert fallback.speech_text
+    assert fallback.speech_text == "지금은 답변을 불러오기 어렵습니다. 잠시 후 다시 질문해 주세요."
+    assert briefing.speech_text
 
 
 def test_evidence_timeline_and_safe_map_actions_are_preserved() -> None:
@@ -189,6 +220,7 @@ def test_rate_limited_provider_uses_safe_local_fallback(monkeypatch: pytest.Monk
     assert response.provider == "flowlink"
     assert response.model == "local-rate-limit"
     assert response.conversation_public_id == "conversation-id"
+    assert response.speech_text == "지금은 답변을 불러오기 어렵습니다. 잠시 후 다시 질문해 주세요."
     assert "quota 20" not in response.message
 
 
@@ -207,6 +239,7 @@ def test_general_provider_failure_uses_safe_local_fallback(monkeypatch: pytest.M
     assert response.provider == "flowlink"
     assert response.model == "local-rate-limit"
     assert response.conversation_public_id == "conversation-id"
+    assert response.speech_text == "지금은 답변을 불러오기 어렵습니다. 잠시 후 다시 질문해 주세요."
     assert "upstream failed" not in response.message
 
 

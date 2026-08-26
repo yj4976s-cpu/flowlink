@@ -32,6 +32,8 @@ class DetectionEventResponse(BaseModel):
     source_type: str
     status: str
     purpose: str
+    original_media_url: str
+    result_media_url: str | None
     media_width: int | None
     media_height: int | None
     created_at: datetime

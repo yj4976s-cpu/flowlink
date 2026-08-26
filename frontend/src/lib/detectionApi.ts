@@ -1,4 +1,4 @@
-import { buildApiUrl as buildSameOriginApiUrl } from "@/lib/apiBase";
+import { buildApiUrl as buildCommonApiUrl, resolveMediaUrl } from "@/lib/apiBase";
 
 export type DetectionBBox = {
   x: number;
@@ -25,6 +25,8 @@ export type DetectionEvent = {
   source_type: "IMAGE" | "VIDEO";
   status: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED";
   purpose: "USER_ANALYSIS" | "OPERATION";
+  original_media_url: string;
+  result_media_url: string | null;
   media_width: number | null;
   media_height: number | null;
   created_at: string;
@@ -54,6 +56,15 @@ export class DetectionApiError extends Error {
     super(message);
     this.name = "DetectionApiError";
   }
+}
+
+
+function buildApiUrl(path: string, params?: Record<string, string | number | undefined>) {
+  return buildCommonApiUrl(path, params);
+}
+
+export function resolveDetectionMediaUrl(value: string | null | undefined) {
+  return resolveMediaUrl(value) ?? "";
 }
 
 function getFallbackMessage(status: number) {
@@ -94,7 +105,7 @@ async function requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {
 function uploadDetection(path: string, file: File) {
   const formData = new FormData();
   formData.append("file", file);
-  return requestJson<DetectionEvent>(buildSameOriginApiUrl(path), {
+  return requestJson<DetectionEvent>(buildApiUrl(path), {
     method: "POST",
     body: formData,
   });
@@ -111,7 +122,7 @@ export function uploadDetectionVideo(file: File) {
 export function detectWebcamFrame(blob: Blob, signal?: AbortSignal) {
   const formData = new FormData();
   formData.append("file", blob, "webcam-frame.jpg");
-  return requestJson<WebcamDetectionFrame>(buildSameOriginApiUrl("/api/detections/webcam/frame"), {
+  return requestJson<WebcamDetectionFrame>(buildApiUrl("/api/detections/webcam/frame"), {
     method: "POST",
     body: formData,
     signal,
@@ -119,17 +130,17 @@ export function detectWebcamFrame(blob: Blob, signal?: AbortSignal) {
 }
 
 export function listMyDetections(signal?: AbortSignal) {
-  return requestJson<DetectionEvent[]>(buildSameOriginApiUrl("/api/detections/me", { skip: 0, limit: 20 }), { signal });
+  return requestJson<DetectionEvent[]>(buildApiUrl("/api/detections/me", { skip: 0, limit: 20 }), { signal });
 }
 
 export function getMyDetection(id: number, signal?: AbortSignal) {
-  return requestJson<DetectionEvent>(buildSameOriginApiUrl(`/api/detections/${id}`), { signal });
+  return requestJson<DetectionEvent>(buildApiUrl(`/api/detections/${id}`), { signal });
 }
 
 export function deleteMyDetection(id: number) {
-  return requestJson<{ message: string }>(buildSameOriginApiUrl(`/api/detections/${id}`), { method: "DELETE" });
+  return requestJson<{ message: string }>(buildApiUrl(`/api/detections/${id}`), { method: "DELETE" });
 }
 
 export function deleteAllMyDetections() {
-  return requestJson<{ message: string }>(buildSameOriginApiUrl("/api/detections/me"), { method: "DELETE" });
+  return requestJson<{ message: string }>(buildApiUrl("/api/detections/me"), { method: "DELETE" });
 }

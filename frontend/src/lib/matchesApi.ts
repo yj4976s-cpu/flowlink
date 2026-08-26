@@ -1,4 +1,4 @@
-import { buildApiUrl as buildSameOriginApiUrl, getApiMediaBaseUrl } from "@/lib/apiBase";
+import { buildApiUrl as buildCommonApiUrl, resolveMediaUrl } from "@/lib/apiBase";
 
 export type MatchLostReport = {
   id: number;
@@ -47,6 +47,11 @@ export class MatchesApiError extends Error {
   }
 }
 
+
+function buildApiUrl(path: string, params?: Record<string, string | number | undefined>) {
+  return buildCommonApiUrl(path, params);
+}
+
 function getFallbackMessage(status: number) {
   if (status === 401) return "로그인이 필요하거나 로그인 세션이 만료되었습니다.";
   if (status === 422) return "매칭 후보 조회 요청 값을 확인해주세요.";
@@ -55,33 +60,27 @@ function getFallbackMessage(status: number) {
 
 export function listMyMatches(signal?: AbortSignal) {
   return requestJson<MatchCandidate[]>(
-    buildSameOriginApiUrl("/api/matches/me", { skip: 0, limit: 100 }),
+    buildApiUrl("/api/matches/me", { skip: 0, limit: 100 }),
     signal,
   );
 }
 
 export function listMyMatchesForReport(lostReportId: number, signal?: AbortSignal) {
   return requestJson<MatchCandidate[]>(
-    buildSameOriginApiUrl("/api/matches/me", { lost_report_id: lostReportId, skip: 0, limit: 100 }),
+    buildApiUrl("/api/matches/me", { lost_report_id: lostReportId, skip: 0, limit: 100 }),
     signal,
   );
 }
 
 export function listMyProgressMatches(lostReportIds: number[], signal?: AbortSignal) {
   return requestJson<MatchCandidate[]>(
-    buildSameOriginApiUrl("/api/matches/me/progress", { lost_report_ids: lostReportIds }),
+    buildCommonApiUrl("/api/matches/me/progress", { lost_report_ids: lostReportIds }),
     signal,
   );
 }
 
 export function resolveMatchImageUrl(value: string | null) {
-  if (!value) return null;
-  try {
-    const resolved = new URL(value, `${getApiMediaBaseUrl()}/`);
-    return resolved.protocol === "http:" || resolved.protocol === "https:" ? resolved.toString() : null;
-  } catch {
-    return null;
-  }
+  return resolveMediaUrl(value);
 }
 
 async function requestJson<T>(url: string, signal?: AbortSignal): Promise<T> {

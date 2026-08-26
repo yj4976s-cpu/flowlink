@@ -1,262 +1,318 @@
-# FlowLink production Docker deployment
+# FlowLink dual-entry Docker deployment
 
-This document describes the production Docker structure for FlowLink, including TLS termination for the production DuckDNS domain. Cloud provisioning and cost planning are separate deployment steps.
+FlowLink keeps the latest `develop` application code and adds only the Docker,
+Nginx, Certbot, and runtime configuration needed to serve two deployment entry
+points:
+
+- LAN HTTP: `http://mbc-sw.iptime.org:3202`
+- Production HTTPS: `https://flowlink-project.duckdns.org/`
+
+The two URLs are intentionally separate. Do not rewrite one entry point into the
+other except for the DuckDNS HTTP-to-HTTPS redirect described below.
 
 ## Architecture
 
 ```text
-Internet
+Browser
   |
   v
-reverse-proxy:80,443
-  |-- /              -> frontend:3000
-  |-- /api/*         -> backend:8000
-  |-- /uploads/*     -> backend:8000
-                         |
-                         v
-                      backend-ai:8001
-
-External services:
-  - Supabase PostgreSQL, via DATABASE_URL
-  - Optional Supabase Storage, via server-only Supabase service role key
-  - Optional Kakao REST API, via server-only KAKAO_REST_API_KEY
+Nginx reverse-proxy
+  |-- /           -> frontend:3000
+  |-- /api/*      -> backend:8000
+  |-- /uploads/*  -> backend:8000
+                       |
+                       v
+                    backend-ai:8001
 ```
 
-Only the reverse proxy should be published to the Internet. The frontend, backend, backend-ai, and database ports are internal-only in Docker Compose.
+Only Nginx publishes host ports. `frontend`, `backend`, and `backend-ai` use
+Docker `expose` only and must not be opened directly to browsers.
 
 ## Files
 
-- `compose.yaml`: base application services, networks, volumes, environment contract, and health checks.
-- `compose.prod.yaml`: production restart policy and Nginx reverse proxy.
-- `nginx/nginx.conf`: routes `/`, `/api/*`, and `/uploads/*` through one origin. DuckDNS HTTP redirects to HTTPS; LAN HTTP proxies through the same paths for internal demonstrations.
-- `certbot/www/.gitkeep`: keeps the host Certbot renewal webroot in Git without committing challenge tokens.
-- `frontend/Dockerfile`: multi-stage Next.js standalone image.
-- `backend/Dockerfile`: FastAPI application image.
-- `backend-ai/Dockerfile`: FastAPI AI inference image with runtime libraries for image/video processing.
-- `.env.production.example`: production environment template with empty placeholders for secrets.
-- `models/.gitkeep`: keeps the model mount directory in Git without committing model weights.
+- `compose.yaml`: common services, networks, volumes, environment contract, and
+  health checks.
+- `compose.lan.yaml`: LAN HTTP reverse proxy, no TLS/cert mounts.
+- `compose.prod.yaml`: DuckDNS HTTPS reverse proxy with Certbot mounts.
+- `nginx/nginx.lan.conf`: HTTP proxy for `mbc-sw.iptime.org`.
+- `nginx/nginx.prod.conf`: DuckDNS HTTP redirect, ACME challenge, and HTTPS
+  proxy.
+- `frontend/Dockerfile`: Next.js standalone production image.
+- `backend/Dockerfile`: FastAPI backend image.
+- `backend-ai/Dockerfile`: FastAPI AI image with FFmpeg and OpenCV runtime
+  libraries for H.264 result videos.
+- `.env.lan.example`, `.env.production.example`: environment templates only.
+- `models/.gitkeep`: keeps the host model mount directory without committing
+  model weights.
+- `certbot/www/.gitkeep`: keeps the ACME webroot without committing challenge
+  tokens.
 
-## Required host files
+Do not commit real `.env` files, certificates, private keys, uploads, logs, or
+model files such as `best.pt`.
 
-Create these files on the deployment host:
+## Common runtime rules
+
+- Browser traffic enters through Nginx only.
+- Browser API calls use same-origin `/api`.
+- Browser uploads/media calls use same-origin `/uploads`.
+- `AI_SERVICE_URL=http://backend-ai:8001` is internal to Docker.
+- Backend and backend-ai share `AI_INTERNAL_API_KEY`.
+- Supabase PostgreSQL remains external through `DATABASE_URL`; this stack does
+  not start a PostgreSQL container.
+- `models/best.pt` is mounted read-only into backend-ai at `/app/models/best.pt`.
+
+## Trusted proxy address
+
+`FORWARDED_ALLOW_IPS` is not the public HTTPS server IP and not the LAN host IP.
+It is the Docker-internal address of the trusted Nginx `reverse-proxy`
+container that is allowed to supply `X-Forwarded-Proto` and
+`X-Forwarded-Host` to the backend.
+
+Both production HTTPS and LAN HTTP use a separate host, but their Compose
+network is local to each host. Therefore both stacks can safely use the same
+Docker-internal reverse proxy address:
 
 ```text
-.env.production
-models/best.pt
+reverse-proxy: 172.30.0.10
+backend env:   FORWARDED_ALLOW_IPS=172.30.0.10
 ```
 
-Do not commit either file. `models/best.pt` is mounted into `backend-ai` as read-only at `/app/models/best.pt`.
+Do not use a wildcard value for `FORWARDED_ALLOW_IPS`. If `compose.prod.yaml` or
+`compose.lan.yaml` stops assigning `reverse-proxy` to `172.30.0.10`, update
+`FORWARDED_ALLOW_IPS` to the actual Compose network address before deploying.
 
-## Environment setup
+## LAN HTTP deployment
 
-Copy the example and fill in real values on the deployment host.
+Public URL:
 
-Windows PowerShell:
-
-```powershell
-Copy-Item .env.production.example .env.production
+```text
+http://mbc-sw.iptime.org:3202
 ```
 
-Linux/Ubuntu:
+If the LAN router forwards public port `3202` to host port `8100`, keep:
+
+```env
+HTTP_PORT=8100
+```
+
+Run:
 
 ```bash
-cp .env.production.example .env.production
+docker compose --env-file .env.lan up -d --build
 ```
 
-Required production values:
+LAN Nginx:
 
-- `FRONTEND_URL`: public HTTPS origin for the deployed site.
-- `NEXT_PUBLIC_API_BASE_URL`: browser-facing API base. In the Nginx same-origin setup use `/api` so DuckDNS HTTPS and LAN HTTP call the current reverse-proxy origin's `/api/...` routes. Set an absolute API origin only for a deliberately split frontend/backend deployment.
-- `DATABASE_URL`: complete Supabase PostgreSQL connection string copied from the Dashboard. The backend accepts `postgresql://` or `postgres://` and selects SQLAlchemy's psycopg 3 dialect automatically; an explicit `postgresql+psycopg://` URL is also accepted. Preserve any query parameters and keep the URI on one line.
-- `JWT_SECRET_KEY`: at least 32 characters.
-- `AI_INTERNAL_API_KEY`: at least 32 characters; must match between backend and backend-ai.
-- `DETECTION_MODEL`: defaults to `/app/models/best.pt`.
+- listens on HTTP only
+- does not redirect to HTTPS
+- does not mount certificates
+- routes `/`, `/api/`, and `/uploads/` through one origin
+- supports large image/video uploads with `client_max_body_size 128m`
+- forwards Range and If-Range headers for MP4 playback
 
-Feature-specific and optional integration values:
+Cookie behavior:
 
-- `NEXT_PUBLIC_KAKAO_MAP_JS_KEY`: not required to start the containers, but required for a production deployment that uses FlowLink's Kakao map features. Register the actual production domain in Kakao Developers as an allowed JavaScript SDK domain.
-- `KAKAO_REST_API_KEY`: server-side Kakao geocoding key.
-- `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET`: server-only Supabase Storage integration.
-- `ROBOFLOW_API_KEY`, `ROBOFLOW_PROJECT_ID`, `ROBOFLOW_MODEL_VERSION`: optional Roboflow integration values.
-- chat provider API keys.
+- `AUTH_INSECURE_HTTP_HOSTS=mbc-sw.iptime.org` allows HTTP email/password login
+  on the LAN entry point.
+- Cookies are host-only, `HttpOnly`, `SameSite=Lax`, `Path=/`.
+- `Secure` is omitted only for explicit LAN/internal HTTP hosts.
+- Email/password login uses the LAN same-origin `/api` endpoint.
+- OAuth must start on the canonical DuckDNS HTTPS origin so the OAuth state
+  cookie and callback host match. Set
+  `NEXT_PUBLIC_OAUTH_BASE_URL=https://flowlink-project.duckdns.org` for the LAN
+  frontend build.
 
-Never put `SUPABASE_SERVICE_ROLE_KEY`, JWT secrets, AI internal keys, or provider API keys in `NEXT_PUBLIC_*` variables.
+## Production HTTPS deployment
 
-## Database migration for social OAuth
+Public URL:
 
-Before deploying the backend version that includes social OAuth, apply this migration once:
-
-`database/migrations/20260820_01_user_social_accounts.sql`
-
-This migration makes `users.password_hash` nullable for social-only accounts and creates the `user_social_accounts` table.
-
-Apply the migration to the Supabase PostgreSQL database before starting the updated backend. Run it only once.
-
-## Build and run
-
-Validate the merged Compose config:
-
-```powershell
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml config
+```text
+https://flowlink-project.duckdns.org/
 ```
 
-Build images:
+Run:
 
-```powershell
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml build
+```bash
+docker compose \
+  --env-file .env.production \
+  -f compose.yaml \
+  -f compose.prod.yaml \
+  up -d --build
 ```
 
-Start services:
+If `.env.production` contains `COMPOSE_FILE=compose.yaml:compose.prod.yaml`, the
+short form below is equivalent and includes `reverse-proxy` automatically:
 
-```powershell
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml up -d
+```bash
+docker compose --env-file .env.production up -d --build
 ```
 
-Check status:
+Production Nginx:
 
-```powershell
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml ps
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml logs --tail 100
-```
+- publishes `80` and `443`
+- redirects DuckDNS HTTP requests to HTTPS except ACME challenge and health
+- serves `/.well-known/acme-challenge/` from `certbot/www`
+- mounts `/etc/letsencrypt` read-only
+- routes `/`, `/api/`, and `/uploads/` through one origin
+- forwards Range and If-Range headers for MP4 playback
 
-Stop services:
-
-```powershell
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml down
-```
-
-## Volumes and persistence
-
-Local uploaded files are stored in the named Docker volume `flowlink_uploads` and mounted at `/app/uploads` in the backend container.
-
-The AI model directory is mounted from the host:
-
-```yaml
-./models:/app/models:ro
-```
-
-The model mount is read-only inside the container so inference cannot modify committed or host-managed model files.
-
-## Network exposure
-
-The production Compose override publishes only the reverse proxy:
-
-```yaml
-ports:
-  - "${HTTP_PORT:-80}:80"
-  - "443:443"
-```
-
-Do not publish these ports directly:
-
-- `3000` frontend
-- `8000` backend
-- `8001` backend-ai
-- `5432` PostgreSQL
-
-The recommended production/demo URL is `https://flowlink-project.duckdns.org` on port `443`. For academy LAN login demonstrations, use the Nginx reverse proxy at `http://<LAN-IP>/` on port `80`; browser calls still use the same origin through `/api/...` and `/uploads/...`. LAN HTTP login is intended only for private/internal networks. Direct frontend access such as `http://<LAN-IP>:3000` is not a supported authentication demo path because it bypasses the production reverse-proxy entrypoint and can lose the trusted forwarded host/proto context needed for cookie decisions. Before this same-origin LAN support, LAN access should be treated as health-check only.
-
-## HTTPS and certificate renewal
-
-Certbot runs on the EC2 host and manages the certificate under `/etc/letsencrypt`. The production Compose override mounts that host directory read-only at the same path in the Nginx container. The configured certificate files are:
+Certificate paths:
 
 ```text
 /etc/letsencrypt/live/flowlink-project.duckdns.org/fullchain.pem
 /etc/letsencrypt/live/flowlink-project.duckdns.org/privkey.pem
 ```
 
-The host directory `/home/ubuntu/flowlink/certbot/www` is mounted read-only at `/var/www/certbot` in Nginx. Nginx serves `/.well-known/acme-challenge/` from this directory over HTTP.
+Cookie behavior:
 
-### One-time EC2 renewal migration
+- HTTPS requests always set `Secure`.
+- External HTTP requests still keep `Secure=true` and are redirected by Nginx.
+- Cookie Domain is not set, so DuckDNS and LAN hosts keep separate host-only
+  cookies.
 
-The certificate was initially issued with Certbot's `standalone` authenticator. Run this migration once after the production stack is running so future renewals do not try to bind host port 80.
+## Important environment values
 
-First confirm that Certbot reports the expected certificate name:
+Production:
 
-```bash
-sudo certbot certificates
+```env
+COMPOSE_FILE=compose.yaml:compose.prod.yaml
+FRONTEND_URL=https://flowlink-project.duckdns.org
+NEXT_PUBLIC_API_BASE_URL=/api
+NEXT_PUBLIC_OAUTH_BASE_URL=
+OAUTH_BACKEND_BASE_URL=https://flowlink-project.duckdns.org
+FORWARDED_ALLOW_IPS=172.30.0.10
 ```
 
-With Certbot 5.x, `reconfigure` accepts both `--authenticator webroot` and `--webroot-path`. It performs a staging renewal test and saves the new renewal options only when that test succeeds:
+LAN:
 
-```bash
-sudo certbot reconfigure \
-  --cert-name flowlink-project.duckdns.org \
-  --authenticator webroot \
-  --webroot-path /home/ubuntu/flowlink/certbot/www
+```env
+COMPOSE_FILE=compose.yaml:compose.lan.yaml
+FRONTEND_URL=https://flowlink-project.duckdns.org
+NEXT_PUBLIC_API_BASE_URL=/api
+NEXT_PUBLIC_OAUTH_BASE_URL=https://flowlink-project.duckdns.org
+OAUTH_BACKEND_BASE_URL=https://flowlink-project.duckdns.org
+ALLOWED_FRONTEND_ORIGINS=http://mbc-sw.iptime.org:3202,https://flowlink-project.duckdns.org
+AUTH_INSECURE_HTTP_HOSTS=mbc-sw.iptime.org
+FORWARDED_ALLOW_IPS=172.30.0.10
+HTTP_PORT=8100
 ```
 
-After this succeeds, ordinary `certbot renew` runs reuse the saved `webroot` authenticator and path; do not manually edit `/etc/letsencrypt/renewal/flowlink-project.duckdns.org.conf`. See the [Certbot renewal configuration documentation](https://eff-certbot.readthedocs.io/en/stable/using.html#modifying-the-renewal-configuration-of-existing-certificates).
+`NEXT_PUBLIC_*` values are baked into the frontend image at build time. Rebuild
+the frontend after changing them.
 
-### Reload Nginx after a successful renewal
+## Validation commands
 
-Certbot deploy hooks run only after a certificate is successfully issued or renewed. Install a root-owned executable hook so the running Nginx container reloads the updated files from the read-only `/etc/letsencrypt` mount:
-
-```bash
-sudo install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
-sudo tee /etc/letsencrypt/renewal-hooks/deploy/flowlink-nginx-reload >/dev/null <<'EOF'
-#!/bin/sh
-set -eu
-cd /home/ubuntu/flowlink
-exec /usr/bin/docker compose --env-file .env.production \
-  -f compose.yaml -f compose.prod.yaml \
-  exec -T reverse-proxy nginx -s reload
-EOF
-sudo chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/flowlink-nginx-reload
-```
-
-Confirm that Docker is installed at `/usr/bin/docker`; adjust the absolute path in the hook if `command -v docker` reports a different location. Test the hook once against the currently running container:
+Compose config:
 
 ```bash
-sudo /etc/letsencrypt/renewal-hooks/deploy/flowlink-nginx-reload
+docker compose --env-file .env.lan config
+docker compose --env-file .env.production config
+docker compose --env-file .env.lan -f compose.yaml -f compose.lan.yaml config --services
+docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml config --services
 ```
 
-Finally, verify the saved webroot renewal configuration with Let's Encrypt's staging environment:
+Trusted proxy checks:
+
+```bash
+docker compose --env-file .env.production exec reverse-proxy hostname -i
+docker compose --env-file .env.production exec backend env | grep FORWARDED_ALLOW_IPS
+docker compose --env-file .env.lan exec reverse-proxy hostname -i
+docker compose --env-file .env.lan exec backend env | grep FORWARDED_ALLOW_IPS
+```
+
+Expected:
+
+- reverse-proxy IP includes `172.30.0.10`
+- backend has `FORWARDED_ALLOW_IPS=172.30.0.10`
+
+Runtime status:
+
+```bash
+docker compose --env-file .env.production ps
+docker compose --env-file .env.production logs -f backend
+docker compose --env-file .env.production logs -f backend-ai
+docker compose --env-file .env.production logs -f frontend
+```
+
+MP4 Range checks:
+
+```bash
+curl -I https://flowlink-project.duckdns.org/uploads/<actual-result>.mp4
+curl -I -H "Range: bytes=0-1023" https://flowlink-project.duckdns.org/uploads/<actual-result>.mp4
+curl -I http://mbc-sw.iptime.org:3202/uploads/<actual-result>.mp4
+curl -I -H "Range: bytes=0-1023" http://mbc-sw.iptime.org:3202/uploads/<actual-result>.mp4
+```
+
+Expected:
+
+- normal request: `200`
+- range request: `206`
+- `Content-Range` exists
+- `Content-Type` is video-compatible
+- Chrome/Edge can play `original_media_url` and `result_media_url`
+
+## Manual smoke checklist
+
+LAN HTTP:
+
+- open `http://mbc-sw.iptime.org:3202`
+- register
+- login
+- `/api/auth/me`
+- logout
+- admin login
+- image detection
+- video detection and `result.mp4` playback
+- cookie has no `Secure`
+
+Production HTTPS:
+
+- open `https://flowlink-project.duckdns.org`
+- HTTP redirects to HTTPS
+- register
+- login
+- `/api/auth/me`
+- logout
+- OAuth callback
+- image detection
+- video detection and `result.mp4` playback
+- cookie has `Secure`
+- TLS certificate is valid
+
+## Certbot renewal
+
+Certbot is host-managed. Nginx only mounts certificate files and the challenge
+webroot. Do not copy certificates into Docker images.
+
+The production config uses the webroot challenge path mounted from:
+
+```text
+/home/ubuntu/flowlink/certbot/www
+```
+
+If the certificate was originally issued with standalone mode, switch renewal to
+webroot on the host. The important pieces are:
+
+- webroot: `/home/ubuntu/flowlink/certbot/www`
+- Nginx config: `nginx/nginx.prod.conf`
+- Compose override: `compose.prod.yaml`
+- env file: `.env.production`
+- certificate, private key, and Certbot renewal config stay outside Git
+
+Dry-run renewal:
 
 ```bash
 sudo certbot renew --dry-run
 ```
 
-A normal dry run validates renewal but does not execute deploy hooks unless `--run-deploy-hooks` is also supplied, so the manual hook test above is intentional. The host's Certbot systemd timer can then continue running ordinary `certbot renew`; no Nginx stop/start hooks are needed. See the [Certbot deploy hook documentation](https://eff-certbot.readthedocs.io/en/stable/using.html#renewing-certificates).
+After renewal, reload the reverse proxy:
 
-Do not commit generated challenge tokens, certificates, private keys, renewal configuration, or hook files; all remain host-managed under `/etc/letsencrypt` or the ignored `certbot/www` contents.
+```bash
+docker compose --env-file .env.production exec -T reverse-proxy nginx -s reload
+```
 
-## URLs to check
+Typical deploy hook:
 
-- Production frontend: `https://flowlink-project.duckdns.org/`
-- Academy LAN login/demo frontend: `http://<LAN-IP>/`
-- Direct frontend container port, if temporarily exposed: `http://<LAN-IP>:3000/` for development checks only; do not use it for authentication demonstrations.
-- Reverse proxy health: `http://localhost/healthz`
-- Backend health inside Docker network: `http://backend:8000/health`
-- Backend AI health inside Docker network: `http://backend-ai:8001/health`
-
-The backend-ai health endpoint does not prove that `best.pt` has completed the first YOLO inference. Model loading can still happen lazily on the first inference request.
-
-The backend API routers already include `/api/...` prefixes, so Nginx forwards `/api/*` without stripping or adding another `/api` segment.
-
-## Health checks
-
-- `frontend`: checks `http://127.0.0.1:3000`.
-- `backend`: checks `http://127.0.0.1:8000/health`.
-- `backend-ai`: checks `http://127.0.0.1:8001/health`.
-- `reverse-proxy`: checks `http://127.0.0.1/healthz`.
-
-## Production notes
-
-- The frontend image bakes `NEXT_PUBLIC_*` variables at build time. Rebuild the frontend image after changing public frontend environment variables.
-- The backend production config requires a valid HTTPS `FRONTEND_URL`. Auth cookies are `Secure` for HTTPS requests. For LAN HTTP demonstrations, the backend only relaxes `Secure` when proxy headers identify an internal host such as `localhost`, `127.0.0.1`, `10.0.0.0/8`, `172.16.0.0/12`, or `192.168.0.0/16`.
-- Nginx overwrites `X-Forwarded-For` with the direct public client address. The backend trusts proxy headers only from Nginx's fixed `172.30.0.10` address on the private Compose network; keep that address aligned with `FORWARDED_ALLOW_IPS` if the network configuration changes.
-- DuckDNS HTTP requests other than `/healthz` and ACME challenges redirect to the production HTTPS origin. LAN HTTP requests are proxied same-origin for internal demonstrations only.
-- Production Compose does not publish the frontend `3000` port. Keep LAN login tests on the reverse-proxy URL `http://<LAN-IP>/`, not a direct frontend port.
-- Supabase PostgreSQL is external. This stack does not run a PostgreSQL container.
-- Choose host CPU, RAM, disk, and GPU/CPU inference capacity after measuring the real video workload and model latency. Tiny instances are unlikely to be a safe default for video inference.
-
-## EC2 deployment checklist for the next step
-
-- Choose an instance with enough RAM and CPU for PyTorch, Ultralytics, OpenCV, and the expected video inference workload.
-- Install Docker Engine and Docker Compose.
-- Put real secrets in `.env.production` on the host only.
-- Put the trained model at `models/best.pt` on the host only.
-- Configure the EC2 security group so `80`/`443` are public, `22` is restricted to the administrator's **My IP** CIDR, and `3000`/`8000`/`8001`/`5432` have no public inbound rules.
-- Point `flowlink-project.duckdns.org` at the EC2 host and keep the host-managed Certbot certificate renewable through `certbot/www`.
-- Confirm Docker log rotation policy on the host if long-running production logs become large.
+```bash
+--deploy-hook "cd /home/ubuntu/flowlink && docker compose --env-file .env.production exec -T reverse-proxy nginx -s reload"
+```

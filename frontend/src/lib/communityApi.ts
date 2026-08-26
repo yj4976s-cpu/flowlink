@@ -1,5 +1,4 @@
-import { buildApiUrl, getApiMediaBaseUrl } from "@/lib/apiBase";
-
+import { buildApiUrl, resolveMediaUrl } from "@/lib/apiBase";
 export type CommunityCategory = "FIELD_STORY" | "QUESTION" | "EXPERIENCE" | "OPINION";
 export type CommunityPost = { id: number; user_id: number; nickname: string; category: CommunityCategory; title: string; content: string; place_name: string | null; address: string | null; latitude: number | null; longitude: number | null; image_url: string | null; is_notice: boolean; comment_count: number; created_at: string; updated_at: string };
 export type CommunityComment = { id: number; parent_comment_id: number | null; user_id: number; nickname: string; content: string; created_at: string };
@@ -8,7 +7,7 @@ export type CommunityFeed = { notices: CommunityPost[]; posts: CommunityPost[]; 
 export type CommunityPostPayload = { category: CommunityCategory; title: string; content: string; place_name?: string; address?: string; latitude?: number; longitude?: number; is_notice?: boolean; image?: File; remove_image?: boolean };
 
 export class CommunityApiError extends Error { constructor(message: string, readonly status?: number) { super(message); this.name = "CommunityApiError"; } }
-export const resolveCommunityImageUrl = (value: string | null) => value ? new URL(value, `${getApiMediaBaseUrl()}/`).toString() : null;
+export const resolveCommunityImageUrl = (value: string | null) => resolveMediaUrl(value);
 function params(values: Record<string, string | number | undefined>) { const result = new URLSearchParams(); Object.entries(values).forEach(([key, value]) => { if (value !== undefined && String(value).trim()) result.set(key, String(value)); }); return result; }
 async function request<T>(path: string, init?: RequestInit): Promise<T> { const response = await fetch(buildApiUrl(path), { ...init, credentials: "include" }); if (!response.ok) { let message = "커뮤니티 요청을 처리하지 못했습니다."; try { const data = await response.json() as { detail?: string }; if (data.detail) message = data.detail; } catch {} throw new CommunityApiError(message, response.status); } if (response.status === 204) return undefined as T; return response.json() as Promise<T>; }
 function form(payload: CommunityPostPayload) { const data = new FormData(); data.set("category", payload.category); data.set("title", payload.title); data.set("content", payload.content); if (payload.place_name) data.set("place_name", payload.place_name); if (payload.address) data.set("address", payload.address); if (payload.latitude != null) data.set("latitude", String(payload.latitude)); if (payload.longitude != null) data.set("longitude", String(payload.longitude)); data.set("is_notice", String(Boolean(payload.is_notice))); data.set("remove_image", String(Boolean(payload.remove_image))); if (payload.image) data.set("image", payload.image); return data; }

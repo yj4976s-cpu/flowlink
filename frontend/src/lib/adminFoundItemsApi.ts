@@ -38,14 +38,13 @@ export class AdminFoundItemsApiError extends Error {
   }
 }
 
+
 export async function listAdminFoundItems(filters: { skip: number; limit: number; status?: string; item_category?: string; q?: string; found_date?: string }, signal?: AbortSignal) {
-  const response = await fetch(
-    buildApiUrl("/api/admin/found-items", {
-      ...filters,
-      found_date: filters.found_date ? `${filters.found_date}T00:00:00` : undefined,
-    }),
-    { credentials: "include", signal },
-  );
+  const url = buildApiUrl("/api/admin/found-items", {
+    ...filters,
+    found_date: filters.found_date ? `${filters.found_date}T00:00:00` : undefined,
+  });
+  const response = await fetch(url, { credentials: "include", signal });
   if (!response.ok) throw new AdminFoundItemsApiError(response.status === 403 ? "관리자 권한이 필요합니다." : "발견물 정보를 불러오지 못했습니다.", response.status);
   return response.json() as Promise<AdminFoundItemList>;
 }
