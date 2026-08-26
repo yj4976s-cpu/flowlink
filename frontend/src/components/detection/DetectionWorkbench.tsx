@@ -740,9 +740,13 @@ function WebcamReportModal({
   );
 }
 
-export function DetectionWorkbench() {
+type DetectionWorkbenchProps = {
+  initialTab?: DetectionTab;
+};
+
+export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchProps) {
   const { cue: cueDaru } = useDaru();
-  const [tab, setTab] = useState<DetectionTab>("image");
+  const [tab, setTab] = useState<DetectionTab>(initialTab);
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
