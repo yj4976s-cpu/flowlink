@@ -5,7 +5,7 @@ import {
   resolveAutoSpeechText,
   resolveManualSpeechText,
   splitSpeechText,
-} from "../src/hooks/useSpeechSynthesis.ts";
+} from "../src/lib/copilotSpeech.ts";
 
 test("manual listening always reads the full visible answer", () => {
   const message = "화면에 표시되는 자세한 답변입니다. 다음 행동도 함께 설명합니다.";
