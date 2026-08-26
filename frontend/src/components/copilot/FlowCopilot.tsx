@@ -12,6 +12,7 @@ import {
 import { Icon } from "@/components/common/Icon";
 import { useDaru } from "@/components/mascot";
 import { getCurrentUser, type AuthUser } from "@/lib/authApi";
+import { resolveAutoSpeechText, resolveManualSpeechText } from "@/lib/copilotSpeech";
 import {
   deleteAllCopilotConversations,
   deleteCopilotConversation,
@@ -95,7 +96,7 @@ type UiMessage = {
 };
 
 function getSpeechText(message: UiMessage) {
-  return message.text;
+  return resolveManualSpeechText(message.text);
 }
 
 function historyGroup(value: string) {
@@ -792,7 +793,13 @@ export function FlowCopilot() {
       };
       setMessages((current) => [...current, assistantMessage]);
       if (user?.role === "USER" && autoSpeechEnabledRef.current) {
-        speakSpeech(assistantMessage.id, getSpeechText(assistantMessage));
+        speakSpeech(
+          assistantMessage.id,
+          resolveAutoSpeechText(
+            assistantMessage.text,
+            assistantMessage.speechText,
+          ),
+        );
       }
       void refreshMemory().catch(() => undefined);
       setShowExamples(false);
