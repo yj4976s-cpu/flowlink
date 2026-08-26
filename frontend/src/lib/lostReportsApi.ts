@@ -1,5 +1,4 @@
-import { buildApiUrl } from "@/lib/apiBase";
-
+import { buildApiUrl as buildCommonApiUrl } from "@/lib/apiBase";
 export type LostReportCreateRequest = {
   item_category: string;
   color: string | null;
@@ -33,6 +32,11 @@ export class LostReportsApiError extends Error {
     super(message);
     this.name = "LostReportsApiError";
   }
+}
+
+
+function buildApiUrl(path: string) {
+  return buildCommonApiUrl(path);
 }
 
 function getFallbackMessage(status: number) {

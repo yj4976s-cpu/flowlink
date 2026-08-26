@@ -60,6 +60,16 @@ class AdminDetectedObjectCollectionResponse(BaseModel):
     follow_up_status: Literal["COMPLETED"] = "COMPLETED"
 
 
+class AdminMobileWasteRegistrationResponse(BaseModel):
+    detection_event_id: int
+    detected_object_id: int
+    processing_status: Literal["CONFIRMED"]
+    follow_up_kind: Literal["WASTE"] = "WASTE"
+    waste_collection_completed: Literal[False] = False
+    original_media_url: str
+    cropped_image_url: str | None
+
+
 class AdminDetectionEventResponse(BaseModel):
     id: int
     purpose: Literal["OPERATION", "USER_ANALYSIS"]

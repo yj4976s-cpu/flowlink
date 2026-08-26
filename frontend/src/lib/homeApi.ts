@@ -1,5 +1,7 @@
+import { headers } from "next/headers";
+
 import type { HomeSummary, ObjectKind } from "@/types/home";
-import { buildServerApiUrl, getApiMediaBaseUrl } from "@/lib/apiBase";
+import { buildApiUrl, resolveMediaUrl } from "@/lib/apiBase";
 
 type ApiHomeSummary = {
   stats: {
@@ -31,12 +33,11 @@ function objectKind(value: string): ObjectKind {
   return objectKinds.has(value as ObjectKind) ? value as ObjectKind : "container";
 }
 
-function mediaUrl(value: string | null, requestOrigin?: string | null): string | null {
-  const baseUrl = getApiMediaBaseUrl() || requestOrigin || "";
-  return value && baseUrl ? new URL(value, `${baseUrl.replace(/\/+$/, "")}/`).toString() : value;
+function mediaUrl(value: string | null): string | null {
+  return resolveMediaUrl(value);
 }
 
-function mapSummary(summary: ApiHomeSummary, requestOrigin?: string | null): HomeSummary {
+function mapSummary(summary: ApiHomeSummary): HomeSummary {
   return {
     stats: {
       recentFound: summary.stats.recent_found,
@@ -49,7 +50,7 @@ function mapSummary(summary: ApiHomeSummary, requestOrigin?: string | null): Hom
       category: item.category,
       title: item.title,
       location: item.location,
-      imageUrl: mediaUrl(item.image_url, requestOrigin),
+      imageUrl: mediaUrl(item.image_url),
       confidence: item.confidence,
       foundAt: item.found_at,
       objectKind: objectKind(item.object_kind),
@@ -57,13 +58,23 @@ function mapSummary(summary: ApiHomeSummary, requestOrigin?: string | null): Hom
   };
 }
 
-export async function getHomeSummary(requestOrigin?: string | null): Promise<HomeSummary | null> {
-  const url = buildServerApiUrl("/api/system/home-summary", requestOrigin);
-  if (!url) return null;
+async function buildServerApiUrl(path: string) {
+  const apiUrl = buildApiUrl(path);
+  if (/^https?:\/\//i.test(apiUrl)) return apiUrl;
+  const requestHeaders = await headers();
+  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host");
+  if (!host) return null;
+  const proto = requestHeaders.get("x-forwarded-proto") ?? "http";
+  return `${proto}://${host}${apiUrl.startsWith("/") ? apiUrl : `/${apiUrl}`}`;
+}
+
+export async function getHomeSummary(): Promise<HomeSummary | null> {
   try {
+    const url = await buildServerApiUrl("/api/system/home-summary");
+    if (!url) return null;
     const response = await fetch(url, { cache: "no-store" });
     if (!response.ok) return null;
-    return mapSummary(await response.json() as ApiHomeSummary, requestOrigin);
+    return mapSummary(await response.json() as ApiHomeSummary);
   } catch {
     return null;
   }

@@ -77,7 +77,9 @@ def detail(db: Session,user:User,public_id:str)->CopilotConversationDetail|None:
     messages=[]
     for item in sorted(row.messages,key=lambda value:value.id):
         data=item.presentation or {}
-        messages.append(CopilotStoredMessage(id=item.id,role=item.role,content=item.content,cards=data.get("cards",[]),actions=data.get("actions",[]),suggestions=data.get("suggestions",[]),created_at=item.created_at))
+        raw_speech_text = data.get("speech_text")
+        speech_text = " ".join(raw_speech_text.split())[:500] or None if isinstance(raw_speech_text, str) else None
+        messages.append(CopilotStoredMessage(id=item.id,role=item.role,content=item.content,speech_text=speech_text,cards=data.get("cards",[]),actions=data.get("actions",[]),suggestions=data.get("suggestions",[]),created_at=item.created_at))
     return CopilotConversationDetail(public_id=row.public_id,title=row.title,context_type=row.context_type,context_entity_id=row.context_entity_id,last_message_at=row.last_message_at,messages=messages)
 
 def rename(db:Session,user:User,public_id:str,title:str)->CopilotConversation|None:

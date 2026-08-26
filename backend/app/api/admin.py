@@ -25,7 +25,7 @@ from app.repositories.user_flow import (
     list_ownership_claims,
     waste_collection_completed_ids,
 )
-from app.schemas.admin import AdminAiReportResponse, AdminCameraResponse, AdminCommunityPostListResponse, AdminDashboardResponse, AdminDetectedObjectCollectionResponse, AdminDetectedObjectFoundItemResponse, AdminDetectionEventResponse, AdminFoundItemListResponse, AdminOwnershipClaimResponse, AdminUserListResponse, DetectedObjectUpdateRequest
+from app.schemas.admin import AdminAiReportResponse, AdminCameraResponse, AdminCommunityPostListResponse, AdminDashboardResponse, AdminDetectedObjectCollectionResponse, AdminDetectedObjectFoundItemResponse, AdminDetectionEventResponse, AdminFoundItemListResponse, AdminMobileWasteRegistrationResponse, AdminOwnershipClaimResponse, AdminUserListResponse, DetectedObjectUpdateRequest
 from app.schemas.citizen_report import AdminCitizenReportResponse, AdminCitizenReportUpdateRequest, ResolveCitizenReportRequest
 from app.schemas.common import MessageResponse
 from app.schemas.found_item import FoundItemUpdateRequest
@@ -34,13 +34,14 @@ from app.services.mappers import admin_ownership_claim_response
 from app.services.ownership import review_ownership_claim
 from app.services.citizen_reports import admin_response, list_admin as list_admin_citizen_reports, resolve_report, review_report
 from app.services.admin_detection_actions import complete_waste_collection, create_ai_found_item, effective_group
-from app.services.detection_inference import DetectionInferenceService, get_inference_service
+from app.services.detection_inference import DetectionBBox, DetectionInferenceService, get_inference_service
 from app.services.detections import DetectionModelUnavailableError, create_operation_detection_event, process_detection_event
 from app.services.color_estimation import normalize_item_color
 from app.services.matching import reconcile_match_candidates_for_found_item
 from app.services.geocoding import GeocodingError, geocode_location
 from app.services.found_item_images import representative_found_item_image_url
-from app.api.detections import IMAGE_CONTENT_TYPES, IMAGE_MAX_BYTES, save_upload_file
+from app.services.mobile_waste import register_mobile_waste_candidate
+from app.api.detections import IMAGE_CONTENT_TYPES, IMAGE_MAX_BYTES, WEBCAM_FRAME_MAX_BYTES, save_upload_file
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 KST = ZoneInfo("Asia/Seoul")
@@ -309,6 +310,45 @@ async def detect_image(
     except Exception as exc:
         raise HTTPException(status_code=500, detail="AI detection could not be completed") from exc
     return MessageResponse(message=f"Operation detection created: {event.id}")
+
+
+@router.post("/detections/mobile-waste", response_model=AdminMobileWasteRegistrationResponse, status_code=status.HTTP_201_CREATED, summary="모바일 현장 폐기물 후보 등록")
+async def register_mobile_waste(
+    current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    inference_service: Annotated[DetectionInferenceService, Depends(get_inference_service)],
+    camera_id: Annotated[int, Form(ge=1)],
+    file: Annotated[UploadFile, File(description="선택 시점의 JPEG 프레임")],
+    bbox_x: Annotated[float, Form()],
+    bbox_y: Annotated[float, Form()],
+    bbox_width: Annotated[float, Form()],
+    bbox_height: Annotated[float, Form()],
+) -> AdminMobileWasteRegistrationResponse:
+    camera = db.scalar(select(Camera).where(Camera.id == camera_id, Camera.is_active.is_(True)))
+    if camera is None:
+        raise HTTPException(status_code=422, detail="활성 카메라를 선택해 주세요.")
+    media_path, media_key = await save_upload_file(
+        file,
+        current_user=current_admin,
+        allowed_types={"image/jpeg": ".jpg"},
+        max_bytes=WEBCAM_FRAME_MAX_BYTES,
+    )
+    detected_object = register_mobile_waste_candidate(
+        db,
+        admin=current_admin,
+        camera=camera,
+        media_path=media_path,
+        media_key=media_key,
+        selected_bbox=DetectionBBox(x=bbox_x, y=bbox_y, width=bbox_width, height=bbox_height),
+        inference_service=inference_service,
+    )
+    return AdminMobileWasteRegistrationResponse(
+        detection_event_id=detected_object.detection_event_id,
+        detected_object_id=detected_object.id,
+        processing_status="CONFIRMED",
+        original_media_url=media_key,
+        cropped_image_url=detected_object.cropped_image_url,
+    )
 
 
 @router.get("/cameras", response_model=list[AdminCameraResponse], summary="활성 운영 카메라 목록")

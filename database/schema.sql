@@ -697,6 +697,97 @@ CREATE TABLE notifications (
 
 
 -- =========================================================
+-- DARU MEMORY 통계 및 난이도별 랭킹
+-- =========================================================
+
+CREATE TABLE public.daru_game_stats (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+
+    user_id BIGINT NOT NULL
+        REFERENCES public.users(id)
+        ON DELETE CASCADE,
+
+    difficulty VARCHAR(10) NOT NULL
+        CHECK (difficulty IN ('EASY', 'NORMAL', 'HARD')),
+
+    best_detection_power NUMERIC(4,1) NOT NULL DEFAULT 0.0
+        CHECK (best_detection_power BETWEEN 0 AND 100),
+
+    score_version INTEGER NOT NULL DEFAULT 2
+        CHECK (score_version IN (1, 2)),
+
+    best_hints_used SMALLINT
+        CHECK (
+            best_hints_used IS NULL
+            OR best_hints_used BETWEEN 0 AND 2
+        ),
+
+    best_attempts INTEGER
+        CHECK (
+            best_attempts IS NULL
+            OR best_attempts > 0
+        ),
+
+    best_elapsed_seconds INTEGER
+        CHECK (
+            best_elapsed_seconds IS NULL
+            OR best_elapsed_seconds > 0
+        ),
+
+    best_combo INTEGER NOT NULL DEFAULT 0
+        CHECK (best_combo >= 0),
+
+    total_daru_points BIGINT NOT NULL DEFAULT 0
+        CHECK (total_daru_points >= 0),
+
+    play_count INTEGER NOT NULL DEFAULT 0
+        CHECK (play_count >= 0),
+
+    best_achieved_at TIMESTAMPTZ,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    UNIQUE (user_id, difficulty)
+);
+
+ALTER TABLE public.daru_game_stats
+ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE public.daru_game_runs (
+    id UUID PRIMARY KEY,
+
+    user_id BIGINT NOT NULL
+        REFERENCES public.users(id)
+        ON DELETE CASCADE,
+
+    difficulty VARCHAR(10) NOT NULL
+        CHECK (difficulty IN ('EASY', 'NORMAL', 'HARD')),
+
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    play_started_at TIMESTAMPTZ,
+    consumed_at TIMESTAMPTZ,
+    deck_state JSONB NOT NULL DEFAULT '[]'::JSONB,
+    first_position INTEGER,
+    matched_positions JSONB NOT NULL DEFAULT '[]'::JSONB,
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    matched_pairs INTEGER NOT NULL DEFAULT 0 CHECK (matched_pairs >= 0),
+    current_combo INTEGER NOT NULL DEFAULT 0 CHECK (current_combo >= 0),
+    max_combo INTEGER NOT NULL DEFAULT 0 CHECK (max_combo >= current_combo),
+    hints_used INTEGER NOT NULL DEFAULT 0 CHECK (hints_used BETWEEN 0 AND 2),
+    earned_daru_points BIGINT NOT NULL DEFAULT 0 CHECK (earned_daru_points >= 0),
+
+    CHECK (
+        consumed_at IS NULL
+        OR consumed_at >= started_at
+    ),
+    CHECK (first_position IS NULL OR first_position >= 0)
+);
+
+ALTER TABLE public.daru_game_runs
+ENABLE ROW LEVEL SECURITY;
+
+-- =========================================================
 -- 12. 관리자 처리 이력
 -- 분류 수정, 회수, 승인, 반환 등의 기록
 -- =========================================================
@@ -937,6 +1028,35 @@ CREATE INDEX idx_notifications_unread
         created_at DESC
     )
     WHERE read_at IS NULL;
+
+CREATE INDEX idx_daru_game_stats_ranking
+    ON public.daru_game_stats (
+        difficulty,
+        score_version,
+        best_detection_power DESC,
+        best_attempts ASC,
+        best_elapsed_seconds ASC,
+        best_achieved_at ASC
+    );
+
+CREATE INDEX idx_daru_game_runs_active_user
+    ON public.daru_game_runs (user_id, started_at DESC)
+    WHERE consumed_at IS NULL;
+
+CREATE TABLE public.daru_game_run_actions (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    run_id UUID NOT NULL REFERENCES public.daru_game_runs(id) ON DELETE CASCADE,
+    action_id UUID NOT NULL,
+    action_type VARCHAR(10) NOT NULL CHECK (action_type IN ('START', 'FLIP', 'HINT', 'COMPLETE')),
+    request_fingerprint VARCHAR(64) NOT NULL,
+    response_payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_daru_game_run_actions_run_action UNIQUE (run_id, action_id)
+);
+
+ALTER TABLE public.daru_game_run_actions ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.daru_game_run_actions FROM anon, authenticated;
+REVOKE ALL ON SEQUENCE public.daru_game_run_actions_id_seq FROM anon, authenticated;
 
 CREATE INDEX idx_processing_histories_entity
     ON processing_histories (

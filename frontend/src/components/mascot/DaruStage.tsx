@@ -313,7 +313,7 @@ export function DaruStage() {
     if (locomotionTimerRef.current !== null) window.clearTimeout(locomotionTimerRef.current);
   }, []);
 
-  if (mode === "hidden") return null;
+  if (mode === "hidden" || pathname === "/daru-game") return null;
   const handleGuideToggle = () => {
     const rect = stageRef.current?.getBoundingClientRect();
     if (rect) { setPanelSide(rect.left < 330 ? "left" : "right"); setPanelVertical(rect.top < 430 ? "below" : "above"); }

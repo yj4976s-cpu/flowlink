@@ -10,6 +10,7 @@ import { NotificationToastHost } from "@/components/notifications/NotificationTo
 import { NotificationCenter } from "@/components/notifications/NotificationCenter";
 import { DaruSettings } from "@/components/mascot";
 import { AuthUser, getCurrentUser, logout as logoutRequest } from "@/lib/authApi";
+import { AUTH_CHANGED_EVENT } from "@/lib/authEvents";
 
 type NavigationItem = {
   label: string;
@@ -19,7 +20,6 @@ type NavigationItem = {
 };
 
 const userNavigation: readonly NavigationItem[] = [
-  { label: "분실 신고", href: "/lost-reports/new" },
   {
     label: "발견물 센터",
     href: "/found-items",
@@ -31,6 +31,7 @@ const userNavigation: readonly NavigationItem[] = [
   { label: "물건 확인", href: "/detect" },
   { label: "커뮤니티", href: "/community" },
   { label: "내 진행 상황", href: "/mypage" },
+  { label: "다루 놀이터", href: "/daru-game" },
 ];
 
 const adminNavigation: readonly NavigationItem[] = [
@@ -139,6 +140,21 @@ export function Header() {
     return () => {
       active = false;
     };
+  }, []);
+
+  useEffect(() => {
+    const syncAuth = (event: Event) => {
+      const user = (event as CustomEvent<AuthUser | null>).detail;
+      setCurrentUser(user);
+      setAuthResolved(true);
+      if (!user) {
+        setProfileOpen(false);
+        setNotificationOpen(false);
+        setLogoutConfirm(false);
+      }
+    };
+    window.addEventListener(AUTH_CHANGED_EVENT, syncAuth);
+    return () => window.removeEventListener(AUTH_CHANGED_EVENT, syncAuth);
   }, []);
 
   useEffect(() => {

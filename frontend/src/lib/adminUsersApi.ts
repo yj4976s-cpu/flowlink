@@ -38,11 +38,13 @@ export class AdminUsersApiError extends Error {
   }
 }
 
+
 export async function getAdminUsers(
   filters: { skip: number; limit: number; q?: string; role?: string; active?: string; include_deleted?: boolean },
   signal?: AbortSignal,
 ) {
-  const response = await fetch(buildApiUrl("/api/admin/users", filters), { credentials: "include", signal });
+  const url = buildApiUrl("/api/admin/users", filters);
+  const response = await fetch(url, { credentials: "include", signal });
   if (!response.ok) {
     throw new AdminUsersApiError(
       response.status === 403 ? "관리자 권한이 필요합니다." : "사용자 현황을 불러오지 못했습니다.",

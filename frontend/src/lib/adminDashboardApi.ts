@@ -1,5 +1,5 @@
-import { buildApiUrl, getApiMediaBaseUrl } from "@/lib/apiBase";
 import { resolveUploadedMediaUrl } from "@/lib/mediaUrl";
+import { buildApiUrl, getPublicApiBaseUrl } from "@/lib/apiBase";
 
 export type AdminDashboardData = {
   period: "today" | "7d" | "all";
@@ -39,8 +39,14 @@ export class AdminDashboardApiError extends Error {
   constructor(message: string, readonly status?: number) { super(message); this.name = "AdminDashboardApiError"; }
 }
 
+function getApiBaseUrl() {
+  const baseUrl = getPublicApiBaseUrl();
+  if (!baseUrl) throw new AdminDashboardApiError("API 서버 주소가 설정되지 않았습니다.");
+  return baseUrl.replace(/\/+$/, "");
+}
+
 export function resolveAdminDashboardImageUrl(value?: string | null) {
-  return resolveUploadedMediaUrl(value, getApiMediaBaseUrl());
+  return resolveUploadedMediaUrl(value, getApiBaseUrl());
 }
 
 export async function getAdminDashboard(period: "today" | "7d" | "all" = "today", signal?: AbortSignal) {

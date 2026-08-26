@@ -189,6 +189,8 @@ def detection_event_response(event: DetectionEvent) -> DetectionEventResponse:
         source_type=event.source_type,
         status=event.status,
         purpose=event.purpose,
+        original_media_url=event.original_media_url,
+        result_media_url=event.result_media_url,
         media_width=event.media_width,
         media_height=event.media_height,
         created_at=event.created_at,

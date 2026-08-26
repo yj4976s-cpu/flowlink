@@ -1,4 +1,6 @@
-import { buildApiUrl } from "@/lib/apiBase";
+import { clearDaruActiveRun } from "@/lib/daruActiveRun";
+import { invalidateAuthOnUnauthorized, publishAuthChange } from "@/lib/authEvents";
+import { buildApiUrl, buildOAuthUrl } from "@/lib/apiBase";
 
 export type AuthUser = {
   id: number;
@@ -40,6 +42,10 @@ type ApiValidationError = {
   msg?: string;
 };
 
+type RequestOptions = {
+  suppressUnauthorizedInvalidation?: boolean;
+};
+
 function getErrorMessage(detail: unknown) {
   if (typeof detail === "string") return detail;
   if (Array.isArray(detail)) {
@@ -51,11 +57,12 @@ function getErrorMessage(detail: unknown) {
   return "입력 내용을 확인해주세요.";
 }
 
-export function getOAuthStartUrl(provider: SocialAuthProvider) {
-  return buildApiUrl(`/api/auth/oauth/${provider}/start`);
+
+export function getOAuthStartUrl(provider: SocialAuthProvider, nextPath = "/") {
+  return buildOAuthUrl(`/api/auth/oauth/${provider}/start`, { next: nextPath });
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, options: RequestOptions = {}): Promise<T> {
   const response = await fetch(buildApiUrl(path), {
     ...init,
     credentials: "include",
@@ -73,6 +80,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       // Keep the safe fallback when the server does not return JSON.
     }
+    if (!options.suppressUnauthorizedInvalidation) {
+      invalidateAuthOnUnauthorized(response.status);
+    }
     throw new AuthApiError(message, response.status);
   }
 
@@ -84,7 +94,7 @@ export async function login(payload: LoginRequest) {
     method: "POST",
     body: JSON.stringify(payload),
   });
-  window.dispatchEvent(new CustomEvent("flowlink:auth-changed", { detail: result.user }));
+  publishAuthChange(result.user);
   return result;
 }
 
@@ -93,7 +103,7 @@ export async function register(payload: RegisterRequest) {
     method: "POST",
     body: JSON.stringify(payload),
   });
-  window.dispatchEvent(new CustomEvent("flowlink:auth-changed", { detail: result }));
+  publishAuthChange(result);
   return result;
 }
 
@@ -102,17 +112,18 @@ export async function completeSocialRegistration(payload: SocialRegisterRequest)
     method: "POST",
     body: JSON.stringify(payload),
   });
-  window.dispatchEvent(new CustomEvent("flowlink:auth-changed", { detail: result }));
+  publishAuthChange(result);
   return result;
 }
 
 export function getCurrentUser() {
-  return request<AuthUser>("/api/auth/me");
+  return request<AuthUser>("/api/auth/me", {}, { suppressUnauthorizedInvalidation: true });
 }
 
 export async function logout() {
   const result = await request<{ message: string }>("/api/auth/logout", { method: "POST" });
-  window.dispatchEvent(new CustomEvent("flowlink:auth-changed", { detail: null }));
+  clearDaruActiveRun();
+  publishAuthChange(null);
   return result;
 }
 

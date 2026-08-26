@@ -11,6 +11,7 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
+from starlette.requests import Request
 
 from app.core.config import Settings, get_settings
 from app.core.security import create_access_token, hash_password, utc_now
@@ -89,6 +90,30 @@ def login(
         "/api/auth/login",
         json={"email": email, "password": password},
         headers=headers,
+    )
+
+
+def make_request(
+    *,
+    client_host: str,
+    host: str,
+    scheme: str = "http",
+    headers: dict[str, str] | None = None,
+) -> Request:
+    merged_headers = {"host": host, **(headers or {})}
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/auth/login",
+            "scheme": scheme,
+            "server": (host, 80 if scheme == "http" else 443),
+            "client": (client_host, 12345),
+            "headers": [
+                (name.lower().encode("latin-1"), value.encode("latin-1"))
+                for name, value in merged_headers.items()
+            ],
+        }
     )
 
 
@@ -275,6 +300,21 @@ def test_login_sets_httponly_cookie_without_exposing_access_token(client: TestCl
     assert f"Max-Age={settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60}" in set_cookie
 
 
+def test_login_cookie_uses_eight_hour_policy(client: TestClient, db: Session) -> None:
+    settings = get_settings()
+    original_minutes = settings.ACCESS_TOKEN_EXPIRE_MINUTES
+    settings.ACCESS_TOKEN_EXPIRE_MINUTES = 480
+    try:
+        seed_user(db)
+        response = login(client)
+    finally:
+        settings.ACCESS_TOKEN_EXPIRE_MINUTES = original_minutes
+
+    assert response.status_code == 200
+    assert response.json()["expires_in"] == 480 * 60
+    assert "Max-Age=28800" in response.headers["set-cookie"]
+
+
 @pytest.mark.parametrize(
     ("headers", "expects_secure"),
     [
@@ -289,21 +329,21 @@ def test_login_sets_httponly_cookie_without_exposing_access_token(client: TestCl
         ),
         pytest.param(
             {
+                "host": "mbc-sw.iptime.org",
+                "x-forwarded-host": "mbc-sw.iptime.org",
+                "x-forwarded-proto": "http",
+            },
+            False,
+            id="lan-domain-http-explicit-host-insecure-cookie",
+        ),
+        pytest.param(
+            {
                 "host": "192.168.0.25",
                 "x-forwarded-host": "192.168.0.25",
                 "x-forwarded-proto": "http",
             },
             False,
             id="lan-nginx-http-insecure-cookie",
-        ),
-        pytest.param(
-            {
-                "host": "10.0.1.15",
-                "x-forwarded-host": "10.0.1.15",
-                "x-forwarded-proto": "http",
-            },
-            False,
-            id="internal-nginx-http-insecure-cookie",
         ),
         pytest.param(
             {
@@ -316,7 +356,7 @@ def test_login_sets_httponly_cookie_without_exposing_access_token(client: TestCl
         ),
     ],
 )
-def test_login_cookie_secure_policy_respects_scheme_and_lan_hosts(
+def test_login_cookie_secure_policy_respects_scheme_lan_and_explicit_hosts(
     client: TestClient,
     db: Session,
     monkeypatch: pytest.MonkeyPatch,
@@ -335,6 +375,8 @@ def test_login_cookie_secure_policy_respects_scheme_and_lan_hosts(
             JWT_SECRET_KEY="flowlink-test-secret-with-at-least-32-characters",
             FRONTEND_URL="https://flowlink.example",
             AI_INTERNAL_API_KEY="flowlink-test-ai-internal-key-32-chars",
+            AUTH_INSECURE_HTTP_HOSTS="mbc-sw.iptime.org",
+            FORWARDED_ALLOW_IPS="testclient",
         ),
     )
     seed_user(db)
@@ -345,6 +387,88 @@ def test_login_cookie_secure_policy_respects_scheme_and_lan_hosts(
     set_cookie = response.headers["set-cookie"]
     assert ("Secure" in set_cookie) is expects_secure
     assert "Domain=" not in set_cookie
+
+
+@pytest.mark.parametrize(
+    ("client_host", "headers", "expects_secure"),
+    [
+        pytest.param(
+            "172.30.0.10",
+            {
+                "x-forwarded-host": "flowlink-project.duckdns.org",
+                "x-forwarded-proto": "https",
+            },
+            True,
+            id="trusted-proxy-duckdns-https-secure-cookie",
+        ),
+        pytest.param(
+            "172.30.0.10",
+            {
+                "x-forwarded-host": "mbc-sw.iptime.org",
+                "x-forwarded-proto": "http",
+            },
+            False,
+            id="trusted-proxy-lan-host-http-insecure-cookie",
+        ),
+        pytest.param(
+            "172.30.0.10",
+            {
+                "x-forwarded-host": "192.168.0.25",
+                "x-forwarded-proto": "http",
+            },
+            False,
+            id="trusted-proxy-private-lan-http-insecure-cookie",
+        ),
+        pytest.param(
+            "172.30.0.10",
+            {
+                "x-forwarded-host": "flowlink.example",
+                "x-forwarded-proto": "http",
+            },
+            True,
+            id="trusted-proxy-external-http-secure-cookie",
+        ),
+        pytest.param(
+            "172.30.0.11",
+            {
+                "x-forwarded-host": "mbc-sw.iptime.org",
+                "x-forwarded-proto": "http",
+            },
+            True,
+            id="untrusted-client-forwarded-lan-headers-ignored",
+        ),
+    ],
+)
+def test_secure_cookie_policy_uses_configured_reverse_proxy_ip(
+    monkeypatch: pytest.MonkeyPatch,
+    client_host: str,
+    headers: dict[str, str],
+    expects_secure: bool,
+) -> None:
+    import app.api.auth as auth_api
+
+    monkeypatch.setattr(
+        auth_api,
+        "get_settings",
+        lambda: Settings(
+            _env_file=None,
+            APP_ENV="production",
+            DATABASE_URL="postgresql+psycopg://flowlink_user:strong-password@db.flowlink.example:5432/flowlink",
+            JWT_SECRET_KEY="flowlink-test-secret-with-at-least-32-characters",
+            FRONTEND_URL="https://flowlink.example",
+            AI_INTERNAL_API_KEY="flowlink-test-ai-internal-key-32-chars",
+            AUTH_INSECURE_HTTP_HOSTS="mbc-sw.iptime.org",
+            FORWARDED_ALLOW_IPS="172.30.0.10",
+        ),
+    )
+
+    request = make_request(
+        client_host=client_host,
+        host="backend",
+        headers=headers,
+    )
+
+    assert auth_api.should_use_secure_cookie(request) is expects_secure
 
 
 def test_login_failure_does_not_set_cookie(client: TestClient, db: Session) -> None:
@@ -555,8 +679,9 @@ def configure_fake_oauth(monkeypatch: pytest.MonkeyPatch, identity: OAuthIdentit
     )
 
 
-def begin_oauth(client: TestClient, provider: str = "google") -> str:
-    response = client.get(f"/api/auth/oauth/{provider}/start", follow_redirects=False)
+def begin_oauth(client: TestClient, provider: str = "google", next_path: str | None = None) -> str:
+    suffix = f"?next={next_path}" if next_path else ""
+    response = client.get(f"/api/auth/oauth/{provider}/start{suffix}", follow_redirects=False)
     assert response.status_code == 302
     assert "flowlink_oauth_state" in response.headers["set-cookie"]
     return response.headers["location"].split("state=", 1)[1]
@@ -629,6 +754,64 @@ def test_returning_social_user_receives_existing_login_cookie(
     assert response.status_code == 302
     assert get_settings().AUTH_COOKIE_NAME in response.headers["set-cookie"]
     assert db.get(User, user.id).last_login_at is not None
+
+
+@pytest.mark.parametrize(
+    ("provider", "provider_name", "provider_user_id"),
+    [("google", "GOOGLE", "g-ttl"), ("kakao", "KAKAO", "k-ttl"), ("naver", "NAVER", "n-ttl")],
+)
+def test_social_providers_share_eight_hour_login_cookie_policy(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+    provider_name: str,
+    provider_user_id: str,
+) -> None:
+    user = seed_user(db)
+    now = utc_now()
+    db.add(UserSocialAccount(user_id=user.id, provider=provider_name, provider_user_id=provider_user_id, created_at=now, updated_at=now))
+    db.commit()
+    configure_fake_oauth(monkeypatch, OAuthIdentity(provider_name, provider_user_id, "user@example.com", "user"))
+    state_value = begin_oauth(client, provider)
+
+    response = client.get(f"/api/auth/oauth/{provider}/callback?code=valid-code&state={state_value}", follow_redirects=False)
+
+    assert response.status_code == 302
+    settings = get_settings()
+    set_cookies = response.headers.get_list("set-cookie")
+    expected_max_age = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    assert any(
+        cookie.startswith(f"{settings.AUTH_COOKIE_NAME}=")
+        and f"Max-Age={expected_max_age}" in cookie
+        for cookie in set_cookies
+    ), set_cookies
+
+
+def test_returning_social_user_resumes_safe_relative_path(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = seed_user(db)
+    now = utc_now()
+    db.add(UserSocialAccount(user_id=user.id, provider="KAKAO", provider_user_id="k-resume", created_at=now, updated_at=now))
+    db.commit()
+    configure_fake_oauth(monkeypatch, OAuthIdentity("KAKAO", "k-resume", "user@example.com", "user"))
+    state_value = begin_oauth(client, "kakao", "/daru-game")
+    response = client.get(f"/api/auth/oauth/kakao/callback?code=valid-code&state={state_value}", follow_redirects=False)
+    assert response.headers["location"].endswith("/daru-game")
+
+
+def test_oauth_start_rejects_protocol_relative_next_path(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = seed_user(db)
+    now = utc_now()
+    db.add(UserSocialAccount(user_id=user.id, provider="GOOGLE", provider_user_id="g-safe", created_at=now, updated_at=now))
+    db.commit()
+    configure_fake_oauth(monkeypatch, OAuthIdentity("GOOGLE", "g-safe", "user@example.com", "user"))
+    state_value = begin_oauth(client, "google", "//evil.example")
+    response = client.get(f"/api/auth/oauth/google/callback?code=valid-code&state={state_value}", follow_redirects=False)
+    assert response.headers["location"].endswith("/")
 
 
 @pytest.mark.parametrize("active,deleted", [(False, False), (False, True)])

@@ -31,6 +31,7 @@ EXPECTED_OPERATIONS = {
     "/api/notifications/{id}/read": {"patch"},
     "/api/admin/detections/images": {"post"},
     "/api/admin/detections/videos": {"post"},
+    "/api/admin/detections/mobile-waste": {"post"},
     "/api/admin/detections": {"get"},
     "/api/admin/detected-objects/{id}": {"patch"},
     "/api/admin/found-items/{id}": {"patch"},

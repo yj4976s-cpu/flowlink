@@ -1,5 +1,4 @@
-import { buildApiUrl } from "@/lib/apiBase";
-
+import { buildApiUrl as buildCommonApiUrl } from "@/lib/apiBase";
 export type OwnershipClaimCreateRequest = {
   found_item_id: number;
   lost_report_id: number | null;
@@ -24,6 +23,11 @@ export class OwnershipClaimsApiError extends Error {
     super(message);
     this.name = "OwnershipClaimsApiError";
   }
+}
+
+
+function buildApiUrl(path: string) {
+  return buildCommonApiUrl(path);
 }
 
 function getFallbackMessage(status: number) {
@@ -98,19 +102,13 @@ export async function listMyOwnershipClaims(signal?: AbortSignal) {
 }
 
 export async function listMyOwnershipClaimProgress(lostReportIds: number[], signal?: AbortSignal) {
-  const response = await fetch(
-    buildApiUrl("/api/ownership-claims/me/progress", { lost_report_ids: lostReportIds }),
-    { credentials: "include", signal },
-  );
+  const response = await fetch(buildCommonApiUrl("/api/ownership-claims/me/progress", { lost_report_ids: lostReportIds }), { credentials: "include", signal });
   if (!response.ok) throw new OwnershipClaimsApiError(await readErrorMessage(response), response.status);
   return response.json() as Promise<OwnershipClaimResponse[]>;
 }
 
 export async function listMyOwnershipClaimActivity(lostReportIds: number[], signal?: AbortSignal) {
-  const response = await fetch(
-    buildApiUrl("/api/ownership-claims/me/activity", { lost_report_ids: lostReportIds }),
-    { credentials: "include", signal },
-  );
+  const response = await fetch(buildCommonApiUrl("/api/ownership-claims/me/activity", { lost_report_ids: lostReportIds }), { credentials: "include", signal });
   if (!response.ok) throw new OwnershipClaimsApiError(await readErrorMessage(response), response.status);
   return response.json() as Promise<OwnershipClaimResponse[]>;
 }

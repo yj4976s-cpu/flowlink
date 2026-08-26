@@ -43,7 +43,7 @@ class OAuthCallbackResult:
     pending_token: str | None
 
 
-def create_oauth_start(provider: str) -> OAuthStartData:
+def create_oauth_start(provider: str, next_path: str | None = None) -> OAuthStartData:
     state_value = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(32)
     code_verifier = secrets.token_urlsafe(64) if provider == "GOOGLE" else None
@@ -57,6 +57,7 @@ def create_oauth_start(provider: str) -> OAuthStartData:
             "state": state_value,
             "nonce": nonce,
             "code_verifier": code_verifier,
+            "next_path": next_path if next_path and next_path.startswith("/") and not next_path.startswith("//") else "/",
         },
         STATE_AUDIENCE,
         STATE_TTL_SECONDS,

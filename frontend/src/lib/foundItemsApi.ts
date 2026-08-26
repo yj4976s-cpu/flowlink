@@ -1,5 +1,5 @@
-import { buildApiUrl as buildSameOriginApiUrl, getApiMediaBaseUrl } from "@/lib/apiBase";
 import { resolveUploadedMediaUrl } from "@/lib/mediaUrl";
+import { buildApiUrl as buildCommonApiUrl, getPublicApiBaseUrl } from "@/lib/apiBase";
 
 export type FoundItemListItem = {
   id: number;
@@ -39,8 +39,14 @@ export class FoundItemsApiError extends Error {
   }
 }
 
+function getApiBaseUrl() { return getPublicApiBaseUrl(); }
+
 export function resolveFoundItemImageUrl(value: string | null) {
-  return resolveUploadedMediaUrl(value, getApiMediaBaseUrl());
+  return resolveUploadedMediaUrl(value, getApiBaseUrl());
+}
+
+function buildApiUrl(path: string, params?: Record<string, string | number | undefined>) {
+  return buildCommonApiUrl(path, params);
 }
 
 async function requestJson<T>(url: string, signal?: AbortSignal): Promise<T> {
@@ -53,15 +59,15 @@ async function requestJson<T>(url: string, signal?: AbortSignal): Promise<T> {
 
 export function listFoundItems(filters: FoundItemFilters, signal?: AbortSignal) {
   return requestJson<FoundItemListItem[]>(
-    buildSameOriginApiUrl("/api/found-items", { skip: 0, limit: 100, ...filters }),
+    buildApiUrl("/api/found-items", { skip: 0, limit: 100, ...filters }),
     signal,
   );
 }
 
 export function listMapFoundItems(signal?: AbortSignal) {
-  return requestJson<FoundItemMapItem[]>(buildSameOriginApiUrl("/api/found-items/map"), signal);
+  return requestJson<FoundItemMapItem[]>(buildApiUrl("/api/found-items/map"), signal);
 }
 
 export function getFoundItem(id: string, signal?: AbortSignal) {
-  return requestJson<FoundItemDetail>(buildSameOriginApiUrl(`/api/found-items/${id}`), signal);
+  return requestJson<FoundItemDetail>(buildApiUrl(`/api/found-items/${id}`), signal);
 }
