@@ -11,6 +11,7 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
+from starlette.requests import Request
 
 from app.core.config import Settings, get_settings
 from app.core.security import create_access_token, hash_password, utc_now
@@ -89,6 +90,30 @@ def login(
         "/api/auth/login",
         json={"email": email, "password": password},
         headers=headers,
+    )
+
+
+def make_request(
+    *,
+    client_host: str,
+    host: str,
+    scheme: str = "http",
+    headers: dict[str, str] | None = None,
+) -> Request:
+    merged_headers = {"host": host, **(headers or {})}
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/auth/login",
+            "scheme": scheme,
+            "server": (host, 80 if scheme == "http" else 443),
+            "client": (client_host, 12345),
+            "headers": [
+                (name.lower().encode("latin-1"), value.encode("latin-1"))
+                for name, value in merged_headers.items()
+            ],
+        }
     )
 
 
@@ -362,6 +387,88 @@ def test_login_cookie_secure_policy_respects_scheme_lan_and_explicit_hosts(
     set_cookie = response.headers["set-cookie"]
     assert ("Secure" in set_cookie) is expects_secure
     assert "Domain=" not in set_cookie
+
+
+@pytest.mark.parametrize(
+    ("client_host", "headers", "expects_secure"),
+    [
+        pytest.param(
+            "172.30.0.10",
+            {
+                "x-forwarded-host": "flowlink-project.duckdns.org",
+                "x-forwarded-proto": "https",
+            },
+            True,
+            id="trusted-proxy-duckdns-https-secure-cookie",
+        ),
+        pytest.param(
+            "172.30.0.10",
+            {
+                "x-forwarded-host": "mbc-sw.iptime.org",
+                "x-forwarded-proto": "http",
+            },
+            False,
+            id="trusted-proxy-lan-host-http-insecure-cookie",
+        ),
+        pytest.param(
+            "172.30.0.10",
+            {
+                "x-forwarded-host": "192.168.0.25",
+                "x-forwarded-proto": "http",
+            },
+            False,
+            id="trusted-proxy-private-lan-http-insecure-cookie",
+        ),
+        pytest.param(
+            "172.30.0.10",
+            {
+                "x-forwarded-host": "flowlink.example",
+                "x-forwarded-proto": "http",
+            },
+            True,
+            id="trusted-proxy-external-http-secure-cookie",
+        ),
+        pytest.param(
+            "172.30.0.11",
+            {
+                "x-forwarded-host": "mbc-sw.iptime.org",
+                "x-forwarded-proto": "http",
+            },
+            True,
+            id="untrusted-client-forwarded-lan-headers-ignored",
+        ),
+    ],
+)
+def test_secure_cookie_policy_uses_configured_reverse_proxy_ip(
+    monkeypatch: pytest.MonkeyPatch,
+    client_host: str,
+    headers: dict[str, str],
+    expects_secure: bool,
+) -> None:
+    import app.api.auth as auth_api
+
+    monkeypatch.setattr(
+        auth_api,
+        "get_settings",
+        lambda: Settings(
+            _env_file=None,
+            APP_ENV="production",
+            DATABASE_URL="postgresql+psycopg://flowlink_user:strong-password@db.flowlink.example:5432/flowlink",
+            JWT_SECRET_KEY="flowlink-test-secret-with-at-least-32-characters",
+            FRONTEND_URL="https://flowlink.example",
+            AI_INTERNAL_API_KEY="flowlink-test-ai-internal-key-32-chars",
+            AUTH_INSECURE_HTTP_HOSTS="mbc-sw.iptime.org",
+            FORWARDED_ALLOW_IPS="172.30.0.10",
+        ),
+    )
+
+    request = make_request(
+        client_host=client_host,
+        host="backend",
+        headers=headers,
+    )
+
+    assert auth_api.should_use_secure_cookie(request) is expects_secure
 
 
 def test_login_failure_does_not_set_cookie(client: TestClient, db: Session) -> None:

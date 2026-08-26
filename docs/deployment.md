@@ -61,6 +61,26 @@ model files such as `best.pt`.
   not start a PostgreSQL container.
 - `models/best.pt` is mounted read-only into backend-ai at `/app/models/best.pt`.
 
+## Trusted proxy address
+
+`FORWARDED_ALLOW_IPS` is not the public HTTPS server IP and not the LAN host IP.
+It is the Docker-internal address of the trusted Nginx `reverse-proxy`
+container that is allowed to supply `X-Forwarded-Proto` and
+`X-Forwarded-Host` to the backend.
+
+Both production HTTPS and LAN HTTP use a separate host, but their Compose
+network is local to each host. Therefore both stacks can safely use the same
+Docker-internal reverse proxy address:
+
+```text
+reverse-proxy: 172.30.0.10
+backend env:   FORWARDED_ALLOW_IPS=172.30.0.10
+```
+
+Do not set `FORWARDED_ALLOW_IPS=*`. If `compose.prod.yaml` or
+`compose.lan.yaml` stops assigning `reverse-proxy` to `172.30.0.10`, update
+`FORWARDED_ALLOW_IPS` to the actual Compose network address before deploying.
+
 ## LAN HTTP deployment
 
 Public URL:
@@ -185,6 +205,20 @@ docker compose --env-file .env.production config
 docker compose --env-file .env.lan -f compose.yaml -f compose.lan.yaml config --services
 docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml config --services
 ```
+
+Trusted proxy checks:
+
+```bash
+docker compose --env-file .env.production exec reverse-proxy hostname -i
+docker compose --env-file .env.production exec backend env | grep FORWARDED_ALLOW_IPS
+docker compose --env-file .env.lan exec reverse-proxy hostname -i
+docker compose --env-file .env.lan exec backend env | grep FORWARDED_ALLOW_IPS
+```
+
+Expected:
+
+- reverse-proxy IP includes `172.30.0.10`
+- backend has `FORWARDED_ALLOW_IPS=172.30.0.10`
 
 Runtime status:
 
