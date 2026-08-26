@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "test:daru-game": "node --experimental-strip-types --test tests/daru-game-contract.test.mjs",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:copilot-speech": "node --experimental-strip-types --test tests/copilot-speech-contract.test.mjs"
   },
   "dependencies": {
     "@rive-app/react-canvas": "^4.31.0",
