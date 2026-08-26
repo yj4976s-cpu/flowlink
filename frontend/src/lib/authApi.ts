@@ -41,6 +41,10 @@ type ApiValidationError = {
   msg?: string;
 };
 
+type RequestOptions = {
+  suppressUnauthorizedInvalidation?: boolean;
+};
+
 function getErrorMessage(detail: unknown) {
   if (typeof detail === "string") return detail;
   if (Array.isArray(detail)) {
@@ -64,7 +68,7 @@ export function getOAuthStartUrl(provider: SocialAuthProvider, nextPath = "/") {
   return url.toString();
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, options: RequestOptions = {}): Promise<T> {
   const response = await fetch(`${getApiBaseUrl()}${path}`, {
     ...init,
     credentials: "include",
@@ -82,7 +86,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       // Keep the safe fallback when the server does not return JSON.
     }
-    invalidateAuthOnUnauthorized(response.status);
+    if (!options.suppressUnauthorizedInvalidation) {
+      invalidateAuthOnUnauthorized(response.status);
+    }
     throw new AuthApiError(message, response.status);
   }
 
@@ -117,7 +123,7 @@ export async function completeSocialRegistration(payload: SocialRegisterRequest)
 }
 
 export function getCurrentUser() {
-  return request<AuthUser>("/api/auth/me");
+  return request<AuthUser>("/api/auth/me", {}, { suppressUnauthorizedInvalidation: true });
 }
 
 export async function logout() {
