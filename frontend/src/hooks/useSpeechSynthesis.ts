@@ -173,7 +173,6 @@ export function useSpeechSynthesis({
 
       utterance.onend = () => {
         if (generationRef.current !== generation || utteranceRef.current !== utterance) return;
-        if (pausedRef.current) return;
         if (chunkIndex + 1 < chunks.length) playChunk(chunkIndex + 1);
         else finish(utterance);
       };
