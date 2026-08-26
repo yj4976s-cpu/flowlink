@@ -29,12 +29,11 @@ import {
   type CopilotSuggestion,
 } from "@/lib/copilotApi";
 import { listNotifications } from "@/lib/notificationsApi";
+import { speechVoiceId, useSpeechSynthesis } from "@/hooks/useSpeechSynthesis";
 import {
   resolveAutoSpeechText,
   resolveManualSpeechText,
-  speechVoiceId,
-  useSpeechSynthesis,
-} from "@/hooks/useSpeechSynthesis";
+} from "@/lib/copilotSpeech";
 import { CopilotSpeechButton } from "./CopilotSpeechButton";
 import { FlowBeacon } from "./FlowBeacon";
 import {
