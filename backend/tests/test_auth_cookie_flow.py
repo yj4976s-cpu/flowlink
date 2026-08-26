@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.security import create_access_token, hash_password, utc_now
 from app.db.session import Base, get_db
 from app.main import app
@@ -79,8 +79,17 @@ def seed_user(
     return user
 
 
-def login(client: TestClient, email: str = "user@example.com", password: str = "password123"):
-    return client.post("/api/auth/login", json={"email": email, "password": password})
+def login(
+    client: TestClient,
+    email: str = "user@example.com",
+    password: str = "password123",
+    headers: dict[str, str] | None = None,
+):
+    return client.post(
+        "/api/auth/login",
+        json={"email": email, "password": password},
+        headers=headers,
+    )
 
 
 def register(
@@ -279,6 +288,80 @@ def test_login_cookie_uses_eight_hour_policy(client: TestClient, db: Session) ->
     assert response.status_code == 200
     assert response.json()["expires_in"] == 480 * 60
     assert "Max-Age=28800" in response.headers["set-cookie"]
+
+
+@pytest.mark.parametrize(
+    ("headers", "expects_secure"),
+    [
+        pytest.param(
+            {
+                "host": "flowlink-project.duckdns.org",
+                "x-forwarded-host": "flowlink-project.duckdns.org",
+                "x-forwarded-proto": "https",
+            },
+            True,
+            id="duckdns-https-secure-cookie",
+        ),
+        pytest.param(
+            {
+                "host": "mbc-sw.iptime.org",
+                "x-forwarded-host": "mbc-sw.iptime.org",
+                "x-forwarded-proto": "http",
+            },
+            False,
+            id="academy-http-explicit-host-insecure-cookie",
+        ),
+        pytest.param(
+            {
+                "host": "192.168.0.25",
+                "x-forwarded-host": "192.168.0.25",
+                "x-forwarded-proto": "http",
+            },
+            False,
+            id="lan-nginx-http-insecure-cookie",
+        ),
+        pytest.param(
+            {
+                "host": "flowlink.example",
+                "x-forwarded-host": "flowlink.example",
+                "x-forwarded-proto": "http",
+            },
+            True,
+            id="external-http-still-secure-cookie",
+        ),
+    ],
+)
+def test_login_cookie_secure_policy_respects_scheme_lan_and_academy_hosts(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    headers: dict[str, str],
+    expects_secure: bool,
+) -> None:
+    import app.api.auth as auth_api
+
+    monkeypatch.setattr(
+        auth_api,
+        "get_settings",
+        lambda: Settings(
+            _env_file=None,
+            APP_ENV="production",
+            DATABASE_URL="postgresql+psycopg://flowlink_user:strong-password@db.flowlink.example:5432/flowlink",
+            JWT_SECRET_KEY="flowlink-test-secret-with-at-least-32-characters",
+            FRONTEND_URL="https://flowlink.example",
+            AI_INTERNAL_API_KEY="flowlink-test-ai-internal-key-32-chars",
+            AUTH_INSECURE_HTTP_HOSTS="mbc-sw.iptime.org",
+            FORWARDED_ALLOW_IPS="testclient",
+        ),
+    )
+    seed_user(db)
+
+    response = login(client, headers=headers)
+
+    assert response.status_code == 200
+    set_cookie = response.headers["set-cookie"]
+    assert ("Secure" in set_cookie) is expects_secure
+    assert "Domain=" not in set_cookie
 
 
 def test_login_failure_does_not_set_cookie(client: TestClient, db: Session) -> None:
@@ -588,7 +671,14 @@ def test_social_providers_share_eight_hour_login_cookie_policy(
     response = client.get(f"/api/auth/oauth/{provider}/callback?code=valid-code&state={state_value}", follow_redirects=False)
 
     assert response.status_code == 302
-    assert "Max-Age=28800" in response.headers["set-cookie"]
+    settings = get_settings()
+    set_cookies = response.headers.get_list("set-cookie")
+    expected_max_age = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    assert any(
+        cookie.startswith(f"{settings.AUTH_COOKIE_NAME}=")
+        and f"Max-Age={expected_max_age}" in cookie
+        for cookie in set_cookies
+    ), set_cookies
 
 
 def test_returning_social_user_resumes_safe_relative_path(

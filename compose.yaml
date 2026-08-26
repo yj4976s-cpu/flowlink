@@ -1,0 +1,137 @@
+name: flowlink
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-/api}
+        NEXT_PUBLIC_KAKAO_MAP_JS_KEY: ${NEXT_PUBLIC_KAKAO_MAP_JS_KEY:-}
+        NEXT_PUBLIC_KAKAO_MAP_KEY: ${NEXT_PUBLIC_KAKAO_MAP_KEY:-}
+    expose:
+      - "3000"
+    environment:
+      NODE_ENV: production
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+    networks:
+      - flowlink
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  backend:
+    build:
+      context: ./backend
+    expose:
+      - "8000"
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      APP_HOST: 0.0.0.0
+      APP_PORT: "8000"
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-172.30.0.10}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-480}
+      AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-flowlink_access_token}
+      AUTH_INSECURE_HTTP_HOSTS: ${AUTH_INSECURE_HTTP_HOSTS:-}
+      ALLOWED_FRONTEND_ORIGINS: ${ALLOWED_FRONTEND_ORIGINS:-}
+      ROBOFLOW_API_KEY: ${ROBOFLOW_API_KEY:-}
+      ROBOFLOW_PROJECT_ID: ${ROBOFLOW_PROJECT_ID:-}
+      ROBOFLOW_MODEL_VERSION: ${ROBOFLOW_MODEL_VERSION:-}
+      UPLOAD_DIR: /app/uploads
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+      SUPABASE_STORAGE_BUCKET: ${SUPABASE_STORAGE_BUCKET:-}
+      FRONTEND_URL: ${FRONTEND_URL:?Set FRONTEND_URL}
+      KAKAO_REST_API_KEY: ${KAKAO_REST_API_KEY:-}
+      KAKAO_CLIENT_SECRET: ${KAKAO_CLIENT_SECRET:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      NAVER_CLIENT_ID: ${NAVER_CLIENT_ID:-}
+      NAVER_CLIENT_SECRET: ${NAVER_CLIENT_SECRET:-}
+      OAUTH_BACKEND_BASE_URL: ${OAUTH_BACKEND_BASE_URL:?Set OAUTH_BACKEND_BASE_URL}
+      AI_SERVICE_URL: http://backend-ai:8001
+      AI_INTERNAL_API_KEY: ${AI_INTERNAL_API_KEY:?Set AI_INTERNAL_API_KEY}
+      AI_SERVICE_TIMEOUT_SECONDS: ${AI_SERVICE_TIMEOUT_SECONDS:-30}
+      AI_VIDEO_SERVICE_TIMEOUT_SECONDS: ${AI_VIDEO_SERVICE_TIMEOUT_SECONDS:-120}
+      CHAT_MODEL_PROVIDER: ${CHAT_MODEL_PROVIDER:-gemini}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
+      GEMINI_FALLBACK_MODEL: ${GEMINI_FALLBACK_MODEL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      COPILOT_TIMEOUT_SECONDS: ${COPILOT_TIMEOUT_SECONDS:-30}
+      COPILOT_RATE_LIMIT_WINDOW_SECONDS: ${COPILOT_RATE_LIMIT_WINDOW_SECONDS:-60}
+      COPILOT_GUEST_RATE_LIMIT: ${COPILOT_GUEST_RATE_LIMIT:-10}
+      COPILOT_USER_RATE_LIMIT: ${COPILOT_USER_RATE_LIMIT:-30}
+      COPILOT_ADMIN_RATE_LIMIT: ${COPILOT_ADMIN_RATE_LIMIT:-60}
+      COPILOT_MAX_OUTPUT_TOKENS: ${COPILOT_MAX_OUTPUT_TOKENS:-1200}
+      COPILOT_PROVIDER_COOLDOWN_SECONDS: ${COPILOT_PROVIDER_COOLDOWN_SECONDS:-30}
+    volumes:
+      - flowlink_uploads:/app/uploads
+    depends_on:
+      backend-ai:
+        condition: service_healthy
+    networks:
+      - flowlink
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  backend-ai:
+    build:
+      context: ./backend-ai
+    expose:
+      - "8001"
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      APP_HOST: 0.0.0.0
+      APP_PORT: "8001"
+      AI_INTERNAL_API_KEY: ${AI_INTERNAL_API_KEY:?Set AI_INTERNAL_API_KEY}
+      DETECTION_MODEL: ${DETECTION_MODEL:-/app/models/best.pt}
+      DETECTION_CONFIDENCE: ${DETECTION_CONFIDENCE:-0.25}
+      DETECTION_IMGSZ: ${DETECTION_IMGSZ:-640}
+      IMAGE_MAX_BYTES: ${IMAGE_MAX_BYTES:-20971520}
+      IMAGE_MAX_PIXELS: ${IMAGE_MAX_PIXELS:-16000000}
+      VIDEO_MAX_BYTES: ${VIDEO_MAX_BYTES:-104857600}
+      VIDEO_MAX_DURATION_SECONDS: ${VIDEO_MAX_DURATION_SECONDS:-30}
+    volumes:
+      - ./models:/app/models:ro
+    networks:
+      - flowlink
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=5)"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+networks:
+  flowlink:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  flowlink_uploads:
