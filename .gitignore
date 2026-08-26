@@ -3,7 +3,7 @@
 .env.*
 !.env.example
 !.env.production.example
-!.env.academy.example
+!.env.lan.example
 
 # Next.js
 frontend/node_modules/

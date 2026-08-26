@@ -4,7 +4,7 @@ FlowLink keeps the latest `develop` application code and adds only the Docker,
 Nginx, Certbot, and runtime configuration needed to serve two deployment entry
 points:
 
-- Academy HTTP: `http://mbc-sw.iptime.org:3202`
+- LAN HTTP: `http://mbc-sw.iptime.org:3202`
 - Production HTTPS: `https://flowlink-project.duckdns.org/`
 
 The two URLs are intentionally separate. Do not rewrite one entry point into the
@@ -32,16 +32,16 @@ Docker `expose` only and must not be opened directly to browsers.
 
 - `compose.yaml`: common services, networks, volumes, environment contract, and
   health checks.
-- `compose.academy.yaml`: academy HTTP reverse proxy, no TLS/cert mounts.
+- `compose.lan.yaml`: LAN HTTP reverse proxy, no TLS/cert mounts.
 - `compose.prod.yaml`: DuckDNS HTTPS reverse proxy with Certbot mounts.
-- `nginx/nginx.academy.conf`: HTTP proxy for `mbc-sw.iptime.org`.
+- `nginx/nginx.lan.conf`: HTTP proxy for `mbc-sw.iptime.org`.
 - `nginx/nginx.prod.conf`: DuckDNS HTTP redirect, ACME challenge, and HTTPS
   proxy.
 - `frontend/Dockerfile`: Next.js standalone production image.
 - `backend/Dockerfile`: FastAPI backend image.
 - `backend-ai/Dockerfile`: FastAPI AI image with FFmpeg and OpenCV runtime
   libraries for H.264 result videos.
-- `.env.academy.example`, `.env.production.example`: environment templates only.
+- `.env.lan.example`, `.env.production.example`: environment templates only.
 - `models/.gitkeep`: keeps the host model mount directory without committing
   model weights.
 - `certbot/www/.gitkeep`: keeps the ACME webroot without committing challenge
@@ -61,7 +61,7 @@ model files such as `best.pt`.
   not start a PostgreSQL container.
 - `models/best.pt` is mounted read-only into backend-ai at `/app/models/best.pt`.
 
-## Academy HTTP deployment
+## LAN HTTP deployment
 
 Public URL:
 
@@ -69,7 +69,7 @@ Public URL:
 http://mbc-sw.iptime.org:3202
 ```
 
-If the academy router forwards public port `3202` to host port `8100`, keep:
+If the LAN router forwards public port `3202` to host port `8100`, keep:
 
 ```env
 HTTP_PORT=8100
@@ -78,14 +78,10 @@ HTTP_PORT=8100
 Run:
 
 ```bash
-docker compose \
-  --env-file .env.academy \
-  -f compose.yaml \
-  -f compose.academy.yaml \
-  up -d --build
+docker compose --env-file .env.lan up -d --build
 ```
 
-Academy Nginx:
+LAN Nginx:
 
 - listens on HTTP only
 - does not redirect to HTTPS
@@ -97,9 +93,9 @@ Academy Nginx:
 Cookie behavior:
 
 - `AUTH_INSECURE_HTTP_HOSTS=mbc-sw.iptime.org` allows HTTP email/password login
-  on the academy entry point.
+  on the LAN entry point.
 - Cookies are host-only, `HttpOnly`, `SameSite=Lax`, `Path=/`.
-- `Secure` is omitted only for explicit academy/internal HTTP hosts.
+- `Secure` is omitted only for explicit LAN/internal HTTP hosts.
 - OAuth callbacks remain on the canonical DuckDNS HTTPS origin unless a separate
   OAuth environment is deliberately configured.
 
@@ -119,6 +115,13 @@ docker compose \
   -f compose.yaml \
   -f compose.prod.yaml \
   up -d --build
+```
+
+If `.env.production` contains `COMPOSE_FILE=compose.yaml:compose.prod.yaml`, the
+short form below is equivalent and includes `reverse-proxy` automatically:
+
+```bash
+docker compose --env-file .env.production up -d --build
 ```
 
 Production Nginx:
@@ -141,7 +144,7 @@ Cookie behavior:
 
 - HTTPS requests always set `Secure`.
 - External HTTP requests still keep `Secure=true` and are redirected by Nginx.
-- Cookie Domain is not set, so DuckDNS and academy hosts keep separate host-only
+- Cookie Domain is not set, so DuckDNS and LAN hosts keep separate host-only
   cookies.
 
 ## Important environment values
@@ -149,15 +152,17 @@ Cookie behavior:
 Production:
 
 ```env
+COMPOSE_FILE=compose.yaml:compose.prod.yaml
 FRONTEND_URL=https://flowlink-project.duckdns.org
 NEXT_PUBLIC_API_BASE_URL=/api
 OAUTH_BACKEND_BASE_URL=https://flowlink-project.duckdns.org
 FORWARDED_ALLOW_IPS=172.30.0.10
 ```
 
-Academy:
+LAN:
 
 ```env
+COMPOSE_FILE=compose.yaml:compose.lan.yaml
 FRONTEND_URL=https://flowlink-project.duckdns.org
 NEXT_PUBLIC_API_BASE_URL=/api
 OAUTH_BACKEND_BASE_URL=https://flowlink-project.duckdns.org
@@ -175,17 +180,19 @@ the frontend after changing them.
 Compose config:
 
 ```bash
-docker compose --env-file .env.academy -f compose.yaml -f compose.academy.yaml config
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml config
+docker compose --env-file .env.lan config
+docker compose --env-file .env.production config
+docker compose --env-file .env.lan -f compose.yaml -f compose.lan.yaml config --services
+docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml config --services
 ```
 
 Runtime status:
 
 ```bash
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml ps
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml logs -f backend
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml logs -f backend-ai
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml logs -f frontend
+docker compose --env-file .env.production ps
+docker compose --env-file .env.production logs -f backend
+docker compose --env-file .env.production logs -f backend-ai
+docker compose --env-file .env.production logs -f frontend
 ```
 
 MP4 Range checks:
@@ -207,7 +214,7 @@ Expected:
 
 ## Manual smoke checklist
 
-Academy HTTP:
+LAN HTTP:
 
 - open `http://mbc-sw.iptime.org:3202`
 - register
@@ -241,5 +248,5 @@ webroot. Do not copy certificates into Docker images.
 After renewal, reload the reverse proxy:
 
 ```bash
-docker compose --env-file .env.production -f compose.yaml -f compose.prod.yaml exec -T reverse-proxy nginx -s reload
+docker compose --env-file .env.production exec -T reverse-proxy nginx -s reload
 ```

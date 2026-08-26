@@ -309,7 +309,7 @@ def test_login_cookie_uses_eight_hour_policy(client: TestClient, db: Session) ->
                 "x-forwarded-proto": "http",
             },
             False,
-            id="academy-http-explicit-host-insecure-cookie",
+            id="lan-domain-http-explicit-host-insecure-cookie",
         ),
         pytest.param(
             {
@@ -331,7 +331,7 @@ def test_login_cookie_uses_eight_hour_policy(client: TestClient, db: Session) ->
         ),
     ],
 )
-def test_login_cookie_secure_policy_respects_scheme_lan_and_academy_hosts(
+def test_login_cookie_secure_policy_respects_scheme_lan_and_explicit_hosts(
     client: TestClient,
     db: Session,
     monkeypatch: pytest.MonkeyPatch,
