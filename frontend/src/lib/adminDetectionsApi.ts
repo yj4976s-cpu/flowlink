@@ -1,4 +1,5 @@
 import { resolveUploadedMediaUrl } from "@/lib/mediaUrl";
+import { buildApiUrl, getPublicApiBaseUrl } from "@/lib/apiBase";
 
 export type DetectionObject = {
   id: number; object_class: string; object_class_name: string; final_class_code: string | null;
@@ -20,13 +21,13 @@ export type DetectionObjectUpdate = { final_class_code?: string; processing_stat
 export type AdminCamera = { id: number; code: string; name: string; area_name: string; latitude: number; longitude: number };
 
 export class AdminDetectionsApiError extends Error { constructor(message: string, readonly status?: number) { super(message); this.name = "AdminDetectionsApiError"; } }
-function baseUrl() { const value = process.env.NEXT_PUBLIC_API_BASE_URL?.trim(); if (!value) throw new AdminDetectionsApiError("API 서버 주소가 설정되지 않았습니다."); return value.replace(/\/+$/, ""); }
-async function request<T>(path: string, init?: RequestInit) { const response = await fetch(`${baseUrl()}${path}`, { ...init, credentials: "include", headers: { "Content-Type": "application/json", ...init?.headers } }); if (!response.ok) throw new AdminDetectionsApiError(response.status === 403 ? "관리자 권한이 필요합니다." : "탐지 관리 요청을 처리하지 못했습니다.", response.status); return response.json() as Promise<T>; }
+function baseUrl() { return getPublicApiBaseUrl(); }
+async function request<T>(path: string, init?: RequestInit) { const response = await fetch(buildApiUrl(path), { ...init, credentials: "include", headers: { "Content-Type": "application/json", ...init?.headers } }); if (!response.ok) throw new AdminDetectionsApiError(response.status === 403 ? "관리자 권한이 필요합니다." : "탐지 관리 요청을 처리하지 못했습니다.", response.status); return response.json() as Promise<T>; }
 export function listAdminDetections(signal?: AbortSignal) { return request<DetectionEvent[]>("/api/admin/detections?skip=0&limit=100", { signal }); }
 export function listAdminCameras(signal?: AbortSignal) { return request<AdminCamera[]>("/api/admin/cameras", { signal }); }
 export async function createOperationDetection(cameraId: number, file: File) {
   const body = new FormData(); body.append("camera_id", String(cameraId)); body.append("file", file);
-  const response = await fetch(`${baseUrl()}/api/admin/detections/images`, { method: "POST", credentials: "include", body });
+  const response = await fetch(buildApiUrl("/api/admin/detections/images"), { method: "POST", credentials: "include", body });
   if (!response.ok) { let message = "운영 탐지를 실행하지 못했습니다."; try { const payload = await response.json() as { detail?: string }; if (payload.detail) message = payload.detail; } catch { /* safe fallback */ } throw new AdminDetectionsApiError(message, response.status); }
   return response.json() as Promise<{ message: string }>;
 }

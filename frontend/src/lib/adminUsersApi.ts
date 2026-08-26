@@ -1,3 +1,5 @@
+import { buildApiUrl } from "@/lib/apiBase";
+
 export type AdminUserSummary = {
   total: number;
   active: number;
@@ -36,21 +38,12 @@ export class AdminUsersApiError extends Error {
   }
 }
 
-function apiBaseUrl() {
-  const value = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (!value) throw new AdminUsersApiError("API 서버 주소가 설정되지 않았습니다.");
-  return value.replace(/\/+$/, "");
-}
 
 export async function getAdminUsers(
   filters: { skip: number; limit: number; q?: string; role?: string; active?: string; include_deleted?: boolean },
   signal?: AbortSignal,
 ) {
-  const url = new URL(`${apiBaseUrl()}/api/admin/users`);
-  Object.entries(filters).forEach(([key, value]) => {
-    const normalized = String(value ?? "").trim();
-    if (normalized) url.searchParams.set(key, normalized);
-  });
+  const url = buildApiUrl("/api/admin/users", filters);
   const response = await fetch(url, { credentials: "include", signal });
   if (!response.ok) {
     throw new AdminUsersApiError(

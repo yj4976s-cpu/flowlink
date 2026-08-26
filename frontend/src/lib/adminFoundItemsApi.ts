@@ -1,3 +1,5 @@
+import { buildApiUrl } from "@/lib/apiBase";
+
 export type AdminFoundItemUpdate = {
   status?: string;
   area_name?: string;
@@ -36,17 +38,11 @@ export class AdminFoundItemsApiError extends Error {
   }
 }
 
-function apiBaseUrl() {
-  const value = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (!value) throw new AdminFoundItemsApiError("API 서버 주소가 설정되지 않았습니다.");
-  return value.replace(/\/+$/, "");
-}
 
 export async function listAdminFoundItems(filters: { skip: number; limit: number; status?: string; item_category?: string; q?: string; found_date?: string }, signal?: AbortSignal) {
-  const url = new URL(`${apiBaseUrl()}/api/admin/found-items`);
-  Object.entries(filters).forEach(([key, value]) => {
-    const normalized = key === "found_date" && value ? `${value}T00:00:00` : String(value ?? "").trim();
-    if (normalized) url.searchParams.set(key, normalized);
+  const url = buildApiUrl("/api/admin/found-items", {
+    ...filters,
+    found_date: filters.found_date ? `${filters.found_date}T00:00:00` : undefined,
   });
   const response = await fetch(url, { credentials: "include", signal });
   if (!response.ok) throw new AdminFoundItemsApiError(response.status === 403 ? "관리자 권한이 필요합니다." : "발견물 정보를 불러오지 못했습니다.", response.status);
@@ -54,7 +50,7 @@ export async function listAdminFoundItems(filters: { skip: number; limit: number
 }
 
 export async function updateAdminFoundItem(id: number, update: AdminFoundItemUpdate) {
-  const response = await fetch(`${apiBaseUrl()}/api/admin/found-items/${id}`, {
+  const response = await fetch(buildApiUrl(`/api/admin/found-items/${id}`), {
     method: "PATCH",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
@@ -76,7 +72,7 @@ export async function updateAdminFoundItem(id: number, update: AdminFoundItemUpd
 }
 
 export async function archiveAdminFoundItem(id: number) {
-  const response = await fetch(`${apiBaseUrl()}/api/admin/found-items/${id}/archive`, {
+  const response = await fetch(buildApiUrl(`/api/admin/found-items/${id}/archive`), {
     method: "POST",
     credentials: "include",
   });

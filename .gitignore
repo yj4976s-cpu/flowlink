@@ -2,6 +2,8 @@
 .env
 .env.*
 !.env.example
+!.env.production.example
+!.env.lan.example
 
 # Next.js
 frontend/node_modules/
@@ -32,11 +34,17 @@ backend/__pycache__/
 backend/uploads/*
 !backend/uploads/.gitkeep
 
+# Certbot HTTP-01 challenge tokens
+certbot/www/*
+!certbot/www/.gitkeep
+
 # AI datasets and models
 ai/datasets/
 ai/data/
 ai/runs/
 ai/weights/
+models/*
+!models/.gitkeep
 *.pt
 *.pth
 *.onnx

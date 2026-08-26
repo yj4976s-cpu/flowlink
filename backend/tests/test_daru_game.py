@@ -586,9 +586,8 @@ def test_creating_authenticated_run_renews_login_cookie(client: TestClient, db: 
     settings = get_settings()
     set_cookie = response.headers["set-cookie"]
     assert response.status_code == 201
-    assert settings.ACCESS_TOKEN_EXPIRE_MINUTES == 480
     assert f"{settings.AUTH_COOKIE_NAME}=" in set_cookie
-    assert "Max-Age=28800" in set_cookie
+    assert f"Max-Age={settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60}" in set_cookie
     assert "HttpOnly" in set_cookie and "SameSite=lax" in set_cookie
 
 

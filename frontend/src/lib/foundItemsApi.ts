@@ -1,4 +1,5 @@
 import { resolveUploadedMediaUrl } from "@/lib/mediaUrl";
+import { buildApiUrl as buildCommonApiUrl, getPublicApiBaseUrl } from "@/lib/apiBase";
 
 export type FoundItemListItem = {
   id: number;
@@ -38,26 +39,14 @@ export class FoundItemsApiError extends Error {
   }
 }
 
-function getApiBaseUrl() {
-  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (!baseUrl) {
-    throw new FoundItemsApiError("NEXT_PUBLIC_API_BASE_URL 환경 변수가 설정되지 않았습니다.");
-  }
-  return baseUrl.replace(/\/+$/, "");
-}
+function getApiBaseUrl() { return getPublicApiBaseUrl(); }
 
 export function resolveFoundItemImageUrl(value: string | null) {
   return resolveUploadedMediaUrl(value, getApiBaseUrl());
 }
 
 function buildApiUrl(path: string, params?: Record<string, string | number | undefined>) {
-  const url = new URL(`${getApiBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`);
-  Object.entries(params ?? {}).forEach(([key, value]) => {
-    if (value === undefined) return;
-    const normalized = String(value).trim();
-    if (normalized) url.searchParams.set(key, normalized);
-  });
-  return url.toString();
+  return buildCommonApiUrl(path, params);
 }
 
 async function requestJson<T>(url: string, signal?: AbortSignal): Promise<T> {

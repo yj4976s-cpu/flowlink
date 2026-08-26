@@ -1,3 +1,5 @@
+import { buildApiUrl as buildCommonApiUrl, resolveMediaUrl } from "@/lib/apiBase";
+
 export type DetectionBBox = {
   x: number;
   y: number;
@@ -56,31 +58,13 @@ export class DetectionApiError extends Error {
   }
 }
 
-function getApiBaseUrl() {
-  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (!baseUrl) {
-    throw new DetectionApiError("NEXT_PUBLIC_API_BASE_URL 환경 변수가 설정되지 않았습니다.");
-  }
-  return baseUrl.replace(/\/+$/, "");
-}
 
 function buildApiUrl(path: string, params?: Record<string, string | number | undefined>) {
-  const url = new URL(`${getApiBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`);
-  Object.entries(params ?? {}).forEach(([key, value]) => {
-    if (value === undefined) return;
-    const normalized = String(value).trim();
-    if (normalized) url.searchParams.set(key, normalized);
-  });
-  return url.toString();
+  return buildCommonApiUrl(path, params);
 }
 
 export function resolveDetectionMediaUrl(value: string | null | undefined) {
-  const trimmed = value?.trim();
-  if (!trimmed) return "";
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  const relative = trimmed.replace(/^\/+/, "");
-  const path = relative.startsWith("uploads/") ? `/${relative}` : `/uploads/${relative}`;
-  return new URL(path, `${getApiBaseUrl()}/`).toString();
+  return resolveMediaUrl(value) ?? "";
 }
 
 function getFallbackMessage(status: number) {
