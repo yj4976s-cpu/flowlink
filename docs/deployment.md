@@ -77,7 +77,7 @@ reverse-proxy: 172.30.0.10
 backend env:   FORWARDED_ALLOW_IPS=172.30.0.10
 ```
 
-Do not set `FORWARDED_ALLOW_IPS=*`. If `compose.prod.yaml` or
+Do not use a wildcard value for `FORWARDED_ALLOW_IPS`. If `compose.prod.yaml` or
 `compose.lan.yaml` stops assigning `reverse-proxy` to `172.30.0.10`, update
 `FORWARDED_ALLOW_IPS` to the actual Compose network address before deploying.
 
