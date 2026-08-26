@@ -35,4 +35,5 @@ export function requestDaruGameHint(runId: string) { return actionRequest<{ hint
 export function getDaruGameRunState(runId: string) { return request<ServerRunState>(`/api/daru-game/runs/${runId}/state`); }
 export function getDaruGameRecords(signal?: AbortSignal) { return request<GameRecord[]>("/api/daru-game/me", { signal }); }
 export function submitDaruGameResult(payload: { run_id: string; finish_partial?: boolean }) { return actionRequest<ServerGameResult>("/api/daru-game/results", payload); }
-export function getDaruLeaderboard(difficulty: ApiGameDifficulty, signal?: AbortSignal) { return request<{ difficulty: ApiGameDifficulty; entries: LeaderboardEntry[]; my_entry: LeaderboardEntry | null }>(`/api/daru-game/leaderboard?difficulty=${difficulty}`, { signal }); }
+export interface DaruLeaderboardResponse { difficulty: ApiGameDifficulty; top_entries: LeaderboardEntry[]; entries: LeaderboardEntry[]; my_entry: LeaderboardEntry | null; next_rank_score: number | null; total: number; page: number; page_size: number; total_pages: number; }
+export function getDaruLeaderboard(difficulty: ApiGameDifficulty, page: number, signal?: AbortSignal) { return request<DaruLeaderboardResponse>(`/api/daru-game/leaderboard?difficulty=${difficulty}&page=${page}&page_size=5`, { signal }); }

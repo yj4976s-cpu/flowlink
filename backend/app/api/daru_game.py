@@ -86,12 +86,16 @@ def run_state(run_id: UUID, current_user: Annotated[User, Depends(require_user)]
 
 
 @router.get("/leaderboard", response_model=DaruLeaderboardResponse)
-def leaderboard(db: Annotated[Session, Depends(get_db)], current_user: Annotated[User | None, Depends(get_optional_current_user)], difficulty: Annotated[Difficulty, Query()] = "EASY") -> DaruLeaderboardResponse:
+def leaderboard(db: Annotated[Session, Depends(get_db)], current_user: Annotated[User | None, Depends(get_optional_current_user)], difficulty: Annotated[Difficulty, Query()] = "EASY", page: Annotated[int, Query(ge=1)] = 1, page_size: Annotated[int, Query(ge=1, le=20)] = 5) -> DaruLeaderboardResponse:
     rows = db.execute(ranking_query(difficulty)).all()
     entries = [DaruLeaderboardEntry(rank=index, nickname=nickname, best_detection_power=float(stat.best_detection_power), best_attempts=stat.best_attempts or 0, best_elapsed_seconds=stat.best_elapsed_seconds or 0, best_combo=stat.best_combo, best_hints_used=stat.best_hints_used or 0, achieved_at=stat.best_achieved_at or stat.created_at, is_me=current_user is not None and current_user.role == "USER" and stat.user_id == current_user.id) for index, (stat, nickname) in enumerate(rows, 1)]
-    top = entries[:10]
     mine = next((entry for entry in entries if entry.is_me), None)
-    return DaruLeaderboardResponse(difficulty=difficulty, entries=top, my_entry=mine)
+    general_entries = entries[3:]
+    total_pages = max(1, (len(general_entries) + page_size - 1) // page_size)
+    current_page = min(page, total_pages)
+    offset = (current_page - 1) * page_size
+    next_rank_score = entries[mine.rank - 2].best_detection_power if mine and mine.rank > 1 else None
+    return DaruLeaderboardResponse(difficulty=difficulty, top_entries=entries[:3], entries=general_entries[offset:offset + page_size], my_entry=mine, next_rank_score=next_rank_score, total=len(entries), page=current_page, page_size=page_size, total_pages=total_pages)
 
 
 @router.get("/me", response_model=list[DaruGameRecord])

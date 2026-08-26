@@ -509,6 +509,28 @@ def test_v2_ranking_orders_score_attempts_elapsed_then_achieved_at(db: Session) 
     assert [nickname for _stat, nickname in db.execute(ranking_query("EASY")).all()] == ["first", "time", "attempt", "score", "lower"]
 
 
+def test_leaderboard_returns_top_three_paged_general_rows_and_my_rank(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    users = [add_user(db, user_id, f"rank-{user_id}") for user_id in range(2, 13)]
+    users.append(db.get(User, 1))
+    for index, user in enumerate(users):
+        assert user is not None
+        db.add(DaruGameStat(user_id=user.id, difficulty="EASY", best_detection_power=Decimal(str(99 - index)), score_version=2, best_attempts=10 + index, best_elapsed_seconds=40 + index, best_combo=5, best_hints_used=0, total_daru_points=0, play_count=1, best_achieved_at=now + timedelta(seconds=index), created_at=now, updated_at=now))
+    db.commit()
+
+    response = client.get("/api/daru-game/leaderboard?difficulty=EASY&page=2&page_size=5")
+    assert response.status_code == 200
+    payload = response.json()
+    assert [entry["rank"] for entry in payload["top_entries"]] == [1, 2, 3]
+    assert [entry["rank"] for entry in payload["entries"]] == [9, 10, 11, 12]
+    assert payload["my_entry"]["rank"] == 12
+    assert payload["next_rank_score"] == 89.0
+    assert payload["total"] == 12
+    assert payload["page"] == 2
+    assert payload["page_size"] == 5
+    assert payload["total_pages"] == 2
+
+
 def test_game_run_actions_lock_the_row() -> None:
     assert "FOR UPDATE" in str(game_run_lock_query(uuid4()).compile(dialect=postgresql.dialect()))
 
