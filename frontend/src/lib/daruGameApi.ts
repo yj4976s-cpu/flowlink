@@ -1,8 +1,8 @@
+import { buildApiUrl } from "@/lib/apiBase";
 import type { ApiGameDifficulty, LeaderboardEntry } from "@/components/daru-game/game.types";
 import { invalidateAuthOnUnauthorized } from "@/lib/authEvents";
-function apiBase() { return (process.env.NEXT_PUBLIC_API_BASE_URL ?? "").replace(/\/+$/, ""); }
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${apiBase()}${path}`, { ...init, credentials: "include", headers: { "Content-Type": "application/json", ...init?.headers } });
+  const response = await fetch(buildApiUrl(path), { ...init, credentials: "include", headers: { "Content-Type": "application/json", ...init?.headers } });
   if (!response.ok) {
     invalidateAuthOnUnauthorized(response.status);
     const payload = await response.json().catch(() => null) as { detail?: string | { code?: string; message?: string } } | null;

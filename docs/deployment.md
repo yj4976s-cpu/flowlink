@@ -116,8 +116,11 @@ Cookie behavior:
   on the LAN entry point.
 - Cookies are host-only, `HttpOnly`, `SameSite=Lax`, `Path=/`.
 - `Secure` is omitted only for explicit LAN/internal HTTP hosts.
-- OAuth callbacks remain on the canonical DuckDNS HTTPS origin unless a separate
-  OAuth environment is deliberately configured.
+- Email/password login uses the LAN same-origin `/api` endpoint.
+- OAuth must start on the canonical DuckDNS HTTPS origin so the OAuth state
+  cookie and callback host match. Set
+  `NEXT_PUBLIC_OAUTH_BASE_URL=https://flowlink-project.duckdns.org` for the LAN
+  frontend build.
 
 ## Production HTTPS deployment
 
@@ -175,6 +178,7 @@ Production:
 COMPOSE_FILE=compose.yaml:compose.prod.yaml
 FRONTEND_URL=https://flowlink-project.duckdns.org
 NEXT_PUBLIC_API_BASE_URL=/api
+NEXT_PUBLIC_OAUTH_BASE_URL=
 OAUTH_BACKEND_BASE_URL=https://flowlink-project.duckdns.org
 FORWARDED_ALLOW_IPS=172.30.0.10
 ```
@@ -185,6 +189,7 @@ LAN:
 COMPOSE_FILE=compose.yaml:compose.lan.yaml
 FRONTEND_URL=https://flowlink-project.duckdns.org
 NEXT_PUBLIC_API_BASE_URL=/api
+NEXT_PUBLIC_OAUTH_BASE_URL=https://flowlink-project.duckdns.org
 OAUTH_BACKEND_BASE_URL=https://flowlink-project.duckdns.org
 ALLOWED_FRONTEND_ORIGINS=http://mbc-sw.iptime.org:3202,https://flowlink-project.duckdns.org
 AUTH_INSECURE_HTTP_HOSTS=mbc-sw.iptime.org
@@ -279,8 +284,35 @@ Production HTTPS:
 Certbot is host-managed. Nginx only mounts certificate files and the challenge
 webroot. Do not copy certificates into Docker images.
 
+The production config uses the webroot challenge path mounted from:
+
+```text
+/home/ubuntu/flowlink/certbot/www
+```
+
+If the certificate was originally issued with standalone mode, switch renewal to
+webroot on the host. The important pieces are:
+
+- webroot: `/home/ubuntu/flowlink/certbot/www`
+- Nginx config: `nginx/nginx.prod.conf`
+- Compose override: `compose.prod.yaml`
+- env file: `.env.production`
+- certificate, private key, and Certbot renewal config stay outside Git
+
+Dry-run renewal:
+
+```bash
+sudo certbot renew --dry-run
+```
+
 After renewal, reload the reverse proxy:
 
 ```bash
 docker compose --env-file .env.production exec -T reverse-proxy nginx -s reload
+```
+
+Typical deploy hook:
+
+```bash
+--deploy-hook "cd /home/ubuntu/flowlink && docker compose --env-file .env.production exec -T reverse-proxy nginx -s reload"
 ```

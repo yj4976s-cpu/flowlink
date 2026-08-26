@@ -1,4 +1,7 @@
+import { headers } from "next/headers";
+
 import type { HomeSummary, ObjectKind } from "@/types/home";
+import { buildApiUrl, resolveMediaUrl } from "@/lib/apiBase";
 
 type ApiHomeSummary = {
   stats: {
@@ -26,20 +29,15 @@ export const emptyHomeSummary: HomeSummary = {
 
 const objectKinds = new Set<ObjectKind>(["backpack", "umbrella", "branch", "ball", "container"]);
 
-function apiBaseUrl() {
-  return process.env.NEXT_PUBLIC_API_BASE_URL?.trim().replace(/\/+$/, "") || null;
-}
-
 function objectKind(value: string): ObjectKind {
   return objectKinds.has(value as ObjectKind) ? value as ObjectKind : "container";
 }
 
-function mediaUrl(value: string | null, baseUrl: string): string | null {
-  return value ? new URL(value, `${baseUrl}/`).toString() : null;
+function mediaUrl(value: string | null): string | null {
+  return resolveMediaUrl(value);
 }
 
 function mapSummary(summary: ApiHomeSummary): HomeSummary {
-  const baseUrl = apiBaseUrl() ?? "";
   return {
     stats: {
       recentFound: summary.stats.recent_found,
@@ -52,7 +50,7 @@ function mapSummary(summary: ApiHomeSummary): HomeSummary {
       category: item.category,
       title: item.title,
       location: item.location,
-      imageUrl: mediaUrl(item.image_url, baseUrl),
+      imageUrl: mediaUrl(item.image_url),
       confidence: item.confidence,
       foundAt: item.found_at,
       objectKind: objectKind(item.object_kind),
@@ -60,11 +58,21 @@ function mapSummary(summary: ApiHomeSummary): HomeSummary {
   };
 }
 
+async function buildServerApiUrl(path: string) {
+  const apiUrl = buildApiUrl(path);
+  if (/^https?:\/\//i.test(apiUrl)) return apiUrl;
+  const requestHeaders = await headers();
+  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host");
+  if (!host) return null;
+  const proto = requestHeaders.get("x-forwarded-proto") ?? "http";
+  return `${proto}://${host}${apiUrl.startsWith("/") ? apiUrl : `/${apiUrl}`}`;
+}
+
 export async function getHomeSummary(): Promise<HomeSummary | null> {
-  const baseUrl = apiBaseUrl();
-  if (!baseUrl) return null;
   try {
-    const response = await fetch(`${baseUrl}/api/system/home-summary`, { cache: "no-store" });
+    const url = await buildServerApiUrl("/api/system/home-summary");
+    if (!url) return null;
+    const response = await fetch(url, { cache: "no-store" });
     if (!response.ok) return null;
     return mapSummary(await response.json() as ApiHomeSummary);
   } catch {

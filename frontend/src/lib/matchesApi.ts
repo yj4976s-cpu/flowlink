@@ -1,3 +1,5 @@
+import { buildApiUrl as buildCommonApiUrl, resolveMediaUrl } from "@/lib/apiBase";
+
 export type MatchLostReport = {
   id: number;
   item_category: string;
@@ -45,22 +47,9 @@ export class MatchesApiError extends Error {
   }
 }
 
-function getApiBaseUrl() {
-  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (!baseUrl) {
-    throw new MatchesApiError("NEXT_PUBLIC_API_BASE_URL 환경 변수가 설정되지 않았습니다.");
-  }
-  return baseUrl.replace(/\/+$/, "");
-}
 
 function buildApiUrl(path: string, params?: Record<string, string | number | undefined>) {
-  const url = new URL(`${getApiBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`);
-  Object.entries(params ?? {}).forEach(([key, value]) => {
-    if (value === undefined) return;
-    const normalized = String(value).trim();
-    if (normalized) url.searchParams.set(key, normalized);
-  });
-  return url.toString();
+  return buildCommonApiUrl(path, params);
 }
 
 function getFallbackMessage(status: number) {
@@ -84,19 +73,14 @@ export function listMyMatchesForReport(lostReportId: number, signal?: AbortSigna
 }
 
 export function listMyProgressMatches(lostReportIds: number[], signal?: AbortSignal) {
-  const url = new URL(`${getApiBaseUrl()}/api/matches/me/progress`);
-  lostReportIds.forEach((id) => url.searchParams.append("lost_report_ids", String(id)));
-  return requestJson<MatchCandidate[]>(url.toString(), signal);
+  return requestJson<MatchCandidate[]>(
+    buildCommonApiUrl("/api/matches/me/progress", { lost_report_ids: lostReportIds }),
+    signal,
+  );
 }
 
 export function resolveMatchImageUrl(value: string | null) {
-  if (!value) return null;
-  try {
-    const resolved = new URL(value, `${getApiBaseUrl()}/`);
-    return resolved.protocol === "http:" || resolved.protocol === "https:" ? resolved.toString() : null;
-  } catch {
-    return null;
-  }
+  return resolveMediaUrl(value);
 }
 
 async function requestJson<T>(url: string, signal?: AbortSignal): Promise<T> {
