@@ -95,7 +95,7 @@ type UiMessage = {
 };
 
 function getSpeechText(message: UiMessage) {
-  return message.speechText?.trim() || message.text;
+  return message.text;
 }
 
 function historyGroup(value: string) {

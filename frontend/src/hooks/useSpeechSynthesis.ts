@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 const VOICE_STORAGE_KEY = "flowlink:copilot:voice";
 const SPEECH_RATE_STORAGE_KEY = "flowlink:copilot:speech-rate";
+const MAX_SPEECH_CHUNK_LENGTH = 160;
 
 export const SPEECH_RATES = [0.8, 1, 1.2, 1.4] as const;
 export type SpeechRate = (typeof SPEECH_RATES)[number];
@@ -55,6 +56,51 @@ function koreanVoices(voices: SpeechSynthesisVoice[]) {
   });
 }
 
+export function splitSpeechText(text: string, maxLength = MAX_SPEECH_CHUNK_LENGTH) {
+  const chunks: string[] = [];
+  const normalizedText = text.trim();
+  let offset = 0;
+
+  while (offset < normalizedText.length) {
+    const remainingLength = normalizedText.length - offset;
+    if (remainingLength <= maxLength) {
+      chunks.push(normalizedText.slice(offset));
+      break;
+    }
+
+    const windowEnd = offset + maxLength;
+    let chunkEnd = -1;
+
+    // Prefer the latest natural sentence or line boundary within the safe window.
+    for (let index = windowEnd - 1; index >= offset; index -= 1) {
+      if (".!?。\n\r".includes(normalizedText[index])) {
+        chunkEnd = index + 1;
+        break;
+      }
+    }
+
+    // A long sentence is split at a clause/word boundary where possible.
+    if (chunkEnd < 0) {
+      for (let index = windowEnd - 1; index >= offset; index -= 1) {
+        if (",;:，、 \t".includes(normalizedText[index])) {
+          chunkEnd = index + 1;
+          break;
+        }
+      }
+    }
+
+    if (chunkEnd <= offset) chunkEnd = windowEnd;
+    // Do not split an emoji or another UTF-16 surrogate pair at the hard limit.
+    const lastCodeUnit = normalizedText.charCodeAt(chunkEnd - 1);
+    if (lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff) chunkEnd -= 1;
+
+    chunks.push(normalizedText.slice(offset, chunkEnd));
+    offset = chunkEnd;
+  }
+
+  return chunks;
+}
+
 export function useSpeechSynthesis({
   voiceSelectionEnabled = false,
   voiceStorageUserId = null,
@@ -96,22 +142,18 @@ export function useSpeechSynthesis({
     generationRef.current = generation;
     window.speechSynthesis.cancel();
 
-    const utterance = new window.SpeechSynthesisUtterance(text);
-    utterance.lang = "ko-KR";
-    utterance.rate = speechRateRef.current;
-    utterance.pitch = 1;
+    const chunks = splitSpeechText(text);
+    const rate = speechRateRef.current;
     const selectedVoice = voiceSelectionEnabledRef.current && selectedVoiceIdRef.current
       ? voicesRef.current.find((voice) => speechVoiceId(voice) === selectedVoiceIdRef.current)
       : null;
     const resolvedVoice = selectedVoice ?? preferredKoreanVoice(voicesRef.current);
-    if (resolvedVoice) utterance.voice = resolvedVoice;
-    utteranceRef.current = utterance;
     activeSpeechRef.current = { messageId, text };
     pausedRef.current = false;
     setSpeakingMessageId(messageId);
     setPaused(false);
 
-    const finish = () => {
+    const finish = (utterance: SpeechSynthesisUtterance) => {
       if (generationRef.current !== generation || utteranceRef.current !== utterance) return;
       utteranceRef.current = null;
       activeSpeechRef.current = null;
@@ -119,26 +161,43 @@ export function useSpeechSynthesis({
       setSpeakingMessageId(null);
       setPaused(false);
     };
-    utterance.onend = finish;
-    utterance.onerror = finish;
-    utterance.onpause = () => {
-      if (generationRef.current === generation && utteranceRef.current === utterance) {
-        pausedRef.current = true;
-        setPaused(true);
-      }
-    };
-    utterance.onresume = () => {
-      if (generationRef.current === generation && utteranceRef.current === utterance) {
-        pausedRef.current = false;
-        setPaused(false);
+
+    const playChunk = (chunkIndex: number) => {
+      if (generationRef.current !== generation) return;
+      const utterance = new window.SpeechSynthesisUtterance(chunks[chunkIndex]);
+      utterance.lang = "ko-KR";
+      utterance.rate = rate;
+      utterance.pitch = 1;
+      if (resolvedVoice) utterance.voice = resolvedVoice;
+      utteranceRef.current = utterance;
+
+      utterance.onend = () => {
+        if (generationRef.current !== generation || utteranceRef.current !== utterance) return;
+        if (chunkIndex + 1 < chunks.length) playChunk(chunkIndex + 1);
+        else finish(utterance);
+      };
+      utterance.onerror = () => finish(utterance);
+      utterance.onpause = () => {
+        if (generationRef.current === generation && utteranceRef.current === utterance) {
+          pausedRef.current = true;
+          setPaused(true);
+        }
+      };
+      utterance.onresume = () => {
+        if (generationRef.current === generation && utteranceRef.current === utterance) {
+          pausedRef.current = false;
+          setPaused(false);
+        }
+      };
+
+      try {
+        window.speechSynthesis.speak(utterance);
+      } catch {
+        finish(utterance);
       }
     };
 
-    try {
-      window.speechSynthesis.speak(utterance);
-    } catch {
-      finish();
-    }
+    playChunk(0);
   }, []);
 
   const pause = useCallback(() => {
