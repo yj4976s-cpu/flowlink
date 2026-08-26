@@ -512,7 +512,12 @@ export function AdminDetectionsClient() {
   const [operationMessage, setOperationMessage] = useState("");
   const [operationError, setOperationError] = useState("");
   const [focusedReview, setFocusedReview] = useState(false);
+  const [mobileNotice, setMobileNotice] = useState("");
   const focusTriggerRef = useRef<HTMLButtonElement>(null);
+  const knownEventIdsRef = useRef<Set<number>>(new Set());
+  const notifiedEventIdsRef = useRef<Set<number>>(new Set());
+  const loadRequestIdRef = useRef(0);
+  const silentRequestRef = useRef<{ controller: AbortController; requestId: number } | null>(null);
 
   const searchedEvents = useMemo(() => events.filter((event) => !search.trim() || String(event.id).includes(search.trim()) || event.detected_objects.some((object) => `${object.object_class_name} ${object.object_class} ${object.final_class_code ?? ""}`.toLowerCase().includes(search.trim().toLowerCase()))), [events, search]);
   const counts = useMemo(() => Object.fromEntries(filterOptions.map((item) => [item.value, searchedEvents.filter((event) => eventMatchesFilter(event, item.value)).length])) as Record<ReviewFilter, number>, [searchedEvents]);
@@ -522,33 +527,75 @@ export function AdminDetectionsClient() {
   const selectedObject = selected?.detected_objects.find((object) => object.id === selectedObjectId && objectMatchesFilter(object, filter)) ?? (selected ? defaultObjectForFilter(selected, filter) : null);
   const filtersActive = filter !== "PENDING" || sort !== "NEWEST" || Boolean(search);
 
-  const applyData = useCallback((data: DetectionEvent[]) => {
+  const applyData = useCallback((data: DetectionEvent[], silent = false) => {
+    if (silent && knownEventIdsRef.current.size > 0) {
+      const newEvents = data.filter((event) => !knownEventIdsRef.current.has(event.id) && !notifiedEventIdsRef.current.has(event.id));
+      if (newEvents.length) {
+        newEvents.forEach((event) => notifiedEventIdsRef.current.add(event.id));
+        setMobileNotice(`새 현장 등록 ${newEvents.length}건이 목록에 반영됐습니다.`);
+      }
+    }
+    knownEventIdsRef.current = new Set(data.map((event) => event.id));
     setEvents(data);
     setSelectedId((current) => data.some((item) => item.id === (requested || current)) ? (requested || current) : data[0]?.id ?? null);
   }, [requested]);
-  const load = useCallback((showLoading = true) => {
+  const load = useCallback((showLoading = true, silent = false) => {
+    if (silent && silentRequestRef.current) return null;
+    if (!silent) {
+      silentRequestRef.current?.controller.abort();
+      silentRequestRef.current = null;
+    }
     const controller = new AbortController();
+    const requestId = ++loadRequestIdRef.current;
+    if (silent) silentRequestRef.current = { controller, requestId };
     if (showLoading) {
       setLoading(true);
       setError("");
     }
-    listAdminDetections(controller.signal).then(applyData).catch((reason) => {
-      if (!isAbortError(reason)) setError("탐지 결과를 불러오지 못했습니다.");
+    listAdminDetections(controller.signal).then((data) => {
+      if (requestId !== loadRequestIdRef.current || controller.signal.aborted) return;
+      applyData(data, silent);
+    }).catch((reason) => {
+      if (!isAbortError(reason) && !silent) setError("탐지 결과를 불러오지 못했습니다.");
     }).finally(() => {
-      if (!controller.signal.aborted) setLoading(false);
+      if (silentRequestRef.current?.requestId === requestId) silentRequestRef.current = null;
+      if (!controller.signal.aborted && showLoading) setLoading(false);
     });
     return controller;
   }, [applyData]);
 
   useEffect(() => {
     const controller = new AbortController();
-    listAdminDetections(controller.signal).then(applyData).catch((reason) => {
+    const requestId = ++loadRequestIdRef.current;
+    listAdminDetections(controller.signal).then((data) => {
+      if (requestId !== loadRequestIdRef.current || controller.signal.aborted) return;
+      applyData(data);
+    }).catch((reason) => {
       if (!isAbortError(reason)) setError("탐지 결과를 불러오지 못했습니다.");
     }).finally(() => {
       if (!controller.signal.aborted) setLoading(false);
     });
     return () => controller.abort();
   }, [applyData]);
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState !== "visible") return;
+      load(false, true);
+    };
+    const intervalId = window.setInterval(refresh, 5000);
+    const visibilityChange = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", visibilityChange);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", visibilityChange);
+      silentRequestRef.current?.controller.abort();
+      silentRequestRef.current = null;
+    };
+  }, [load]);
   useEffect(() => {
     const controller = new AbortController();
     listAdminCameras(controller.signal)
@@ -611,8 +658,18 @@ export function AdminDetectionsClient() {
           <h1>현장 AI 처리</h1>
           <p>현장 카메라에서 확인된 물체를 검토하고 발견물 등록 또는 폐기물 수거 처리를 진행합니다.</p>
         </div>
-        <button type="button" className={styles.refreshButton} data-loading={loading} disabled={loading} onClick={() => { load(); }}><Icon name="scanLine" size={17} />최신 탐지 불러오기</button>
+        <div className={styles.headerActions}>
+          <Link href="/admin/detections/mobile" className={styles.mobileLink}><Icon name="camera" size={17} />모바일 폐기물 회수</Link>
+          <button type="button" className={styles.refreshButton} data-loading={loading} disabled={loading} onClick={() => { load(); }}><Icon name="scanLine" size={17} />최신 탐지 불러오기</button>
+        </div>
       </header>
+      {mobileNotice && (
+        <p className={styles.mobileNotice} role="status">
+          <Icon name="info" size={16} />
+          {mobileNotice}
+          <button type="button" onClick={() => setMobileNotice("")}>닫기</button>
+        </p>
+      )}
 
       <div className={styles.summary} role="tablist" aria-label="현장 AI 업무 필터">
         {filterOptions.map((item) => (

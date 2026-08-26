@@ -19,6 +19,15 @@ export type DetectionEvent = {
 };
 export type DetectionObjectUpdate = { final_class_code?: string; processing_status?: DetectionObject["processing_status"]; admin_memo?: string; confirmed_color?: string };
 export type AdminCamera = { id: number; code: string; name: string; area_name: string; latitude: number; longitude: number };
+export type AdminMobileWasteRegistrationResponse = {
+  detection_event_id: number;
+  detected_object_id: number;
+  processing_status: "CONFIRMED";
+  follow_up_kind: "WASTE";
+  waste_collection_completed: false;
+  original_media_url: string;
+  cropped_image_url: string | null;
+};
 
 export class AdminDetectionsApiError extends Error { constructor(message: string, readonly status?: number) { super(message); this.name = "AdminDetectionsApiError"; } }
 function baseUrl() { return getPublicApiBaseUrl(); }
@@ -30,6 +39,27 @@ export async function createOperationDetection(cameraId: number, file: File) {
   const response = await fetch(buildApiUrl("/api/admin/detections/images"), { method: "POST", credentials: "include", body });
   if (!response.ok) { let message = "운영 탐지를 실행하지 못했습니다."; try { const payload = await response.json() as { detail?: string }; if (payload.detail) message = payload.detail; } catch { /* safe fallback */ } throw new AdminDetectionsApiError(message, response.status); }
   return response.json() as Promise<{ message: string }>;
+}
+export async function registerMobileWasteCandidate(cameraId: number, file: File, bbox: { x: number; y: number; width: number; height: number }) {
+  const body = new FormData();
+  body.append("camera_id", String(cameraId));
+  body.append("file", file);
+  body.append("bbox_x", String(bbox.x));
+  body.append("bbox_y", String(bbox.y));
+  body.append("bbox_width", String(bbox.width));
+  body.append("bbox_height", String(bbox.height));
+  const response = await fetch(buildApiUrl("/api/admin/detections/mobile-waste"), { method: "POST", credentials: "include", body });
+  if (!response.ok) {
+    let message = "모바일 폐기물 등록을 처리하지 못했습니다.";
+    try {
+      const payload = await response.json() as { detail?: string };
+      if (payload.detail) message = payload.detail;
+    } catch {
+      // safe fallback
+    }
+    throw new AdminDetectionsApiError(message, response.status);
+  }
+  return response.json() as Promise<AdminMobileWasteRegistrationResponse>;
 }
 export function updateDetectedObject(id: number, update: DetectionObjectUpdate) { return request<{ message: string }>(`/api/admin/detected-objects/${id}`, { method: "PATCH", body: JSON.stringify(update) }); }
 export function createFoundItemFromDetection(id: number) { return request<{ detected_object_id: number; found_item_id: number; source_type: "AI"; follow_up_status: "COMPLETED" }>(`/api/admin/detected-objects/${id}/found-item`, { method: "POST" }); }
