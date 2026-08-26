@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { BEST_RECORD_STORAGE_KEYS, resolveGuestBest } from "../src/components/daru-game/game.storage.ts";
+import { getLeaderboardPageRequest, isLeaderboardDifficulty, isLeaderboardScoreTie } from "../src/components/daru-game/leaderboard.utils.ts";
 import { isExpiredRunError, isOutdatedDeckError, OUTDATED_DECK_ERROR_CODE, RUN_EXPIRED_ERROR_CODE, terminalRunRecoveryReason } from "../src/lib/daruRunRecovery.ts";
 
 const OLD_HARD_KEY = "flowlink:daru-game:v2:best-detection:hard";
@@ -46,4 +47,20 @@ test("terminal recovery is limited to outdated and expired run codes", () => {
   assert.equal(terminalRunRecoveryReason({ status: 409, code: RUN_EXPIRED_ERROR_CODE }), "expired");
   assert.equal(terminalRunRecoveryReason({ status: 409, code: "OTHER_CONFLICT" }), null);
   assert.equal(terminalRunRecoveryReason({ status: 404, code: RUN_EXPIRED_ERROR_CODE }), null);
+});
+
+test("a leaderboard response is visible only for the selected difficulty", () => {
+  assert.equal(isLeaderboardDifficulty("EASY", "EASY"), true);
+  assert.equal(isLeaderboardDifficulty("EASY", "NORMAL"), false);
+});
+
+test("a failed next-page request retries the displayed next page without skipping", () => {
+  assert.deepEqual(getLeaderboardPageRequest(1, 2, 1, 4), { page: 2, retry: true });
+  assert.deepEqual(getLeaderboardPageRequest(2, 2, 1, 4), { page: 3, retry: false });
+});
+
+test("equal scores explain the ranking tie-break instead of showing a zero-point gap", () => {
+  assert.equal(isLeaderboardScoreTie(5, 0), true);
+  assert.equal(isLeaderboardScoreTie(1, 0), false);
+  assert.equal(isLeaderboardScoreTie(5, 0.1), false);
 });
