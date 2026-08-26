@@ -60,6 +60,33 @@ def _ensure_valid_bbox(bbox: DetectionBBox, *, media_width: int, media_height: i
         )
 
 
+def _clamp_prediction_bbox(bbox: DetectionBBox, *, media_width: int, media_height: int) -> DetectionBBox:
+    values = (bbox.x, bbox.y, bbox.width, bbox.height)
+    if not all(math.isfinite(value) for value in values):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="서버 폐기물 bbox가 유효하지 않습니다.",
+        )
+    if bbox.width <= 0 or bbox.height <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="서버 폐기물 bbox 크기가 유효하지 않습니다.",
+        )
+
+    left = max(0.0, min(float(media_width), bbox.x))
+    top = max(0.0, min(float(media_height), bbox.y))
+    right = max(0.0, min(float(media_width), bbox.x + bbox.width))
+    bottom = max(0.0, min(float(media_height), bbox.y + bbox.height))
+    width = right - left
+    height = bottom - top
+    if width <= 0 or height <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="서버 폐기물 bbox가 이미지 영역과 겹치지 않습니다.",
+        )
+    return DetectionBBox(x=left, y=top, width=width, height=height)
+
+
 def _find_matching_trash(
     predictions: list[DetectionPrediction],
     selected_bbox: DetectionBBox,
@@ -89,12 +116,12 @@ def _find_matching_trash(
     return best_prediction
 
 
-def _save_crop(media_path: Path, prediction: DetectionPrediction, *, media_width: int, media_height: int) -> tuple[Path, str]:
-    _ensure_valid_bbox(prediction.bbox, media_width=media_width, media_height=media_height)
-    left = max(0, min(media_width, int(math.floor(prediction.bbox.x))))
-    top = max(0, min(media_height, int(math.floor(prediction.bbox.y))))
-    right = max(left, min(media_width, int(math.ceil(prediction.bbox.x + prediction.bbox.width))))
-    bottom = max(top, min(media_height, int(math.ceil(prediction.bbox.y + prediction.bbox.height))))
+def _save_crop(media_path: Path, prediction: DetectionPrediction, *, media_width: int, media_height: int) -> tuple[Path, str, DetectionBBox]:
+    clamped_bbox = _clamp_prediction_bbox(prediction.bbox, media_width=media_width, media_height=media_height)
+    left = max(0, min(media_width, int(math.floor(clamped_bbox.x))))
+    top = max(0, min(media_height, int(math.floor(clamped_bbox.y))))
+    right = max(left, min(media_width, int(math.ceil(clamped_bbox.x + clamped_bbox.width))))
+    bottom = max(top, min(media_height, int(math.ceil(clamped_bbox.y + clamped_bbox.height))))
     if right <= left or bottom <= top:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -113,7 +140,7 @@ def _save_crop(media_path: Path, prediction: DetectionPrediction, *, media_width
             detail="폐기물 crop 이미지를 저장하지 못했습니다.",
         ) from exc
 
-    return crop_path, crop_path.relative_to(media_path.parents[3]).as_posix()
+    return crop_path, crop_path.relative_to(media_path.parents[3]).as_posix(), clamped_bbox
 
 
 def register_mobile_waste_candidate(
@@ -151,7 +178,7 @@ def register_mobile_waste_candidate(
             )
 
         selected_prediction = _find_matching_trash(result.detections, selected_bbox)
-        crop_path, crop_key = _save_crop(
+        crop_path, crop_key, stored_bbox = _save_crop(
             media_path,
             selected_prediction,
             media_width=result.media_width,
@@ -185,10 +212,10 @@ def register_mobile_waste_candidate(
             processing_status="CONFIRMED",
             admin_memo=MOBILE_WASTE_NOTE,
             confidence=Decimal(str(selected_prediction.confidence)),
-            bbox_x=Decimal(str(selected_prediction.bbox.x)),
-            bbox_y=Decimal(str(selected_prediction.bbox.y)),
-            bbox_width=Decimal(str(selected_prediction.bbox.width)),
-            bbox_height=Decimal(str(selected_prediction.bbox.height)),
+            bbox_x=Decimal(str(stored_bbox.x)),
+            bbox_y=Decimal(str(stored_bbox.y)),
+            bbox_width=Decimal(str(stored_bbox.width)),
+            bbox_height=Decimal(str(stored_bbox.height)),
             cropped_image_url=crop_key,
             appearance_count=1,
             detected_at=now,

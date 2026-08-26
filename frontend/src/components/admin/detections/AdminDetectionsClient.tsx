@@ -515,6 +515,9 @@ export function AdminDetectionsClient() {
   const [mobileNotice, setMobileNotice] = useState("");
   const focusTriggerRef = useRef<HTMLButtonElement>(null);
   const knownEventIdsRef = useRef<Set<number>>(new Set());
+  const notifiedEventIdsRef = useRef<Set<number>>(new Set());
+  const loadRequestIdRef = useRef(0);
+  const silentRequestRef = useRef<{ controller: AbortController; requestId: number } | null>(null);
 
   const searchedEvents = useMemo(() => events.filter((event) => !search.trim() || String(event.id).includes(search.trim()) || event.detected_objects.some((object) => `${object.object_class_name} ${object.object_class} ${object.final_class_code ?? ""}`.toLowerCase().includes(search.trim().toLowerCase()))), [events, search]);
   const counts = useMemo(() => Object.fromEntries(filterOptions.map((item) => [item.value, searchedEvents.filter((event) => eventMatchesFilter(event, item.value)).length])) as Record<ReviewFilter, number>, [searchedEvents]);
@@ -526,22 +529,36 @@ export function AdminDetectionsClient() {
 
   const applyData = useCallback((data: DetectionEvent[], silent = false) => {
     if (silent && knownEventIdsRef.current.size > 0) {
-      const newEvents = data.filter((event) => !knownEventIdsRef.current.has(event.id));
-      if (newEvents.length) setMobileNotice(`새 현장 등록 ${newEvents.length}건이 목록에 반영됐습니다.`);
+      const newEvents = data.filter((event) => !knownEventIdsRef.current.has(event.id) && !notifiedEventIdsRef.current.has(event.id));
+      if (newEvents.length) {
+        newEvents.forEach((event) => notifiedEventIdsRef.current.add(event.id));
+        setMobileNotice(`새 현장 등록 ${newEvents.length}건이 목록에 반영됐습니다.`);
+      }
     }
     knownEventIdsRef.current = new Set(data.map((event) => event.id));
     setEvents(data);
     setSelectedId((current) => data.some((item) => item.id === (requested || current)) ? (requested || current) : data[0]?.id ?? null);
   }, [requested]);
   const load = useCallback((showLoading = true, silent = false) => {
+    if (silent && silentRequestRef.current) return null;
+    if (!silent) {
+      silentRequestRef.current?.controller.abort();
+      silentRequestRef.current = null;
+    }
     const controller = new AbortController();
+    const requestId = ++loadRequestIdRef.current;
+    if (silent) silentRequestRef.current = { controller, requestId };
     if (showLoading) {
       setLoading(true);
       setError("");
     }
-    listAdminDetections(controller.signal).then((data) => applyData(data, silent)).catch((reason) => {
+    listAdminDetections(controller.signal).then((data) => {
+      if (requestId !== loadRequestIdRef.current || controller.signal.aborted) return;
+      applyData(data, silent);
+    }).catch((reason) => {
       if (!isAbortError(reason) && !silent) setError("탐지 결과를 불러오지 못했습니다.");
     }).finally(() => {
+      if (silentRequestRef.current?.requestId === requestId) silentRequestRef.current = null;
       if (!controller.signal.aborted && showLoading) setLoading(false);
     });
     return controller;
@@ -549,7 +566,11 @@ export function AdminDetectionsClient() {
 
   useEffect(() => {
     const controller = new AbortController();
-    listAdminDetections(controller.signal).then(applyData).catch((reason) => {
+    const requestId = ++loadRequestIdRef.current;
+    listAdminDetections(controller.signal).then((data) => {
+      if (requestId !== loadRequestIdRef.current || controller.signal.aborted) return;
+      applyData(data);
+    }).catch((reason) => {
       if (!isAbortError(reason)) setError("탐지 결과를 불러오지 못했습니다.");
     }).finally(() => {
       if (!controller.signal.aborted) setLoading(false);
@@ -571,6 +592,8 @@ export function AdminDetectionsClient() {
       window.clearInterval(intervalId);
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", visibilityChange);
+      silentRequestRef.current?.controller.abort();
+      silentRequestRef.current = null;
     };
   }, [load]);
   useEffect(() => {

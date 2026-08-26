@@ -16,6 +16,7 @@ import {
   getOverlayPercentageStyle,
   normalizeBBoxForDisplayMedia,
 } from "@/components/detection/detectionOverlayGeometry";
+import { isMobileWasteCandidate } from "./mobileWasteFilters";
 import styles from "./AdminMobileWasteCamera.module.css";
 
 const FRAME_INTERVAL_MS = 650;
@@ -23,6 +24,11 @@ const JPEG_QUALITY = 0.9;
 
 type CameraStatus = "idle" | "requesting" | "ready" | "running" | "selected" | "registering" | "registered" | "collecting" | "completed";
 type FacingMode = "environment" | "user";
+
+type DetectionSnapshot = {
+  frame: WebcamDetectionFrame;
+  blob: Blob;
+};
 
 type FrozenCandidate = {
   object: WebcamDetectionObject;
@@ -38,10 +44,6 @@ type RegistrationResult = {
 
 function isAbortError(reason: unknown) {
   return reason instanceof DOMException && reason.name === "AbortError";
-}
-
-function isWasteCandidate(object: WebcamDetectionObject) {
-  return object.class_code?.toUpperCase() === "TRASH" || object.group_code?.toUpperCase() === "WASTE";
 }
 
 function objectLabel(object: WebcamDetectionObject) {
@@ -100,8 +102,6 @@ export function AdminMobileWasteCamera() {
   const detectAbortRef = useRef<AbortController | null>(null);
   const runningRef = useRef(false);
   const analyzeFrameRef = useRef<() => void>(() => undefined);
-  const latestBlobRef = useRef<Blob | null>(null);
-  const latestFrameRef = useRef<WebcamDetectionFrame | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
   const [cameras, setCameras] = useState<AdminCamera[]>([]);
@@ -112,27 +112,28 @@ export function AdminMobileWasteCamera() {
   const [status, setStatus] = useState<CameraStatus>("idle");
   const [error, setError] = useState("");
   const [isRunning, setIsRunning] = useState(false);
-  const [frame, setFrame] = useState<WebcamDetectionFrame | null>(null);
+  const [snapshot, setSnapshot] = useState<DetectionSnapshot | null>(null);
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
   const [videoSize, setVideoSize] = useState({ width: 0, height: 0 });
   const [frozen, setFrozen] = useState<FrozenCandidate | null>(null);
   const [frozenNaturalSize, setFrozenNaturalSize] = useState({ width: 0, height: 0 });
   const [registered, setRegistered] = useState<RegistrationResult | null>(null);
 
-  const wasteObjects = useMemo(() => frame?.detected_objects.filter(isWasteCandidate) ?? [], [frame]);
+  const wasteObjects = useMemo(() => snapshot?.frame.detected_objects.filter(isMobileWasteCandidate) ?? [], [snapshot]);
   const selectedObjectId = frozen ? `${frozen.object.bbox.x}-${frozen.object.bbox.y}-${frozen.object.bbox.width}-${frozen.object.bbox.height}` : "";
   const cameraActive = status !== "idle" && status !== "requesting";
   const secureHint = typeof window !== "undefined" && !window.isSecureContext && location.hostname !== "localhost" && location.hostname !== "127.0.0.1";
 
   const liveMediaRect = useMemo(() => {
-    if (!frame) return null;
+    if (!snapshot) return null;
+    const frame = snapshot.frame;
     const naturalSize = videoSize.width && videoSize.height ? videoSize : { width: frame.media_width, height: frame.media_height };
     return getContainedMediaRect(stageSize, naturalSize);
-  }, [frame, stageSize, videoSize]);
+  }, [snapshot, stageSize, videoSize]);
   const liveDisplayMediaSize = videoSize.width && videoSize.height
     ? videoSize
-    : frame
-      ? { width: frame.media_width, height: frame.media_height }
+    : snapshot
+      ? { width: snapshot.frame.media_width, height: snapshot.frame.media_height }
       : { width: 0, height: 0 };
   const frozenMediaRect = frozen ? getContainedMediaRect(stageSize, frozenNaturalSize) : null;
 
@@ -157,10 +158,8 @@ export function AdminMobileWasteCamera() {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
-    setFrame(null);
+    setSnapshot(null);
     setVideoSize({ width: 0, height: 0 });
-    latestBlobRef.current = null;
-    latestFrameRef.current = null;
     setStatus("idle");
   }, [stopDetection]);
 
@@ -207,9 +206,8 @@ export function AdminMobileWasteCamera() {
     try {
       const blob = await captureFrame();
       const nextFrame = await detectWebcamFrame(blob, controller.signal);
-      latestBlobRef.current = blob;
-      latestFrameRef.current = nextFrame;
-      setFrame(nextFrame);
+      if (controller.signal.aborted || !runningRef.current) return;
+      setSnapshot({ frame: nextFrame, blob });
       setError("");
     } catch (reason) {
       if (!isAbortError(reason)) {
@@ -291,15 +289,11 @@ export function AdminMobileWasteCamera() {
     if (wasRunning) startDetection();
   };
 
-  const selectObject = async (object: WebcamDetectionObject) => {
-    const sourceFrame = latestFrameRef.current ?? frame;
-    let sourceBlob = latestBlobRef.current;
-    if (!sourceFrame) return;
-    if (!sourceBlob) sourceBlob = await captureFrame();
+  const selectObject = (object: WebcamDetectionObject, sourceSnapshot: DetectionSnapshot) => {
     stopDetection();
     revokeFrozen();
-    const file = new File([sourceBlob], "mobile-waste-frame.jpg", { type: "image/jpeg" });
-    setFrozen({ object, frame: sourceFrame, file, previewUrl: URL.createObjectURL(sourceBlob) });
+    const file = new File([sourceSnapshot.blob], "mobile-waste-frame.jpg", { type: "image/jpeg" });
+    setFrozen({ object, frame: sourceSnapshot.frame, file, previewUrl: URL.createObjectURL(sourceSnapshot.blob) });
     setStatus("selected");
   };
 
@@ -428,16 +422,16 @@ export function AdminMobileWasteCamera() {
                   </div>
                 )}
                 {status === "running" && <span className={styles.liveBadge}>LIVE · TRASH 탐지 중</span>}
-                {frame && liveMediaRect && (
+                {snapshot && liveMediaRect && (
                   <div className={styles.mediaLayer} style={getContainedMediaRectStyle(liveMediaRect)}>
                     {wasteObjects.map((object, index) => (
                       <OverlayBox
                         key={`${object.class_code}-${index}-${object.bbox.x}-${object.bbox.y}`}
                         object={object}
-                        frame={frame}
+                        frame={snapshot.frame}
                         displayMediaSize={liveDisplayMediaSize}
                         selected={selectedObjectId === `${object.bbox.x}-${object.bbox.y}-${object.bbox.width}-${object.bbox.height}`}
-                        onSelect={() => void selectObject(object)}
+                        onSelect={() => selectObject(object, snapshot)}
                       />
                     ))}
                   </div>
@@ -496,7 +490,7 @@ export function AdminMobileWasteCamera() {
           ) : wasteObjects.length ? (
             <div className={styles.candidateList}>
               {wasteObjects.map((object, index) => (
-                <button type="button" onClick={() => void selectObject(object)} key={`${object.label}-${index}-${object.bbox.x}`}>
+                <button type="button" onClick={() => snapshot && selectObject(object, snapshot)} key={`${object.label}-${index}-${object.bbox.x}`}>
                   <Icon name="trash" size={18} />
                   <strong>{objectLabel(object)}</strong>
                   <span>신뢰도 {Math.round(object.confidence * 100)}%</span>
