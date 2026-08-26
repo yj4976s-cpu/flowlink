@@ -29,7 +29,12 @@ import {
   type CopilotSuggestion,
 } from "@/lib/copilotApi";
 import { listNotifications } from "@/lib/notificationsApi";
-import { speechVoiceId, useSpeechSynthesis } from "@/hooks/useSpeechSynthesis";
+import {
+  resolveAutoSpeechText,
+  resolveManualSpeechText,
+  speechVoiceId,
+  useSpeechSynthesis,
+} from "@/hooks/useSpeechSynthesis";
 import { CopilotSpeechButton } from "./CopilotSpeechButton";
 import { FlowBeacon } from "./FlowBeacon";
 import {
@@ -93,10 +98,6 @@ type UiMessage = {
   actions?: CopilotAction[];
   suggestions?: CopilotSuggestion[];
 };
-
-function getSpeechText(message: UiMessage) {
-  return message.text;
-}
 
 function historyGroup(value: string) {
   const date = new Date(value);
@@ -792,7 +793,10 @@ export function FlowCopilot() {
       };
       setMessages((current) => [...current, assistantMessage]);
       if (user?.role === "USER" && autoSpeechEnabledRef.current) {
-        speakSpeech(assistantMessage.id, getSpeechText(assistantMessage));
+        speakSpeech(
+          assistantMessage.id,
+          resolveAutoSpeechText(assistantMessage.text, assistantMessage.speechText),
+        );
       }
       void refreshMemory().catch(() => undefined);
       setShowExamples(false);
@@ -1732,7 +1736,9 @@ export function FlowCopilot() {
                           paused={speakingMessageId === message.id && speechPaused}
                           speechRate={speechRate}
                           unsupported={!speechSupported}
-                          onSpeak={() => speakSpeech(message.id, getSpeechText(message))}
+                          onSpeak={() =>
+                            speakSpeech(message.id, resolveManualSpeechText(message.text))
+                          }
                           onPause={pauseSpeech}
                           onResume={resumeSpeech}
                           onStop={stopSpeech}
