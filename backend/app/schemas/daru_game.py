@@ -138,5 +138,11 @@ class DaruLeaderboardEntry(BaseModel):
 
 class DaruLeaderboardResponse(BaseModel):
     difficulty: Difficulty
+    top_entries: list[DaruLeaderboardEntry]
     entries: list[DaruLeaderboardEntry]
     my_entry: DaruLeaderboardEntry | None
+    next_rank_score: float | None
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
