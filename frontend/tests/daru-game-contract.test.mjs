@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { BEST_RECORD_STORAGE_KEYS, resolveGuestBest } from "../src/components/daru-game/game.storage.ts";
+import { BEST_RECORD_STORAGE_KEYS, isGuestBestEligible, resolveGuestBest } from "../src/components/daru-game/game.storage.ts";
 import { getLeaderboardPageRequest, isLeaderboardDifficulty, isLeaderboardScoreTie } from "../src/components/daru-game/leaderboard.utils.ts";
 import { isExpiredRunError, isOutdatedDeckError, OUTDATED_DECK_ERROR_CODE, RUN_EXPIRED_ERROR_CODE, terminalRunRecoveryReason } from "../src/lib/daruRunRecovery.ts";
 
@@ -28,6 +29,27 @@ test("old HARD guest best is ignored and HARD40 establishes its own first and su
 test("ineligible and lower HARD40 scores do not replace the current best", () => {
   assert.deepEqual(resolveGuestBest("82", 81, true), { previousBest: 82, isNewBest: false });
   assert.deepEqual(resolveGuestBest("82", 90, false), { previousBest: 82, isNewBest: false });
+});
+
+test("an overtime guest completion can replace the local best", () => {
+  assert.equal(isGuestBestEligible(true, null), true);
+  assert.deepEqual(resolveGuestBest("70", 75, true), { previousBest: 70, isNewBest: true });
+  assert.deepEqual(resolveGuestBest("90", 75, true), { previousBest: 90, isNewBest: false });
+});
+
+test("unresolved auth and ADMIN games cannot use the guest local best", () => {
+  assert.equal(isGuestBestEligible(false, null), false);
+  assert.equal(isGuestBestEligible(true, "ADMIN"), false);
+  assert.equal(isGuestBestEligible(true, "USER"), false);
+});
+
+test("overtime completion and leaderboard copy describe the new ranking policy", () => {
+  const resultSource = readFileSync(new URL("../src/components/daru-game/GameResult.tsx", import.meta.url), "utf8");
+  const leaderboardSource = readFileSync(new URL("../src/components/daru-game/DaruLeaderboard.tsx", import.meta.url), "utf8");
+  assert.match(resultSource, /제한시간을 초과해 속도 점수는 0점으로 반영되었어요/);
+  assert.match(resultSource, /완주 기록도 랭킹 최고기록 비교 대상에 포함됩니다/);
+  assert.match(resultSource, /완주 기록도 개인 최고기록 비교 대상에 포함됩니다/);
+  assert.match(leaderboardSource, /제한시간을 초과해도 완주 기록은 등록되며, 속도 점수는 0점으로 계산됩니다/);
 });
 
 test("only the explicit outdated deck 409 is treated as a legacy run", () => {

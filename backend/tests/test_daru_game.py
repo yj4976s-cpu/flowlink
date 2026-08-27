@@ -465,8 +465,16 @@ def test_server_timestamp_controls_elapsed_and_timeout(client: TestClient, db: S
     complete_pairs(client, run_id, 10)
     response = client.post("/api/daru-game/results", json=action_json(run_id=run_id))
     assert response.status_code == 200
-    assert response.json()["metrics"]["within_time_limit"] is False
-    assert response.json()["leaderboard_rank"] is None
+    payload = response.json()
+    assert payload["metrics"]["completed"] is True
+    assert payload["metrics"]["within_time_limit"] is False
+    assert payload["metrics"]["speed_score"] == 0.0
+    assert payload["metrics"]["memory_accuracy"] == 100.0
+    assert payload["metrics"]["combo_score"] == 100.0
+    assert payload["metrics"]["hint_score"] == 100.0
+    assert payload["metrics"]["detection_power"] == 75.0
+    assert payload["is_new_best"] is True
+    assert payload["leaderboard_rank"] == 1
 
 
 def test_hard_server_timeout_uses_new_280_second_limit(client: TestClient, db: Session) -> None:
@@ -476,7 +484,23 @@ def test_hard_server_timeout_uses_new_280_second_limit(client: TestClient, db: S
     assert response.status_code == 200
     assert response.json()["metrics"]["within_time_limit"] is False
     assert response.json()["metrics"]["speed_score"] == 0.0
-    assert response.json()["leaderboard_rank"] is None
+    assert response.json()["leaderboard_rank"] == 1
+
+
+@pytest.mark.parametrize(("existing_score", "expected_score", "expected_new_best"), [("70.0", 75.0, True), ("90.0", 90.0, False)])
+def test_overtime_completion_compares_against_existing_best(client: TestClient, db: Session, existing_score: str, expected_score: float, expected_new_best: bool) -> None:
+    now = utc_now()
+    db.add(DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=Decimal(existing_score), score_version=2, best_attempts=20, best_elapsed_seconds=100, best_combo=5, best_hints_used=0, total_daru_points=0, play_count=1, best_achieved_at=now, created_at=now, updated_at=now))
+    db.commit()
+    run_id, _run = start_authoritative_run(client, db, elapsed_seconds=121)
+    complete_pairs(client, run_id, 10)
+
+    response = client.post("/api/daru-game/results", json=action_json(run_id=run_id))
+
+    assert response.status_code == 200
+    assert response.json()["metrics"]["detection_power"] == 75.0
+    assert response.json()["record"]["best_detection_power"] == expected_score
+    assert response.json()["is_new_best"] is expected_new_best
 
 
 def test_partial_timeout_uses_server_points_without_official_record(client: TestClient, db: Session) -> None:

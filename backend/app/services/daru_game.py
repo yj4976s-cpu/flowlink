@@ -297,7 +297,7 @@ def submit_result(db: Session, *, run: DaruGameRun, user_id: int, finish_partial
         raise ValueError("Active game cannot be finalized as partial")
     within_time_limit = completed and elapsed_seconds <= config["time_limit_seconds"]
     earned_points = run.earned_daru_points + (config["clear_bonus"] if completed else 0)
-    eligible = completed and within_time_limit
+    eligible = completed
     power = calculate_detection_power(run.difficulty, run.attempts, elapsed_seconds, run.max_combo, run.hints_used, within_time_limit)
     run.consumed_at = now
     difficulty = run.difficulty
