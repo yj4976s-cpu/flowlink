@@ -813,6 +813,44 @@ html[data-theme="night"] .auth-register-copy-card { background: linear-gradient(
 @keyframes scan-pulse { 0%, 100% { opacity: .42; transform: scale(.96); } 50% { opacity: .95; transform: scale(1.035); } }
 @keyframes arrow-glow { 0%, 100% { opacity: .38; } 50% { opacity: 1; } }
 
+@media (max-width: 600px) {
+  .detection-path, html[data-theme="night"] .detection-path { filter: none; mix-blend-mode: normal; opacity: .72; }
+  .detection-path path,
+  .detection-path circle,
+  .detection-path .flow-halo,
+  .detection-path .flow-main,
+  .detection-path .flow-secondary,
+  .detection-path .flow-thread,
+  .detection-path .flow-arrows path,
+  .detection-path .flow-particles circle,
+  .detection-path .scan-rings ellipse,
+  .detection-path .node-large,
+  html[data-theme="dawn"] .detection-path .flow-main,
+  html[data-theme="dawn"] .detection-path .flow-secondary,
+  html[data-theme="dawn"] .detection-path .flow-thread,
+  html[data-theme="dawn"] .detection-path .scan-rings ellipse,
+  html[data-theme="night"] .detection-path .flow-main,
+  html[data-theme="night"] .detection-path .flow-secondary,
+  html[data-theme="night"] .detection-path .flow-thread,
+  html[data-theme="night"] .detection-path .flow-halo,
+  html[data-theme="night"] .detection-path .flow-arrow-head,
+  html[data-theme="night"] .detection-path .flow-arrows path,
+  html[data-theme="night"] .detection-path .flow-particles circle,
+  html[data-theme="night"] .detection-path .scan-rings ellipse {
+    filter: none;
+  }
+  .detection-path path,
+  .detection-path .flow-arrows path,
+  .detection-path .scan-rings ellipse {
+    animation: none;
+  }
+  .detection-path .flow-halo { opacity: .08; }
+  .detection-path .flow-secondary,
+  .detection-path .flow-thread,
+  .detection-path .flow-particles { opacity: .55; }
+  .detection-card::after { display: none; }
+}
+
 @media (max-width: 1280px) {
   .header-inner { width: min(100% - 40px, 1180px); gap: 24px; }.desktop-nav { gap: 22px; }.login-link { display: none; }.header-actions { gap: 14px; }.theme-option { min-width: 54px; }
   .hero-inner { width: min(100% - 40px, 1240px); min-height: 620px; }.hero h1 { font-size: 42px; }.hero-copy { width: 38%; min-width: 405px; padding-left: 6px; padding-right: 25px; }
