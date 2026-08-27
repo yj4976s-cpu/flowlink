@@ -8,6 +8,7 @@ import styles from "./DaruMascot.module.css";
 import { loadThemedDaruImageSrc } from "./daru.theme-image";
 
 const preloadPromises = new Map<DaruRhythm, Promise<void>>();
+const DARU_MOBILE_FRAME_SAMPLE_MS = 84;
 
 export function preloadDaruWalkFrames(theme: DaruRhythm = "day") {
   const existing = preloadPromises.get(theme);
@@ -78,7 +79,14 @@ export function DaruSpriteRenderer({ state, theme = "day" }: { state: DaruRender
     }
 
     let animationFrame = 0;
-    const sample = () => {
+    let lastSampleMs = 0;
+    const mobileViewport = window.matchMedia("(max-width: 600px)").matches;
+    const sample = (timestamp: number) => {
+      if (mobileViewport && timestamp - lastSampleMs < DARU_MOBILE_FRAME_SAMPLE_MS) {
+        animationFrame = requestAnimationFrame(sample);
+        return;
+      }
+      lastSampleMs = timestamp;
       const image = imageRef.current;
       const stage = rendererRef.current?.closest<HTMLElement>("[data-daru-stage]");
       if (!image || !stage) {
