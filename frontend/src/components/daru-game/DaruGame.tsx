@@ -11,7 +11,7 @@ import { clearDaruActiveRun, loadDaruActiveRun, storeDaruActiveRun } from "@/lib
 import { createDaruGameRun, DaruGameApiError, flipDaruGameCard, getDaruGameRecords, getDaruGameRunPreview, getDaruGameRunState, requestDaruGameHint, startDaruGameRun, submitDaruGameResult, type GameRecord, type ServerGameMetrics, type ServerGameResult, type ServerRunState } from "@/lib/daruGameApi";
 import { terminalRunRecoveryReason } from "@/lib/daruRunRecovery";
 import { DARU_CARD_BACK_ASSETS, DARU_MEMORY_GUIDE_ASSETS, DIFFICULTY_CONFIG, MISMATCH_REVEAL_MS } from "./game.config";
-import { BEST_RECORD_STORAGE_KEYS, resolveGuestBest } from "./game.storage";
+import { BEST_RECORD_STORAGE_KEYS, isGuestBestEligible, resolveGuestBest } from "./game.storage";
 import { CARD_CATALOG, getCardThemeImages } from "./card.catalog";
 import type { DetectionMetrics, GameCard, GameDifficulty, GamePhase, GameRank } from "./game.types";
 import { calculateDetectionMetricsWithEligibility, calculatePairPoints, createGameDeck, getGameRank } from "./game.utils";
@@ -306,14 +306,15 @@ export function DaruGame() {
     }
     const hintsUsed = DIFFICULTY_CONFIG[difficulty].hintCount - hintsRemaining;
     const finalMetrics = calculateDetectionMetricsWithEligibility(difficulty, finalElapsed, attempts, maxCombo, hintsUsed, withinTimeLimit);
-    const guestBestResult = resolveGuestBest(localStorage.getItem(BEST_RECORD_STORAGE_KEYS[difficulty]), finalMetrics.detectionPower, !isServerGame && withinTimeLimit);
+    const isGuestGame = isGuestBestEligible(authResolved, currentUser?.role);
+    const guestBestResult = isGuestGame ? resolveGuestBest(localStorage.getItem(BEST_RECORD_STORAGE_KEYS[difficulty]), finalMetrics.detectionPower, true) : { previousBest: null, isNewBest: false };
     const guestBest = guestBestResult.isNewBest;
-    const guestPreviousBest = !isServerGame ? guestBestResult.previousBest : null;
-    if (!isServerGame && guestBest) localStorage.setItem(BEST_RECORD_STORAGE_KEYS[difficulty], String(finalMetrics.detectionPower));
+    const guestPreviousBest = isGuestGame ? guestBestResult.previousBest : null;
+    if (isGuestGame && guestBest) localStorage.setItem(BEST_RECORD_STORAGE_KEYS[difficulty], String(finalMetrics.detectionPower));
     const finalPoints = daruPoints + DIFFICULTY_CONFIG[difficulty].clearBonus;
-    setElapsedSeconds(finalElapsed); setDaruPoints(finalPoints); setMetrics(finalMetrics); setRank(getGameRank(finalMetrics.detectionPower)); setNewBest(!isServerGame && guestBest); setFeedback(null);
+    setElapsedSeconds(finalElapsed); setDaruPoints(finalPoints); setMetrics(finalMetrics); setRank(getGameRank(finalMetrics.detectionPower)); setNewBest(guestBest); setFeedback(null);
     completionTimerRef.current = window.setTimeout(() => { completionTimerRef.current = null; setPreviousBestPower(guestPreviousBest); setPhase("finished"); cue("happy", { source: "direct" }); }, 380);
-  }, [attempts, clearFeedbackTimer, clearHintTimer, cue, daruPoints, difficulty, hintsRemaining, matchedPairIds.length, maxCombo, phase, setPhase, startedAt, submitResult, withinTimeLimit]);
+  }, [attempts, authResolved, clearFeedbackTimer, clearHintTimer, cue, currentUser, daruPoints, difficulty, hintsRemaining, matchedPairIds.length, maxCombo, phase, setPhase, startedAt, submitResult, withinTimeLimit]);
   const finishPartial = () => {
     clearHintTimer();
     if (runIdRef.current) {
@@ -388,7 +389,7 @@ export function DaruGame() {
       {readyCue && <div className={styles.readyCue} aria-live="assertive">{readyCue}</div>}
     </div>
     {phase === "time-over" && recordStatus !== "saving" && <TimeOverDialog onContinue={() => setPhase("playing")} onFinish={finishPartial} />}
-    {phase === "finished" && metrics && <GameResult rank={rank} metrics={metrics} daruPoints={daruPoints} elapsedSeconds={elapsedSeconds} attempts={attempts} maxCombo={maxCombo} hintsUsed={hintsUsed} withinTimeLimit={withinTimeLimit} newBest={newBest} leaderboardRank={leaderboardRank} personalBestPower={personalBestPower} previousBestPower={previousBestPower} recordStatus={currentUser?.role === "USER" ? recordStatus : currentUser?.role === "ADMIN" ? "admin" : "guest"} difficultyLabel={DIFFICULTY_CONFIG[difficulty].label} onRestart={() => startGame(difficulty)} onChangeDifficulty={chooseDifficulty} onViewLeaderboard={currentUser?.role === "USER" && withinTimeLimit ? viewLeaderboard : undefined} startPending={startPending} />}
+    {phase === "finished" && metrics && <GameResult rank={rank} metrics={metrics} daruPoints={daruPoints} elapsedSeconds={elapsedSeconds} attempts={attempts} maxCombo={maxCombo} hintsUsed={hintsUsed} withinTimeLimit={withinTimeLimit} newBest={newBest} leaderboardRank={leaderboardRank} personalBestPower={personalBestPower} previousBestPower={previousBestPower} recordStatus={currentUser?.role === "USER" ? recordStatus : currentUser?.role === "ADMIN" ? "admin" : "guest"} difficultyLabel={DIFFICULTY_CONFIG[difficulty].label} onRestart={() => startGame(difficulty)} onChangeDifficulty={chooseDifficulty} onViewLeaderboard={currentUser?.role === "USER" ? viewLeaderboard : undefined} startPending={startPending} />}
     {phase === "partial" && <PartialResult matchedPairs={matchedPairIds.length} pairCount={DIFFICULTY_CONFIG[difficulty].pairCount} maxCombo={maxCombo} daruPoints={daruPoints} elapsedSeconds={elapsedSeconds} recordStatus={currentUser?.role === "USER" ? recordStatus : currentUser?.role === "ADMIN" ? "admin" : "guest"} onRestart={() => startGame(difficulty)} onChangeDifficulty={chooseDifficulty} startPending={startPending} />}
   </section>;
 }

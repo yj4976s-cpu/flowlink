@@ -93,7 +93,7 @@ function ScoreGuide() {
           <div className={styles.scoreGuideMeta}><p><strong>동점 기준</strong><span>시도 횟수 → 플레이 시간 → 먼저 달성</span></p><p><strong>등급</strong><span>S {RANK_THRESHOLDS.S}+ · A {RANK_THRESHOLDS.A}+ · B {RANK_THRESHOLDS.B}+ · C {RANK_THRESHOLDS.B} 미만</span></p></div>
           <ul className={styles.scoreNotice}>
             <li>다루 포인트는 별도 플레이 보상이며 랭킹 순위를 결정하지 않아요.</li>
-            <li>제한 시간을 넘긴 기록은 공식 랭킹 대상이 아니에요.</li>
+            <li>시간이 지나도 완주할 수 있으며, 시간 초과 시 속도 점수는 0점이에요.</li>
           </ul>
         </div>
       )}

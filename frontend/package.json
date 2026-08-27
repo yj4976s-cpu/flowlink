@@ -8,6 +8,7 @@
     "start": "next start",
     "test:copilot-speech": "node --experimental-strip-types --test tests/copilot-speech-contract.test.mjs",
     "test:daru-game": "node --experimental-strip-types --test tests/daru-game-contract.test.mjs",
+    "test:daru-mobile-roaming": "node --experimental-strip-types --test tests/daru-mobile-roaming-contract.test.mjs",
     "lint": "eslint"
   },
   "dependencies": {

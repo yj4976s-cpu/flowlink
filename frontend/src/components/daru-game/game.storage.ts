@@ -11,3 +11,7 @@ export function resolveGuestBest(storedValue: string | null, detectionPower: num
   const previousBest = Number.isFinite(storedBest) && storedBest >= 0 ? storedBest : null;
   return { previousBest, isNewBest: eligible && (previousBest === null || detectionPower > previousBest) };
 }
+
+export function isGuestBestEligible(authResolved: boolean, role?: string | null) {
+  return authResolved && !role;
+}

@@ -27,13 +27,18 @@ export function GameResult({ rank, metrics, daruPoints, elapsedSeconds, attempts
   const improvement = newBest && previousBestPower !== null && previousBestPower !== undefined ? roundToTenth(metrics.detectionPower - previousBestPower) : null;
   const newBestTitle = activeTheme === "day" ? "최고 기록 갱신!" : "다루와 새로운 기록을 세웠어요!";
   const newBestMessage = activeTheme === "night" ? "대단해요! 역대 최고 기록을 갱신했어요!" : activeTheme === "dawn" ? "정말 멋져요! 새로운 기록을 세웠어요!" : "짝짝! 오늘의 최고 기록을 갱신했어요!";
+  const overtimeMessage = recordStatus === "saved"
+    ? "제한시간을 초과해 속도 점수는 0점으로 반영되었어요. 완주 기록도 랭킹 최고기록 비교 대상에 포함됩니다."
+    : recordStatus === "guest"
+      ? "제한시간을 초과해 속도 점수는 0점으로 반영되었어요. 완주 기록도 개인 최고기록 비교 대상에 포함됩니다."
+      : "제한시간을 초과해 속도 점수는 0점으로 반영되었어요.";
 
   return <section ref={stageRef} className={styles.result} data-theme={activeTheme} data-new-best={newBest || undefined} role="dialog" aria-modal="true" aria-labelledby="game-result-title" tabIndex={-1}>
     <div className={styles.clearParticles} aria-hidden="true"><i /><i /><i /><i /><i /></div>
     {newBest && <div className={styles.newBestSparkles} aria-hidden="true"><i>✦</i><i>✧</i><i>✦</i><i>✧</i></div>}
     <p className={styles.clearLabel}>✦ CLEAR! ✦</p>
     <div className={styles.clearDaru} aria-hidden="true">{previewTheme ? <Image src={DARU_CLEAR_ASSETS[previewTheme]} alt="" fill sizes="190px" priority style={{ opacity: 1 }} /> : <><Image className={styles.daruDawn} src={DARU_CLEAR_ASSETS.dawn} alt="" fill sizes="190px" priority /><Image className={styles.daruDay} src={DARU_CLEAR_ASSETS.day} alt="" fill sizes="190px" priority /><Image className={styles.daruNight} src={DARU_CLEAR_ASSETS.night} alt="" fill sizes="190px" priority /></>}</div>
-    <h2 id="game-result-title">{newBest ? newBestTitle : "다루와 전부 찾았어요!"}</h2><p className={styles.rankMessage}>{newBest ? newBestMessage : withinTimeLimit ? RANK_MESSAGES[rank] : "시간 초과 후 완주했어요. 공식 랭킹에는 반영되지 않아요."}</p>
+    <h2 id="game-result-title">{newBest ? newBestTitle : withinTimeLimit ? "다루와 전부 찾았어요!" : "클리어 완료!"}</h2><p className={styles.rankMessage}>{withinTimeLimit ? newBest ? newBestMessage : RANK_MESSAGES[rank] : overtimeMessage}</p>
     {newBest && <div className={styles.newBestRibbon} aria-label="새로운 최고 기록"><span aria-hidden="true">♛</span> NEW BEST</div>}
     <div className={styles.rankSummary}><strong>{rank} RANK</strong><span>메모리 점수 <b>{formatMemoryScore(metrics.detectionPower)}</b></span></div>
     <dl className={styles.resultMetrics}><div><dt>기억 정확도</dt><dd>{formatMemoryScore(metrics.memoryAccuracy)}</dd></div><div><dt>플레이 속도</dt><dd>{formatMemoryScore(metrics.speedScore)}</dd></div><div><dt>최고 콤보</dt><dd>{formatMemoryScore(metrics.comboScore)}</dd><small>{maxCombo}콤보</small></div><div><dt>힌트 절약</dt><dd>{formatMemoryScore(metrics.hintScore)}</dd><small>{hintsUsed}회 사용</small></div></dl>
