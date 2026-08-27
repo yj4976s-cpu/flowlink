@@ -9,7 +9,7 @@ import { DaruMascot } from "./DaruMascot";
 import { useDaru } from "./DaruProvider";
 import { DARU_ADMIN_IDLE_MULTIPLIER, DARU_IDLE_DELAY, DARU_MOBILE_IDLE_MULTIPLIER, pickNaturalIdle } from "./daru.motion.config";
 import { DARU_GROUNDED_ROAMING_CONFIG, DARU_ROAMING_PAUSED_STORAGE_KEY, type DaruFacing } from "./daru.renderer.config";
-import { canCompleteDirectGreetingMove, mobileDestinationCandidates, resolveMobileBubbleAnchor, resolveMobileRoamBounds, shouldPlaceDirectGreetingImmediately } from "./daru.mobile-roaming";
+import { canCompleteDirectGreetingMove, mobileDestinationCandidates, resolveMobileBubbleAnchor, resolveMobileRoamBounds, shouldReduceDaruMovement } from "./daru.mobile-roaming";
 import { behaviorForAction, normalizedMovementSpeed, tailEnergyFor, type DaruInteraction, type DaruLocomotion } from "./daru.animation.adapter";
 import type { DaruGuideRole } from "./daru.guide.config";
 import type { DaruIdleAction, DaruRhythm } from "./types";
@@ -83,15 +83,16 @@ export function DaruStage() {
   const [directGreeting, setDirectGreeting] = useState(false);
   const [bubbleSide, setBubbleSide] = useState<"left" | "right">("left");
   const [mobileBubbleStyle, setMobileBubbleStyle] = useState<React.CSSProperties | undefined>(undefined);
-  const directGreetingStateRef = useRef({ mode, guideOpen, occluded, dragging, pageVisible, reducedMotion });
+  const movementReduced = shouldReduceDaruMovement(reducedMotion, mobileViewport);
+  const directGreetingStateRef = useRef({ mode, guideOpen, occluded, dragging, pageVisible, movementReduced });
 
   useEffect(() => {
     positionRef.current = position;
   }, [position]);
 
   useEffect(() => {
-    directGreetingStateRef.current = { mode, guideOpen, occluded, dragging, pageVisible, reducedMotion };
-  }, [dragging, guideOpen, mode, occluded, pageVisible, reducedMotion]);
+    directGreetingStateRef.current = { mode, guideOpen, occluded, dragging, pageVisible, movementReduced };
+  }, [dragging, guideOpen, mode, movementReduced, occluded, pageVisible]);
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 600px)");
@@ -245,7 +246,7 @@ export function DaruStage() {
 
   const beginMovementTo = useCallback((target: { x: number; y: number }) => {
     const latest = directGreetingStateRef.current;
-    if (latest.reducedMotion || latest.mode !== "active" || latest.occluded || latest.guideOpen || latest.dragging || !latest.pageVisible) return false;
+    if (latest.movementReduced || latest.mode !== "active" || latest.occluded || latest.guideOpen || latest.dragging || !latest.pageVisible) return false;
     const currentPosition = positionRef.current;
     const stage = stageRef.current;
     const rect = stage?.getBoundingClientRect();
@@ -345,16 +346,16 @@ export function DaruStage() {
   }, [cue, mode, pathname]);
 
   useEffect(() => {
-    if (!pageVisible || mode !== "active" || reducedMotion || occluded || roaming || guideOpen || dragging) return;
+    if (!pageVisible || mode !== "active" || movementReduced || occluded || roaming || guideOpen || dragging) return;
     const rhythm = currentRhythm();
     const [minimum, maximum] = DARU_IDLE_DELAY[rhythm];
     const multiplier = (pathname.startsWith("/admin") ? DARU_ADMIN_IDLE_MULTIPLIER : 1) * (window.matchMedia("(max-width: 600px)").matches ? DARU_MOBILE_IDLE_MULTIPLIER : 1);
     const timer = window.setTimeout(() => { const next = pickNaturalIdle(rhythm, previousIdle.current); previousIdle.current = next; cue(next, { source: "idle" }); }, (minimum + Math.random() * (maximum - minimum)) * multiplier);
     return () => window.clearTimeout(timer);
-  }, [action, cue, dragging, guideOpen, mode, occluded, pageVisible, pathname, reducedMotion, roaming]);
+  }, [action, cue, dragging, guideOpen, mode, movementReduced, occluded, pageVisible, pathname, roaming]);
 
   useEffect(() => {
-    if (!pageVisible || reducedMotion || userPaused || mode !== "active" || occluded || guideOpen || dragging || roaming || directGreeting || action === "wave") return;
+    if (!pageVisible || movementReduced || userPaused || mode !== "active" || occluded || guideOpen || dragging || roaming || directGreeting || action === "wave") return;
     const delay = nextRoamDelayRef.current ?? (3000 + Math.random() * 4000);
     nextRoamDelayRef.current = null;
     const timer = window.setTimeout(() => {
@@ -366,7 +367,7 @@ export function DaruStage() {
       }
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [action, beginMovementTo, chooseSafeDestination, directGreeting, dragging, guideOpen, mode, occluded, pageVisible, reducedMotion, roamRetry, roaming, userPaused]);
+  }, [action, beginMovementTo, chooseSafeDestination, directGreeting, dragging, guideOpen, mode, movementReduced, occluded, pageVisible, roamRetry, roaming, userPaused]);
 
   useEffect(() => {
     if (!roaming) return;
@@ -381,8 +382,8 @@ export function DaruStage() {
   }, [roamDuration, roaming]);
 
   useEffect(() => {
-    if ((!pageVisible || reducedMotion || userPaused || occluded || mode !== "active") && (roaming || locomotion !== "idle")) freezeRoaming();
-  }, [freezeRoaming, locomotion, mode, occluded, pageVisible, reducedMotion, roaming, userPaused]);
+    if ((!pageVisible || movementReduced || userPaused || occluded || mode !== "active") && (roaming || locomotion !== "idle")) freezeRoaming();
+  }, [freezeRoaming, locomotion, mode, movementReduced, occluded, pageVisible, roaming, userPaused]);
 
   useEffect(() => {
     if (!(guideOpen || occluded || dragging || mode !== "active" || !pageVisible)) return undefined;
@@ -458,13 +459,6 @@ export function DaruStage() {
       const latest = directGreetingStateRef.current;
       if (!canCompleteDirectGreetingMove(latest)) return;
       const target = chooseSafeDestination();
-      if (shouldPlaceDirectGreetingImmediately(latest)) {
-        setRoaming(false);
-        setMovementSpeed(0);
-        setLocomotion("idle");
-        setPosition(target);
-        return;
-      }
       beginMovementTo(target);
     }, DARU_DIRECT_GREETING_MS);
   };
@@ -488,9 +482,9 @@ export function DaruStage() {
     behavior,
     interaction,
     facing,
-    movementSpeed: reducedMotion ? 0 : movementSpeed,
+    movementSpeed: movementReduced ? 0 : movementSpeed,
     dragging,
-    reducedMotion,
+    reducedMotion: movementReduced,
     lookX: behavior === "look" ? (facing === "left" ? -0.35 : 0.35) * DARU_PERSONALITY.curiosity : 0,
     lookY: behavior === "sniff" ? -0.18 : behavior === "alert" ? 0.16 : 0,
     tailEnergy: tailEnergyFor(behavior, movementSpeed, dragging) * DARU_PERSONALITY.tailEnergy * themeTailMultiplier,
