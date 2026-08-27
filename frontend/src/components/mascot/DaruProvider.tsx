@@ -67,7 +67,7 @@ export function DaruProvider({ children }: { children: React.ReactNode }) {
     const syncInitialState = window.setTimeout(() => {
       syncMotion();
       const stored = localStorage.getItem(DARU_MODE_STORAGE_KEY);
-      setModeState(isDaruMode(stored) ? stored : media.matches ? "quiet" : "active");
+      setModeState(isDaruMode(stored) ? stored : "active");
     }, 0);
     media.addEventListener("change", syncMotion);
     return () => {
