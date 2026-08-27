@@ -1,5 +1,6 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { DARU_ACTION_LABEL } from "./config";
 import { DaruCharacter } from "./DaruCharacter";
 import type { DaruRendererState } from "./daru.animation.adapter";
@@ -13,6 +14,9 @@ interface DaruMascotProps {
   reducedMotion: boolean;
   dragging: boolean;
   guideOpen: boolean;
+  directGreeting: boolean;
+  bubbleSide: "left" | "right";
+  mobileBubbleStyle?: CSSProperties;
   rendererState: DaruRendererState;
   onInteract: () => void;
   onGuide: () => void;
@@ -23,11 +27,11 @@ interface DaruMascotProps {
   onPointerCancel: (event: React.PointerEvent<HTMLButtonElement>) => void;
 }
 
-export function DaruMascot({ action, mode, message, reducedMotion, dragging, guideOpen, rendererState, onInteract, onGuide, onHover, onPointerDown, onPointerMove, onPointerUp, onPointerCancel }: DaruMascotProps) {
+export function DaruMascot({ action, mode, message, reducedMotion, dragging, guideOpen, directGreeting, bubbleSide, mobileBubbleStyle, rendererState, onInteract, onGuide, onHover, onPointerDown, onPointerMove, onPointerUp, onPointerCancel }: DaruMascotProps) {
   const label = message ?? DARU_ACTION_LABEL[action];
   return (
-    <div className={styles.mascot} data-action={action} data-mode={mode} data-dragging={dragging || undefined} data-reduced-motion={reducedMotion || undefined}>
-      {mode === "active" && action !== "idle" && !guideOpen && <p className={styles.bubble} role="status">{label}</p>}
+    <div className={styles.mascot} data-action={action} data-mode={mode} data-dragging={dragging || undefined} data-reduced-motion={reducedMotion || undefined} data-direct-greeting={directGreeting || undefined} data-bubble-side={bubbleSide}>
+      {mode === "active" && action !== "idle" && !guideOpen && <p className={styles.bubble} role="status" style={mobileBubbleStyle}>{label}</p>}
       <button className={styles.character} type="button" aria-label="다루와 상호작용하거나 끌어서 이동하기" onClick={onInteract} onPointerEnter={onHover} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerCancel}>
         <DaruCharacter state={rendererState} action={action} />
       </button>
