@@ -28,9 +28,9 @@ export function GameResult({ rank, metrics, daruPoints, elapsedSeconds, attempts
   const newBestTitle = activeTheme === "day" ? "최고 기록 갱신!" : "다루와 새로운 기록을 세웠어요!";
   const newBestMessage = activeTheme === "night" ? "대단해요! 역대 최고 기록을 갱신했어요!" : activeTheme === "dawn" ? "정말 멋져요! 새로운 기록을 세웠어요!" : "짝짝! 오늘의 최고 기록을 갱신했어요!";
   const overtimeMessage = recordStatus === "saved"
-    ? "제한시간을 초과해 속도 점수는 0점으로 반영되었어요. 완주 기록은 랭킹에 정상 반영됩니다."
+    ? "제한시간을 초과해 속도 점수는 0점으로 반영되었어요. 완주 기록도 랭킹 최고기록 비교 대상에 포함됩니다."
     : recordStatus === "guest"
-      ? "제한시간을 초과해 속도 점수는 0점으로 반영되었어요. 완주 기록은 개인 최고기록에 반영됩니다."
+      ? "제한시간을 초과해 속도 점수는 0점으로 반영되었어요. 완주 기록도 개인 최고기록 비교 대상에 포함됩니다."
       : "제한시간을 초과해 속도 점수는 0점으로 반영되었어요.";
 
   return <section ref={stageRef} className={styles.result} data-theme={activeTheme} data-new-best={newBest || undefined} role="dialog" aria-modal="true" aria-labelledby="game-result-title" tabIndex={-1}>
