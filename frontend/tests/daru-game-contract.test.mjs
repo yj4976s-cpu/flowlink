@@ -46,6 +46,7 @@ test("unresolved auth and ADMIN games cannot use the guest local best", () => {
 test("overtime completion and leaderboard copy describe the new ranking policy", () => {
   const resultSource = readFileSync(new URL("../src/components/daru-game/GameResult.tsx", import.meta.url), "utf8");
   const leaderboardSource = readFileSync(new URL("../src/components/daru-game/DaruLeaderboard.tsx", import.meta.url), "utf8");
+  assert.match(resultSource, /\{newBest \? newBestTitle : withinTimeLimit \? "다루와 전부 찾았어요!" : "클리어 완료!"\}/);
   assert.match(resultSource, /제한시간을 초과해 속도 점수는 0점으로 반영되었어요/);
   assert.match(resultSource, /완주 기록도 랭킹 최고기록 비교 대상에 포함됩니다/);
   assert.match(resultSource, /완주 기록도 개인 최고기록 비교 대상에 포함됩니다/);
