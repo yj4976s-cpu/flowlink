@@ -12,6 +12,32 @@ export interface DaruMobileRoamBounds {
   minTravelDistance: number;
 }
 
+export interface DaruDirectGreetingState {
+  mode: "active" | "quiet" | "hidden";
+  guideOpen: boolean;
+  occluded: boolean;
+  dragging: boolean;
+  pageVisible: boolean;
+}
+
+export interface DaruDirectGreetingCompletionState extends DaruDirectGreetingState {
+  reducedMotion: boolean;
+}
+
+export interface DaruMobileBubbleAnchorInput {
+  viewportWidth: number;
+  stageLeft: number;
+  stageWidth: number;
+  bubbleWidth: number;
+  preferredSide: "left" | "right";
+  margin: number;
+}
+
+export interface DaruMobileBubbleAnchor {
+  side: "left" | "right";
+  leftOffset: number;
+}
+
 export function clampValue(value: number, min: number, max: number) {
   if (max < min) return min;
   return Math.min(max, Math.max(min, value));
@@ -45,4 +71,41 @@ export function mobileDestinationCandidates(bounds: DaruMobileRoamBounds, curren
     .filter((left, index, values) => values.findIndex((value) => Math.abs(value - left) < 1) === index)
     .filter((left) => Math.abs(left - currentLeft) >= minTravelDistance);
   return candidates.sort((leftA, leftB) => Math.abs(leftB - currentLeft) - Math.abs(leftA - currentLeft));
+}
+
+export function canCompleteDirectGreetingMove({
+  mode,
+  guideOpen,
+  occluded,
+  dragging,
+  pageVisible,
+}: DaruDirectGreetingState) {
+  return mode === "active" && !guideOpen && !occluded && !dragging && pageVisible;
+}
+
+export function shouldPlaceDirectGreetingImmediately(state: DaruDirectGreetingCompletionState) {
+  return state.reducedMotion && canCompleteDirectGreetingMove(state);
+}
+
+export function resolveMobileBubbleAnchor({
+  viewportWidth,
+  stageLeft,
+  stageWidth,
+  bubbleWidth,
+  preferredSide,
+  margin,
+}: DaruMobileBubbleAnchorInput): DaruMobileBubbleAnchor {
+  const safeMargin = Math.max(0, margin);
+  const maxBubbleWidth = Math.max(0, viewportWidth - safeMargin * 2);
+  const effectiveBubbleWidth = Math.min(Math.max(0, bubbleWidth), maxBubbleWidth);
+  const minLeftOffset = safeMargin - stageLeft;
+  const maxLeftOffset = viewportWidth - safeMargin - effectiveBubbleWidth - stageLeft;
+  const preferredLeftOffset = preferredSide === "right"
+    ? -4
+    : stageWidth - effectiveBubbleWidth + 4;
+
+  return {
+    side: preferredSide,
+    leftOffset: clampValue(preferredLeftOffset, minLeftOffset, maxLeftOffset),
+  };
 }

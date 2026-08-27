@@ -9,7 +9,7 @@ import { DaruMascot } from "./DaruMascot";
 import { useDaru } from "./DaruProvider";
 import { DARU_ADMIN_IDLE_MULTIPLIER, DARU_IDLE_DELAY, DARU_MOBILE_IDLE_MULTIPLIER, pickNaturalIdle } from "./daru.motion.config";
 import { DARU_GROUNDED_ROAMING_CONFIG, DARU_ROAMING_PAUSED_STORAGE_KEY, type DaruFacing } from "./daru.renderer.config";
-import { mobileDestinationCandidates, resolveMobileRoamBounds } from "./daru.mobile-roaming";
+import { canCompleteDirectGreetingMove, mobileDestinationCandidates, resolveMobileBubbleAnchor, resolveMobileRoamBounds, shouldPlaceDirectGreetingImmediately } from "./daru.mobile-roaming";
 import { behaviorForAction, normalizedMovementSpeed, tailEnergyFor, type DaruInteraction, type DaruLocomotion } from "./daru.animation.adapter";
 import type { DaruGuideRole } from "./daru.guide.config";
 import type { DaruIdleAction, DaruRhythm } from "./types";
@@ -64,10 +64,15 @@ export function DaruStage() {
   const [directGreeting, setDirectGreeting] = useState(false);
   const [bubbleSide, setBubbleSide] = useState<"left" | "right">("left");
   const [mobileBubbleStyle, setMobileBubbleStyle] = useState<React.CSSProperties | undefined>(undefined);
+  const directGreetingStateRef = useRef({ mode, guideOpen, occluded, dragging, pageVisible, reducedMotion });
 
   useEffect(() => {
     positionRef.current = position;
   }, [position]);
+
+  useEffect(() => {
+    directGreetingStateRef.current = { mode, guideOpen, occluded, dragging, pageVisible, reducedMotion };
+  }, [dragging, guideOpen, mode, occluded, pageVisible, reducedMotion]);
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 600px)");
@@ -126,6 +131,12 @@ export function DaruStage() {
     if (directGreetingTimerRef.current !== null) window.clearTimeout(directGreetingTimerRef.current);
     directGreetingTimerRef.current = null;
   }, []);
+
+  const cancelDirectGreeting = useCallback(() => {
+    clearDirectGreetingTimer();
+    setDirectGreeting(false);
+    setMobileBubbleStyle(undefined);
+  }, [clearDirectGreetingTimer]);
 
   useEffect(() => {
     if (!guideOpen) return;
@@ -214,7 +225,8 @@ export function DaruStage() {
   }, [roaming]);
 
   const beginMovementTo = useCallback((target: { x: number; y: number }) => {
-    if (reducedMotion || mode !== "active" || occluded || guideOpen || dragging) return false;
+    const latest = directGreetingStateRef.current;
+    if (latest.reducedMotion || latest.mode !== "active" || latest.occluded || latest.guideOpen || latest.dragging || !latest.pageVisible) return false;
     const currentPosition = positionRef.current;
     const stage = stageRef.current;
     const rect = stage?.getBoundingClientRect();
@@ -250,7 +262,7 @@ export function DaruStage() {
       startMovement();
     }
     return true;
-  }, [dragging, facing, guideOpen, mode, occluded, reducedMotion]);
+  }, [facing]);
 
   const handlePointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
     if (mode === "hidden") return;
@@ -268,10 +280,8 @@ export function DaruStage() {
     const dy = event.clientY - drag.startY;
     if (!drag.moved && Math.hypot(dx, dy) > 5) {
       drag.moved = true;
-      clearDirectGreetingTimer();
+      cancelDirectGreeting();
       freezeRoaming();
-      setDirectGreeting(false);
-      setMobileBubbleStyle(undefined);
       setInteraction("none");
       setDragging(true);
       setLocomotion("drag");
@@ -280,7 +290,7 @@ export function DaruStage() {
     if (!drag.moved) return;
     event.preventDefault();
     setPosition(clampPosition(drag.originX + dx, drag.originY + dy));
-  }, [clampPosition, clearDirectGreetingTimer, freezeRoaming]);
+  }, [cancelDirectGreeting, clampPosition, freezeRoaming]);
 
   const handlePointerUp = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
     const drag = dragRef.current;
@@ -356,6 +366,16 @@ export function DaruStage() {
   }, [freezeRoaming, locomotion, mode, occluded, pageVisible, reducedMotion, roaming, userPaused]);
 
   useEffect(() => {
+    if (!(guideOpen || occluded || dragging || mode !== "active" || !pageVisible)) return undefined;
+    clearDirectGreetingTimer();
+    const timer = window.setTimeout(() => {
+      setDirectGreeting(false);
+      setMobileBubbleStyle(undefined);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [clearDirectGreetingTimer, dragging, guideOpen, mode, occluded, pageVisible]);
+
+  useEffect(() => {
     const clamp = () => setPosition((current) => clampPosition(current.x, current.y));
     window.addEventListener("resize", clamp);
     window.visualViewport?.addEventListener("resize", clamp);
@@ -373,6 +393,7 @@ export function DaruStage() {
 
   if (mode === "hidden" || pathname === "/daru-game") return null;
   const handleGuideToggle = () => {
+    cancelDirectGreeting();
     const rect = stageRef.current?.getBoundingClientRect();
     if (rect) { setPanelSide(rect.left < 330 ? "left" : "right"); setPanelVertical(rect.top < 430 ? "below" : "above"); }
     if (!guideOpen) freezeRoaming();
@@ -391,9 +412,18 @@ export function DaruStage() {
     if (rect && window.matchMedia("(max-width: 600px)").matches) {
       const width = Math.min(220, Math.max(180, window.innerWidth - 24));
       const opensRight = rect.left + rect.width / 2 < window.innerWidth / 2;
-      setBubbleSide(opensRight ? "right" : "left");
+      const anchor = resolveMobileBubbleAnchor({
+        viewportWidth: window.innerWidth,
+        stageLeft: rect.left,
+        stageWidth: rect.width,
+        bubbleWidth: width,
+        preferredSide: opensRight ? "right" : "left",
+        margin: 12,
+      });
+      setBubbleSide(anchor.side);
       setMobileBubbleStyle({
         "--daru-mobile-bubble-width": `${width}px`,
+        "--daru-mobile-bubble-left-offset": `${anchor.leftOffset}px`,
       } as React.CSSProperties);
     } else {
       setBubbleSide("left");
@@ -406,8 +436,16 @@ export function DaruStage() {
       setDirectGreeting(false);
       setMobileBubbleStyle(undefined);
       directGreetingTimerRef.current = null;
-      if (reducedMotion || mode !== "active") return;
+      const latest = directGreetingStateRef.current;
+      if (!canCompleteDirectGreetingMove(latest)) return;
       const target = chooseSafeDestination();
+      if (shouldPlaceDirectGreetingImmediately(latest)) {
+        setRoaming(false);
+        setMovementSpeed(0);
+        setLocomotion("idle");
+        setPosition(target);
+        return;
+      }
       beginMovementTo(target);
     }, DARU_DIRECT_GREETING_MS);
   };
