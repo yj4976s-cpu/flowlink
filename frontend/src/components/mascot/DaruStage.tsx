@@ -393,10 +393,11 @@ export function DaruStage() {
       const opensRight = rect.left + rect.width / 2 < window.innerWidth / 2;
       const preferredLeft = opensRight ? rect.right - 22 : rect.left - width + 22;
       const left = Math.min(window.innerWidth - width - 12, Math.max(12, preferredLeft));
+      const bubbleBottom = Math.min(window.innerHeight - 96, Math.max(104, window.innerHeight - rect.top - 2));
       setBubbleSide(opensRight ? "right" : "left");
       setMobileBubbleStyle({
         "--daru-mobile-bubble-left": `${left}px`,
-        "--daru-mobile-bubble-bottom": `${Math.max(104, window.innerHeight - rect.top + 8)}px`,
+        "--daru-mobile-bubble-bottom": `${bubbleBottom}px`,
         "--daru-mobile-bubble-width": `${width}px`,
       } as React.CSSProperties);
     } else {
