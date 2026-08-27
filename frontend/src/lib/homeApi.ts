@@ -1,7 +1,7 @@
-import { headers } from "next/headers";
+import "server-only";
 
 import type { HomeSummary, ObjectKind } from "@/types/home";
-import { buildApiUrl, resolveMediaUrl } from "@/lib/apiBase";
+import { resolveMediaUrl } from "@/lib/apiBase";
 
 type ApiHomeSummary = {
   stats: {
@@ -58,20 +58,14 @@ function mapSummary(summary: ApiHomeSummary): HomeSummary {
   };
 }
 
-async function buildServerApiUrl(path: string) {
-  const apiUrl = buildApiUrl(path);
-  if (/^https?:\/\//i.test(apiUrl)) return apiUrl;
-  const requestHeaders = await headers();
-  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host");
-  if (!host) return null;
-  const proto = requestHeaders.get("x-forwarded-proto") ?? "http";
-  return `${proto}://${host}${apiUrl.startsWith("/") ? apiUrl : `/${apiUrl}`}`;
+function buildServerApiUrl(path: string) {
+  const internalApiBaseUrl = process.env.INTERNAL_API_BASE_URL?.trim() || "http://backend:8000";
+  return `${internalApiBaseUrl.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 export async function getHomeSummary(): Promise<HomeSummary | null> {
   try {
-    const url = await buildServerApiUrl("/api/system/home-summary");
-    if (!url) return null;
+    const url = buildServerApiUrl("/api/system/home-summary");
     const response = await fetch(url, { cache: "no-store" });
     if (!response.ok) return null;
     return mapSummary(await response.json() as ApiHomeSummary);
