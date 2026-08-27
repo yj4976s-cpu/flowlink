@@ -25,10 +25,29 @@ const DARU_DIRECT_GREETING_MESSAGE = "안녕하세요! 같이 둘러볼까요?";
 const DARU_DIRECT_GREETING_MS = 880;
 
 function numericTranslate(element: HTMLElement) {
-  const translated = getComputedStyle(element).translate.split(" ");
+  const computed = getComputedStyle(element);
+  const translated = computed.translate.split(" ");
   const x = Number.parseFloat(translated[0]);
   const y = Number.parseFloat(translated[1] ?? "0");
-  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+  if (Number.isFinite(x) && Number.isFinite(y)) return { x, y };
+
+  const matrix = computed.transform;
+  if (!matrix || matrix === "none") return null;
+  const matrix3d = matrix.match(/^matrix3d\((.+)\)$/);
+  if (matrix3d) {
+    const values = matrix3d[1].split(",").map((value) => Number.parseFloat(value.trim()));
+    const matrixX = values[12];
+    const matrixY = values[13];
+    return Number.isFinite(matrixX) && Number.isFinite(matrixY) ? { x: matrixX, y: matrixY } : null;
+  }
+  const matrix2d = matrix.match(/^matrix\((.+)\)$/);
+  if (matrix2d) {
+    const values = matrix2d[1].split(",").map((value) => Number.parseFloat(value.trim()));
+    const matrixX = values[4];
+    const matrixY = values[5];
+    return Number.isFinite(matrixX) && Number.isFinite(matrixY) ? { x: matrixX, y: matrixY } : null;
+  }
+  return null;
 }
 
 export function DaruStage() {

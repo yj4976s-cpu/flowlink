@@ -29,10 +29,26 @@ export function preloadDaruWalkFrames(theme: DaruRhythm = "day") {
 }
 
 function translatedX(element: HTMLElement): number {
-  const value = getComputedStyle(element).translate;
-  if (!value || value === "none") return 0;
-  const x = Number.parseFloat(value.split(" ")[0]);
-  return Number.isFinite(x) ? x : 0;
+  const computed = getComputedStyle(element);
+  const value = computed.translate;
+  if (value && value !== "none") {
+    const x = Number.parseFloat(value.split(" ")[0]);
+    if (Number.isFinite(x)) return x;
+  }
+
+  const matrix = computed.transform;
+  if (!matrix || matrix === "none") return 0;
+  const matrix3d = matrix.match(/^matrix3d\((.+)\)$/);
+  if (matrix3d) {
+    const values = matrix3d[1].split(",").map((item) => Number.parseFloat(item.trim()));
+    return Number.isFinite(values[12]) ? values[12] : 0;
+  }
+  const matrix2d = matrix.match(/^matrix\((.+)\)$/);
+  if (matrix2d) {
+    const values = matrix2d[1].split(",").map((item) => Number.parseFloat(item.trim()));
+    return Number.isFinite(values[4]) ? values[4] : 0;
+  }
+  return 0;
 }
 
 function frameIndexForDistance(travelledPx: number, frameCount: number) {
