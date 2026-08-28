@@ -10,6 +10,7 @@
     "test:daru-game": "node --experimental-strip-types --test tests/daru-game-contract.test.mjs",
     "test:daru-mobile-roaming": "node --experimental-strip-types --test tests/daru-mobile-roaming-contract.test.mjs",
     "test:home-api": "node --experimental-strip-types --test tests/home-api-contract.test.mjs",
+    "test:admin-map": "node --experimental-strip-types --test tests/admin-operations-map-contract.test.mjs",
     "lint": "eslint"
   },
   "dependencies": {
