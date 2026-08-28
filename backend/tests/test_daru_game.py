@@ -674,6 +674,45 @@ def test_deleting_best_recomputes_best_while_delete_all_preserves_progress(db: S
     assert stat.total_daru_points == 777; assert stat.play_count == 9
 
 
+def test_deleting_current_version_best_never_revives_an_old_score_version(db: Session) -> None:
+    now = utc_now()
+    old_best = history_record(db, score="99.0", achieved=now)
+    old_best.score_version = 1
+    current_best = history_record(db, score="90.0", achieved=now + timedelta(seconds=1))
+    current_second = history_record(db, score="80.0", achieved=now + timedelta(seconds=2))
+    stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=current_best.detection_power, score_version=2, best_attempts=current_best.attempts, best_elapsed_seconds=current_best.elapsed_seconds, best_combo=current_best.max_combo, best_hints_used=current_best.hints_used, total_daru_points=777, play_count=9, best_achieved_at=current_best.achieved_at, ranking_record_id=current_second.id, created_at=now, updated_at=now)
+    db.add(stat); db.commit()
+
+    assert soft_delete_play_record(db, user_id=1, record_id=current_best.id) is not None
+
+    db.refresh(stat)
+    assert stat.best_detection_power == Decimal("80.0")
+    assert stat.best_achieved_at == current_second.achieved_at.replace(tzinfo=None)
+    assert stat.ranking_record_id == current_second.id
+    assert stat.total_daru_points == 777 and stat.play_count == 9
+
+
+def test_deleting_only_current_version_best_leaves_best_empty(db: Session) -> None:
+    now = utc_now()
+    old_best = history_record(db, score="99.0", achieved=now)
+    old_best.score_version = 1
+    current_best = history_record(db, score="90.0", achieved=now + timedelta(seconds=1))
+    stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=current_best.detection_power, score_version=2, best_attempts=current_best.attempts, best_elapsed_seconds=current_best.elapsed_seconds, best_combo=current_best.max_combo, best_hints_used=current_best.hints_used, total_daru_points=777, play_count=9, best_achieved_at=current_best.achieved_at, ranking_record_id=current_best.id, created_at=now, updated_at=now)
+    db.add(stat); db.commit()
+
+    assert soft_delete_play_record(db, user_id=1, record_id=current_best.id) is not None
+
+    db.refresh(stat)
+    assert stat.best_detection_power == Decimal("0.0")
+    assert stat.best_attempts is None
+    assert stat.best_elapsed_seconds is None
+    assert stat.best_combo == 0
+    assert stat.best_hints_used is None
+    assert stat.best_achieved_at is None
+    assert stat.ranking_record_id == current_best.id
+    assert stat.total_daru_points == 777 and stat.play_count == 9
+
+
 def test_restore_recomputes_best_but_preserves_ranking_pointer(client: TestClient, db: Session) -> None:
     now = utc_now()
     best = history_record(db, score="95.0", achieved=now)

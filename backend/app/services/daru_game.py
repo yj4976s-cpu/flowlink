@@ -430,7 +430,13 @@ def leaderboard_rank(db: Session, stat: DaruGameStat) -> int | None:
 def best_record_query(user_id: int, difficulty: str):
     return (
         select(DaruGamePlayRecord)
-        .where(DaruGamePlayRecord.user_id == user_id, DaruGamePlayRecord.difficulty == difficulty, DaruGamePlayRecord.completed.is_(True), DaruGamePlayRecord.deleted_at.is_(None))
+        .where(
+            DaruGamePlayRecord.user_id == user_id,
+            DaruGamePlayRecord.difficulty == difficulty,
+            DaruGamePlayRecord.completed.is_(True),
+            DaruGamePlayRecord.deleted_at.is_(None),
+            DaruGamePlayRecord.score_version == CURRENT_SCORE_VERSION,
+        )
         .order_by(DaruGamePlayRecord.detection_power.desc(), DaruGamePlayRecord.attempts.asc(), DaruGamePlayRecord.elapsed_seconds.asc(), DaruGamePlayRecord.achieved_at.asc())
     )
 
