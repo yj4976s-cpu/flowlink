@@ -138,6 +138,10 @@
 .missionLive { padding: 4px 8px; border-radius: 999px; background: var(--color-primary-soft); color: var(--color-primary); font-size: 8px; font-weight: 900; letter-spacing: .1em; }
 .waveCue { position: absolute; z-index: 5; inset: 0; display: grid; place-items: center; pointer-events: none; }.waveCue span { z-index: 1; padding: 8px 14px; border-radius: 999px; background: var(--color-surface); color: var(--color-primary); box-shadow: var(--shadow-card); font-size: 12px; font-weight: 800; }.waveCue i { position: absolute; width: 12%; height: 36%; border: 2px solid color-mix(in srgb, var(--color-primary) 38%, transparent); border-radius: 50%; animation: memoryWave .62s ease-out both; }
 .readyCue { position: absolute; z-index: 6; inset: 0; background: color-mix(in srgb, var(--color-background) 36%, transparent); color: var(--color-primary); display: grid; place-items: center; font-size: clamp(32px, 7vw, 64px); font-weight: 900; letter-spacing: .16em; pointer-events: none; backdrop-filter: blur(1px); animation: cueFade .2s ease both; }
+.resultPendingOverlay { position: absolute; z-index: 10; inset: 0; background: color-mix(in srgb, var(--color-background) 24%, transparent); display: flex; align-items: center; justify-content: center; gap: 10px; pointer-events: auto; backdrop-filter: blur(1px); }
+.resultPendingOverlay p { margin: 0; padding: 8px 11px; border-radius: 999px; background: color-mix(in srgb, var(--color-surface) 92%, transparent); color: var(--color-text); box-shadow: var(--shadow-card); font-size: 12px; font-weight: 800; }
+.resultPendingOverlay button { min-height: 34px; padding: 0 13px; border: 1px solid var(--color-primary); border-radius: 999px; background: var(--color-surface); color: var(--color-primary); font: inherit; font-size: 12px; font-weight: 800; cursor: pointer; }
+.resultPendingSpinner { width: 18px; height: 18px; border: 2px solid color-mix(in srgb, var(--color-primary) 24%, transparent); border-top-color: var(--color-primary); border-radius: 50%; animation: resultPendingSpin .7s linear infinite; }
 
 .board {
   --daru-card-width: 80px;
@@ -258,6 +262,7 @@
 @keyframes comboBadgeIn { from { transform: scale(.92); } 60% { transform: scale(1.06); } }
 @keyframes memoryWave { from { opacity: .55; transform: scaleX(.2); } to { opacity: 0; transform: scaleX(8); } }
 @keyframes cueFade { from { opacity: 0; } }
+@keyframes resultPendingSpin { to { transform: rotate(360deg); } }
 @keyframes timerPulse { 50% { opacity: .58; transform: scale(1.04); } }
 @keyframes timerSpark { 50% { opacity: .28; transform: translate(1px, -1px) rotate(-38deg) scale(.72); } }
 
@@ -606,6 +611,7 @@
   .card[data-matched] .cardFace { animation: none; }
   .waveCue i { animation: none; opacity: .2; transform: scaleX(4); }
   .readyCue { animation: none; }
+  .resultPendingSpinner { animation: none; border-color: var(--color-primary); }
   .cardInner { transition-delay: 0ms; }
   .liveHud[data-timer-state="critical"] .timerZone dd,
   .liveHud[data-timer-state="critical"] .timerIcon i::before,

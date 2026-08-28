@@ -116,6 +116,27 @@ test("a READY 401 recovery preserves auth expiry and blocks silent guest restart
   assert.match(gameSource, /로그인 세션이 만료되었습니다[\s\S]+\/login\?next=%2Fdaru-game[\s\S]+다시 로그인/);
 });
 
+test("authoritative completion keeps pending and retry UI inside the board stage", () => {
+  const css = readFileSync(new URL("../src/components/daru-game/DaruGame.module.css", import.meta.url), "utf8");
+  assert.match(gameSource, /const RESULT_PENDING_DELAY_MS = 1500/);
+  assert.match(gameSource, /setTimeout\([\s\S]*setShowResultPendingOverlay\(true\)[\s\S]*RESULT_PENDING_DELAY_MS/);
+  assert.match(gameSource, /<div className=\{styles\.boardStage\}[\s\S]*<MemoryBoard[\s\S]*styles\.resultPendingOverlay/);
+  assert.doesNotMatch(gameSource, /recordStatus === "saving" && <p className=\{styles\.authRecoveryNotice\}/);
+  assert.match(gameSource, /recordStatus === "saving"[\s\S]*role="status" aria-live="polite"/);
+  assert.match(gameSource, /recordStatus === "failed"[\s\S]*role="alert"[\s\S]*결과 다시 확인/);
+  assert.match(css, /\.resultPendingOverlay \{ position: absolute;[^}]*inset: 0;/);
+  assert.doesNotMatch(css, /\.resultPendingOverlay \{[^}]*grid-row/);
+});
+
+test("completion keeps authoritative USER results and direct guest or admin outcomes", () => {
+  assert.match(gameSource, /submitDaruGameResult\(\{ run_id: runId, finish_partial: finishPartial \}\)/);
+  assert.match(gameSource, /recoverRunState\(runId, difficulty\)/);
+  assert.match(gameSource, /setLeaderboardRank\(response\.leaderboard_rank\)/);
+  assert.match(gameSource, /setPersonalBestPower\(response\.record\.best_detection_power\)/);
+  assert.match(gameSource, /isGuestBestEligible\(authResolved, currentUser\?\.role\)/);
+  assert.match(gameSource, /currentUser\?\.role === "ADMIN" \? "admin" : "guest"/);
+});
+
 test("HARD40 uses a new guest best key while EASY and NORMAL keep their keys", () => {
   assert.equal(BEST_RECORD_STORAGE_KEYS.easy, "flowlink:daru-game:v2:best-detection:easy");
   assert.equal(BEST_RECORD_STORAGE_KEYS.normal, "flowlink:daru-game:v2:best-detection:normal");
