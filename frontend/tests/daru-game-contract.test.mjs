@@ -4,6 +4,8 @@ import test from "node:test";
 
 import { BEST_RECORD_STORAGE_KEYS, isGuestBestEligible, resolveGuestBest } from "../src/components/daru-game/game.storage.ts";
 import { getLeaderboardPageRequest, isLeaderboardDifficulty, isLeaderboardScoreTie } from "../src/components/daru-game/leaderboard.utils.ts";
+import { BOARD_SAFETY_PX, calculateMemoryBoardGeometry, memoryBoardGeometryEqual } from "../src/components/daru-game/memoryBoard.geometry.ts";
+import { constrainedShuffleCards, hasAdjacentPair } from "../src/components/daru-game/deckShuffle.ts";
 import { createActionId } from "../src/lib/daruActionId.ts";
 import { isExpiredRunError, isOutdatedDeckError, OUTDATED_DECK_ERROR_CODE, RUN_EXPIRED_ERROR_CODE, terminalRunRecoveryReason } from "../src/lib/daruRunRecovery.ts";
 
@@ -12,6 +14,61 @@ const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}
 const apiSource = readFileSync(new URL("../src/lib/daruGameApi.ts", import.meta.url), "utf8");
 const gameSource = readFileSync(new URL("../src/components/daru-game/DaruGame.tsx", import.meta.url), "utf8");
 const leaderboardSource = readFileSync(new URL("../src/components/daru-game/DaruLeaderboard.tsx", import.meta.url), "utf8");
+
+function seededRandom(seed) {
+  let state = seed;
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+}
+
+test("all difficulties generate one hundred non-adjacent randomized decks", () => {
+  const cases = [["easy", 20, 10, 5], ["normal", 32, 16, 8], ["hard", 40, 20, 10]];
+  for (const [difficulty, cardCount, pairCount, columns] of cases) {
+    const source = Array.from({ length: pairCount }, (_, pairId) => [{ id: `${pairId}-0`, pairId: String(pairId) }, { id: `${pairId}-1`, pairId: String(pairId) }]).flat();
+    const decks = Array.from({ length: 100 }, (_, seed) => constrainedShuffleCards(source, columns, seededRandom(seed + 1)));
+    assert.ok(decks.every((deck) => deck.length === cardCount));
+    assert.ok(decks.every((deck) => new Set(deck.map((card) => card.pairId)).size === pairCount));
+    assert.ok(decks.every((deck) => !hasAdjacentPair(deck, columns)), `${difficulty} produced an adjacent pair`);
+    assert.ok(new Set(decks.map((deck) => deck.map((card) => card.id).join(","))).size > 90);
+  }
+});
+
+test("constrained shuffle fallback remains valid after repeated failed shuffles", () => {
+  for (const [pairCount, columns] of [[10, 5], [16, 8], [20, 10]]) {
+    const source = Array.from({ length: pairCount }, (_, pairId) => [{ pairId: String(pairId) }, { pairId: String(pairId) }]).flat();
+    const deck = constrainedShuffleCards(source, columns, () => 0, 2);
+    assert.equal(hasAdjacentPair(deck, columns), false);
+  }
+});
+
+test("memory board geometry keeps desktop difficulty columns and fits without scrollbars", () => {
+  const cases = [["easy", 20, 5], ["normal", 32, 8], ["hard", 40, 10]];
+  for (const [difficulty, cardCount, columns] of cases) {
+    const geometry = calculateMemoryBoardGeometry({ difficulty, cardCount, availableWidth: 1300, availableHeight: 530, viewportWidth: 1366, viewportHeight: 768 });
+    assert.equal(geometry.columns, columns);
+    assert.ok(geometry.boardWidth <= 1300 - BOARD_SAFETY_PX);
+    assert.ok(geometry.boardHeight <= 530 - BOARD_SAFETY_PX);
+  }
+});
+
+test("memory board cards shrink with available height and preserve mobile reflow", () => {
+  const tall = calculateMemoryBoardGeometry({ difficulty: "hard", cardCount: 40, availableWidth: 1200, availableHeight: 530, viewportWidth: 1280, viewportHeight: 720 });
+  const short = calculateMemoryBoardGeometry({ difficulty: "hard", cardCount: 40, availableWidth: 1200, availableHeight: 430, viewportWidth: 1280, viewportHeight: 620 });
+  const mobile = calculateMemoryBoardGeometry({ difficulty: "hard", cardCount: 40, availableWidth: 370, availableHeight: 600, viewportWidth: 390, viewportHeight: 844 });
+  assert.ok(short.cardWidth < tall.cardWidth);
+  assert.equal(mobile.reflow, true);
+  assert.equal(mobile.columns, 4);
+  assert.ok(mobile.boardHeight <= 600 - BOARD_SAFETY_PX);
+});
+
+test("identical memory board geometry skips redundant DOM updates", () => {
+  const geometry = calculateMemoryBoardGeometry({ difficulty: "normal", cardCount: 32, availableWidth: 1200, availableHeight: 500, viewportWidth: 1280, viewportHeight: 720 });
+  assert.equal(memoryBoardGeometryEqual(null, geometry), false);
+  assert.equal(memoryBoardGeometryEqual(geometry, { ...geometry }), true);
+  assert.equal(memoryBoardGeometryEqual(geometry, { ...geometry, cardWidth: geometry.cardWidth - 0.1 }), false);
+});
 
 test("action IDs prefer native randomUUID when available", () => {
   const nativeId = "123e4567-e89b-42d3-a456-426614174000";

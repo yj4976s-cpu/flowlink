@@ -1,6 +1,7 @@
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+import random
 from uuid import UUID, uuid4
 
 import pytest
@@ -17,7 +18,7 @@ from app.core.security import utc_now
 from app.db.session import Base, get_db
 from app.main import app
 from app.models import DaruGamePlayRecord, DaruGameRun, DaruGameRunAction, DaruGameStat, User
-from app.services.daru_game import DIFFICULTY_CONFIG, GAME_RUN_MAX_AGE, HARD_ADDITIONAL_CARD_IDS, NORMAL_CARD_IDS, GameRunExpiredError, _ensure_not_expired, _round_to_tenth, calculate_detection_power, calculate_hint_score, calculate_memory_accuracy, calculate_speed_score, detection_metrics, game_run_lock_query, is_better, rank_for, ranking_query, select_card_ids, soft_delete_all_play_records, soft_delete_play_record
+from app.services.daru_game import DIFFICULTY_CONFIG, GAME_RUN_MAX_AGE, HARD_ADDITIONAL_CARD_IDS, NORMAL_CARD_IDS, GameRunExpiredError, _ensure_not_expired, _round_to_tenth, calculate_detection_power, calculate_hint_score, calculate_memory_accuracy, calculate_speed_score, constrained_shuffle, create_shuffled_deck, detection_metrics, game_run_lock_query, has_adjacent_pair, is_better, rank_for, ranking_query, select_card_ids, soft_delete_all_play_records, soft_delete_play_record
 
 
 @compiles(BigInteger, "sqlite")
@@ -83,6 +84,7 @@ def test_detection_power_uses_each_difficulty_config() -> None:
 def test_hard_balance_config_uses_twenty_pairs_and_new_timing() -> None:
     assert DIFFICULTY_CONFIG["HARD"] == {
         "pairs": 20,
+        "columns": 10,
         "time_limit_seconds": 280,
         "speed_benchmark_seconds": 200,
         "combo_target": 8,
@@ -250,6 +252,26 @@ def test_hard_card_selection_can_produce_different_deterministic_subsets() -> No
     second = select_card_ids("HARD", FrontLoadingRandom(["shoe-found", "backpack-found", "proud", "styrofoam"]))
     assert first[16:] != second[16:]
     assert len(set(first[16:])) == len(set(second[16:])) == 4
+
+
+@pytest.mark.parametrize(
+    ("difficulty", "card_count", "pair_count", "columns"),
+    [("EASY", 20, 10, 5), ("NORMAL", 32, 16, 8), ("HARD", 40, 20, 10)],
+)
+def test_constrained_shuffle_avoids_adjacent_pairs_across_one_hundred_decks(difficulty: str, card_count: int, pair_count: int, columns: int) -> None:
+    decks = [create_shuffled_deck(difficulty, random.Random(seed)) for seed in range(100)]
+    assert all(len(deck) == card_count for deck in decks)
+    assert all(len(set(deck)) == pair_count for deck in decks)
+    assert all(all(deck.count(pair_id) == 2 for pair_id in set(deck)) for deck in decks)
+    assert all(not has_adjacent_pair(deck, columns) for deck in decks)
+    assert len({tuple(deck) for deck in decks}) > 90
+
+
+def test_constrained_shuffle_fallback_is_valid_when_randomizer_never_changes_order() -> None:
+    deck = [pair_id for pair_id in NORMAL_CARD_IDS for _copy in range(2)]
+    result = constrained_shuffle(deck, 8, FrontLoadingRandom([]), max_attempts=2)
+    assert sorted(result) == sorted(deck)
+    assert not has_adjacent_pair(result, 8)
 
 
 @pytest.mark.parametrize(("difficulty", "card_count"), [("EASY", 20), ("NORMAL", 32), ("HARD", 40)])

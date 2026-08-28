@@ -6,7 +6,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import hashlib
 import json
 import secrets
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -17,9 +17,9 @@ from app.models import DaruGamePlayRecord, DaruGameRun, DaruGameRunAction, DaruG
 
 
 DIFFICULTY_CONFIG = {
-    "EASY": {"pairs": 10, "time_limit_seconds": 120, "speed_benchmark_seconds": 90, "combo_target": 5, "clear_bonus": 300, "preview_seconds": 5},
-    "NORMAL": {"pairs": 16, "time_limit_seconds": 210, "speed_benchmark_seconds": 150, "combo_target": 7, "clear_bonus": 500, "preview_seconds": 7},
-    "HARD": {"pairs": 20, "time_limit_seconds": 280, "speed_benchmark_seconds": 200, "combo_target": 8, "clear_bonus": 700, "preview_seconds": 8},
+    "EASY": {"pairs": 10, "columns": 5, "time_limit_seconds": 120, "speed_benchmark_seconds": 90, "combo_target": 5, "clear_bonus": 300, "preview_seconds": 5},
+    "NORMAL": {"pairs": 16, "columns": 8, "time_limit_seconds": 210, "speed_benchmark_seconds": 150, "combo_target": 7, "clear_bonus": 500, "preview_seconds": 7},
+    "HARD": {"pairs": 20, "columns": 10, "time_limit_seconds": 280, "speed_benchmark_seconds": 200, "combo_target": 8, "clear_bonus": 700, "preview_seconds": 8},
 }
 EASY_CARD_IDS = ["greeting", "excited", "heart", "sleeping", "search", "umbrella", "shoe", "backpack", "ball", "can"]
 NORMAL_CARD_IDS = [*EASY_CARD_IDS, "thumbs-up", "sulky", "coastal-cleanup", "umbrella-found", "plastic-bag", "plastic-bottle"]
@@ -31,6 +31,7 @@ CARD_IDS_BY_DIFFICULTY = {
 GAME_RUN_MAX_AGE = timedelta(hours=24)
 CURRENT_SCORE_VERSION = 2
 SCORE_TENTH = Decimal("0.1")
+DECK_SHUFFLE_MAX_ATTEMPTS = 80
 
 
 class GameRunNotFoundError(ValueError):
@@ -57,11 +58,43 @@ def select_card_ids(difficulty: str, randomizer: Any | None = None) -> list[str]
     return [*NORMAL_CARD_IDS, *hard_additional[:4]]
 
 
+def has_adjacent_pair(deck: Sequence[str], columns: int) -> bool:
+    first_positions: dict[str, int] = {}
+    for index, pair_id in enumerate(deck):
+        first_index = first_positions.get(pair_id)
+        if first_index is None:
+            first_positions[pair_id] = index
+            continue
+        first_row, first_column = divmod(first_index, columns)
+        row, column = divmod(index, columns)
+        if abs(first_row - row) <= 1 and abs(first_column - column) <= 1:
+            return True
+    return False
+
+
+def constrained_shuffle(deck: Sequence[str], columns: int, randomizer: Any | None = None, *, max_attempts: int = DECK_SHUFFLE_MAX_ATTEMPTS) -> list[str]:
+    rng = randomizer or secrets.SystemRandom()
+    for _attempt in range(max_attempts):
+        candidate = list(deck)
+        rng.shuffle(candidate)
+        if not has_adjacent_pair(candidate, columns):
+            return candidate
+
+    # Current boards have four rows, so the two halves are always two rows apart.
+    pair_ids = list(dict.fromkeys(deck))
+    rng.shuffle(pair_ids)
+    return [*pair_ids, *pair_ids]
+
+
+def create_shuffled_deck(difficulty: str, randomizer: Any | None = None) -> list[str]:
+    rng = randomizer or secrets.SystemRandom()
+    deck = [card_id for card_id in select_card_ids(difficulty, rng) for _copy in range(2)]
+    return constrained_shuffle(deck, DIFFICULTY_CONFIG[difficulty]["columns"], rng)
+
+
 def create_game_run(db: Session, *, user_id: int, difficulty: str) -> DaruGameRun:
     now = utc_now()
-    randomizer = secrets.SystemRandom()
-    deck = [card_id for card_id in select_card_ids(difficulty, randomizer) for _copy in range(2)]
-    randomizer.shuffle(deck)
+    deck = create_shuffled_deck(difficulty)
     run = DaruGameRun(id=uuid4(), user_id=user_id, difficulty=difficulty, started_at=now, deck_state=deck, matched_positions=[])
     db.add(run)
     db.commit()
