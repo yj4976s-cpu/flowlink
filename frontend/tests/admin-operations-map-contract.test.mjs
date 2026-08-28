@@ -4,11 +4,12 @@ import test from "node:test";
 import {
   getLayerToggleTransition,
   getMapMarkerSelectionTransition,
+  getResetMapTransition,
   getSearchClearTransition,
   getSearchSelectionTransition,
   isSearchRequestCurrent,
 } from "../src/components/admin/operations-map/operationsMapState.ts";
-import { createProgrammaticViewportGuard } from "../src/components/admin/operations-map/operationsMapViewport.ts";
+import { createProgrammaticViewportGuard, getClampedMapLevel } from "../src/components/admin/operations-map/operationsMapViewport.ts";
 
 const pageSource = readFileSync(new URL("../src/app/admin/map/page.tsx", import.meta.url), "utf8");
 const screenSource = readFileSync(new URL("../src/components/admin/operations-map/AdminOperationsMap.tsx", import.meta.url), "utf8");
@@ -80,6 +81,25 @@ test("programmatic viewport zooms stay clean while user zooms become dirty", () 
   assert.match(mapSource, /const markDirty = \(\) => setDirty\(true\)/, "drag remains a user viewport change");
   assert.match(mapSource, /const zoom = \(delta: number\)[\s\S]*setDirty\(true\)/, "the custom zoom control is explicitly user initiated");
   assert.match(mapSource, /onQueryArea\(boundsOf\(map\)\); setDirty\(false\)/, "querying the visible area clears dirty state");
+});
+
+test("resetting the map ends spotlight and clears focused map context", () => {
+  assert.deepEqual(getResetMapTransition(), {
+    searchPoint: null,
+    selectedId: null,
+    queriedBounds: null,
+    spotlightCameraId: null,
+  });
+  assert.match(screenSource, /setSpotlightCameraId\(transition\.spotlightCameraId\)/);
+  assert.match(screenSource, /setFitToken\(\(value\) => value \+ 1\)/);
+});
+
+test("custom zoom controls only dirty the map for an actual level change", () => {
+  assert.equal(getClampedMapLevel(2, -1, 2, 10), 2, "zoom in at the minimum level is a no-op");
+  assert.equal(getClampedMapLevel(10, 1, 2, 10), 10, "zoom out at the maximum level is a no-op");
+  assert.equal(getClampedMapLevel(6, -1, 2, 10), 5, "zoom in changes the level");
+  assert.equal(getClampedMapLevel(6, 1, 2, 10), 7, "zoom out changes the level");
+  assert.match(mapSource, /if \(nextLevel === currentLevel\) return;\s+setDirty\(true\);\s+map\.setLevel\(nextLevel\)/);
 });
 
 test("operations use geographic coordinates and camera detection aggregation", () => {

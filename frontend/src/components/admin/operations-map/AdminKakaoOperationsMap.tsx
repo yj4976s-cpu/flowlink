@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/common/Icon";
 import { loadKakaoMaps, type KakaoCustomOverlayInstance, type KakaoMapInstance, type KakaoRoot } from "@/lib/kakaoPlaces";
 import type { MapMarker, SearchResult } from "./mockOperationsMapData";
-import { createProgrammaticViewportGuard } from "./operationsMapViewport";
+import { createProgrammaticViewportGuard, getClampedMapLevel } from "./operationsMapViewport";
 import styles from "./AdminOperationsMap.module.css";
 
 export type OperationsBounds = { south: number; west: number; north: number; east: number };
@@ -229,8 +229,11 @@ export function AdminKakaoOperationsMap({ markers, detectionCounts, selectedId, 
   const zoom = (delta: number) => {
     const map = mapRef.current;
     if (!map) return;
+    const currentLevel = map.getLevel();
+    const nextLevel = getClampedMapLevel(currentLevel, delta, MIN_LEVEL, MAX_LEVEL);
+    if (nextLevel === currentLevel) return;
     setDirty(true);
-    map.setLevel(Math.max(MIN_LEVEL, Math.min(MAX_LEVEL, map.getLevel() + delta)));
+    map.setLevel(nextLevel);
   };
 
   return <div className={styles.kakaoMapShell}>

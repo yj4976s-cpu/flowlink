@@ -61,6 +61,15 @@ export function getSearchClearTransition(sequence: number) {
   };
 }
 
+export function getResetMapTransition() {
+  return {
+    searchPoint: null,
+    selectedId: null,
+    queriedBounds: null,
+    spotlightCameraId: null,
+  };
+}
+
 export function isSearchRequestCurrent(sequence: number, requestId: number) {
   return sequence === requestId;
 }

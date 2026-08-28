@@ -1,5 +1,9 @@
 type LevelMap = { getLevel: () => number };
 
+export function getClampedMapLevel(current: number, delta: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, current + delta));
+}
+
 export function createProgrammaticViewportGuard(onUserZoom: () => void) {
   const activeChanges: { zoomObserved: boolean }[] = [];
   let pendingProgrammaticZooms = 0;

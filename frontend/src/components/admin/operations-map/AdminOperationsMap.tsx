@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { Icon } from "@/components/common/Icon";
 import { searchKakaoPlaces } from "@/lib/kakaoPlaces";
 import { AdminKakaoOperationsMap, type OperationsBounds } from "./AdminKakaoOperationsMap";
-import { getLayerToggleTransition, getMapMarkerSelectionTransition, getSearchClearTransition, getSearchSelectionTransition, isSearchRequestCurrent } from "./operationsMapState";
+import { getLayerToggleTransition, getMapMarkerSelectionTransition, getResetMapTransition, getSearchClearTransition, getSearchSelectionTransition, isSearchRequestCurrent } from "./operationsMapState";
 import {
   getOperationsMapSnapshot,
   operationsMarkers,
@@ -226,7 +226,14 @@ export function AdminOperationsMap() {
     if (transition.spotlightCameraId !== spotlightCameraId) setSpotlightCameraId(transition.spotlightCameraId);
   };
   const selectDetection = (marker: MapMarker) => { setSelectedId(marker.id); setSearchPoint({ id: `focus-${marker.id}`, group: "AI 탐지", title: marker.title, detail: marker.subtitle, markerId: marker.id, latitude: marker.latitude, longitude: marker.longitude }); };
-  const resetMap = () => { setSearchPoint(null); setSelectedId(null); setQueriedBounds(null); setFitToken((value) => value + 1); };
+  const resetMap = () => {
+    const transition = getResetMapTransition();
+    setSearchPoint(transition.searchPoint);
+    setSelectedId(transition.selectedId);
+    setQueriedBounds(transition.queriedBounds);
+    setSpotlightCameraId(transition.spotlightCameraId);
+    setFitToken((value) => value + 1);
+  };
   const retry = () => { setMapState("loading"); void getOperationsMapSnapshot().then(() => setMapRetryKey((value) => value + 1)); };
   const changeFilter = (value: StatusFilter) => { setFilter(value); setSelectedId(spotlightCameraId); setSearchPoint(null); };
   const toggleLayer = (kind: MapMarkerKind) => {
