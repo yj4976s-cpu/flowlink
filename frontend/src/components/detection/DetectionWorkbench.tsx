@@ -23,6 +23,7 @@ import type { CitizenReport } from "@/types/discoveryNetwork";
 import { WebcamDetectionPanel } from "./WebcamDetectionPanel";
 import type { WebcamPanelStatus, WebcamReportCandidate } from "./WebcamDetectionPanel";
 import { getContainedMediaRect, getContainedMediaRectStyle, getOverlayPercentageStyle, normalizeBBoxForDisplayMedia } from "./detectionOverlayGeometry";
+import { waitForDecodedVideoFrame } from "./videoFrameReadiness";
 import styles from "./DetectionWorkbench.module.css";
 
 type DetectionTab = "image" | "video" | "webcam";
@@ -298,8 +299,14 @@ async function captureVideoReportFrame(videoFile: File, object: DetectionObject)
       ? Math.min(Math.max(getVideoReportTimestampMs(object) / 1000, 0), Math.max(duration - 0.05, 0))
       : 0;
 
+    const supportsVideoFrameCallback = typeof video.requestVideoFrameCallback === "function";
+    const decodedFrameReady = supportsVideoFrameCallback
+      ? waitForDecodedVideoFrame(video, VIDEO_REPORT_FRAME_TIMEOUT_MS, undefined, targetSeconds)
+      : null;
+    const seeked = waitForVideoEvent(video, "seeked", VIDEO_REPORT_FRAME_TIMEOUT_MS);
     video.currentTime = targetSeconds;
-    await waitForVideoEvent(video, "seeked", VIDEO_REPORT_FRAME_TIMEOUT_MS);
+    await seeked;
+    await (decodedFrameReady ?? waitForDecodedVideoFrame(video, VIDEO_REPORT_FRAME_TIMEOUT_MS));
 
     const crop = getReportCropRect(object.bbox, video.videoWidth, video.videoHeight, video.videoWidth, video.videoHeight);
     if (!crop) return null;
