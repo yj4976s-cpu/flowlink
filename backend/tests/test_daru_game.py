@@ -824,6 +824,32 @@ def test_batch_history_delete_supports_entire_difficulty_with_exclusions(client:
     assert all(db.get(DaruGamePlayRecord, record.id).deleted_at is not None for record in easy[:-1])
 
 
+def test_all_history_cleanup_returns_actual_count_and_preserves_each_ranking_record(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    easy_ranking = history_record(db, score="90.0", achieved=now)
+    easy_other = history_record(db, score="80.0", achieved=now + timedelta(seconds=1))
+    normal_ranking = history_record(db, score="85.0", achieved=now)
+    normal_ranking.difficulty = "NORMAL"
+    normal_other = history_record(db, score="75.0", achieved=now + timedelta(seconds=1))
+    normal_other.difficulty = "NORMAL"
+    db.flush()
+    db.add_all([
+        DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=easy_ranking.detection_power, score_version=2, best_attempts=easy_ranking.attempts, best_elapsed_seconds=easy_ranking.elapsed_seconds, best_combo=easy_ranking.max_combo, best_hints_used=easy_ranking.hints_used, total_daru_points=400, play_count=4, best_achieved_at=easy_ranking.achieved_at, ranking_record_id=easy_ranking.id, created_at=now, updated_at=now),
+        DaruGameStat(user_id=1, difficulty="NORMAL", best_detection_power=normal_ranking.detection_power, score_version=2, best_attempts=normal_ranking.attempts, best_elapsed_seconds=normal_ranking.elapsed_seconds, best_combo=normal_ranking.max_combo, best_hints_used=normal_ranking.hints_used, total_daru_points=300, play_count=3, best_achieved_at=normal_ranking.achieved_at, ranking_record_id=normal_ranking.id, created_at=now, updated_at=now),
+    ])
+    db.commit()
+
+    response = client.delete("/api/daru-game/history")
+
+    assert response.status_code == 200
+    assert response.json() == {"deleted_count": 2}
+    db.expire_all()
+    assert db.get(DaruGamePlayRecord, easy_ranking.id).deleted_at is None
+    assert db.get(DaruGamePlayRecord, normal_ranking.id).deleted_at is None
+    assert db.get(DaruGamePlayRecord, easy_other.id).deleted_at is not None
+    assert db.get(DaruGamePlayRecord, normal_other.id).deleted_at is not None
+
+
 def test_batch_history_delete_requires_authentication(client: TestClient) -> None:
     app.dependency_overrides.pop(get_current_user)
     assert client.post("/api/daru-game/history/delete", json={"record_ids": [1]}).status_code == 401

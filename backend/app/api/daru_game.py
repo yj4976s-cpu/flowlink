@@ -173,7 +173,6 @@ def delete_selected_history(
     return DaruGameHistoryBatchDeleteResponse(deleted_count=len(records))
 
 
-@router.delete("/history", status_code=204)
-def delete_history(current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> Response:
-    soft_delete_all_play_records(db, user_id=current_user.id)
-    return Response(status_code=204)
+@router.delete("/history", response_model=DaruGameHistoryBatchDeleteResponse)
+def delete_history(current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> DaruGameHistoryBatchDeleteResponse:
+    return DaruGameHistoryBatchDeleteResponse(deleted_count=soft_delete_all_play_records(db, user_id=current_user.id))

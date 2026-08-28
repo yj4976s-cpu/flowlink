@@ -46,5 +46,5 @@ export function restoreDaruGameHistoryRecord(recordId: number) { return request<
 export function getDaruGameTrash(difficulty: ApiGameDifficulty, page: number, signal?: AbortSignal) { return request<DaruHistoryResponse>(`/api/daru-game/history/trash?difficulty=${difficulty}&page=${page}&page_size=5`, { signal }); }
 export function permanentlyDeleteDaruGameHistoryRecord(recordId: number) { return request<void>(`/api/daru-game/history/${recordId}/permanent`, { method: "DELETE" }); }
 export function emptyDaruGameTrash(difficulty: ApiGameDifficulty) { return request<{ deleted_count: number }>(`/api/daru-game/history/trash?difficulty=${difficulty}`, { method: "DELETE" }); }
-export function deleteAllDaruGameHistory() { return request<void>("/api/daru-game/history", { method: "DELETE" }); }
+export function deleteAllDaruGameHistory() { return request<{ deleted_count: number }>("/api/daru-game/history", { method: "DELETE" }); }
 export function deleteDaruGameHistorySelection(payload: { record_ids?: number[]; difficulty?: ApiGameDifficulty; exclude_record_ids?: number[] }) { return request<{ deleted_count: number }>("/api/daru-game/history/delete", { method: "POST", body: JSON.stringify(payload) }); }

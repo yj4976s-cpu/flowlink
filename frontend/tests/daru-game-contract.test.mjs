@@ -240,7 +240,7 @@ test("ordinary individual deletion skips the dialog while BEST and multiple dele
   assert.match(leaderboardSource, /선택한 플레이 기록/);
   assert.match(leaderboardSource, /selectedCount > 0 \? `\$\{selectedCount\}개 휴지통으로 이동` : "휴지통으로 이동"/);
   assert.match(leaderboardSource, /현재 ‘.*’ 기록을 휴지통으로 이동할까요/);
-  assert.match(leaderboardSource, /모든 난이도 플레이 기록을 휴지통으로 이동할까요/);
+  assert.match(leaderboardSource, /모든 난이도의 기록을 정리할까요/);
 });
 
 test("ordinary deletion uses a real restore API and one six-second undo toast", () => {
@@ -341,7 +341,7 @@ test("trash actions share one rounded icon and horizontal button alignment", () 
   assert.match(leaderboardSource, /function TrashIcon\(\)[\s\S]*viewBox="0 0 24 24"[\s\S]*M3 6h18/);
   assert.match(leaderboardSource, /aria-label="선택한 플레이 기록을 휴지통으로 이동"/);
   assert.match(leaderboardSource, /aria-label="기록 관리 옵션"/);
-  assert.match(leaderboardSource, /현재 난이도 기록 전체 정리/);
+  assert.match(leaderboardSource, /현재 난이도 기록 정리/);
   assert.match(leaderboardSource, /모든 난이도 기록 정리/);
   assert.match(css, /\.playHistory \.trashIcon \{ width: 18px; height: 18px; stroke-width: 2;/);
   assert.match(css, /\.historyManagement button \{ display: inline-flex; align-items: center; justify-content: center; gap: 7px;/);
@@ -356,9 +356,21 @@ test("history management is conditional and rare bulk actions stay in a confirme
   assert.match(leaderboardSource, /aria-haspopup="menu" aria-expanded=\{bulkMenuOpen\}/);
   assert.match(leaderboardSource, /openDeleteDialog\("difficulty"\)/);
   assert.match(leaderboardSource, /openDeleteDialog\("all"\)/);
-  assert.match(leaderboardSource, /쉬움 · 보통 · 어려움의 기록이 모두 휴지통으로 이동합니다/);
-  assert.match(leaderboardSource, /deleteTarget === "all" \? "모든 기록 이동"/);
+  assert.match(leaderboardSource, /각 난이도의 현재 랭킹 반영 기록은 보호되며/);
+  assert.match(leaderboardSource, /deleteTarget === "all" \? "기록 정리"/);
   assert.match(leaderboardSource, /setManagementMode\(false\); resetSelection\(\)/);
+});
+
+test("bulk cleanup copy explains ranking protection and uses the server deletion count", () => {
+  assert.match(apiSource, /deleteAllDaruGameHistory[\s\S]*deleted_count/);
+  assert.match(leaderboardSource, /현재 난이도 기록 정리/);
+  assert.doesNotMatch(leaderboardSource, /현재 난이도 기록 전체 정리/);
+  assert.match(leaderboardSource, /각 난이도의 현재 랭킹 반영 기록은 보호되며/);
+  assert.match(leaderboardSource, /현재 랭킹에 반영 중인 기록은 보호되며/);
+  assert.match(leaderboardSource, /deletedCount = result\.deleted_count/);
+  assert.match(leaderboardSource, /정리할 수 있는 기록이 없어요\. 현재 랭킹 반영 기록은 유지됩니다\./);
+  assert.match(leaderboardSource, /랭킹 반영 기록을 제외한 플레이 기록 \$\{deletedCount\}개/);
+  assert.doesNotMatch(leaderboardSource, /기록이 모두 휴지통으로 이동합니다/);
 });
 
 test("history typography keeps readable sizes and stable responsive rows", () => {
