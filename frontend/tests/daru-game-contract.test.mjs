@@ -382,12 +382,26 @@ test("bulk selection and BEST warnings use backend management metadata", () => {
   assert.equal(getBulkSelectedCount(5, 2), 3);
   assert.equal(getBulkSelectedCount(0, 0), 0);
   assert.equal(getBulkSelectedCount(0, 1), 0);
-  assert.equal(bulkDeleteIncludesBest("selected", true, false, false, true), false);
-  assert.equal(bulkDeleteIncludesBest("selected", true, true, false, false), true);
-  assert.equal(bulkDeleteIncludesBest("all", false, false, false, true), false);
-  assert.equal(bulkDeleteIncludesBest("all", false, false, true, false), true);
+  const options = {
+    target: "selected",
+    selectAllDifficulty: true,
+    deletableBestRecordId: 101,
+    excludedIds: new Set(),
+    hasDeletableBest: true,
+    hasDeletableBestAnyDifficulty: false,
+    selectedItemsHaveBest: false,
+  };
+  assert.equal(bulkDeleteIncludesBest(options), true);
+  assert.equal(bulkDeleteIncludesBest({ ...options, excludedIds: new Set([101]) }), false);
+  assert.equal(bulkDeleteIncludesBest({ ...options, excludedIds: new Set([102]) }), true);
+  assert.equal(bulkDeleteIncludesBest({ ...options, deletableBestRecordId: null }), false);
+  assert.equal(bulkDeleteIncludesBest({ ...options, selectAllDifficulty: false, selectedItemsHaveBest: true }), true);
+  assert.equal(bulkDeleteIncludesBest({ ...options, selectAllDifficulty: false, selectedItemsHaveBest: false }), false);
+  assert.equal(bulkDeleteIncludesBest({ ...options, target: "difficulty", hasDeletableBest: true }), true);
+  assert.equal(bulkDeleteIncludesBest({ ...options, target: "all", hasDeletableBestAnyDifficulty: true }), true);
   assert.doesNotMatch(leaderboardSource, /rankingSelectionOffset|myEntry \? 1 : 0/);
   assert.match(leaderboardSource, /history\?\.deletable_count/);
+  assert.match(leaderboardSource, /history\?\.deletable_best_record_id/);
   assert.match(leaderboardSource, /disabled=\{selectedCount === 0 \|\| deleting\}/);
 });
 
