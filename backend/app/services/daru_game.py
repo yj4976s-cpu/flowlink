@@ -72,6 +72,34 @@ def has_adjacent_pair(deck: Sequence[str], columns: int) -> bool:
     return False
 
 
+def _positions_are_adjacent(first: int, second: int, columns: int) -> bool:
+    first_row, first_column = divmod(first, columns)
+    second_row, second_column = divmod(second, columns)
+    return abs(first_row - second_row) <= 1 and abs(first_column - second_column) <= 1
+
+
+def _randomized_position_pairs(card_count: int, columns: int, rng: Any) -> list[tuple[int, int]]:
+    def pair_positions(available: list[int]) -> list[tuple[int, int]] | None:
+        if not available:
+            return []
+        first_candidates = list(available)
+        rng.shuffle(first_candidates)
+        for first in first_candidates:
+            remaining = [position for position in available if position != first]
+            second_candidates = [position for position in remaining if not _positions_are_adjacent(first, position, columns)]
+            rng.shuffle(second_candidates)
+            for second in second_candidates:
+                rest = pair_positions([position for position in remaining if position != second])
+                if rest is not None:
+                    return [(first, second), *rest]
+        return None
+
+    result = pair_positions(list(range(card_count)))
+    if result is None:
+        raise RuntimeError("Unable to construct a non-adjacent card layout")
+    return result
+
+
 def constrained_shuffle(deck: Sequence[str], columns: int, randomizer: Any | None = None, *, max_attempts: int = DECK_SHUFFLE_MAX_ATTEMPTS) -> list[str]:
     rng = randomizer or secrets.SystemRandom()
     for _attempt in range(max_attempts):
@@ -80,10 +108,14 @@ def constrained_shuffle(deck: Sequence[str], columns: int, randomizer: Any | Non
         if not has_adjacent_pair(candidate, columns):
             return candidate
 
-    # Current boards have four rows, so the two halves are always two rows apart.
     pair_ids = list(dict.fromkeys(deck))
     rng.shuffle(pair_ids)
-    return [*pair_ids, *pair_ids]
+    positions = _randomized_position_pairs(len(deck), columns, rng)
+    result = [""] * len(deck)
+    for pair_id, (first, second) in zip(pair_ids, positions, strict=True):
+        result[first] = pair_id
+        result[second] = pair_id
+    return result
 
 
 def create_shuffled_deck(difficulty: str, randomizer: Any | None = None) -> list[str]:

@@ -267,11 +267,18 @@ def test_constrained_shuffle_avoids_adjacent_pairs_across_one_hundred_decks(diff
     assert len({tuple(deck) for deck in decks}) > 90
 
 
-def test_constrained_shuffle_fallback_is_valid_when_randomizer_never_changes_order() -> None:
-    deck = [pair_id for pair_id in NORMAL_CARD_IDS for _copy in range(2)]
-    result = constrained_shuffle(deck, 8, FrontLoadingRandom([]), max_attempts=2)
-    assert sorted(result) == sorted(deck)
-    assert not has_adjacent_pair(result, 8)
+@pytest.mark.parametrize(("difficulty", "columns"), [("EASY", 5), ("NORMAL", 8), ("HARD", 10)])
+def test_constrained_shuffle_fallback_is_randomized_and_valid(difficulty: str, columns: int) -> None:
+    pair_ids = select_card_ids(difficulty, random.Random(0))
+    deck = [pair_id for pair_id in pair_ids for _copy in range(2)]
+    results = [constrained_shuffle(deck, columns, random.Random(seed), max_attempts=0) for seed in range(20)]
+    for result in results:
+        assert sorted(result) == sorted(deck)
+        assert not has_adjacent_pair(result, columns)
+        assert result[:len(result) // 2] != result[len(result) // 2:]
+        positions = {pair_id: [index for index, value in enumerate(result) if value == pair_id] for pair_id in pair_ids}
+        assert not all(second - first == columns * 2 for first, second in positions.values())
+    assert len({tuple(result) for result in results}) > 15
 
 
 @pytest.mark.parametrize(("difficulty", "card_count"), [("EASY", 20), ("NORMAL", 32), ("HARD", 40)])

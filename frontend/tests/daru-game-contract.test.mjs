@@ -38,8 +38,17 @@ test("all difficulties generate one hundred non-adjacent randomized decks", () =
 test("constrained shuffle fallback remains valid after repeated failed shuffles", () => {
   for (const [pairCount, columns] of [[10, 5], [16, 8], [20, 10]]) {
     const source = Array.from({ length: pairCount }, (_, pairId) => [{ pairId: String(pairId) }, { pairId: String(pairId) }]).flat();
-    const deck = constrainedShuffleCards(source, columns, () => 0, 2);
-    assert.equal(hasAdjacentPair(deck, columns), false);
+    const decks = Array.from({ length: 20 }, (_, seed) => constrainedShuffleCards(source, columns, seededRandom(seed + 101), 0));
+    for (const deck of decks) {
+      assert.equal(deck.length, source.length);
+      assert.equal(hasAdjacentPair(deck, columns), false);
+      assert.ok([...new Set(deck.map((card) => card.pairId))].every((pairId) => deck.filter((card) => card.pairId === pairId).length === 2));
+      assert.notDeepEqual(deck.slice(0, deck.length / 2).map((card) => card.pairId), deck.slice(deck.length / 2).map((card) => card.pairId));
+      const positions = new Map();
+      deck.forEach((card, index) => positions.set(card.pairId, [...(positions.get(card.pairId) ?? []), index]));
+      assert.equal([...positions.values()].every(([first, second]) => second - first === columns * 2), false);
+    }
+    assert.ok(new Set(decks.map((deck) => deck.map((card) => card.pairId).join(","))).size > 15);
   }
 });
 
