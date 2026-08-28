@@ -11,6 +11,7 @@ const OLD_HARD_KEY = "flowlink:daru-game:v2:best-detection:hard";
 const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const apiSource = readFileSync(new URL("../src/lib/daruGameApi.ts", import.meta.url), "utf8");
 const gameSource = readFileSync(new URL("../src/components/daru-game/DaruGame.tsx", import.meta.url), "utf8");
+const leaderboardSource = readFileSync(new URL("../src/components/daru-game/DaruLeaderboard.tsx", import.meta.url), "utf8");
 
 test("action IDs prefer native randomUUID when available", () => {
   const nativeId = "123e4567-e89b-42d3-a456-426614174000";
@@ -95,12 +96,58 @@ test("unresolved auth and ADMIN games cannot use the guest local best", () => {
 
 test("overtime completion and leaderboard copy describe the new ranking policy", () => {
   const resultSource = readFileSync(new URL("../src/components/daru-game/GameResult.tsx", import.meta.url), "utf8");
-  const leaderboardSource = readFileSync(new URL("../src/components/daru-game/DaruLeaderboard.tsx", import.meta.url), "utf8");
   assert.match(resultSource, /\{newBest \? newBestTitle : withinTimeLimit \? "다루와 전부 찾았어요!" : "클리어 완료!"\}/);
   assert.match(resultSource, /제한시간을 초과해 속도 점수는 0점으로 반영되었어요/);
-  assert.match(resultSource, /완주 기록도 랭킹 최고기록 비교 대상에 포함됩니다/);
+  assert.match(resultSource, /이번 완주 기록이 현재 랭킹에 반영됩니다/);
   assert.match(resultSource, /완주 기록도 개인 최고기록 비교 대상에 포함됩니다/);
   assert.match(leaderboardSource, /제한시간을 초과해도 완주 기록은 등록되며, 속도 점수는 0점으로 계산됩니다/);
+});
+
+test("leaderboard uses latest-score fields and shows personal BEST separately", () => {
+  assert.match(leaderboardSource, /entry\.detection_power/);
+  assert.match(leaderboardSource, /visible\.my_best\.best_detection_power/);
+  assert.match(leaderboardSource, /현재 랭킹/);
+  assert.match(leaderboardSource, /개인 BEST/);
+});
+
+test("play history shares difficulty and resets its page", () => {
+  assert.match(leaderboardSource, /getDaruGameHistory\(DIFFICULTY_CONFIG\[difficulty\]\.key, historyPage/);
+  assert.match(leaderboardSource, /setHistoryPage\(1\)/);
+  assert.doesNotMatch(leaderboardSource, /historyTabs/);
+});
+
+test("history is fixed to five records and corrects an invalid last page", () => {
+  assert.match(apiSource, /history\?difficulty=\$\{difficulty\}&page=\$\{page\}&page_size=5/);
+  assert.match(leaderboardSource, /if \(next\.page !== historyPage\) setHistoryPage\(next\.page\)/);
+});
+
+test("history exposes BEST ranking and partial labels with distinct icons", () => {
+  assert.match(leaderboardSource, /<CrownIcon \/> BEST/);
+  assert.match(leaderboardSource, /<PawIcon \/> 랭킹 반영/);
+  assert.match(leaderboardSource, /<ClockIcon \/> 미완주/);
+});
+
+test("history deletion provides state-specific and delete-all dialogs", () => {
+  assert.match(leaderboardSource, /최고 기록을 삭제할까요/);
+  assert.match(leaderboardSource, /현재 랭킹 기록을 삭제할까요/);
+  assert.match(leaderboardSource, /현재 BEST이자 랭킹 기록입니다/);
+  assert.match(leaderboardSource, /모든 플레이 기록을 삭제할까요/);
+});
+
+test("history remains a full-width sibling after the ranking grid", () => {
+  assert.match(leaderboardSource, /<\/div>\s*\{!preview && <section className=\{styles\.playHistory\}/);
+  assert.match(leaderboardSource, /내 플레이 기록/);
+});
+
+test("history has an accessible delete control and empty state", () => {
+  assert.match(leaderboardSource, /aria-label="플레이 기록 삭제"/);
+  assert.match(leaderboardSource, /아직 플레이 기록이 없어요/);
+});
+
+test("history styles derive accents from the shared theme variables", () => {
+  const css = readFileSync(new URL("../src/components/daru-game/DaruGame.module.css", import.meta.url), "utf8");
+  assert.match(css, /\.playHistory[\s\S]*var\(--rank-accent\)/);
+  assert.match(css, /html\[data-theme="dawn"\][\s\S]*html\[data-theme="day"\][\s\S]*html\[data-theme="night"\]/);
 });
 
 test("only the explicit outdated deck 409 is treated as a legacy run", () => {

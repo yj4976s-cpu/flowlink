@@ -36,5 +36,10 @@ export function requestDaruGameHint(runId: string) { return actionRequest<{ hint
 export function getDaruGameRunState(runId: string) { return request<ServerRunState>(`/api/daru-game/runs/${runId}/state`); }
 export function getDaruGameRecords(signal?: AbortSignal) { return request<GameRecord[]>("/api/daru-game/me", { signal }); }
 export function submitDaruGameResult(payload: { run_id: string; finish_partial?: boolean }) { return actionRequest<ServerGameResult>("/api/daru-game/results", payload); }
-export interface DaruLeaderboardResponse { difficulty: ApiGameDifficulty; top_entries: LeaderboardEntry[]; entries: LeaderboardEntry[]; my_entry: LeaderboardEntry | null; next_rank_score: number | null; total: number; page: number; page_size: number; total_pages: number; }
+export interface DaruLeaderboardResponse { difficulty: ApiGameDifficulty; top_entries: LeaderboardEntry[]; entries: LeaderboardEntry[]; my_entry: LeaderboardEntry | null; my_best: GameRecord | null; next_rank_score: number | null; total: number; page: number; page_size: number; total_pages: number; }
 export function getDaruLeaderboard(difficulty: ApiGameDifficulty, page: number, signal?: AbortSignal) { return request<DaruLeaderboardResponse>(`/api/daru-game/leaderboard?difficulty=${difficulty}&page=${page}&page_size=5`, { signal }); }
+export interface DaruHistoryItem { id: number; difficulty: ApiGameDifficulty; detection_power: number; attempts: number; elapsed_seconds: number; max_combo: number; hints_used: number; earned_daru_points: number; completed: boolean; within_time_limit: boolean; achieved_at: string; is_best: boolean; is_ranking_record: boolean; }
+export interface DaruHistoryResponse { difficulty: ApiGameDifficulty; items: DaruHistoryItem[]; total: number; page: number; page_size: number; total_pages: number; }
+export function getDaruGameHistory(difficulty: ApiGameDifficulty, page: number, signal?: AbortSignal) { return request<DaruHistoryResponse>(`/api/daru-game/history?difficulty=${difficulty}&page=${page}&page_size=5`, { signal }); }
+export function deleteDaruGameHistoryRecord(recordId: number) { return request<void>(`/api/daru-game/history/${recordId}`, { method: "DELETE" }); }
+export function deleteAllDaruGameHistory() { return request<void>("/api/daru-game/history", { method: "DELETE" }); }
