@@ -35,6 +35,22 @@ export function getSearchSelectionTransition(
   };
 }
 
+export function getMapMarkerSelectionTransition(
+  markerId: string | null,
+  target: SearchTarget,
+  spotlightCameraId: string | null,
+) {
+  if (!markerId) {
+    return { selectedId: null, spotlightCameraId };
+  }
+
+  return {
+    selectedId: markerId,
+    spotlightCameraId:
+      target?.kind === "camera" && spotlightCameraId ? target.id : null,
+  };
+}
+
 export function getSearchClearTransition(sequence: number) {
   return {
     query: "",

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   getLayerToggleTransition,
+  getMapMarkerSelectionTransition,
   getSearchClearTransition,
   getSearchSelectionTransition,
   isSearchRequestCurrent,
@@ -98,6 +99,23 @@ test("search selection only preserves spotlight for the same camera", () => {
   assert.deepEqual(place, { selectedId: null, spotlightCameraId: null });
 });
 
+test("direct map selection keeps spotlight context synchronized", () => {
+  const sameCamera = getMapMarkerSelectionTransition("CAM-03", { id: "CAM-03", kind: "camera" }, "CAM-03");
+  assert.deepEqual(sameCamera, { selectedId: "CAM-03", spotlightCameraId: "CAM-03" });
+
+  const otherCamera = getMapMarkerSelectionTransition("CAM-01", { id: "CAM-01", kind: "camera" }, "CAM-03");
+  assert.deepEqual(otherCamera, { selectedId: "CAM-01", spotlightCameraId: "CAM-01" });
+
+  const found = getMapMarkerSelectionTransition("FI-1024", { id: "FI-1024", kind: "found" }, "CAM-03");
+  assert.deepEqual(found, { selectedId: "FI-1024", spotlightCameraId: null });
+
+  const citizen = getMapMarkerSelectionTransition("CR-12", { id: "CR-12", kind: "citizen" }, "CAM-03");
+  assert.deepEqual(citizen, { selectedId: "CR-12", spotlightCameraId: null });
+
+  const blankMap = getMapMarkerSelectionTransition(null, null, "CAM-03");
+  assert.deepEqual(blankMap, { selectedId: null, spotlightCameraId: "CAM-03" });
+});
+
 test("clearing search resets local results and invalidates stale Kakao responses", () => {
   const requestId = 7;
   const cleared = getSearchClearTransition(requestId);
@@ -121,4 +139,17 @@ test("selected detection drawer separates back navigation from close", () => {
   assert.match(screenSource, /aria-label="상세 패널 닫기"/);
   assert.match(cssSource, /\.detailPanelTopbar/);
   assert.match(cssSource, /\.detectionBack/);
+});
+
+test("expanded map restores dialog semantics and keyboard focus containment", () => {
+  assert.match(screenSource, /role=\{expanded \? "dialog" : undefined\}/);
+  assert.match(screenSource, /aria-modal=\{expanded \? true : undefined\}/);
+  assert.match(screenSource, /aria-labelledby=\{expanded \? "admin-operations-map-dialog-title" : undefined\}/);
+  assert.match(screenSource, /requestAnimationFrame\(\(\) => trigger\?\.focus\(\)\)/);
+  assert.match(screenSource, /event\.key !== "Tab"/);
+  assert.match(screenSource, /event\.shiftKey/);
+  assert.match(screenSource, /document\.activeElement === first/);
+  assert.match(screenSource, /document\.activeElement === last/);
+  assert.match(screenSource, /event\.key === "Escape"/);
+  assert.match(screenSource, /window\.setTimeout\(\(\) => trigger\?\.focus\(\)\)/);
 });

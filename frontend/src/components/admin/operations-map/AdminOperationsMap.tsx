@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { Icon } from "@/components/common/Icon";
 import { searchKakaoPlaces } from "@/lib/kakaoPlaces";
 import { AdminKakaoOperationsMap, type OperationsBounds } from "./AdminKakaoOperationsMap";
-import { getLayerToggleTransition, getSearchClearTransition, getSearchSelectionTransition, isSearchRequestCurrent } from "./operationsMapState";
+import { getLayerToggleTransition, getMapMarkerSelectionTransition, getSearchClearTransition, getSearchSelectionTransition, isSearchRequestCurrent } from "./operationsMapState";
 import {
   getOperationsMapSnapshot,
   operationsMarkers,
@@ -157,6 +157,7 @@ export function AdminOperationsMap() {
   const [fitToken, setFitToken] = useState(1);
   const [queriedBounds, setQueriedBounds] = useState<OperationsBounds | null>(null);
   const expandTrigger = useRef<HTMLButtonElement>(null);
+  const mapCard = useRef<HTMLElement>(null);
   const detections = useMemo(() => operationsMarkers.filter((marker) => marker.kind === "detection"), []);
   const spotlightActive = Boolean(spotlightCameraId);
 
@@ -196,11 +197,24 @@ export function AdminOperationsMap() {
   useEffect(() => {
     if (!expanded) return;
     const trigger = expandTrigger.current;
+    const dialog = mapCard.current;
     const previousOverflow = document.body.style.overflow;
+    const focusableSelector = 'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
     document.body.style.overflow = "hidden";
-    const keyDown = (event: globalThis.KeyboardEvent) => { if (event.key === "Escape") setExpanded(false); };
+    const focusFrame = window.requestAnimationFrame(() => trigger?.focus());
+    const keyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") { setExpanded(false); return; }
+      if (event.key !== "Tab" || !dialog) return;
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector));
+      if (!focusable.length) { event.preventDefault(); return; }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!dialog.contains(document.activeElement)) { event.preventDefault(); (event.shiftKey ? last : first).focus(); }
+      else if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
     window.addEventListener("keydown", keyDown);
-    return () => { document.body.style.overflow = previousOverflow; window.removeEventListener("keydown", keyDown); window.setTimeout(() => trigger?.focus()); };
+    return () => { window.cancelAnimationFrame(focusFrame); document.body.style.overflow = previousOverflow; window.removeEventListener("keydown", keyDown); window.setTimeout(() => trigger?.focus()); };
   }, [expanded]);
 
   const selectSearch = (result: SearchResult) => {
@@ -234,10 +248,11 @@ export function AdminOperationsMap() {
     { label: "처리 대기", count: spotlightDetections.filter((marker) => marker.status === "waiting").length },
   ];
   const selectMapMarker = (id: string | null) => {
-    setSelectedId(id);
-    if (!id) { setSearchPoint(null); return; }
-    const marker = operationsMarkers.find((item) => item.id === id);
-    if (spotlightCameraId && marker?.kind === "camera") setSpotlightCameraId(marker.id);
+    const target = operationsMarkers.find((item) => item.id === id) ?? null;
+    const transition = getMapMarkerSelectionTransition(id, target, spotlightCameraId);
+    setSelectedId(transition.selectedId);
+    setSearchPoint(null);
+    if (transition.spotlightCameraId !== spotlightCameraId) setSpotlightCameraId(transition.spotlightCameraId);
   };
   const changeSpotlight = (id: string | null) => {
     setSpotlightCameraId(id);
@@ -251,8 +266,8 @@ export function AdminOperationsMap() {
 
   return <main className={styles.page}>
     <header className={styles.intro}><div><p>ADMIN · OPERATIONS MAP</p><h1>발견물 관리 · 지도</h1><span>카메라와 AI 탐지, 발견물, 시민 제보를 실제 공간에서 확인합니다.</span></div><nav className={styles.viewSwitch} aria-label="발견물 관리 보기 방식"><Link href="/admin/found-items"><Icon name="archive" size={15} />목록</Link><Link href="/admin/map" aria-current="page"><Icon name="location" size={15} />지도</Link></nav></header>
-    <section className={styles.mapCard} data-expanded={expanded || undefined} aria-label="관리자 운영 지도">
-      <div className={styles.cardHeading}><div><span>실시간 운영 현황</span><small>데모 운영 데이터 · 카메라 중심 집계</small></div><button ref={expandTrigger} type="button" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}><Icon name={expanded ? "close" : "maximize"} size={17} />{expanded ? "크게 보기 닫기" : "크게 보기"}</button></div>
+    <section ref={mapCard} className={styles.mapCard} data-expanded={expanded || undefined} aria-label={expanded ? undefined : "관리자 운영 지도"} role={expanded ? "dialog" : undefined} aria-modal={expanded ? true : undefined} aria-labelledby={expanded ? "admin-operations-map-dialog-title" : undefined}>
+      <div className={styles.cardHeading}><div><span id="admin-operations-map-dialog-title">실시간 운영 현황</span><small>데모 운영 데이터 · 카메라 중심 집계</small></div><button ref={expandTrigger} type="button" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}><Icon name={expanded ? "close" : "maximize"} size={17} />{expanded ? "크게 보기 닫기" : "크게 보기"}</button></div>
       <div className={styles.toolbarTop}><SearchBox onSelect={selectSearch} /><PeriodFilters value={period} onChange={setPeriod} /></div>
       <div className={styles.toolbarBottom}><StatusFilters value={filter} onChange={changeFilter} />{!expanded && <LayerControl layers={layers} onToggle={toggleLayer} />}</div>
       <div className={styles.workspace}>
