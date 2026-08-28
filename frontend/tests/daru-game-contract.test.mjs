@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { BEST_RECORD_STORAGE_KEYS, isGuestBestEligible, resolveGuestBest } from "../src/components/daru-game/game.storage.ts";
-import { getLeaderboardPageRequest, isLeaderboardDifficulty, isLeaderboardScoreTie } from "../src/components/daru-game/leaderboard.utils.ts";
+import { bulkDeleteIncludesBest, getBulkSelectedCount, getLeaderboardPageRequest, isLeaderboardDifficulty, isLeaderboardScoreTie } from "../src/components/daru-game/leaderboard.utils.ts";
 import { BOARD_SAFETY_PX, calculateMemoryBoardGeometry, memoryBoardGeometryEqual } from "../src/components/daru-game/memoryBoard.geometry.ts";
 import { constrainedShuffleCards, hasAdjacentPair } from "../src/components/daru-game/deckShuffle.ts";
 import { createActionId } from "../src/lib/daruActionId.ts";
@@ -371,6 +371,20 @@ test("bulk cleanup copy explains ranking protection and uses the server deletion
   assert.match(leaderboardSource, /정리할 수 있는 기록이 없어요\. 현재 랭킹 반영 기록은 유지됩니다\./);
   assert.match(leaderboardSource, /랭킹 반영 기록을 제외한 플레이 기록 \$\{deletedCount\}개/);
   assert.doesNotMatch(leaderboardSource, /기록이 모두 휴지통으로 이동합니다/);
+});
+
+test("bulk selection and BEST warnings use backend management metadata", () => {
+  assert.equal(getBulkSelectedCount(5, 0), 5);
+  assert.equal(getBulkSelectedCount(5, 2), 3);
+  assert.equal(getBulkSelectedCount(0, 0), 0);
+  assert.equal(getBulkSelectedCount(0, 1), 0);
+  assert.equal(bulkDeleteIncludesBest("selected", true, false, false, true), false);
+  assert.equal(bulkDeleteIncludesBest("selected", true, true, false, false), true);
+  assert.equal(bulkDeleteIncludesBest("all", false, false, false, true), false);
+  assert.equal(bulkDeleteIncludesBest("all", false, false, true, false), true);
+  assert.doesNotMatch(leaderboardSource, /rankingSelectionOffset|myEntry \? 1 : 0/);
+  assert.match(leaderboardSource, /history\?\.deletable_count/);
+  assert.match(leaderboardSource, /disabled=\{selectedCount === 0 \|\| deleting\}/);
 });
 
 test("history typography keeps readable sizes and stable responsive rows", () => {

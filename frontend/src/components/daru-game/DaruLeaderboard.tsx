@@ -5,7 +5,7 @@ import { deleteAllDaruGameHistory, deleteDaruGameHistoryRecord, deleteDaruGameHi
 import { DIFFICULTY_CONFIG } from "./game.config";
 import type { GameDifficulty, LeaderboardEntry } from "./game.types";
 import { formatElapsedTime, formatMemoryScore } from "./game.utils";
-import { getLeaderboardPageRequest, isLeaderboardDifficulty, isLeaderboardScoreTie } from "./leaderboard.utils";
+import { bulkDeleteIncludesBest, getBulkSelectedCount, getLeaderboardPageRequest, isLeaderboardDifficulty, isLeaderboardScoreTie } from "./leaderboard.utils";
 import styles from "./DaruGame.module.css";
 
 const PAGE_SIZE = 5;
@@ -176,8 +176,7 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
     else setPage(request.page);
   };
   const goToMyRank = () => { if (myEntry && myEntry.rank > 3) setPage(Math.floor((myEntry.rank - 4) / PAGE_SIZE) + 1); };
-  const rankingSelectionOffset = myEntry ? 1 : 0;
-  const selectedCount = selectAllDifficulty ? Math.max(0, (history?.total ?? 0) - rankingSelectionOffset - excludedIds.size) : selectedIds.size;
+  const selectedCount = selectAllDifficulty ? getBulkSelectedCount(history?.deletable_count ?? 0, excludedIds.size) : selectedIds.size;
   const itemSelected = (item: DaruHistoryItem) => selectAllDifficulty ? !excludedIds.has(item.id) : selectedIds.has(item.id);
   const resetSelection = () => { setSelectedIds(new Set()); setSelectedRecords(new Map()); setSelectAllDifficulty(false); setExcludedIds(new Set()); };
   const toggleItem = (item: DaruHistoryItem) => {
@@ -303,7 +302,9 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
     } catch { setDeleteError(true); } finally { setDeleting(false); }
   };
   const selectedItems = [...selectedRecords.values()];
-  const deletingBest = deleteTarget === "difficulty" || deleteTarget === "all" || (deleteTarget === "selected" && (selectAllDifficulty ? visible?.my_best != null : selectedItems.some((item) => item.is_best))) || Boolean(deleteTarget && isHistoryItem(deleteTarget) && deleteTarget.is_best);
+  const deletingBest = typeof deleteTarget === "string"
+    ? bulkDeleteIncludesBest(deleteTarget, selectAllDifficulty, history?.has_deletable_best ?? false, history?.has_deletable_best_any_difficulty ?? false, selectedItems.some((item) => item.is_best))
+    : Boolean(deleteTarget && isHistoryItem(deleteTarget) && deleteTarget.is_best);
   const deletingRanking = Boolean(deleteTarget && isHistoryItem(deleteTarget) && deleteTarget.is_ranking_record);
   const permanentTarget = deleteTarget && typeof deleteTarget === "object" && "kind" in deleteTarget && deleteTarget.kind === "permanent" ? deleteTarget.item : null;
   const emptyTrashTarget = Boolean(deleteTarget && typeof deleteTarget === "object" && "kind" in deleteTarget && deleteTarget.kind === "empty-trash");

@@ -173,6 +173,10 @@ class DaruGameHistoryResponse(BaseModel):
     page: int
     page_size: int
     total_pages: int
+    protected_count: int = 0
+    deletable_count: int = 0
+    has_deletable_best: bool = False
+    has_deletable_best_any_difficulty: bool = False
 
 
 class DaruGameHistoryBatchDeleteInput(BaseModel):

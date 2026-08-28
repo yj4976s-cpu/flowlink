@@ -659,6 +659,45 @@ def test_history_latest_clear_updates_ranking_but_not_best_and_partial_updates_n
     assert items[2]["is_best"] is True
 
 
+@pytest.mark.parametrize(
+    ("pointer_version", "pointer_deleted", "other_count", "expected_total", "expected_protected", "expected_deletable"),
+    [
+        (2, False, 5, 6, 1, 5),
+        (1, False, 5, 6, 1, 5),
+        (2, True, 5, 5, 0, 5),
+        (2, False, 0, 1, 1, 0),
+    ],
+    ids=["current-ranking", "old-version-ranking", "deleted-ranking", "ranking-only"],
+)
+def test_history_management_metadata_matches_active_ranking_protection(
+    client: TestClient,
+    db: Session,
+    pointer_version: int,
+    pointer_deleted: bool,
+    other_count: int,
+    expected_total: int,
+    expected_protected: int,
+    expected_deletable: int,
+) -> None:
+    now = utc_now()
+    pointer = history_record(db, score="90.0", achieved=now)
+    pointer.score_version = pointer_version
+    if pointer_deleted:
+        pointer.deleted_at = now
+    others = [history_record(db, score=str(80 - index), achieved=now + timedelta(seconds=index + 1)) for index in range(other_count)]
+    best = others[0] if others else pointer
+    stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=best.detection_power, score_version=2, best_attempts=best.attempts, best_elapsed_seconds=best.elapsed_seconds, best_combo=best.max_combo, best_hints_used=best.hints_used, total_daru_points=600, play_count=6, best_achieved_at=best.achieved_at, ranking_record_id=pointer.id, created_at=now, updated_at=now)
+    db.add(stat); db.commit()
+
+    payload = client.get("/api/daru-game/history?difficulty=EASY&page=1&page_size=5").json()
+
+    assert payload["total"] == expected_total
+    assert payload["protected_count"] == expected_protected
+    assert payload["deletable_count"] == expected_deletable
+    if pointer_version == 1 and not pointer_deleted:
+        assert client.get("/api/daru-game/leaderboard?difficulty=EASY").json()["my_entry"] is None
+
+
 def test_deleting_ranking_record_never_revives_an_older_record(client: TestClient, db: Session) -> None:
     now = utc_now(); best = history_record(db, score="95.0", achieved=now); ranking = history_record(db, score="70.0", achieved=now + timedelta(seconds=1))
     stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=best.detection_power, score_version=2, best_attempts=10, best_elapsed_seconds=60, best_combo=5, best_hints_used=0, total_daru_points=200, play_count=2, best_achieved_at=best.achieved_at, ranking_record_id=ranking.id, created_at=now, updated_at=now)
