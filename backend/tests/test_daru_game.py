@@ -29,7 +29,7 @@ def compile_big_integer_for_sqlite(_type, _compiler, **_kwargs) -> str:
 def db() -> Iterator[Session]:
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine, class_=Session, expire_on_commit=False)
+    factory = sessionmaker(bind=engine, class_=Session, autoflush=False, expire_on_commit=False)
     with factory() as session:
         yield session
 
@@ -483,6 +483,51 @@ def test_server_timestamp_controls_elapsed_and_timeout(client: TestClient, db: S
     assert payload["metrics"]["detection_power"] == 75.0
     assert payload["is_new_best"] is True
     assert payload["leaderboard_rank"] == 1
+
+
+def test_result_immediately_ranks_first_completed_record_with_autoflush_disabled(client: TestClient, db: Session) -> None:
+    assert db.autoflush is False
+    competitor = add_user(db, 2, "competitor")
+    add_ranked_stat(db, competitor, score="80.0", attempts=15, elapsed=60, achieved=utc_now())
+    db.commit()
+    run_id, _run = start_authoritative_run(client, db, elapsed_seconds=1)
+    complete_pairs(client, run_id, 10)
+
+    result = client.post("/api/daru-game/results", json=action_json(run_id=run_id))
+    leaderboard = client.get("/api/daru-game/leaderboard?difficulty=EASY")
+
+    assert result.status_code == leaderboard.status_code == 200
+    assert result.json()["leaderboard_rank"] == 1
+    assert leaderboard.json()["my_entry"]["rank"] == 1
+
+
+def test_result_immediately_uses_lower_latest_record_rank_with_autoflush_disabled(client: TestClient, db: Session) -> None:
+    assert db.autoflush is False
+    now = utc_now()
+    for index, score in enumerate(("95.0", "94.0", "90.0", "85.0", "80.0"), 2):
+        competitor = add_user(db, index, f"competitor-{index}")
+        add_ranked_stat(db, competitor, score=score, attempts=10 + index, elapsed=40 + index, achieved=now + timedelta(seconds=index))
+    db.commit()
+    best_run_id, _run = start_authoritative_run(client, db, elapsed_seconds=1)
+    complete_pairs(client, best_run_id, 10)
+    assert client.post("/api/daru-game/results", json=action_json(run_id=best_run_id)).json()["leaderboard_rank"] == 1
+    latest_run_id, _run = start_authoritative_run(client, db, elapsed_seconds=121)
+    complete_pairs(client, latest_run_id, 10)
+
+    result = client.post("/api/daru-game/results", json=action_json(run_id=latest_run_id))
+    leaderboard = client.get("/api/daru-game/leaderboard?difficulty=EASY")
+    history = client.get("/api/daru-game/history?difficulty=EASY&page=1&page_size=5")
+    stat = db.scalar(select(DaruGameStat).where(DaruGameStat.user_id == 1, DaruGameStat.difficulty == "EASY"))
+
+    assert result.status_code == leaderboard.status_code == history.status_code == 200
+    assert result.json()["metrics"]["detection_power"] == 75.0
+    assert result.json()["leaderboard_rank"] == leaderboard.json()["my_entry"]["rank"] == 6
+    assert leaderboard.json()["my_entry"]["detection_power"] == 75.0
+    assert leaderboard.json()["my_best"]["best_detection_power"] == 100.0
+    assert [item["detection_power"] for item in history.json()["items"]] == [75.0, 100.0]
+    assert history.json()["items"][0]["is_ranking_record"] is True
+    assert history.json()["items"][1]["is_best"] is True
+    assert stat is not None and stat.ranking_record_id == history.json()["items"][0]["id"]
 
 
 def test_hard_server_timeout_uses_new_280_second_limit(client: TestClient, db: Session) -> None:

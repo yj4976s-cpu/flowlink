@@ -324,6 +324,7 @@ def submit_result(db: Session, *, run: DaruGameRun, user_id: int, finish_partial
     db.flush()
     if completed:
         stat.ranking_record_id = play_record.id
+        db.flush()
     metrics = detection_metrics(difficulty, attempts, elapsed_seconds, max_combo, hints_used, within_time_limit)
     return stat, play_record, improved, {
         **metrics,
