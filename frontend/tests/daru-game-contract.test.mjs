@@ -50,6 +50,14 @@ test("a failed authoritative READY start recovers instead of remaining in READY"
   assert.match(gameSource, /setDifficulty\(null\); setCards\(\[\]\); setPhase\("lobby"\)/);
 });
 
+test("a READY 401 recovery preserves auth expiry and blocks silent guest restart", () => {
+  assert.match(gameSource, /error instanceof DaruGameApiError && error\.status === 401/);
+  assert.match(gameSource, /recoveryError instanceof DaruGameApiError && recoveryError\.status === 401/);
+  assert.match(gameSource, /authExpiredRef\.current = true; setAuthExpired\(true\); setLocked\(true\); setRunRecoveryNotice\(null\)/);
+  assert.match(gameSource, /startDisabled=\{!authResolved \|\| authExpired \|\| Boolean\(previewRetry\)\}/);
+  assert.match(gameSource, /로그인 세션이 만료되었습니다[\s\S]+\/login\?next=%2Fdaru-game[\s\S]+다시 로그인/);
+});
+
 test("HARD40 uses a new guest best key while EASY and NORMAL keep their keys", () => {
   assert.equal(BEST_RECORD_STORAGE_KEYS.easy, "flowlink:daru-game:v2:best-detection:easy");
   assert.equal(BEST_RECORD_STORAGE_KEYS.normal, "flowlink:daru-game:v2:best-detection:normal");
