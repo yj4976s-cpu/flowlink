@@ -29,29 +29,53 @@ test("the admin screen renders one reusable Kakao map instance", () => {
 });
 
 test("programmatic viewport zooms stay clean while user zooms become dirty", () => {
-  let dirty = false;
   let level = 8;
+  let userZooms = 0;
   const map = { getLevel: () => level };
-  const guard = createProgrammaticViewportGuard(() => { dirty = true; });
+  const guard = createProgrammaticViewportGuard(() => { userZooms += 1; });
 
-  guard.run(map, () => { level = 5; guard.onZoomChanged(map); });
-  assert.equal(dirty, false, "synchronous search zoom must stay clean");
+  guard.run(map, () => { level = 5; guard.onZoomChanged(); });
+  assert.equal(userZooms, 0, "synchronous search zoom must stay clean");
 
   guard.run(map, () => { level = 6; });
-  guard.onZoomChanged(map);
-  assert.equal(dirty, false, "asynchronous spotlight zoom must stay clean");
+  guard.onZoomChanged();
+  assert.equal(userZooms, 0, "a single asynchronous spotlight zoom must stay clean");
+
+  guard.run(map, () => { level = 5; });
+  guard.run(map, () => { level = 6; });
+  guard.onZoomChanged();
+  guard.onZoomChanged();
+  assert.equal(userZooms, 0, "two consecutive asynchronous zooms must consume exactly two tokens");
+  guard.onZoomChanged();
+  assert.equal(userZooms, 1, "the event after two programmatic zooms must be treated as user zoom");
+
+  guard.run(map, () => { level = 6; });
+  guard.onZoomChanged();
+  assert.equal(userZooms, 2, "setting the current level must not create a suppression token");
+
+  guard.reset();
+  guard.run(map, () => { level = 5; });
+  guard.run(map, () => { level = 6; });
+  guard.run(map, () => { level = 4; });
+  guard.onZoomChanged();
+  guard.onZoomChanged();
+  guard.onZoomChanged();
+  assert.equal(userZooms, 2, "three consecutive programmatic zooms must consume exactly three tokens");
+  guard.onZoomChanged();
+  assert.equal(userZooms, 3, "the fourth event after three programmatic zooms must be user zoom");
+
+  guard.reset();
+  guard.run(map, () => { level = 5; guard.onZoomChanged(); });
+  guard.run(map, () => { level = 6; });
+  guard.onZoomChanged();
+  assert.equal(userZooms, 3, "mixed synchronous and asynchronous zooms must keep exact accounting");
+  guard.onZoomChanged();
+  assert.equal(userZooms, 4, "mixed accounting must suppress only its asynchronous event");
 
   guard.run(map, () => { level = 4; });
-  guard.onZoomChanged(map);
-  assert.equal(dirty, false, "setBounds level changes must stay clean");
-
-  guard.onZoomChanged(map);
-  assert.equal(dirty, true, "wheel or pinch zoom must become dirty");
-
-  dirty = false;
   guard.reset();
-  guard.onZoomChanged(map);
-  assert.equal(dirty, true, "cleanup must not leave zoom suppression behind");
+  guard.onZoomChanged();
+  assert.equal(userZooms, 5, "reset must clear pending programmatic zooms");
 
   assert.match(mapSource, /const markDirty = \(\) => setDirty\(true\)/, "drag remains a user viewport change");
   assert.match(mapSource, /const zoom = \(delta: number\)[\s\S]*setDirty\(true\)/, "the custom zoom control is explicitly user initiated");

@@ -104,7 +104,7 @@ export function AdminKakaoOperationsMap({ markers, detectionCounts, selectedId, 
       viewportGuardRef.current = viewportGuard;
       kakao.maps.event.addListener(map, "click", selectNone);
       kakao.maps.event.addListener(map, "dragend", markDirty);
-      const handleZoomChanged = () => viewportGuard.onZoomChanged(map);
+      const handleZoomChanged = () => viewportGuard.onZoomChanged();
       kakao.maps.event.addListener(map, "zoom_changed", handleZoomChanged);
       resizeObserver = new ResizeObserver(() => {
         window.cancelAnimationFrame(frame);

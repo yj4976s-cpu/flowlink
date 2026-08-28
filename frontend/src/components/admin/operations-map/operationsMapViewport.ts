@@ -2,7 +2,7 @@ type LevelMap = { getLevel: () => number };
 
 export function createProgrammaticViewportGuard(onUserZoom: () => void) {
   const activeChanges: { zoomObserved: boolean }[] = [];
-  const pendingLevels: number[] = [];
+  let pendingProgrammaticZooms = 0;
 
   return {
     run(map: LevelMap, change: () => void) {
@@ -15,25 +15,23 @@ export function createProgrammaticViewportGuard(onUserZoom: () => void) {
         activeChanges.pop();
       }
       const after = map.getLevel();
-      if (!active.zoomObserved && after !== before) pendingLevels.push(after);
+      if (!active.zoomObserved && after !== before) pendingProgrammaticZooms += 1;
     },
-    onZoomChanged(map: LevelMap) {
+    onZoomChanged() {
       const active = activeChanges.at(-1);
       if (active) {
         active.zoomObserved = true;
         return;
       }
-      const pendingIndex = pendingLevels.indexOf(map.getLevel());
-      if (pendingIndex >= 0) {
-        pendingLevels.splice(0, pendingIndex + 1);
+      if (pendingProgrammaticZooms > 0) {
+        pendingProgrammaticZooms -= 1;
         return;
       }
-      pendingLevels.length = 0;
       onUserZoom();
     },
     reset() {
       activeChanges.length = 0;
-      pendingLevels.length = 0;
+      pendingProgrammaticZooms = 0;
     },
   };
 }
