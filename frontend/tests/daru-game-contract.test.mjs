@@ -189,9 +189,18 @@ test("leaderboard uses latest-score fields and shows personal BEST separately", 
 });
 
 test("play history shares difficulty and resets its page", () => {
-  assert.match(leaderboardSource, /getDaruGameHistory\(DIFFICULTY_CONFIG\[difficulty\]\.key, historyPage/);
+  assert.match(leaderboardSource, /getDaruGameHistory\(requestDifficulty, historyPage/);
   assert.match(leaderboardSource, /setHistoryPage\(1\)/);
   assert.doesNotMatch(leaderboardSource, /historyTabs/);
+});
+
+test("difficulty changes clear trash actions and reject stale history responses", () => {
+  assert.match(leaderboardSource, /setTrash\(null\); setTrashPage\(1\); setTrashLoading\(true\)/);
+  assert.match(leaderboardSource, /setHistoryView\("active"\); setManagementMode\(false\)/);
+  assert.match(leaderboardSource, /setDeleteTarget\(null\); setBulkMenuOpen\(false\)/);
+  assert.match(leaderboardSource, /setUndoRecord\(null\); setUndoError\(false\)/);
+  assert.match(leaderboardSource, /getDaruGameTrash\(requestDifficulty, trashPage, controller\.signal\)[\s\S]*controller\.signal\.aborted \|\| !isLeaderboardDifficulty\(next\.difficulty, requestDifficulty\)/);
+  assert.match(leaderboardSource, /getDaruGameHistory\(requestDifficulty, historyPage, controller\.signal\)[\s\S]*controller\.signal\.aborted \|\| !isLeaderboardDifficulty\(next\.difficulty, requestDifficulty\)/);
 });
 
 test("history is fixed to five records and corrects an invalid last page", () => {
@@ -258,7 +267,7 @@ test("history has an accessible delete control and empty state", () => {
 });
 
 test("main history expands from a three-record summary into an inline manager", () => {
-  assert.match(leaderboardSource, /getDaruGameHistory\(DIFFICULTY_CONFIG\[difficulty\]\.key, 1, controller\.signal, 3\)/);
+  assert.match(leaderboardSource, /getDaruGameHistory\(requestDifficulty, 1, controller\.signal, 3\)/);
   assert.match(leaderboardSource, /recentHistory\.items\.slice\(0, 3\)/);
   assert.match(leaderboardSource, /전체 기록 \{recentHistory\?\.total \?\? 0\}개/);
   assert.match(leaderboardSource, /historyExpanded \? "간단히 보기"/);

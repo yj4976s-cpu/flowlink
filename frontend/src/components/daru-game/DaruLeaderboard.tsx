@@ -112,8 +112,12 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
   useEffect(() => {
     if (preview) return;
     const controller = new AbortController();
-    void getDaruGameHistory(DIFFICULTY_CONFIG[difficulty].key, historyPage, controller.signal)
-      .then((next) => { setHistory(next); if (next.page !== historyPage) setHistoryPage(next.page); })
+    const requestDifficulty = DIFFICULTY_CONFIG[difficulty].key;
+    void getDaruGameHistory(requestDifficulty, historyPage, controller.signal)
+      .then((next) => {
+        if (controller.signal.aborted || !isLeaderboardDifficulty(next.difficulty, requestDifficulty)) return;
+        setHistory(next); if (next.page !== historyPage) setHistoryPage(next.page);
+      })
       .catch((requestError: unknown) => { if (!(requestError instanceof DOMException && requestError.name === "AbortError")) setHistory(null); })
       .finally(() => { if (!controller.signal.aborted) setHistoryLoading(false); });
     return () => controller.abort();
@@ -122,8 +126,11 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
   useEffect(() => {
     if (preview) return;
     const controller = new AbortController();
-    void getDaruGameHistory(DIFFICULTY_CONFIG[difficulty].key, 1, controller.signal, 3)
-      .then(setRecentHistory)
+    const requestDifficulty = DIFFICULTY_CONFIG[difficulty].key;
+    void getDaruGameHistory(requestDifficulty, 1, controller.signal, 3)
+      .then((next) => {
+        if (!controller.signal.aborted && isLeaderboardDifficulty(next.difficulty, requestDifficulty)) setRecentHistory(next);
+      })
       .catch((requestError: unknown) => { if (!(requestError instanceof DOMException && requestError.name === "AbortError")) setRecentHistory(null); })
       .finally(() => { if (!controller.signal.aborted) setRecentHistoryLoading(false); });
     return () => controller.abort();
@@ -132,8 +139,12 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
   useEffect(() => {
     if (preview) return;
     const controller = new AbortController();
-    void getDaruGameTrash(DIFFICULTY_CONFIG[difficulty].key, trashPage, controller.signal)
-      .then((next) => { setTrash(next); if (next.page !== trashPage) setTrashPage(next.page); })
+    const requestDifficulty = DIFFICULTY_CONFIG[difficulty].key;
+    void getDaruGameTrash(requestDifficulty, trashPage, controller.signal)
+      .then((next) => {
+        if (controller.signal.aborted || !isLeaderboardDifficulty(next.difficulty, requestDifficulty)) return;
+        setTrash(next); if (next.page !== trashPage) setTrashPage(next.page);
+      })
       .catch((requestError: unknown) => { if (!(requestError instanceof DOMException && requestError.name === "AbortError")) setTrash(null); })
       .finally(() => { if (!controller.signal.aborted) setTrashLoading(false); });
     return () => controller.abort();
@@ -154,7 +165,9 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
   const selectDifficulty = (next: GameDifficulty) => {
     if (next === difficulty) return;
     setDifficulty(next); setPage(1); setHistoryPage(1); setHistory(null); setHistoryLoading(true); setRecentHistory(null); setRecentHistoryLoading(true); setHistoryExpanded(false);
-    setTrashPage(1); setTrashLoading(true); setSelectedIds(new Set()); setSelectedRecords(new Map()); setSelectAllDifficulty(false); setExcludedIds(new Set()); setDeleteSuccess(""); setRestoreSuccess(""); setMoveSuccess("");
+    setTrash(null); setTrashPage(1); setTrashLoading(true); setHistoryView("active"); setManagementMode(false); setSelectedIds(new Set()); setSelectedRecords(new Map()); setSelectAllDifficulty(false); setExcludedIds(new Set()); setDeleteTarget(null); setBulkMenuOpen(false); setDeleteSuccess(""); setRestoreSuccess(""); setMoveSuccess("");
+    if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
+    undoTimerRef.current = null; setUndoRecord(null); setUndoError(false);
     if (!preview) { setResponse(null); setError(false); setLoading(true); }
   };
   const changePage = (direction: -1 | 1) => {
