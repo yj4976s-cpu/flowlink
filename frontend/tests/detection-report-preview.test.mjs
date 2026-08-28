@@ -430,3 +430,103 @@ test("current history detail response is applied normally", async () => {
 
   assert.deepEqual(result, { status: "success", value: detail });
 });
+
+test("detail loading invalidates the previously displayed event report", async () => {
+  const previousReport = deferred();
+  let generation = 50;
+  let currentEventId = "B";
+  let historyDetailLoading = false;
+  const report = prepareCurrentDetectionReport({
+    generation,
+    getCurrentGeneration: () => generation,
+    prepare: () => previousReport.promise,
+  });
+
+  generation += 1;
+  historyDetailLoading = true;
+  assert.equal(historyDetailLoading, true);
+  currentEventId = "A";
+  historyDetailLoading = false;
+  previousReport.resolve({ eventId: "B" });
+
+  assert.deepEqual(await report, { status: "stale" });
+  assert.equal(currentEventId, "A");
+});
+
+test("deleting a pending detail makes its late success stale", async () => {
+  const pendingDetail = deferred();
+  let generation = 60;
+  let pendingHistoryDetailId = "A";
+  const detail = prepareCurrentDetectionReport({
+    generation,
+    getCurrentGeneration: () => generation,
+    prepare: () => pendingDetail.promise,
+  });
+
+  if (pendingHistoryDetailId === "A") {
+    generation += 1;
+    pendingHistoryDetailId = null;
+  }
+  pendingDetail.resolve({ id: "A" });
+
+  assert.deepEqual(await detail, { status: "stale" });
+  assert.equal(pendingHistoryDetailId, null);
+});
+
+test("deleting a pending detail makes its late failure stale", async () => {
+  const pendingDetail = deferred();
+  let generation = 70;
+  let pendingHistoryDetailId = "A";
+  const detail = prepareCurrentDetectionReport({
+    generation,
+    getCurrentGeneration: () => generation,
+    prepare: () => pendingDetail.promise,
+  });
+
+  if (pendingHistoryDetailId === "A") {
+    generation += 1;
+    pendingHistoryDetailId = null;
+  }
+  pendingDetail.reject(new Error("deleted pending detail"));
+
+  assert.deepEqual(await detail, { status: "stale" });
+});
+
+test("an older detail cleanup does not clear a newer pending detail", async () => {
+  let generation = 80;
+  let pendingHistoryDetailId = "A";
+  const requestAGeneration = generation;
+
+  generation += 1;
+  pendingHistoryDetailId = "B";
+  if (pendingHistoryDetailId === "A" && generation === requestAGeneration) {
+    pendingHistoryDetailId = null;
+  }
+
+  assert.equal(pendingHistoryDetailId, "B");
+});
+
+test("the latest detail request still applies normally", async () => {
+  let generation = 90;
+  const pendingHistoryDetailId = "A";
+  const result = await prepareCurrentDetectionReport({
+    generation,
+    getCurrentGeneration: () => generation,
+    prepare: async () => ({ id: pendingHistoryDetailId }),
+  });
+
+  assert.deepEqual(result, { status: "success", value: { id: "A" } });
+});
+
+test("deleting an unrelated history keeps current and pending context valid", async () => {
+  let generation = 100;
+  const currentEventId = "A";
+  const pendingHistoryDetailId = "A";
+  const deletedId = "C";
+
+  if (currentEventId === deletedId || pendingHistoryDetailId === deletedId) generation += 1;
+
+  assert.equal(generation, 100);
+  assert.equal(currentEventId, "A");
+  assert.equal(pendingHistoryDetailId, "A");
+});

@@ -771,6 +771,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
   const [webcamStatus, setWebcamStatus] = useState<WebcamPanelStatus>("idle");
   const [webcamReportCandidate, setWebcamReportCandidate] = useState<FoundReportCandidate | null>(null);
   const [reportPreparing, setReportPreparing] = useState(false);
+  const [historyDetailLoading, setHistoryDetailLoading] = useState(false);
   const [webcamReportSubmitting, setWebcamReportSubmitting] = useState(false);
   const [webcamReportError, setWebcamReportError] = useState("");
   const [webcamReportSuccess, setWebcamReportSuccess] = useState<CitizenReport | null>(null);
@@ -789,6 +790,8 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
   const reportPreparingRef = useRef(false);
   const reportContextGenerationRef = useRef(0);
   const currentEventIdRef = useRef<number | null>(null);
+  const pendingHistoryDetailIdRef = useRef<number | null>(null);
+  const historyDetailLoadingRef = useRef(false);
   const webcamFoundSignatureRef = useRef("");
 
   useEffect(() => {
@@ -970,6 +973,9 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
   const resetSelectedFile = () => {
     reportContextGenerationRef.current += 1;
     currentEventIdRef.current = null;
+    pendingHistoryDetailIdRef.current = null;
+    historyDetailLoadingRef.current = false;
+    setHistoryDetailLoading(false);
     revokeReportPreviewUrl();
     setFile(null);
     setVideoDuration(null);
@@ -996,6 +1002,9 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
     if (!nextFile || tab === "webcam") return;
     reportContextGenerationRef.current += 1;
     currentEventIdRef.current = null;
+    pendingHistoryDetailIdRef.current = null;
+    historyDetailLoadingRef.current = false;
+    setHistoryDetailLoading(false);
     const validationMessage = validateFile(nextFile, tab);
     setCurrentEvent(null);
     setVideoDuration(null);
@@ -1060,12 +1069,27 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
 
   const loadHistoryDetail = async (id: number) => {
     const historyGeneration = ++reportContextGenerationRef.current;
+    pendingHistoryDetailIdRef.current = id;
+    historyDetailLoadingRef.current = true;
+    setHistoryDetailLoading(true);
     setError("");
-    const detail = await prepareCurrentDetectionReport({
-      generation: historyGeneration,
-      getCurrentGeneration: () => reportContextGenerationRef.current,
-      prepare: () => getMyDetection(id),
-    });
+    let detail:
+      | { status: "success"; value: DetectionEvent }
+      | { status: "failure"; error: unknown }
+      | { status: "stale" };
+    try {
+      detail = await prepareCurrentDetectionReport({
+        generation: historyGeneration,
+        getCurrentGeneration: () => reportContextGenerationRef.current,
+        prepare: () => getMyDetection(id),
+      });
+    } finally {
+      if (pendingHistoryDetailIdRef.current === id && reportContextGenerationRef.current === historyGeneration) {
+        pendingHistoryDetailIdRef.current = null;
+        historyDetailLoadingRef.current = false;
+        setHistoryDetailLoading(false);
+      }
+    }
     if (detail.status === "stale") return;
     if (detail.status === "success") {
       const result = detail.value;
@@ -1094,8 +1118,17 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
     try {
       await deleteMyDetection(id);
       setHistory((current) => current.filter((event) => event.id !== id));
-      if (currentEventIdRef.current === id) {
+      const deletesCurrentContext = currentEventIdRef.current === id;
+      const deletesPendingContext = pendingHistoryDetailIdRef.current === id;
+      if (deletesCurrentContext || deletesPendingContext) {
         reportContextGenerationRef.current += 1;
+      }
+      if (deletesPendingContext) {
+        pendingHistoryDetailIdRef.current = null;
+        historyDetailLoadingRef.current = false;
+        setHistoryDetailLoading(false);
+      }
+      if (deletesCurrentContext) {
         currentEventIdRef.current = null;
         setCurrentEvent(null);
         setSubmitState(file ? "selected" : "idle");
@@ -1123,6 +1156,9 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
       await deleteAllMyDetections();
       reportContextGenerationRef.current += 1;
       currentEventIdRef.current = null;
+      pendingHistoryDetailIdRef.current = null;
+      historyDetailLoadingRef.current = false;
+      setHistoryDetailLoading(false);
       setHistory([]);
       setHistoryPage(1);
       setCurrentEvent(null);
@@ -1172,7 +1208,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
 
   const openDetectionReport = async (object: DetectionObject) => {
     const classCode = getReportableClassCode(object.class_code);
-    if (!classCode || !currentEvent || reportPreparingRef.current) return;
+    if (!classCode || !currentEvent || reportPreparingRef.current || historyDetailLoadingRef.current) return;
     const sourceEvent = currentEvent;
     const sourceType = sourceEvent.source_type === "VIDEO" ? "video" : "image";
     const localFile = file;
@@ -1213,7 +1249,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
       setReportPreparing(false);
     }
 
-    if (preparation.status === "stale") return;
+    if (preparation.status === "stale" || currentEventIdRef.current !== sourceEvent.id) return;
     if (preparation.status === "success") {
       image = preparation.value;
       if (isHistorySource && !image && sourceEvent.original_media_url) {
@@ -1468,7 +1504,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
                       <span>{object.class_name_ko || reportableClassNames[object.class_code]}</span>
                       <small>인식 신뢰도 {formatConfidence(object.confidence)}</small>
                       <div>
-                        <button className="button button-secondary" type="button" onClick={() => void openDetectionReport(object)} disabled={reportPreparing}>
+                        <button className="button button-secondary" type="button" onClick={() => void openDetectionReport(object)} disabled={reportPreparing || historyDetailLoading}>
                           {reportPreparing ? "대표 이미지 준비 중..." : "발견한 물건을 제보할게요"}
                         </button>
                         <Link className="button button-primary" href={`/lost-reports/new?class_code=${encodeURIComponent(object.class_code)}&source=detection`}>
