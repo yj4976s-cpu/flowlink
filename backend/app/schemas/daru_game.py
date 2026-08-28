@@ -127,11 +127,11 @@ class DaruGameResultResponse(BaseModel):
 class DaruLeaderboardEntry(BaseModel):
     rank: int
     nickname: str
-    best_detection_power: float
-    best_attempts: int
-    best_elapsed_seconds: int
-    best_combo: int
-    best_hints_used: int
+    detection_power: float
+    attempts: int
+    elapsed_seconds: int
+    max_combo: int
+    hints_used: int
     achieved_at: datetime
     is_me: bool = False
 
@@ -141,7 +141,33 @@ class DaruLeaderboardResponse(BaseModel):
     top_entries: list[DaruLeaderboardEntry]
     entries: list[DaruLeaderboardEntry]
     my_entry: DaruLeaderboardEntry | None
+    my_best: DaruGameRecord | None
     next_rank_score: float | None
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class DaruGameHistoryItem(BaseModel):
+    id: int
+    difficulty: Difficulty
+    detection_power: float
+    attempts: int
+    elapsed_seconds: int
+    max_combo: int
+    hints_used: int
+    earned_daru_points: int
+    completed: bool
+    within_time_limit: bool
+    achieved_at: datetime
+    is_best: bool
+    is_ranking_record: bool
+
+
+class DaruGameHistoryResponse(BaseModel):
+    difficulty: Difficulty
+    items: list[DaruGameHistoryItem]
     total: int
     page: int
     page_size: int

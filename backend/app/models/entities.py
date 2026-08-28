@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -43,6 +43,7 @@ class User(Base):
     copilot_conversations: Mapped[list[CopilotConversation]] = relationship(back_populates="user")
     social_accounts: Mapped[list[UserSocialAccount]] = relationship(back_populates="user", passive_deletes=True)
     daru_game_stats: Mapped[list[DaruGameStat]] = relationship(back_populates="user", passive_deletes=True)
+    daru_game_play_records: Mapped[list[DaruGamePlayRecord]] = relationship(back_populates="user", passive_deletes=True)
     daru_game_runs: Mapped[list[DaruGameRun]] = relationship(back_populates="user", passive_deletes=True)
 
 
@@ -78,6 +79,7 @@ class DaruGameStat(Base):
         CheckConstraint("total_daru_points >= 0", name="ck_daru_game_stats_points"),
         CheckConstraint("play_count >= 0", name="ck_daru_game_stats_play_count"),
         UniqueConstraint("user_id", "difficulty", name="uq_daru_game_stats_user_difficulty"),
+        Index("ix_daru_game_stats_ranking_record_id", "ranking_record_id"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
@@ -92,10 +94,41 @@ class DaruGameStat(Base):
     total_daru_points: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     play_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     best_achieved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    ranking_record_id: Mapped[int | None] = mapped_column(ForeignKey("daru_game_play_records.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
 
     user: Mapped[User] = relationship(back_populates="daru_game_stats")
+    ranking_record: Mapped[DaruGamePlayRecord | None] = relationship(foreign_keys=[ranking_record_id], post_update=True)
+
+
+class DaruGamePlayRecord(Base):
+    __tablename__ = "daru_game_play_records"
+    __table_args__ = (
+        CheckConstraint("difficulty IN ('EASY', 'NORMAL', 'HARD')", name="ck_daru_game_play_records_difficulty"),
+        CheckConstraint("detection_power BETWEEN 0 AND 100", name="ck_daru_game_play_records_detection_power"),
+        CheckConstraint("attempts >= 0 AND elapsed_seconds > 0 AND max_combo >= 0 AND hints_used BETWEEN 0 AND 2 AND earned_daru_points >= 0", name="ck_daru_game_play_records_metrics"),
+        Index("ix_daru_game_play_records_user_difficulty_achieved", "user_id", "difficulty", "achieved_at"),
+        Index("ix_daru_game_play_records_user_difficulty_deleted", "user_id", "difficulty", "deleted_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    difficulty: Mapped[str] = mapped_column(String(10), nullable=False)
+    detection_power: Mapped[Decimal] = mapped_column(Numeric(4, 1), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False)
+    elapsed_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_combo: Mapped[int] = mapped_column(Integer, nullable=False)
+    hints_used: Mapped[int] = mapped_column(Integer, nullable=False)
+    earned_daru_points: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    completed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    within_time_limit: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    score_version: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    achieved_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+    user: Mapped[User] = relationship(back_populates="daru_game_play_records")
 
 
 class DaruGameRun(Base):
