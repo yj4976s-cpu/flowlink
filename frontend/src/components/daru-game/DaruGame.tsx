@@ -211,9 +211,42 @@ export function DaruGame() {
   }, [beginFlipping, clearSequenceTimer, difficulty, phase]);
   useEffect(() => {
     if (phase === "flipping") { sequenceTimerRef.current = window.setTimeout(() => { setReadyCue("READY"); setPhase("ready"); }, 650); return clearSequenceTimer; }
-    if (phase === "ready") { sequenceTimerRef.current = window.setTimeout(() => { void (async () => { const runId = runIdRef.current; let authoritativeStart: number | null = null; if (currentUser?.role === "USER" && runId) { try { const response = await startDaruGameRun(runId); authoritativeStart = new Date(response.play_started_at).getTime(); } catch (error) { if (handleTerminalRunError(error)) return; try { const state = await getDaruGameRunState(runId); if (!state.play_started_at) throw new Error("Run did not start"); authoritativeStart = new Date(state.play_started_at).getTime(); } catch (recoveryError) { if (!handleTerminalRunError(recoveryError)) setRecordStatus("failed"); return; } } } setReadyCue("GO!"); setStartedAt(authoritativeStart ?? Date.now()); setPhase("playing"); })(); }, 700); return clearSequenceTimer; }
+    if (phase === "ready") {
+      sequenceTimerRef.current = window.setTimeout(() => {
+        void (async () => {
+          const runId = runIdRef.current;
+          let authoritativeStart: number | null = null;
+          if (currentUser?.role === "USER" && runId) {
+            try {
+              const response = await startDaruGameRun(runId);
+              authoritativeStart = new Date(response.play_started_at).getTime();
+            } catch (error) {
+              if (handleTerminalRunError(error)) return;
+              try {
+                const state = await getDaruGameRunState(runId);
+                if (!state.play_started_at) throw new Error("Run did not start");
+                authoritativeStart = new Date(state.play_started_at).getTime();
+              } catch (recoveryError) {
+                if (handleTerminalRunError(recoveryError)) return;
+                const authenticationExpired = (error instanceof DaruGameApiError && error.status === 401)
+                  || (recoveryError instanceof DaruGameApiError && recoveryError.status === 401);
+                resetState(); clearDaruActiveRun(); runIdRef.current = null; setDifficulty(null); setCards([]); setPhase("lobby");
+                if (authenticationExpired) {
+                  authExpiredRef.current = true; setAuthExpired(true); setLocked(true); setRunRecoveryNotice(null);
+                } else {
+                  setRunRecoveryNotice("게임 시작을 확인하지 못했어요. 네트워크를 확인한 뒤 다시 시작해 주세요.");
+                }
+                return;
+              }
+            }
+          }
+          setReadyCue("GO!"); setStartedAt(authoritativeStart ?? Date.now()); setPhase("playing");
+        })();
+      }, 700);
+      return clearSequenceTimer;
+    }
     if (phase === "playing" && readyCue === "GO!") { sequenceTimerRef.current = window.setTimeout(() => setReadyCue(null), 500); return clearSequenceTimer; }
-  }, [clearSequenceTimer, currentUser, handleTerminalRunError, phase, readyCue, setPhase]);
+  }, [clearSequenceTimer, currentUser, handleTerminalRunError, phase, readyCue, resetState, setPhase]);
   useEffect(() => {
     if (phase !== "playing" || startedAt === 0 || !difficulty) return;
     const update = () => {
@@ -364,7 +397,7 @@ export function DaruGame() {
   const viewLeaderboard = () => { if (startPendingRef.current || submitInProgressRef.current) return; chooseDifficulty(); window.setTimeout(() => document.getElementById("daru-leaderboard")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0); };
   useEffect(() => () => { clearMismatchTimer(); clearFeedbackTimer(); clearSequenceTimer(); clearCompletionTimer(); clearHintTimer(); }, [clearCompletionTimer, clearFeedbackTimer, clearHintTimer, clearMismatchTimer, clearSequenceTimer]);
 
-  if (phase === "lobby" || !difficulty) return <>{runRecoveryNotice && <p className={styles.authRecoveryNotice} role="status">{runRecoveryNotice}</p>}{authExpired && <p className={styles.authRecoveryNotice} role="alert">로그인 세션이 만료되었습니다. 게임을 시작하려면 <Link href="/login?next=%2Fdaru-game">다시 로그인</Link>해 주세요.</p>}{previewRetry && !authExpired && <p className={styles.authRecoveryNotice} role="alert">카드 미리보기를 불러오지 못했어요. <button type="button" onClick={() => void retryPreview()} disabled={startPending}>다시 시도</button></p>}<DifficultySelector onSelect={startGame} startDisabled={!authResolved || Boolean(previewRetry)} startPending={startPending} />{authResolved && currentUser?.role === "USER" && <DaruLeaderboard refreshKey={leaderboardRefresh} />}</>;
+  if (phase === "lobby" || !difficulty) return <>{runRecoveryNotice && <p className={styles.authRecoveryNotice} role="status">{runRecoveryNotice}</p>}{authExpired && <p className={styles.authRecoveryNotice} role="alert">로그인 세션이 만료되었습니다. 게임을 시작하려면 <Link href="/login?next=%2Fdaru-game">다시 로그인</Link>해 주세요.</p>}{previewRetry && !authExpired && <p className={styles.authRecoveryNotice} role="alert">카드 미리보기를 불러오지 못했어요. <button type="button" onClick={() => void retryPreview()} disabled={startPending}>다시 시도</button></p>}<DifficultySelector onSelect={startGame} startDisabled={!authResolved || authExpired || Boolean(previewRetry)} startPending={startPending} />{authResolved && currentUser?.role === "USER" && <DaruLeaderboard refreshKey={leaderboardRefresh} />}</>;
   const hintsUsed = DIFFICULTY_CONFIG[difficulty].hintCount - hintsRemaining;
   const previewSecondsRemaining = Math.max(1, Math.ceil(previewProgress * DIFFICULTY_CONFIG[difficulty].previewSeconds));
   return <section className={styles.game} data-phase={phase} aria-labelledby="active-game-title">

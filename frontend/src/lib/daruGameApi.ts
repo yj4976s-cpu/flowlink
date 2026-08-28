@@ -1,6 +1,7 @@
 import { buildApiUrl } from "@/lib/apiBase";
 import type { ApiGameDifficulty, LeaderboardEntry } from "@/components/daru-game/game.types";
 import { invalidateAuthOnUnauthorized } from "@/lib/authEvents";
+import { createActionId } from "@/lib/daruActionId";
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(buildApiUrl(path), { ...init, credentials: "include", headers: { "Content-Type": "application/json", ...init?.headers } });
   if (!response.ok) {
@@ -17,7 +18,7 @@ export class DaruGameApiError extends Error {
 }
 function retryable(error: unknown) { return !(error instanceof DaruGameApiError) || [502, 503, 504].includes(error.status); }
 async function actionRequest<T>(path: string, payload: Record<string, unknown>): Promise<T> {
-  const actionId = crypto.randomUUID();
+  const actionId = createActionId();
   const execute = () => request<T>(path, { method: "POST", body: JSON.stringify({ ...payload, action_id: actionId }) });
   try { return await execute(); } catch (error) { if (!retryable(error)) throw error; return execute(); }
 }

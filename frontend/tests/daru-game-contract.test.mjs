@@ -4,9 +4,59 @@ import test from "node:test";
 
 import { BEST_RECORD_STORAGE_KEYS, isGuestBestEligible, resolveGuestBest } from "../src/components/daru-game/game.storage.ts";
 import { getLeaderboardPageRequest, isLeaderboardDifficulty, isLeaderboardScoreTie } from "../src/components/daru-game/leaderboard.utils.ts";
+import { createActionId } from "../src/lib/daruActionId.ts";
 import { isExpiredRunError, isOutdatedDeckError, OUTDATED_DECK_ERROR_CODE, RUN_EXPIRED_ERROR_CODE, terminalRunRecoveryReason } from "../src/lib/daruRunRecovery.ts";
 
 const OLD_HARD_KEY = "flowlink:daru-game:v2:best-detection:hard";
+const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const apiSource = readFileSync(new URL("../src/lib/daruGameApi.ts", import.meta.url), "utf8");
+const gameSource = readFileSync(new URL("../src/components/daru-game/DaruGame.tsx", import.meta.url), "utf8");
+
+test("action IDs prefer native randomUUID when available", () => {
+  const nativeId = "123e4567-e89b-42d3-a456-426614174000";
+  let fallbackCalled = false;
+  const actionId = createActionId({
+    randomUUID: () => nativeId,
+    getRandomValues: (array) => { fallbackCalled = true; return array; },
+  });
+  assert.equal(actionId, nativeId);
+  assert.equal(fallbackCalled, false);
+});
+
+test("action IDs use secure random bytes for an RFC 4122 UUID v4 fallback", () => {
+  const actionId = createActionId({
+    getRandomValues: (array) => {
+      const bytes = new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
+      bytes.forEach((_byte, index) => { bytes[index] = index; });
+      return array;
+    },
+  });
+  assert.match(actionId, UUID_V4_PATTERN);
+  assert.equal(actionId, "00010203-0405-4607-8809-0a0b0c0d0e0f");
+});
+
+test("all authoritative game actions share the compatible action ID helper", () => {
+  assert.match(apiSource, /const actionId = createActionId\(\)/);
+  assert.doesNotMatch(apiSource, /crypto\.randomUUID\(\)/);
+  for (const action of ["startDaruGameRun", "flipDaruGameCard", "requestDaruGameHint", "submitDaruGameResult"]) {
+    assert.match(apiSource, new RegExp(`function ${action}[^\\n]+actionRequest`));
+  }
+});
+
+test("a failed authoritative READY start recovers instead of remaining in READY", () => {
+  assert.match(gameSource, /startDaruGameRun\(runId\)/);
+  assert.match(gameSource, /setReadyCue\("GO!"\); setStartedAt\(authoritativeStart \?\? Date\.now\(\)\); setPhase\("playing"\)/);
+  assert.match(gameSource, /setRunRecoveryNotice\("게임 시작을 확인하지 못했어요\./);
+  assert.match(gameSource, /setDifficulty\(null\); setCards\(\[\]\); setPhase\("lobby"\)/);
+});
+
+test("a READY 401 recovery preserves auth expiry and blocks silent guest restart", () => {
+  assert.match(gameSource, /error instanceof DaruGameApiError && error\.status === 401/);
+  assert.match(gameSource, /recoveryError instanceof DaruGameApiError && recoveryError\.status === 401/);
+  assert.match(gameSource, /authExpiredRef\.current = true; setAuthExpired\(true\); setLocked\(true\); setRunRecoveryNotice\(null\)/);
+  assert.match(gameSource, /startDisabled=\{!authResolved \|\| authExpired \|\| Boolean\(previewRetry\)\}/);
+  assert.match(gameSource, /로그인 세션이 만료되었습니다[\s\S]+\/login\?next=%2Fdaru-game[\s\S]+다시 로그인/);
+});
 
 test("HARD40 uses a new guest best key while EASY and NORMAL keep their keys", () => {
   assert.equal(BEST_RECORD_STORAGE_KEYS.easy, "flowlink:daru-game:v2:best-detection:easy");
