@@ -20,8 +20,8 @@ export type KakaoServices = {
   Status: { OK: KakaoPlacesStatus; ZERO_RESULT: KakaoPlacesStatus; ERROR: KakaoPlacesStatus };
 };
 export type KakaoLatLng = { getLat: () => number; getLng: () => number };
-export type KakaoLatLngBoundsInstance = { extend: (position: KakaoLatLng) => void };
-export type KakaoMapInstance = { setCenter: (position: KakaoLatLng) => void; setBounds: (bounds: KakaoLatLngBoundsInstance, padding?: number) => void; getLevel: () => number; setLevel: (level: number, options?: { anchor?: KakaoLatLng }) => void; relayout: () => void };
+export type KakaoLatLngBoundsInstance = { extend: (position: KakaoLatLng) => void; getSouthWest: () => KakaoLatLng; getNorthEast: () => KakaoLatLng };
+export type KakaoMapInstance = { setCenter: (position: KakaoLatLng) => void; panTo: (position: KakaoLatLng) => void; setBounds: (bounds: KakaoLatLngBoundsInstance, padding?: number) => void; getBounds: () => KakaoLatLngBoundsInstance; getLevel: () => number; setLevel: (level: number, options?: { anchor?: KakaoLatLng }) => void; relayout: () => void };
 export type KakaoMarkerInstance = { setPosition: (position: KakaoLatLng) => void; setMap: (map: KakaoMapInstance | null) => void };
 export type KakaoCustomOverlayInstance = { setMap: (map: KakaoMapInstance | null) => void };
 export type KakaoCircleInstance = { setPosition: (position: KakaoLatLng) => void; setMap: (map: KakaoMapInstance | null) => void };
