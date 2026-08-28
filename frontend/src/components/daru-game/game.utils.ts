@@ -1,15 +1,8 @@
 import { CARD_CATALOG, CARD_IDS_BY_DIFFICULTY, HARD_ADDITIONAL_CARD_IDS, NORMAL_CARD_IDS, getCardThemeImages } from "./card.catalog";
+import { constrainedShuffleCards } from "./deckShuffle";
 import { DETECTION_POWER_WEIGHTS, DIFFICULTY_CONFIG, POINT_CONFIG, RANK_THRESHOLDS } from "./game.config";
+import { SUPPORTED_BOARD_COLUMNS } from "./memoryBoard.geometry";
 import type { DaruGameTheme, DetectionMetrics, GameCard, GameDifficulty, GameRank } from "./game.types";
-
-export function shuffleCards(cards: GameCard[], random = Math.random) {
-  const shuffled = [...cards];
-  for (let index = shuffled.length - 1; index > 0; index -= 1) {
-    const swapIndex = Math.floor(random() * (index + 1));
-    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
-  }
-  return shuffled;
-}
 
 export function createGameDeck(difficulty: GameDifficulty, random = Math.random) {
   const catalogById = new Map(CARD_CATALOG.map((card) => [card.id, card]));
@@ -24,7 +17,7 @@ export function createGameDeck(difficulty: GameDifficulty, random = Math.random)
   });
 
   const cards = pairs.flatMap((pair) => [0, 1].map((copy) => ({ ...pair, id: `${pair.pairId}-${copy}` })));
-  return shuffleCards(cards, random);
+  return constrainedShuffleCards(cards, SUPPORTED_BOARD_COLUMNS[difficulty], random);
 }
 
 function shuffleValues<T>(values: readonly T[], random: () => number) {

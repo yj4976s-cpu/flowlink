@@ -25,7 +25,7 @@ const RANK_SCORES: Record<GameRank, number> = { S: 86.4, A: 72.3, B: 58.6, C: 43
 const BASE_RANKING: LeaderboardEntry[] = [
   [1, "물결다루", 91.8, 0, 12, 67], [2, "푸른우산", 87.4, 0, 14, 78], [3, "다루좋아", 83.6, 1, 15, 84],
   [4, "나의 다루", 80.2, 1, 16, 91], [5, "강물", 76.5, 2, 18, 100],
-].map(([rank, nickname, score, hints, attempts, elapsed]) => ({ rank: Number(rank), nickname: String(nickname), best_detection_power: Number(score), best_hints_used: Number(hints), best_attempts: Number(attempts), best_elapsed_seconds: Number(elapsed), best_combo: 5, achieved_at: "2026-08-22T00:00:00Z", is_me: rank === 4 }));
+].map(([rank, nickname, score, hints, attempts, elapsed]) => ({ rank: Number(rank), nickname: String(nickname), detection_power: Number(score), hints_used: Number(hints), attempts: Number(attempts), elapsed_seconds: Number(elapsed), max_combo: 5, achieved_at: "2026-08-22T00:00:00Z", is_me: rank === 4 }));
 
 const createDevDeck = (difficulty: GameDifficulty) => createGameDeck(difficulty, () => 0.37);
 

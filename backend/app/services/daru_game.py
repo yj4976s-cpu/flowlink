@@ -6,20 +6,20 @@ from decimal import Decimal, ROUND_HALF_UP
 import hashlib
 import json
 import secrets
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.security import utc_now
-from app.models import DaruGameRun, DaruGameRunAction, DaruGameStat, User
+from app.models import DaruGamePlayRecord, DaruGameRun, DaruGameRunAction, DaruGameStat, User
 
 
 DIFFICULTY_CONFIG = {
-    "EASY": {"pairs": 10, "time_limit_seconds": 120, "speed_benchmark_seconds": 90, "combo_target": 5, "clear_bonus": 300, "preview_seconds": 5},
-    "NORMAL": {"pairs": 16, "time_limit_seconds": 210, "speed_benchmark_seconds": 150, "combo_target": 7, "clear_bonus": 500, "preview_seconds": 7},
-    "HARD": {"pairs": 20, "time_limit_seconds": 280, "speed_benchmark_seconds": 200, "combo_target": 8, "clear_bonus": 700, "preview_seconds": 8},
+    "EASY": {"pairs": 10, "columns": 5, "supported_columns": (4, 5), "time_limit_seconds": 120, "speed_benchmark_seconds": 90, "combo_target": 5, "clear_bonus": 300, "preview_seconds": 5},
+    "NORMAL": {"pairs": 16, "columns": 8, "supported_columns": (4, 5, 6, 7, 8), "time_limit_seconds": 210, "speed_benchmark_seconds": 150, "combo_target": 7, "clear_bonus": 500, "preview_seconds": 7},
+    "HARD": {"pairs": 20, "columns": 10, "supported_columns": (4, 5, 6, 7, 8, 9, 10), "time_limit_seconds": 280, "speed_benchmark_seconds": 200, "combo_target": 8, "clear_bonus": 700, "preview_seconds": 8},
 }
 EASY_CARD_IDS = ["greeting", "excited", "heart", "sleeping", "search", "umbrella", "shoe", "backpack", "ball", "can"]
 NORMAL_CARD_IDS = [*EASY_CARD_IDS, "thumbs-up", "sulky", "coastal-cleanup", "umbrella-found", "plastic-bag", "plastic-bottle"]
@@ -31,6 +31,7 @@ CARD_IDS_BY_DIFFICULTY = {
 GAME_RUN_MAX_AGE = timedelta(hours=24)
 CURRENT_SCORE_VERSION = 2
 SCORE_TENTH = Decimal("0.1")
+DECK_SHUFFLE_MAX_ATTEMPTS = 80
 
 
 class GameRunNotFoundError(ValueError):
@@ -57,11 +58,85 @@ def select_card_ids(difficulty: str, randomizer: Any | None = None) -> list[str]
     return [*NORMAL_CARD_IDS, *hard_additional[:4]]
 
 
+def has_adjacent_pair(deck: Sequence[str], columns: int) -> bool:
+    first_positions: dict[str, int] = {}
+    for index, pair_id in enumerate(deck):
+        first_index = first_positions.get(pair_id)
+        if first_index is None:
+            first_positions[pair_id] = index
+            continue
+        first_row, first_column = divmod(first_index, columns)
+        row, column = divmod(index, columns)
+        if abs(first_row - row) <= 1 and abs(first_column - column) <= 1:
+            return True
+    return False
+
+
+def has_adjacent_pair_for_columns(deck: Sequence[str], supported_columns: Sequence[int]) -> bool:
+    return any(has_adjacent_pair(deck, columns) for columns in supported_columns)
+
+
+def _positions_are_adjacent(first: int, second: int, columns: int) -> bool:
+    first_row, first_column = divmod(first, columns)
+    second_row, second_column = divmod(second, columns)
+    return abs(first_row - second_row) <= 1 and abs(first_column - second_column) <= 1
+
+
+def _randomized_position_pairs(card_count: int, supported_columns: Sequence[int], rng: Any) -> list[tuple[int, int]]:
+    def pair_positions(available: list[int]) -> list[tuple[int, int]] | None:
+        if not available:
+            return []
+        first_candidates = list(available)
+        rng.shuffle(first_candidates)
+        first = min(
+            first_candidates,
+            key=lambda position: sum(
+                other != position and all(not _positions_are_adjacent(position, other, columns) for columns in supported_columns)
+                for other in available
+            ),
+        )
+        remaining = [position for position in available if position != first]
+        second_candidates = [position for position in remaining if all(not _positions_are_adjacent(first, position, columns) for columns in supported_columns)]
+        rng.shuffle(second_candidates)
+        for second in second_candidates:
+            rest = pair_positions([position for position in remaining if position != second])
+            if rest is not None:
+                return [(first, second), *rest]
+        return None
+
+    result = pair_positions(list(range(card_count)))
+    if result is None:
+        raise RuntimeError("Unable to construct a non-adjacent card layout")
+    return result
+
+
+def constrained_shuffle(deck: Sequence[str], supported_columns: Sequence[int], randomizer: Any | None = None, *, max_attempts: int = DECK_SHUFFLE_MAX_ATTEMPTS) -> list[str]:
+    rng = randomizer or secrets.SystemRandom()
+    for _attempt in range(max_attempts):
+        candidate = list(deck)
+        rng.shuffle(candidate)
+        if not has_adjacent_pair_for_columns(candidate, supported_columns):
+            return candidate
+
+    pair_ids = list(dict.fromkeys(deck))
+    rng.shuffle(pair_ids)
+    positions = _randomized_position_pairs(len(deck), supported_columns, rng)
+    result = [""] * len(deck)
+    for pair_id, (first, second) in zip(pair_ids, positions, strict=True):
+        result[first] = pair_id
+        result[second] = pair_id
+    return result
+
+
+def create_shuffled_deck(difficulty: str, randomizer: Any | None = None) -> list[str]:
+    rng = randomizer or secrets.SystemRandom()
+    deck = [card_id for card_id in select_card_ids(difficulty, rng) for _copy in range(2)]
+    return constrained_shuffle(deck, DIFFICULTY_CONFIG[difficulty]["supported_columns"], rng)
+
+
 def create_game_run(db: Session, *, user_id: int, difficulty: str) -> DaruGameRun:
     now = utc_now()
-    randomizer = secrets.SystemRandom()
-    deck = [card_id for card_id in select_card_ids(difficulty, randomizer) for _copy in range(2)]
-    randomizer.shuffle(deck)
+    deck = create_shuffled_deck(difficulty)
     run = DaruGameRun(id=uuid4(), user_id=user_id, difficulty=difficulty, started_at=now, deck_state=deck, matched_positions=[])
     db.add(run)
     db.commit()
@@ -284,7 +359,7 @@ def _apply_result(stat: DaruGameStat, *, eligible: bool, power: Decimal, attempt
     return improved
 
 
-def submit_result(db: Session, *, run: DaruGameRun, user_id: int, finish_partial: bool = False) -> tuple[DaruGameStat, bool, dict[str, int | bool | Decimal]]:
+def submit_result(db: Session, *, run: DaruGameRun, user_id: int, finish_partial: bool = False) -> tuple[DaruGameStat, DaruGamePlayRecord, bool, dict[str, int | bool | Decimal]]:
     now = utc_now()
     _require_started(run)
     config = DIFFICULTY_CONFIG[run.difficulty]
@@ -313,8 +388,20 @@ def submit_result(db: Session, *, run: DaruGameRun, user_id: int, finish_partial
     else:
         improved = _apply_result(stat, eligible=eligible, power=power, attempts=attempts, elapsed_seconds=elapsed_seconds, max_combo=max_combo, hints_used=hints_used, earned_points=earned_points, now=now)
     db.flush()
+    play_record = DaruGamePlayRecord(
+        user_id=user_id, difficulty=difficulty, detection_power=power, attempts=attempts,
+        elapsed_seconds=elapsed_seconds, max_combo=max_combo, hints_used=hints_used,
+        earned_daru_points=earned_points, completed=completed,
+        within_time_limit=within_time_limit, score_version=CURRENT_SCORE_VERSION,
+        achieved_at=now, created_at=now,
+    )
+    db.add(play_record)
+    db.flush()
+    if completed:
+        stat.ranking_record_id = play_record.id
+        db.flush()
     metrics = detection_metrics(difficulty, attempts, elapsed_seconds, max_combo, hints_used, within_time_limit)
-    return stat, improved, {
+    return stat, play_record, improved, {
         **metrics,
         "attempts": attempts,
         "matched_pairs": run.matched_pairs,
@@ -361,10 +448,208 @@ def game_run_state(db: Session, *, run_id: UUID, user_id: int) -> dict[str, Any]
 
 
 def ranking_query(difficulty: str):
-    return select(DaruGameStat, User.nickname).join(User, User.id == DaruGameStat.user_id).where(DaruGameStat.difficulty == difficulty, DaruGameStat.score_version == CURRENT_SCORE_VERSION, DaruGameStat.best_attempts.is_not(None), User.role == "USER", User.active.is_(True), User.deleted_at.is_(None)).order_by(DaruGameStat.best_detection_power.desc(), DaruGameStat.best_attempts.asc(), DaruGameStat.best_elapsed_seconds.asc(), DaruGameStat.best_achieved_at.asc())
+    return (
+        select(DaruGameStat, DaruGamePlayRecord, User.nickname)
+        .join(User, User.id == DaruGameStat.user_id)
+        .join(DaruGamePlayRecord, DaruGamePlayRecord.id == DaruGameStat.ranking_record_id)
+        .where(
+            DaruGameStat.difficulty == difficulty,
+            DaruGamePlayRecord.score_version == CURRENT_SCORE_VERSION,
+            DaruGamePlayRecord.completed.is_(True),
+            DaruGamePlayRecord.deleted_at.is_(None),
+            User.role == "USER", User.active.is_(True), User.deleted_at.is_(None),
+        )
+        .order_by(DaruGamePlayRecord.detection_power.desc(), DaruGamePlayRecord.attempts.asc(), DaruGamePlayRecord.elapsed_seconds.asc(), DaruGamePlayRecord.achieved_at.asc())
+    )
 
 
 def leaderboard_rank(db: Session, stat: DaruGameStat) -> int | None:
-    ranked_ids = [item.id for item, _nickname in db.execute(ranking_query(stat.difficulty)).all()]
+    ranked_ids = [item.id for item, _record, _nickname in db.execute(ranking_query(stat.difficulty)).all()]
     try: return ranked_ids.index(stat.id) + 1
     except ValueError: return None
+
+
+def best_record_query(user_id: int, difficulty: str):
+    return (
+        select(DaruGamePlayRecord)
+        .where(
+            DaruGamePlayRecord.user_id == user_id,
+            DaruGamePlayRecord.difficulty == difficulty,
+            DaruGamePlayRecord.completed.is_(True),
+            DaruGamePlayRecord.deleted_at.is_(None),
+            DaruGamePlayRecord.score_version == CURRENT_SCORE_VERSION,
+        )
+        .order_by(DaruGamePlayRecord.detection_power.desc(), DaruGamePlayRecord.attempts.asc(), DaruGamePlayRecord.elapsed_seconds.asc(), DaruGamePlayRecord.achieved_at.asc())
+    )
+
+
+def recompute_best(db: Session, stat: DaruGameStat) -> None:
+    best = db.scalar(best_record_query(stat.user_id, stat.difficulty).limit(1))
+    if best is None:
+        stat.best_detection_power = Decimal("0.0")
+        stat.best_attempts = None
+        stat.best_elapsed_seconds = None
+        stat.best_combo = 0
+        stat.best_hints_used = None
+        stat.best_achieved_at = None
+    else:
+        stat.score_version = best.score_version
+        stat.best_detection_power = best.detection_power
+        stat.best_attempts = best.attempts
+        stat.best_elapsed_seconds = best.elapsed_seconds
+        stat.best_combo = best.max_combo
+        stat.best_hints_used = best.hints_used
+        stat.best_achieved_at = best.achieved_at
+    stat.updated_at = utc_now()
+
+
+def soft_delete_play_record(db: Session, *, user_id: int, record_id: int) -> DaruGamePlayRecord | None:
+    records = soft_delete_play_records(db, user_id=user_id, record_ids=[record_id], protect_ranking=False)
+    return records[0] if records else None
+
+
+def restore_play_record(db: Session, *, user_id: int, record_id: int) -> DaruGamePlayRecord | None:
+    record = db.scalar(
+        select(DaruGamePlayRecord)
+        .where(
+            DaruGamePlayRecord.id == record_id,
+            DaruGamePlayRecord.user_id == user_id,
+            DaruGamePlayRecord.deleted_at.is_not(None),
+        )
+        .with_for_update()
+    )
+    if record is None:
+        return None
+    stat = db.scalar(
+        select(DaruGameStat)
+        .where(DaruGameStat.user_id == user_id, DaruGameStat.difficulty == record.difficulty)
+        .with_for_update()
+    )
+    record.deleted_at = None
+    db.flush()
+    if stat is not None:
+        recompute_best(db, stat)
+    db.commit()
+    return record
+
+
+def permanently_delete_play_record(db: Session, *, user_id: int, record_id: int) -> DaruGamePlayRecord | None:
+    record = db.scalar(
+        select(DaruGamePlayRecord)
+        .where(
+            DaruGamePlayRecord.id == record_id,
+            DaruGamePlayRecord.user_id == user_id,
+            DaruGamePlayRecord.deleted_at.is_not(None),
+        )
+        .with_for_update()
+    )
+    if record is None:
+        return None
+    stat = db.scalar(
+        select(DaruGameStat)
+        .where(DaruGameStat.user_id == user_id, DaruGameStat.difficulty == record.difficulty)
+        .with_for_update()
+    )
+    if stat is not None and stat.ranking_record_id == record.id:
+        stat.ranking_record_id = None
+    db.delete(record)
+    db.flush()
+    if stat is not None:
+        recompute_best(db, stat)
+    db.commit()
+    return record
+
+
+def permanently_delete_trash(db: Session, *, user_id: int, difficulty: str) -> int:
+    records = db.scalars(
+        select(DaruGamePlayRecord)
+        .where(
+            DaruGamePlayRecord.user_id == user_id,
+            DaruGamePlayRecord.difficulty == difficulty,
+            DaruGamePlayRecord.deleted_at.is_not(None),
+        )
+        .with_for_update()
+    ).all()
+    if not records:
+        return 0
+    deleted_ids = {record.id for record in records}
+    stat = db.scalar(
+        select(DaruGameStat)
+        .where(DaruGameStat.user_id == user_id, DaruGameStat.difficulty == difficulty)
+        .with_for_update()
+    )
+    if stat is not None and stat.ranking_record_id in deleted_ids:
+        stat.ranking_record_id = None
+    for record in records:
+        db.delete(record)
+    db.flush()
+    if stat is not None:
+        recompute_best(db, stat)
+    db.commit()
+    return len(records)
+
+
+def soft_delete_play_records(
+    db: Session,
+    *,
+    user_id: int,
+    record_ids: list[int] | None = None,
+    difficulty: str | None = None,
+    exclude_record_ids: list[int] | None = None,
+    protect_ranking: bool = True,
+) -> list[DaruGamePlayRecord] | None:
+    selected_ids = set(record_ids or [])
+    excluded_ids = set(exclude_record_ids or [])
+    ranking_ids = set(db.scalars(select(DaruGameStat.ranking_record_id).where(DaruGameStat.user_id == user_id, DaruGameStat.ranking_record_id.is_not(None))).all())
+    query = select(DaruGamePlayRecord).where(
+        DaruGamePlayRecord.user_id == user_id,
+        DaruGamePlayRecord.deleted_at.is_(None),
+    )
+    if difficulty is not None:
+        query = query.where(DaruGamePlayRecord.difficulty == difficulty)
+        if protect_ranking and ranking_ids:
+            query = query.where(DaruGamePlayRecord.id.not_in(ranking_ids))
+        if excluded_ids:
+            query = query.where(DaruGamePlayRecord.id.not_in(excluded_ids))
+    else:
+        if protect_ranking and selected_ids & ranking_ids:
+            db.rollback()
+            return None
+        query = query.where(DaruGamePlayRecord.id.in_(selected_ids))
+    records = db.scalars(query.with_for_update()).all()
+    if difficulty is None and {record.id for record in records} != selected_ids:
+        db.rollback()
+        return None
+
+    now = utc_now()
+    affected_difficulties = {record.difficulty for record in records}
+    for record in records:
+        record.deleted_at = now
+    db.flush()
+    if affected_difficulties:
+        stats = db.scalars(
+            select(DaruGameStat)
+            .where(DaruGameStat.user_id == user_id, DaruGameStat.difficulty.in_(affected_difficulties))
+            .with_for_update()
+        ).all()
+        for stat in stats:
+            recompute_best(db, stat)
+    db.commit()
+    return records
+
+
+def soft_delete_all_play_records(db: Session, *, user_id: int) -> int:
+    ranking_ids = set(db.scalars(select(DaruGameStat.ranking_record_id).where(DaruGameStat.user_id == user_id, DaruGameStat.ranking_record_id.is_not(None))).all())
+    query = select(DaruGamePlayRecord).where(DaruGamePlayRecord.user_id == user_id, DaruGamePlayRecord.deleted_at.is_(None))
+    if ranking_ids:
+        query = query.where(DaruGamePlayRecord.id.not_in(ranking_ids))
+    records = db.scalars(query.with_for_update()).all()
+    now = utc_now()
+    for record in records:
+        record.deleted_at = now
+    db.flush()
+    stats = db.scalars(select(DaruGameStat).where(DaruGameStat.user_id == user_id).with_for_update()).all()
+    for stat in stats:
+        recompute_best(db, stat)
+    db.commit()
+    return len(records)

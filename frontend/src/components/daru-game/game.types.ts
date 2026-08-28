@@ -63,11 +63,11 @@ export interface DifficultyConfig {
 export interface LeaderboardEntry {
   rank: number;
   nickname: string;
-  best_detection_power: number;
-  best_attempts: number;
-  best_elapsed_seconds: number;
-  best_combo: number;
-  best_hints_used: number;
+  detection_power: number;
+  attempts: number;
+  elapsed_seconds: number;
+  max_combo: number;
+  hints_used: number;
   achieved_at: string;
   is_me: boolean;
 }
