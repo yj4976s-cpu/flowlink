@@ -123,7 +123,8 @@ def history(current_user: Annotated[User, Depends(require_user)], db: Annotated[
         for item in stats
     )
     protected_count = int(protected_id is not None)
-    return DaruGameHistoryResponse(difficulty=difficulty, items=items, total=total, page=current_page, page_size=page_size, total_pages=total_pages, protected_count=protected_count, deletable_count=max(0, total - protected_count), has_deletable_best=bool(best and best.id != protected_id), has_deletable_best_any_difficulty=has_deletable_best_any_difficulty)
+    deletable_best_record_id = best.id if best and best.id != protected_id else None
+    return DaruGameHistoryResponse(difficulty=difficulty, items=items, total=total, page=current_page, page_size=page_size, total_pages=total_pages, protected_count=protected_count, deletable_count=max(0, total - protected_count), deletable_best_record_id=deletable_best_record_id, has_deletable_best=deletable_best_record_id is not None, has_deletable_best_any_difficulty=has_deletable_best_any_difficulty)
 
 
 @router.get("/history/trash", response_model=DaruGameHistoryResponse)

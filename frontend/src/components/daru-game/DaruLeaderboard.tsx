@@ -303,7 +303,7 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
   };
   const selectedItems = [...selectedRecords.values()];
   const deletingBest = typeof deleteTarget === "string"
-    ? bulkDeleteIncludesBest(deleteTarget, selectAllDifficulty, history?.has_deletable_best ?? false, history?.has_deletable_best_any_difficulty ?? false, selectedItems.some((item) => item.is_best))
+    ? bulkDeleteIncludesBest({ target: deleteTarget, selectAllDifficulty, deletableBestRecordId: history?.deletable_best_record_id, excludedIds, hasDeletableBest: history?.has_deletable_best ?? false, hasDeletableBestAnyDifficulty: history?.has_deletable_best_any_difficulty ?? false, selectedItemsHaveBest: selectedItems.some((item) => item.is_best) })
     : Boolean(deleteTarget && isHistoryItem(deleteTarget) && deleteTarget.is_best);
   const deletingRanking = Boolean(deleteTarget && isHistoryItem(deleteTarget) && deleteTarget.is_ranking_record);
   const permanentTarget = deleteTarget && typeof deleteTarget === "object" && "kind" in deleteTarget && deleteTarget.kind === "permanent" ? deleteTarget.item : null;
