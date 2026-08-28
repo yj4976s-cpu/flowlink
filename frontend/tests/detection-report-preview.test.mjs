@@ -353,3 +353,80 @@ test("applies report preparation while its detection context is current", async 
 
   assert.deepEqual(preparation, { status: "success", value: preview });
 });
+
+test("selected history deletion invalidates its pending report preview", async () => {
+  const pending = deferred();
+  let generation = 10;
+  const preparation = prepareCurrentDetectionReport({
+    generation,
+    getCurrentGeneration: () => generation,
+    prepare: () => pending.promise,
+  });
+
+  generation += 1;
+  pending.resolve({ name: "deleted-history-preview.jpg" });
+
+  assert.deepEqual(await preparation, { status: "stale" });
+});
+
+test("delete-all invalidates a pending report failure", async () => {
+  const pending = deferred();
+  let generation = 20;
+  const preparation = prepareCurrentDetectionReport({
+    generation,
+    getCurrentGeneration: () => generation,
+    prepare: () => pending.promise,
+  });
+
+  generation += 1;
+  pending.reject(new Error("deleted history failure"));
+
+  assert.deepEqual(await preparation, { status: "stale" });
+});
+
+test("newer history detail wins when an older response completes last", async () => {
+  const historyA = deferred();
+  const historyB = deferred();
+  let generation = 0;
+  const requestA = prepareCurrentDetectionReport({
+    generation: ++generation,
+    getCurrentGeneration: () => generation,
+    prepare: () => historyA.promise,
+  });
+  const requestB = prepareCurrentDetectionReport({
+    generation: ++generation,
+    getCurrentGeneration: () => generation,
+    prepare: () => historyB.promise,
+  });
+
+  historyB.resolve({ id: "B" });
+  assert.deepEqual(await requestB, { status: "success", value: { id: "B" } });
+  historyA.resolve({ id: "A" });
+  assert.deepEqual(await requestA, { status: "stale" });
+});
+
+test("stale history detail failure does not replace the current context", async () => {
+  const historyA = deferred();
+  let generation = 30;
+  const requestA = prepareCurrentDetectionReport({
+    generation,
+    getCurrentGeneration: () => generation,
+    prepare: () => historyA.promise,
+  });
+
+  generation += 1;
+  historyA.reject(new Error("stale detail failure"));
+
+  assert.deepEqual(await requestA, { status: "stale" });
+});
+
+test("current history detail response is applied normally", async () => {
+  const detail = { id: 42 };
+  const result = await prepareCurrentDetectionReport({
+    generation: 40,
+    getCurrentGeneration: () => 40,
+    prepare: async () => detail,
+  });
+
+  assert.deepEqual(result, { status: "success", value: detail });
+});

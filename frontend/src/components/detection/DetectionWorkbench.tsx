@@ -788,6 +788,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
   const webcamReportSubmittingRef = useRef(false);
   const reportPreparingRef = useRef(false);
   const reportContextGenerationRef = useRef(0);
+  const currentEventIdRef = useRef<number | null>(null);
   const webcamFoundSignatureRef = useRef("");
 
   useEffect(() => {
@@ -968,6 +969,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
 
   const resetSelectedFile = () => {
     reportContextGenerationRef.current += 1;
+    currentEventIdRef.current = null;
     revokeReportPreviewUrl();
     setFile(null);
     setVideoDuration(null);
@@ -993,6 +995,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
   const acceptFile = (nextFile: File | undefined) => {
     if (!nextFile || tab === "webcam") return;
     reportContextGenerationRef.current += 1;
+    currentEventIdRef.current = null;
     const validationMessage = validateFile(nextFile, tab);
     setCurrentEvent(null);
     setVideoDuration(null);
@@ -1040,6 +1043,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
     setError("");
     try {
       const result = tab === "image" ? await uploadDetectionImage(file) : await uploadDetectionVideo(file);
+      currentEventIdRef.current = result.id;
       setCurrentEvent(result);
       setSubmitState("success");
       cueDaru(result.detected_objects.length ? "found" : "look", { source: "service" });
@@ -1055,10 +1059,17 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
   };
 
   const loadHistoryDetail = async (id: number) => {
-    reportContextGenerationRef.current += 1;
+    const historyGeneration = ++reportContextGenerationRef.current;
     setError("");
-    try {
-      const result = await getMyDetection(id);
+    const detail = await prepareCurrentDetectionReport({
+      generation: historyGeneration,
+      getCurrentGeneration: () => reportContextGenerationRef.current,
+      prepare: () => getMyDetection(id),
+    });
+    if (detail.status === "stale") return;
+    if (detail.status === "success") {
+      const result = detail.value;
+      currentEventIdRef.current = result.id;
       setCurrentEvent(result);
       setSubmitState("success");
       setFile(null);
@@ -1068,7 +1079,8 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
       setTab(result.source_type === "VIDEO" ? "video" : "image");
       setWebcamFrame(null);
       setWebcamStatus("idle");
-    } catch (caught) {
+    } else {
+      const caught = detail.error;
       const message = caught instanceof DetectionApiError ? caught.message : "확인 상세를 불러오지 못했습니다.";
       setError(message);
       setSubmitState("error");
@@ -1082,8 +1094,10 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
     try {
       await deleteMyDetection(id);
       setHistory((current) => current.filter((event) => event.id !== id));
-      setCurrentEvent((event) => (event?.id === id ? null : event));
-      if (currentEvent?.id === id) {
+      if (currentEventIdRef.current === id) {
+        reportContextGenerationRef.current += 1;
+        currentEventIdRef.current = null;
+        setCurrentEvent(null);
         setSubmitState(file ? "selected" : "idle");
       }
     } catch (caught) {
@@ -1107,6 +1121,8 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
     setDeletingAllHistory(true);
     try {
       await deleteAllMyDetections();
+      reportContextGenerationRef.current += 1;
+      currentEventIdRef.current = null;
       setHistory([]);
       setHistoryPage(1);
       setCurrentEvent(null);
