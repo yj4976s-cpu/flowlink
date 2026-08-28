@@ -31,6 +31,10 @@ export function hasAdjacentPair(cards: readonly PairCard[], columns: number) {
   return false;
 }
 
+export function hasAdjacentPairForColumns(cards: readonly PairCard[], supportedColumns: readonly number[]) {
+  return supportedColumns.some((columns) => hasAdjacentPair(cards, columns));
+}
+
 function positionsAreAdjacent(first: number, second: number, columns: number) {
   const firstRow = Math.floor(first / columns);
   const firstColumn = first % columns;
@@ -39,15 +43,19 @@ function positionsAreAdjacent(first: number, second: number, columns: number) {
   return Math.abs(firstRow - secondRow) <= 1 && Math.abs(firstColumn - secondColumn) <= 1;
 }
 
-function randomizedPositionPairs(cardCount: number, columns: number, random: () => number): [number, number][] {
+function randomizedPositionPairs(cardCount: number, supportedColumns: readonly number[], random: () => number): [number, number][] {
   const pairPositions = (available: number[]): [number, number][] | null => {
     if (available.length === 0) return [];
-    for (const first of shuffleCards(available, random)) {
-      const remaining = available.filter((position) => position !== first);
-      for (const second of shuffleCards(remaining.filter((position) => !positionsAreAdjacent(first, position, columns)), random)) {
-        const rest = pairPositions(remaining.filter((position) => position !== second));
-        if (rest) return [[first, second], ...rest];
-      }
+    const candidates = shuffleCards(available, random);
+    const first = candidates.reduce((best, position) => {
+      const partnerCount = available.filter((other) => other !== position && supportedColumns.every((columns) => !positionsAreAdjacent(position, other, columns))).length;
+      const bestPartnerCount = available.filter((other) => other !== best && supportedColumns.every((columns) => !positionsAreAdjacent(best, other, columns))).length;
+      return partnerCount < bestPartnerCount ? position : best;
+    });
+    const remaining = available.filter((position) => position !== first);
+    for (const second of shuffleCards(remaining.filter((position) => supportedColumns.every((columns) => !positionsAreAdjacent(first, position, columns))), random)) {
+      const rest = pairPositions(remaining.filter((position) => position !== second));
+      if (rest) return [[first, second], ...rest];
     }
     return null;
   };
@@ -56,16 +64,16 @@ function randomizedPositionPairs(cardCount: number, columns: number, random: () 
   return result;
 }
 
-export function constrainedShuffleCards<T extends PairCard>(cards: readonly T[], columns: number, random = Math.random, maxAttempts = DECK_SHUFFLE_MAX_ATTEMPTS) {
+export function constrainedShuffleCards<T extends PairCard>(cards: readonly T[], supportedColumns: readonly number[], random = Math.random, maxAttempts = DECK_SHUFFLE_MAX_ATTEMPTS) {
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const candidate = shuffleCards(cards, random);
-    if (!hasAdjacentPair(candidate, columns)) return candidate;
+    if (!hasAdjacentPairForColumns(candidate, supportedColumns)) return candidate;
   }
 
   const grouped = new Map<string, T[]>();
   for (const card of cards) grouped.set(card.pairId, [...(grouped.get(card.pairId) ?? []), card]);
   const pairOrder = shuffleCards([...grouped.keys()], random);
-  const positions = randomizedPositionPairs(cards.length, columns, random);
+  const positions = randomizedPositionPairs(cards.length, supportedColumns, random);
   const result = Array<T>(cards.length);
   pairOrder.forEach((pairId, index) => {
     const pair = shuffleCards(grouped.get(pairId)!, random);

@@ -4,8 +4,8 @@ import test from "node:test";
 
 import { BEST_RECORD_STORAGE_KEYS, isGuestBestEligible, resolveGuestBest } from "../src/components/daru-game/game.storage.ts";
 import { bulkDeleteIncludesBest, getBulkSelectedCount, getLeaderboardPageRequest, isLeaderboardDifficulty, isLeaderboardScoreTie } from "../src/components/daru-game/leaderboard.utils.ts";
-import { BOARD_SAFETY_PX, calculateMemoryBoardGeometry, memoryBoardGeometryEqual } from "../src/components/daru-game/memoryBoard.geometry.ts";
-import { constrainedShuffleCards, hasAdjacentPair } from "../src/components/daru-game/deckShuffle.ts";
+import { BOARD_SAFETY_PX, SUPPORTED_BOARD_COLUMNS, calculateMemoryBoardGeometry, memoryBoardGeometryEqual } from "../src/components/daru-game/memoryBoard.geometry.ts";
+import { constrainedShuffleCards, hasAdjacentPair, hasAdjacentPairForColumns } from "../src/components/daru-game/deckShuffle.ts";
 import { createActionId } from "../src/lib/daruActionId.ts";
 import { isExpiredRunError, isOutdatedDeckError, OUTDATED_DECK_ERROR_CODE, RUN_EXPIRED_ERROR_CODE, terminalRunRecoveryReason } from "../src/lib/daruRunRecovery.ts";
 
@@ -24,29 +24,33 @@ function seededRandom(seed) {
 }
 
 test("all difficulties generate one hundred non-adjacent randomized decks", () => {
-  const cases = [["easy", 20, 10, 5], ["normal", 32, 16, 8], ["hard", 40, 20, 10]];
-  for (const [difficulty, cardCount, pairCount, columns] of cases) {
+  const cases = [["easy", 20, 10], ["normal", 32, 16], ["hard", 40, 20]];
+  for (const [difficulty, cardCount, pairCount] of cases) {
+    const supportedColumns = SUPPORTED_BOARD_COLUMNS[difficulty];
     const source = Array.from({ length: pairCount }, (_, pairId) => [{ id: `${pairId}-0`, pairId: String(pairId) }, { id: `${pairId}-1`, pairId: String(pairId) }]).flat();
-    const decks = Array.from({ length: 100 }, (_, seed) => constrainedShuffleCards(source, columns, seededRandom(seed + 1)));
+    const decks = Array.from({ length: 100 }, (_, seed) => constrainedShuffleCards(source, supportedColumns, seededRandom(seed + 1)));
     assert.ok(decks.every((deck) => deck.length === cardCount));
     assert.ok(decks.every((deck) => new Set(deck.map((card) => card.pairId)).size === pairCount));
-    assert.ok(decks.every((deck) => !hasAdjacentPair(deck, columns)), `${difficulty} produced an adjacent pair`);
+    assert.ok(decks.every((deck) => !hasAdjacentPairForColumns(deck, supportedColumns)), `${difficulty} produced a responsive adjacent pair`);
+    assert.ok(decks.every((deck) => supportedColumns.every((columns) => !hasAdjacentPair(deck, columns))));
     assert.ok(new Set(decks.map((deck) => deck.map((card) => card.id).join(","))).size > 90);
   }
 });
 
 test("constrained shuffle fallback remains valid after repeated failed shuffles", () => {
-  for (const [pairCount, columns] of [[10, 5], [16, 8], [20, 10]]) {
+  for (const [difficulty, pairCount, desktopColumns] of [["easy", 10, 5], ["normal", 16, 8], ["hard", 20, 10]]) {
+    const supportedColumns = SUPPORTED_BOARD_COLUMNS[difficulty];
     const source = Array.from({ length: pairCount }, (_, pairId) => [{ pairId: String(pairId) }, { pairId: String(pairId) }]).flat();
-    const decks = Array.from({ length: 20 }, (_, seed) => constrainedShuffleCards(source, columns, seededRandom(seed + 101), 0));
+    const decks = Array.from({ length: 20 }, (_, seed) => constrainedShuffleCards(source, supportedColumns, seededRandom(seed + 101), 0));
     for (const deck of decks) {
       assert.equal(deck.length, source.length);
-      assert.equal(hasAdjacentPair(deck, columns), false);
+      assert.equal(hasAdjacentPairForColumns(deck, supportedColumns), false);
+      assert.ok(supportedColumns.every((columns) => !hasAdjacentPair(deck, columns)));
       assert.ok([...new Set(deck.map((card) => card.pairId))].every((pairId) => deck.filter((card) => card.pairId === pairId).length === 2));
       assert.notDeepEqual(deck.slice(0, deck.length / 2).map((card) => card.pairId), deck.slice(deck.length / 2).map((card) => card.pairId));
       const positions = new Map();
       deck.forEach((card, index) => positions.set(card.pairId, [...(positions.get(card.pairId) ?? []), index]));
-      assert.equal([...positions.values()].every(([first, second]) => second - first === columns * 2), false);
+      assert.equal([...positions.values()].every(([first, second]) => second - first === desktopColumns * 2), false);
     }
     assert.ok(new Set(decks.map((deck) => deck.map((card) => card.pairId).join(","))).size > 15);
   }

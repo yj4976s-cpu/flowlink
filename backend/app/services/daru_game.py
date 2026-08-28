@@ -17,9 +17,9 @@ from app.models import DaruGamePlayRecord, DaruGameRun, DaruGameRunAction, DaruG
 
 
 DIFFICULTY_CONFIG = {
-    "EASY": {"pairs": 10, "columns": 5, "time_limit_seconds": 120, "speed_benchmark_seconds": 90, "combo_target": 5, "clear_bonus": 300, "preview_seconds": 5},
-    "NORMAL": {"pairs": 16, "columns": 8, "time_limit_seconds": 210, "speed_benchmark_seconds": 150, "combo_target": 7, "clear_bonus": 500, "preview_seconds": 7},
-    "HARD": {"pairs": 20, "columns": 10, "time_limit_seconds": 280, "speed_benchmark_seconds": 200, "combo_target": 8, "clear_bonus": 700, "preview_seconds": 8},
+    "EASY": {"pairs": 10, "columns": 5, "supported_columns": (4, 5), "time_limit_seconds": 120, "speed_benchmark_seconds": 90, "combo_target": 5, "clear_bonus": 300, "preview_seconds": 5},
+    "NORMAL": {"pairs": 16, "columns": 8, "supported_columns": (4, 5, 6, 7, 8), "time_limit_seconds": 210, "speed_benchmark_seconds": 150, "combo_target": 7, "clear_bonus": 500, "preview_seconds": 7},
+    "HARD": {"pairs": 20, "columns": 10, "supported_columns": (4, 5, 6, 7, 8, 9, 10), "time_limit_seconds": 280, "speed_benchmark_seconds": 200, "combo_target": 8, "clear_bonus": 700, "preview_seconds": 8},
 }
 EASY_CARD_IDS = ["greeting", "excited", "heart", "sleeping", "search", "umbrella", "shoe", "backpack", "ball", "can"]
 NORMAL_CARD_IDS = [*EASY_CARD_IDS, "thumbs-up", "sulky", "coastal-cleanup", "umbrella-found", "plastic-bag", "plastic-bottle"]
@@ -72,26 +72,36 @@ def has_adjacent_pair(deck: Sequence[str], columns: int) -> bool:
     return False
 
 
+def has_adjacent_pair_for_columns(deck: Sequence[str], supported_columns: Sequence[int]) -> bool:
+    return any(has_adjacent_pair(deck, columns) for columns in supported_columns)
+
+
 def _positions_are_adjacent(first: int, second: int, columns: int) -> bool:
     first_row, first_column = divmod(first, columns)
     second_row, second_column = divmod(second, columns)
     return abs(first_row - second_row) <= 1 and abs(first_column - second_column) <= 1
 
 
-def _randomized_position_pairs(card_count: int, columns: int, rng: Any) -> list[tuple[int, int]]:
+def _randomized_position_pairs(card_count: int, supported_columns: Sequence[int], rng: Any) -> list[tuple[int, int]]:
     def pair_positions(available: list[int]) -> list[tuple[int, int]] | None:
         if not available:
             return []
         first_candidates = list(available)
         rng.shuffle(first_candidates)
-        for first in first_candidates:
-            remaining = [position for position in available if position != first]
-            second_candidates = [position for position in remaining if not _positions_are_adjacent(first, position, columns)]
-            rng.shuffle(second_candidates)
-            for second in second_candidates:
-                rest = pair_positions([position for position in remaining if position != second])
-                if rest is not None:
-                    return [(first, second), *rest]
+        first = min(
+            first_candidates,
+            key=lambda position: sum(
+                other != position and all(not _positions_are_adjacent(position, other, columns) for columns in supported_columns)
+                for other in available
+            ),
+        )
+        remaining = [position for position in available if position != first]
+        second_candidates = [position for position in remaining if all(not _positions_are_adjacent(first, position, columns) for columns in supported_columns)]
+        rng.shuffle(second_candidates)
+        for second in second_candidates:
+            rest = pair_positions([position for position in remaining if position != second])
+            if rest is not None:
+                return [(first, second), *rest]
         return None
 
     result = pair_positions(list(range(card_count)))
@@ -100,17 +110,17 @@ def _randomized_position_pairs(card_count: int, columns: int, rng: Any) -> list[
     return result
 
 
-def constrained_shuffle(deck: Sequence[str], columns: int, randomizer: Any | None = None, *, max_attempts: int = DECK_SHUFFLE_MAX_ATTEMPTS) -> list[str]:
+def constrained_shuffle(deck: Sequence[str], supported_columns: Sequence[int], randomizer: Any | None = None, *, max_attempts: int = DECK_SHUFFLE_MAX_ATTEMPTS) -> list[str]:
     rng = randomizer or secrets.SystemRandom()
     for _attempt in range(max_attempts):
         candidate = list(deck)
         rng.shuffle(candidate)
-        if not has_adjacent_pair(candidate, columns):
+        if not has_adjacent_pair_for_columns(candidate, supported_columns):
             return candidate
 
     pair_ids = list(dict.fromkeys(deck))
     rng.shuffle(pair_ids)
-    positions = _randomized_position_pairs(len(deck), columns, rng)
+    positions = _randomized_position_pairs(len(deck), supported_columns, rng)
     result = [""] * len(deck)
     for pair_id, (first, second) in zip(pair_ids, positions, strict=True):
         result[first] = pair_id
@@ -121,7 +131,7 @@ def constrained_shuffle(deck: Sequence[str], columns: int, randomizer: Any | Non
 def create_shuffled_deck(difficulty: str, randomizer: Any | None = None) -> list[str]:
     rng = randomizer or secrets.SystemRandom()
     deck = [card_id for card_id in select_card_ids(difficulty, rng) for _copy in range(2)]
-    return constrained_shuffle(deck, DIFFICULTY_CONFIG[difficulty]["columns"], rng)
+    return constrained_shuffle(deck, DIFFICULTY_CONFIG[difficulty]["supported_columns"], rng)
 
 
 def create_game_run(db: Session, *, user_id: int, difficulty: str) -> DaruGameRun:

@@ -18,7 +18,7 @@ from app.core.security import utc_now
 from app.db.session import Base, get_db
 from app.main import app
 from app.models import DaruGamePlayRecord, DaruGameRun, DaruGameRunAction, DaruGameStat, User
-from app.services.daru_game import DIFFICULTY_CONFIG, GAME_RUN_MAX_AGE, HARD_ADDITIONAL_CARD_IDS, NORMAL_CARD_IDS, GameRunExpiredError, _ensure_not_expired, _round_to_tenth, calculate_detection_power, calculate_hint_score, calculate_memory_accuracy, calculate_speed_score, constrained_shuffle, create_shuffled_deck, detection_metrics, game_run_lock_query, has_adjacent_pair, is_better, rank_for, ranking_query, select_card_ids, soft_delete_all_play_records, soft_delete_play_record
+from app.services.daru_game import DIFFICULTY_CONFIG, GAME_RUN_MAX_AGE, HARD_ADDITIONAL_CARD_IDS, NORMAL_CARD_IDS, GameRunExpiredError, _ensure_not_expired, _round_to_tenth, calculate_detection_power, calculate_hint_score, calculate_memory_accuracy, calculate_speed_score, constrained_shuffle, create_shuffled_deck, detection_metrics, game_run_lock_query, has_adjacent_pair, has_adjacent_pair_for_columns, is_better, rank_for, ranking_query, select_card_ids, soft_delete_all_play_records, soft_delete_play_record
 
 
 @compiles(BigInteger, "sqlite")
@@ -85,6 +85,7 @@ def test_hard_balance_config_uses_twenty_pairs_and_new_timing() -> None:
     assert DIFFICULTY_CONFIG["HARD"] == {
         "pairs": 20,
         "columns": 10,
+        "supported_columns": (4, 5, 6, 7, 8, 9, 10),
         "time_limit_seconds": 280,
         "speed_benchmark_seconds": 200,
         "combo_target": 8,
@@ -255,29 +256,32 @@ def test_hard_card_selection_can_produce_different_deterministic_subsets() -> No
 
 
 @pytest.mark.parametrize(
-    ("difficulty", "card_count", "pair_count", "columns"),
-    [("EASY", 20, 10, 5), ("NORMAL", 32, 16, 8), ("HARD", 40, 20, 10)],
+    ("difficulty", "card_count", "pair_count"),
+    [("EASY", 20, 10), ("NORMAL", 32, 16), ("HARD", 40, 20)],
 )
-def test_constrained_shuffle_avoids_adjacent_pairs_across_one_hundred_decks(difficulty: str, card_count: int, pair_count: int, columns: int) -> None:
+def test_constrained_shuffle_avoids_adjacent_pairs_across_one_hundred_decks(difficulty: str, card_count: int, pair_count: int) -> None:
+    supported_columns = DIFFICULTY_CONFIG[difficulty]["supported_columns"]
     decks = [create_shuffled_deck(difficulty, random.Random(seed)) for seed in range(100)]
     assert all(len(deck) == card_count for deck in decks)
     assert all(len(set(deck)) == pair_count for deck in decks)
     assert all(all(deck.count(pair_id) == 2 for pair_id in set(deck)) for deck in decks)
-    assert all(not has_adjacent_pair(deck, columns) for deck in decks)
+    assert all(not has_adjacent_pair_for_columns(deck, supported_columns) for deck in decks)
     assert len({tuple(deck) for deck in decks}) > 90
 
 
-@pytest.mark.parametrize(("difficulty", "columns"), [("EASY", 5), ("NORMAL", 8), ("HARD", 10)])
-def test_constrained_shuffle_fallback_is_randomized_and_valid(difficulty: str, columns: int) -> None:
+@pytest.mark.parametrize("difficulty", ["EASY", "NORMAL", "HARD"])
+def test_constrained_shuffle_fallback_is_randomized_and_valid(difficulty: str) -> None:
+    supported_columns = DIFFICULTY_CONFIG[difficulty]["supported_columns"]
+    desktop_columns = DIFFICULTY_CONFIG[difficulty]["columns"]
     pair_ids = select_card_ids(difficulty, random.Random(0))
     deck = [pair_id for pair_id in pair_ids for _copy in range(2)]
-    results = [constrained_shuffle(deck, columns, random.Random(seed), max_attempts=0) for seed in range(20)]
+    results = [constrained_shuffle(deck, supported_columns, random.Random(seed), max_attempts=0) for seed in range(20)]
     for result in results:
         assert sorted(result) == sorted(deck)
-        assert not has_adjacent_pair(result, columns)
+        assert not has_adjacent_pair_for_columns(result, supported_columns)
         assert result[:len(result) // 2] != result[len(result) // 2:]
         positions = {pair_id: [index for index, value in enumerate(result) if value == pair_id] for pair_id in pair_ids}
-        assert not all(second - first == columns * 2 for first, second in positions.values())
+        assert not all(second - first == desktop_columns * 2 for first, second in positions.values())
     assert len({tuple(result) for result in results}) > 15
 
 
