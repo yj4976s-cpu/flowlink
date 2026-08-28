@@ -337,6 +337,7 @@
 :global(html[data-theme="night"]) .rankAvatar { background-image: url("/mascot/daru-idle-night.png"); }
 .topMyBadge, .myBadge { width: 22px; height: 22px; padding: 0; border-radius: 50%; color: var(--rank-accent); display: grid; place-items: center; }
 .pawIcon { width: 15px; height: 15px; fill: currentColor; flex: none; }
+.trophyIcon { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 .rankingList { min-height: 0; }
 .rankingList li { grid-template-columns: 28px minmax(0, 1fr) auto auto; transition: background .16s ease, outline-color .16s ease; }
 .rankingList li[data-me], .rankingList li[data-me]:hover { background: color-mix(in srgb, var(--rank-soft) 72%, var(--color-surface)); outline-color: color-mix(in srgb, var(--rank-accent) 24%, transparent); }
