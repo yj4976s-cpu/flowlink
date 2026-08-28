@@ -1120,7 +1120,10 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
       setHistory((current) => current.filter((event) => event.id !== id));
       const deletesCurrentContext = currentEventIdRef.current === id;
       const deletesPendingContext = pendingHistoryDetailIdRef.current === id;
-      if (deletesCurrentContext || deletesPendingContext) {
+      const hasDifferentPendingContext =
+        pendingHistoryDetailIdRef.current !== null &&
+        pendingHistoryDetailIdRef.current !== id;
+      if (deletesPendingContext || (deletesCurrentContext && !hasDifferentPendingContext)) {
         reportContextGenerationRef.current += 1;
       }
       if (deletesPendingContext) {

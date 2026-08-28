@@ -530,3 +530,131 @@ test("deleting an unrelated history keeps current and pending context valid", as
   assert.equal(currentEventId, "A");
   assert.equal(pendingHistoryDetailId, "A");
 });
+
+test("deleting current B preserves pending A and lets its success apply", async () => {
+  const pendingDetail = deferred();
+  let generation = 110;
+  let currentEventId = "B";
+  let pendingHistoryDetailId = "A";
+  let historyDetailLoading = true;
+  const detail = prepareCurrentDetectionReport({
+    generation,
+    getCurrentGeneration: () => generation,
+    prepare: () => pendingDetail.promise,
+  });
+
+  const deletedId = "B";
+  const deletesCurrentContext = currentEventId === deletedId;
+  const deletesPendingContext = pendingHistoryDetailId === deletedId;
+  const hasDifferentPendingContext = pendingHistoryDetailId !== null && pendingHistoryDetailId !== deletedId;
+  if (deletesPendingContext || (deletesCurrentContext && !hasDifferentPendingContext)) generation += 1;
+  if (deletesCurrentContext) currentEventId = null;
+
+  assert.equal(generation, 110);
+  assert.equal(pendingHistoryDetailId, "A");
+  assert.equal(historyDetailLoading, true);
+
+  pendingDetail.resolve({ id: "A" });
+  const result = await detail;
+  if (result.status === "success") currentEventId = result.value.id;
+  if (pendingHistoryDetailId === "A") {
+    pendingHistoryDetailId = null;
+    historyDetailLoading = false;
+  }
+
+  assert.deepEqual(result, { status: "success", value: { id: "A" } });
+  assert.equal(currentEventId, "A");
+  assert.equal(pendingHistoryDetailId, null);
+  assert.equal(historyDetailLoading, false);
+});
+
+test("deleting current B preserves pending A and lets its failure apply", async () => {
+  const pendingDetail = deferred();
+  let generation = 120;
+  let currentEventId = "B";
+  let pendingHistoryDetailId = "A";
+  let historyDetailLoading = true;
+  let error = "";
+  const detail = prepareCurrentDetectionReport({
+    generation,
+    getCurrentGeneration: () => generation,
+    prepare: () => pendingDetail.promise,
+  });
+
+  const deletedId = "B";
+  const hasDifferentPendingContext = pendingHistoryDetailId !== null && pendingHistoryDetailId !== deletedId;
+  if (pendingHistoryDetailId === deletedId || (currentEventId === deletedId && !hasDifferentPendingContext)) generation += 1;
+  if (currentEventId === deletedId) currentEventId = null;
+  pendingDetail.reject(new Error("latest detail failed"));
+
+  const result = await detail;
+  if (result.status === "failure") error = result.error.message;
+  if (pendingHistoryDetailId === "A") {
+    pendingHistoryDetailId = null;
+    historyDetailLoading = false;
+  }
+
+  assert.equal(result.status, "failure");
+  assert.equal(error, "latest detail failed");
+  assert.equal(generation, 120);
+  assert.equal(pendingHistoryDetailId, null);
+  assert.equal(historyDetailLoading, false);
+});
+
+test("deleting the current event without a pending detail invalidates its context", () => {
+  let generation = 130;
+  let currentEventId = "B";
+  const pendingHistoryDetailId = null;
+  const deletedId = "B";
+  const deletesCurrentContext = currentEventId === deletedId;
+  const deletesPendingContext = pendingHistoryDetailId === deletedId;
+  const hasDifferentPendingContext = pendingHistoryDetailId !== null && pendingHistoryDetailId !== deletedId;
+
+  if (deletesPendingContext || (deletesCurrentContext && !hasDifferentPendingContext)) generation += 1;
+  if (deletesCurrentContext) currentEventId = null;
+
+  assert.equal(generation, 131);
+  assert.equal(currentEventId, null);
+});
+
+test("deleting pending A invalidates and clears its loading context", async () => {
+  const pendingDetail = deferred();
+  let generation = 140;
+  let pendingHistoryDetailId = "A";
+  let historyDetailLoading = true;
+  const detail = prepareCurrentDetectionReport({
+    generation,
+    getCurrentGeneration: () => generation,
+    prepare: () => pendingDetail.promise,
+  });
+
+  const deletedId = "A";
+  if (pendingHistoryDetailId === deletedId) {
+    generation += 1;
+    pendingHistoryDetailId = null;
+    historyDetailLoading = false;
+  }
+  pendingDetail.resolve({ id: "A" });
+
+  assert.deepEqual(await detail, { status: "stale" });
+  assert.equal(pendingHistoryDetailId, null);
+  assert.equal(historyDetailLoading, false);
+});
+
+test("deleting unrelated C preserves current B and pending A contexts", () => {
+  let generation = 150;
+  const currentEventId = "B";
+  const pendingHistoryDetailId = "A";
+  const historyDetailLoading = true;
+  const deletedId = "C";
+  const deletesCurrentContext = currentEventId === deletedId;
+  const deletesPendingContext = pendingHistoryDetailId === deletedId;
+  const hasDifferentPendingContext = pendingHistoryDetailId !== null && pendingHistoryDetailId !== deletedId;
+
+  if (deletesPendingContext || (deletesCurrentContext && !hasDifferentPendingContext)) generation += 1;
+
+  assert.equal(generation, 150);
+  assert.equal(currentEventId, "B");
+  assert.equal(pendingHistoryDetailId, "A");
+  assert.equal(historyDetailLoading, true);
+});
