@@ -23,7 +23,7 @@ import type { CitizenReport } from "@/types/discoveryNetwork";
 import { WebcamDetectionPanel } from "./WebcamDetectionPanel";
 import type { WebcamPanelStatus, WebcamReportCandidate } from "./WebcamDetectionPanel";
 import { getContainedMediaRect, getContainedMediaRectStyle, getOverlayPercentageStyle, normalizeBBoxForDisplayMedia } from "./detectionOverlayGeometry";
-import { loadDetectionMediaFile, prepareDetectionReportPreview } from "./detectionReportMedia";
+import { loadDetectionMediaFile, prepareCurrentDetectionReport, prepareDetectionReportPreview } from "./detectionReportMedia";
 import { waitForDecodedVideoFrame, waitForSeekedDecodedFrame } from "./videoFrameReadiness";
 import styles from "./DetectionWorkbench.module.css";
 
@@ -787,6 +787,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
   const reportPreviewUrlRef = useRef("");
   const webcamReportSubmittingRef = useRef(false);
   const reportPreparingRef = useRef(false);
+  const reportContextGenerationRef = useRef(0);
   const webcamFoundSignatureRef = useRef("");
 
   useEffect(() => {
@@ -966,6 +967,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
   };
 
   const resetSelectedFile = () => {
+    reportContextGenerationRef.current += 1;
     revokeReportPreviewUrl();
     setFile(null);
     setVideoDuration(null);
@@ -990,6 +992,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
 
   const acceptFile = (nextFile: File | undefined) => {
     if (!nextFile || tab === "webcam") return;
+    reportContextGenerationRef.current += 1;
     const validationMessage = validateFile(nextFile, tab);
     setCurrentEvent(null);
     setVideoDuration(null);
@@ -1052,6 +1055,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
   };
 
   const loadHistoryDetail = async (id: number) => {
+    reportContextGenerationRef.current += 1;
     setError("");
     try {
       const result = await getMyDetection(id);
@@ -1157,32 +1161,51 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
     const sourceType = sourceEvent.source_type === "VIDEO" ? "video" : "image";
     const localFile = file;
     const isHistorySource = !localFile;
+    const reportGeneration = reportContextGenerationRef.current;
     let image: File | null = null;
     let imageError = "";
+    let preparation:
+      | { status: "success"; value: File | null }
+      | { status: "failure"; error: unknown }
+      | { status: "stale" };
 
     reportPreparingRef.current = true;
     setReportPreparing(true);
     try {
-      image = await prepareDetectionReportPreview({
-        sourceType,
-        localFile,
-        originalMediaUrl: sourceEvent.original_media_url,
-        loadHistoryFile: () => loadDetectionMediaFile({
-          mediaUrl: sourceEvent.original_media_url,
-          eventId: sourceEvent.id,
+      preparation = await prepareCurrentDetectionReport({
+        generation: reportGeneration,
+        getCurrentGeneration: () => reportContextGenerationRef.current,
+        prepare: () => prepareDetectionReportPreview({
           sourceType,
-          resolveMediaUrl: resolveDetectionMediaUrl,
+          localFile,
+          originalMediaUrl: sourceEvent.original_media_url,
+          loadHistoryFile: () => loadDetectionMediaFile({
+            mediaUrl: sourceEvent.original_media_url,
+            eventId: sourceEvent.id,
+            sourceType,
+            resolveMediaUrl: resolveDetectionMediaUrl,
+          }),
+          prepareImage: async (sourceFile) => {
+            if (!sourceEvent.media_width || !sourceEvent.media_height) throw new Error("탐지 이미지 크기가 없습니다.");
+            return prepareCitizenReportImage(sourceFile, object.bbox, sourceEvent.media_width, sourceEvent.media_height);
+          },
+          captureVideo: (sourceFile) => captureVideoReportFrame(sourceFile, object),
         }),
-        prepareImage: async (sourceFile) => {
-          if (!sourceEvent.media_width || !sourceEvent.media_height) throw new Error("탐지 이미지 크기가 없습니다.");
-          return prepareCitizenReportImage(sourceFile, object.bbox, sourceEvent.media_width, sourceEvent.media_height);
-        },
-        captureVideo: (sourceFile) => captureVideoReportFrame(sourceFile, object),
       });
+    } finally {
+      reportPreparingRef.current = false;
+      setReportPreparing(false);
+    }
+
+    if (preparation.status === "stale") return;
+    if (preparation.status === "success") {
+      image = preparation.value;
       if (isHistorySource && !image && sourceEvent.original_media_url) {
-        throw new Error("저장된 원본에서 대표 이미지를 생성하지 못했습니다.");
+        imageError = sourceType === "video"
+          ? "저장된 원본 영상에서 대표 이미지를 준비하지 못했습니다. 이미지 없이 제보를 계속할 수 있습니다."
+          : "저장된 원본 이미지에서 제보용 이미지를 준비하지 못했습니다. 이미지 없이 제보를 계속할 수 있습니다.";
       }
-    } catch {
+    } else {
       imageError = isHistorySource
         ? sourceType === "video"
           ? "저장된 원본 영상에서 대표 이미지를 준비하지 못했습니다. 이미지 없이 제보를 계속할 수 있습니다."
@@ -1190,9 +1213,6 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
         : sourceType === "image"
           ? "이미지를 발견 제보용으로 준비하지 못했습니다. 이미지 없이 제보하거나 더 작은 이미지를 선택해주세요."
           : "영상에서 대표 이미지를 준비하지 못했습니다. 이미지 없이 제보를 계속할 수 있습니다.";
-    } finally {
-      reportPreparingRef.current = false;
-      setReportPreparing(false);
     }
 
     const reportPreviewUrl = image ? URL.createObjectURL(image) : "";

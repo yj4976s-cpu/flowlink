@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { waitForDecodedVideoFrame, waitForSeekedDecodedFrame } from "../src/components/detection/videoFrameReadiness.ts";
-import { loadDetectionMediaFile, prepareDetectionReportPreview } from "../src/components/detection/detectionReportMedia.ts";
+import { loadDetectionMediaFile, prepareCurrentDetectionReport, prepareDetectionReportPreview } from "../src/components/detection/detectionReportMedia.ts";
 
 class FakeVideo extends EventTarget {
   readyState = 2;
@@ -311,4 +311,45 @@ test("rejects empty or mismatched history media responses", async () => {
       headers: { "content-type": "image/jpeg" },
     }),
   }), /일치하지 않습니다/);
+});
+
+test("ignores a stale successful history report preparation", async () => {
+  const pending = deferred();
+  let currentGeneration = 1;
+  const preparation = prepareCurrentDetectionReport({
+    generation: currentGeneration,
+    getCurrentGeneration: () => currentGeneration,
+    prepare: () => pending.promise,
+  });
+
+  currentGeneration += 1;
+  pending.resolve({ name: "stale-preview.jpg" });
+
+  assert.deepEqual(await preparation, { status: "stale" });
+});
+
+test("ignores a stale failed history report preparation", async () => {
+  const pending = deferred();
+  let currentGeneration = 5;
+  const preparation = prepareCurrentDetectionReport({
+    generation: currentGeneration,
+    getCurrentGeneration: () => currentGeneration,
+    prepare: () => pending.promise,
+  });
+
+  currentGeneration += 1;
+  pending.reject(new Error("stale history failure"));
+
+  assert.deepEqual(await preparation, { status: "stale" });
+});
+
+test("applies report preparation while its detection context is current", async () => {
+  const preview = { name: "current-preview.jpg" };
+  const preparation = await prepareCurrentDetectionReport({
+    generation: 3,
+    getCurrentGeneration: () => 3,
+    prepare: async () => preview,
+  });
+
+  assert.deepEqual(preparation, { status: "success", value: preview });
 });

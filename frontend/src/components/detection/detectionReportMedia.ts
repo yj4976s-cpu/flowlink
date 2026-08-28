@@ -63,3 +63,26 @@ export async function prepareDetectionReportPreview({
   if (!sourceFile) return null;
   return sourceType === "image" ? prepareImage(sourceFile) : captureVideo(sourceFile);
 }
+
+type PrepareCurrentDetectionReportOptions<T> = {
+  generation: number;
+  getCurrentGeneration: () => number;
+  prepare: () => Promise<T>;
+};
+
+export async function prepareCurrentDetectionReport<T>({
+  generation,
+  getCurrentGeneration,
+  prepare,
+}: PrepareCurrentDetectionReportOptions<T>) {
+  try {
+    const value = await prepare();
+    return getCurrentGeneration() === generation
+      ? { status: "success" as const, value }
+      : { status: "stale" as const };
+  } catch (error) {
+    return getCurrentGeneration() === generation
+      ? { status: "failure" as const, error }
+      : { status: "stale" as const };
+  }
+}
