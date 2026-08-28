@@ -123,7 +123,7 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
 
   return <section id="daru-leaderboard" className={styles.leaderboard} aria-labelledby="leaderboard-title" aria-busy={loading}>
     <header className={styles.leaderboardHeader}>
-      <div><h2 id="leaderboard-title"><TrophyIcon /> 다루 메모리 랭킹</h2><p>기억력 · 속도 · 콤보 · 힌트로 결정돼요 · 가장 최근 정상 클리어가 랭킹에 반영돼요</p></div>
+      <div><h2 id="leaderboard-title">🏆 다루 메모리 랭킹</h2><p>기억력 · 속도 · 콤보 · 힌트로 결정돼요 · 가장 최근 정상 클리어가 랭킹에 반영돼요</p></div>
       <details className={styles.rankingInfo}><summary aria-label="메모리 점수 산정 방식 보기">i</summary><div role="note"><strong>메모리 점수</strong><span>기억력 정확도 50%</span><span>탐색 속도 25%</span><span>콤보 15%</span><span>힌트 절약 10%</span><small>제한시간을 초과해도 완주 기록은 등록되며, 속도 점수는 0점으로 계산됩니다.</small><small>동점은 시도 횟수, 플레이 시간, 기록 달성 시각 순으로 결정해요.</small></div></details>
     </header>
 
