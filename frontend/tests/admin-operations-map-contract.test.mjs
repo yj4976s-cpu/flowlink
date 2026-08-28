@@ -8,6 +8,7 @@ import {
   getSearchSelectionTransition,
   isSearchRequestCurrent,
 } from "../src/components/admin/operations-map/operationsMapState.ts";
+import { createProgrammaticViewportGuard } from "../src/components/admin/operations-map/operationsMapViewport.ts";
 
 const pageSource = readFileSync(new URL("../src/app/admin/map/page.tsx", import.meta.url), "utf8");
 const screenSource = readFileSync(new URL("../src/components/admin/operations-map/AdminOperationsMap.tsx", import.meta.url), "utf8");
@@ -25,6 +26,36 @@ test("the admin screen renders one reusable Kakao map instance", () => {
   assert.equal((mapSource.match(/new kakao\.maps\.Map/g) ?? []).length, 1);
   assert.match(mapSource, /loadKakaoMaps/);
   assert.match(mapSource, /map\.relayout\(\)/);
+});
+
+test("programmatic viewport zooms stay clean while user zooms become dirty", () => {
+  let dirty = false;
+  let level = 8;
+  const map = { getLevel: () => level };
+  const guard = createProgrammaticViewportGuard(() => { dirty = true; });
+
+  guard.run(map, () => { level = 5; guard.onZoomChanged(map); });
+  assert.equal(dirty, false, "synchronous search zoom must stay clean");
+
+  guard.run(map, () => { level = 6; });
+  guard.onZoomChanged(map);
+  assert.equal(dirty, false, "asynchronous spotlight zoom must stay clean");
+
+  guard.run(map, () => { level = 4; });
+  guard.onZoomChanged(map);
+  assert.equal(dirty, false, "setBounds level changes must stay clean");
+
+  guard.onZoomChanged(map);
+  assert.equal(dirty, true, "wheel or pinch zoom must become dirty");
+
+  dirty = false;
+  guard.reset();
+  guard.onZoomChanged(map);
+  assert.equal(dirty, true, "cleanup must not leave zoom suppression behind");
+
+  assert.match(mapSource, /const markDirty = \(\) => setDirty\(true\)/, "drag remains a user viewport change");
+  assert.match(mapSource, /const zoom = \(delta: number\)[\s\S]*setDirty\(true\)/, "the custom zoom control is explicitly user initiated");
+  assert.match(mapSource, /onQueryArea\(boundsOf\(map\)\); setDirty\(false\)/, "querying the visible area clears dirty state");
 });
 
 test("operations use geographic coordinates and camera detection aggregation", () => {

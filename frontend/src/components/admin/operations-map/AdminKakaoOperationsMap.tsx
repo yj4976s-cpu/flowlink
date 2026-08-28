@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/common/Icon";
 import { loadKakaoMaps, type KakaoCustomOverlayInstance, type KakaoMapInstance, type KakaoRoot } from "@/lib/kakaoPlaces";
 import type { MapMarker, SearchResult } from "./mockOperationsMapData";
+import { createProgrammaticViewportGuard } from "./operationsMapViewport";
 import styles from "./AdminOperationsMap.module.css";
 
 export type OperationsBounds = { south: number; west: number; north: number; east: number };
@@ -79,6 +80,7 @@ export function AdminKakaoOperationsMap({ markers, detectionCounts, selectedId, 
   const fitSearchPointRef = useRef(searchPoint);
   const [readyVersion, setReadyVersion] = useState(0);
   const [dirty, setDirty] = useState(false);
+  const viewportGuardRef = useRef<ReturnType<typeof createProgrammaticViewportGuard> | null>(null);
 
   useEffect(() => { onSelectRef.current = onSelect; }, [onSelect]);
   useEffect(() => { onStateChangeRef.current = onStateChange; }, [onStateChange]);
@@ -98,9 +100,12 @@ export function AdminKakaoOperationsMap({ markers, detectionCounts, selectedId, 
       mapRef.current = map;
       const selectNone = () => onSelectRef.current(null);
       const markDirty = () => setDirty(true);
+      const viewportGuard = createProgrammaticViewportGuard(markDirty);
+      viewportGuardRef.current = viewportGuard;
       kakao.maps.event.addListener(map, "click", selectNone);
       kakao.maps.event.addListener(map, "dragend", markDirty);
-      kakao.maps.event.addListener(map, "zoom_changed", markDirty);
+      const handleZoomChanged = () => viewportGuard.onZoomChanged(map);
+      kakao.maps.event.addListener(map, "zoom_changed", handleZoomChanged);
       resizeObserver = new ResizeObserver(() => {
         window.cancelAnimationFrame(frame);
         frame = window.requestAnimationFrame(() => map.relayout());
@@ -112,7 +117,7 @@ export function AdminKakaoOperationsMap({ markers, detectionCounts, selectedId, 
       removeSdkListeners = () => {
         kakao.maps.event.removeListener(map, "click", selectNone);
         kakao.maps.event.removeListener(map, "dragend", markDirty);
-        kakao.maps.event.removeListener(map, "zoom_changed", markDirty);
+        kakao.maps.event.removeListener(map, "zoom_changed", handleZoomChanged);
       };
     }).catch((error) => {
       console.error("Failed to load Kakao operations map", error);
@@ -125,6 +130,8 @@ export function AdminKakaoOperationsMap({ markers, detectionCounts, selectedId, 
       removeSdkListeners();
       overlaysRef.current.forEach(({ overlay, cleanup }) => { overlay.setMap(null); cleanup(); });
       overlaysRef.current = [];
+      viewportGuardRef.current?.reset();
+      viewportGuardRef.current = null;
       mapRef.current = null;
       kakaoRef.current = null;
     };
@@ -175,8 +182,9 @@ export function AdminKakaoOperationsMap({ markers, detectionCounts, selectedId, 
     const kakao = kakaoRef.current;
     const target = searchPoint ?? markers.find((marker) => marker.id === selectedId);
     if (!map || !kakao || !target) return;
+    setDirty(false);
     map.panTo(new kakao.maps.LatLng(target.latitude, target.longitude));
-    if (map.getLevel() > 5) map.setLevel(5);
+    if (map.getLevel() > 5) viewportGuardRef.current?.run(map, () => map.setLevel(5));
   }, [markers, searchPoint, selectedId]);
 
   useEffect(() => {
@@ -184,8 +192,9 @@ export function AdminKakaoOperationsMap({ markers, detectionCounts, selectedId, 
     const kakao = kakaoRef.current;
     const camera = markers.find((marker) => marker.id === spotlightCameraId && marker.kind === "camera");
     if (!map || !kakao || !camera) return;
+    setDirty(false);
     map.panTo(new kakao.maps.LatLng(camera.latitude, camera.longitude));
-    map.setLevel(6);
+    viewportGuardRef.current?.run(map, () => map.setLevel(6));
   }, [markers, spotlightCameraId]);
 
   useEffect(() => {
@@ -194,16 +203,16 @@ export function AdminKakaoOperationsMap({ markers, detectionCounts, selectedId, 
     const fitMarkers = fitMarkersRef.current;
     const fitSearchPoint = fitSearchPointRef.current;
     if (!map || !kakao || !fitMarkers.length) return;
+    setDirty(false);
     if (fitMarkers.length === 1) {
       map.setCenter(new kakao.maps.LatLng(fitMarkers[0].latitude, fitMarkers[0].longitude));
-      map.setLevel(5);
+      viewportGuardRef.current?.run(map, () => map.setLevel(5));
       return;
     }
     const bounds = new kakao.maps.LatLngBounds();
     fitMarkers.forEach((marker) => bounds.extend(new kakao.maps.LatLng(marker.latitude, marker.longitude)));
     if (fitSearchPoint) bounds.extend(new kakao.maps.LatLng(fitSearchPoint.latitude, fitSearchPoint.longitude));
-    map.setBounds(bounds, 72);
-    window.requestAnimationFrame(() => setDirty(false));
+    viewportGuardRef.current?.run(map, () => map.setBounds(bounds, 72));
   }, [fitToken, readyVersion]);
 
   useEffect(() => {
@@ -220,6 +229,7 @@ export function AdminKakaoOperationsMap({ markers, detectionCounts, selectedId, 
   const zoom = (delta: number) => {
     const map = mapRef.current;
     if (!map) return;
+    setDirty(true);
     map.setLevel(Math.max(MIN_LEVEL, Math.min(MAX_LEVEL, map.getLevel() + delta)));
   };
 
