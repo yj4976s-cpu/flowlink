@@ -6,9 +6,20 @@ export function getBulkSelectedCount(deletableCount: number, excludedCount: numb
   return Math.max(0, deletableCount - excludedCount);
 }
 
-export function bulkDeleteIncludesBest(target: "selected" | "difficulty" | "all", selectAllDifficulty: boolean, hasDeletableBest: boolean, hasDeletableBestAnyDifficulty: boolean, selectedItemsHaveBest: boolean) {
+interface BulkDeleteIncludesBestOptions {
+  target: "selected" | "difficulty" | "all";
+  selectAllDifficulty: boolean;
+  deletableBestRecordId: number | null | undefined;
+  excludedIds: ReadonlySet<number>;
+  hasDeletableBest: boolean;
+  hasDeletableBestAnyDifficulty: boolean;
+  selectedItemsHaveBest: boolean;
+}
+
+export function bulkDeleteIncludesBest({ target, selectAllDifficulty, deletableBestRecordId, excludedIds, hasDeletableBest, hasDeletableBestAnyDifficulty, selectedItemsHaveBest }: BulkDeleteIncludesBestOptions) {
   if (target === "all") return hasDeletableBestAnyDifficulty;
-  if (target === "difficulty" || selectAllDifficulty) return hasDeletableBest;
+  if (target === "difficulty") return hasDeletableBest;
+  if (selectAllDifficulty) return deletableBestRecordId != null && !excludedIds.has(deletableBestRecordId);
   return selectedItemsHaveBest;
 }
 

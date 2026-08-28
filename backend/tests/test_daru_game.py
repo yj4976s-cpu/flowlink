@@ -702,6 +702,56 @@ def test_history_management_metadata_matches_active_ranking_protection(
         assert client.get("/api/daru-game/leaderboard?difficulty=EASY").json()["my_entry"] is None
 
 
+def test_history_metadata_identifies_active_deletable_best(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    best = history_record(db, score="95.0", achieved=now)
+    ranking = history_record(db, score="80.0", achieved=now + timedelta(seconds=1))
+    stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=best.detection_power, score_version=2, best_attempts=best.attempts, best_elapsed_seconds=best.elapsed_seconds, best_combo=best.max_combo, best_hints_used=best.hints_used, total_daru_points=200, play_count=2, best_achieved_at=best.achieved_at, ranking_record_id=ranking.id, created_at=now, updated_at=now)
+    db.add(stat); db.commit()
+
+    payload = client.get("/api/daru-game/history?difficulty=EASY").json()
+
+    assert payload["deletable_best_record_id"] == best.id
+    assert payload["has_deletable_best"] is True
+
+
+def test_history_metadata_excludes_ranking_protected_best(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    best = history_record(db, score="95.0", achieved=now)
+    stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=best.detection_power, score_version=2, best_attempts=best.attempts, best_elapsed_seconds=best.elapsed_seconds, best_combo=best.max_combo, best_hints_used=best.hints_used, total_daru_points=100, play_count=1, best_achieved_at=best.achieved_at, ranking_record_id=best.id, created_at=now, updated_at=now)
+    db.add(stat); db.commit()
+
+    payload = client.get("/api/daru-game/history?difficulty=EASY").json()
+
+    assert payload["deletable_best_record_id"] is None
+    assert payload["has_deletable_best"] is False
+
+
+def test_history_metadata_ignores_old_score_version_best(client: TestClient, db: Session) -> None:
+    old_best = history_record(db, score="99.0", achieved=utc_now())
+    old_best.score_version = 1
+    db.commit()
+
+    payload = client.get("/api/daru-game/history?difficulty=EASY").json()
+
+    assert payload["deletable_best_record_id"] is None
+    assert payload["has_deletable_best"] is False
+
+
+def test_history_metadata_uses_active_fallback_after_previous_best_deleted(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    deleted_best = history_record(db, score="95.0", achieved=now)
+    deleted_best.deleted_at = now + timedelta(seconds=1)
+    active_best = history_record(db, score="82.0", achieved=now + timedelta(seconds=2))
+    stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=active_best.detection_power, score_version=2, best_attempts=active_best.attempts, best_elapsed_seconds=active_best.elapsed_seconds, best_combo=active_best.max_combo, best_hints_used=active_best.hints_used, total_daru_points=200, play_count=2, best_achieved_at=active_best.achieved_at, ranking_record_id=None, created_at=now, updated_at=now)
+    db.add(stat); db.commit()
+
+    payload = client.get("/api/daru-game/history?difficulty=EASY").json()
+
+    assert payload["deletable_best_record_id"] == active_best.id
+    assert payload["has_deletable_best"] is True
+
+
 def test_deleting_ranking_record_never_revives_an_older_record(client: TestClient, db: Session) -> None:
     now = utc_now(); best = history_record(db, score="95.0", achieved=now); ranking = history_record(db, score="70.0", achieved=now + timedelta(seconds=1))
     stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=best.detection_power, score_version=2, best_attempts=10, best_elapsed_seconds=60, best_combo=5, best_hints_used=0, total_daru_points=200, play_count=2, best_achieved_at=best.achieved_at, ranking_record_id=ranking.id, created_at=now, updated_at=now)

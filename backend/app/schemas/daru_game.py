@@ -175,6 +175,7 @@ class DaruGameHistoryResponse(BaseModel):
     total_pages: int
     protected_count: int = 0
     deletable_count: int = 0
+    deletable_best_record_id: int | None = None
     has_deletable_best: bool = False
     has_deletable_best_any_difficulty: bool = False
 
