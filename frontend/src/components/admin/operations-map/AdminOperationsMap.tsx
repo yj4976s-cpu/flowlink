@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { Icon } from "@/components/common/Icon";
 import { searchKakaoPlaces } from "@/lib/kakaoPlaces";
 import { AdminKakaoOperationsMap, type OperationsBounds } from "./AdminKakaoOperationsMap";
-import { getLayerToggleTransition } from "./operationsMapState";
+import { getLayerToggleTransition, getSearchClearTransition, getSearchSelectionTransition, isSearchRequestCurrent } from "./operationsMapState";
 import {
   getOperationsMapSnapshot,
   operationsMarkers,
@@ -56,16 +56,17 @@ function SearchBox({ onSelect }: { onSelect: (result: SearchResult) => void }) {
     const requestId = ++sequence.current;
     if (normalized.length < 2) return;
     const timer = window.setTimeout(() => {
+      if (!isSearchRequestCurrent(sequence.current, requestId)) return;
       setPlaceState("loading");
       void searchKakaoPlaces(normalized).then((items) => {
-        if (sequence.current !== requestId) return;
+        if (!isSearchRequestCurrent(sequence.current, requestId)) return;
         setPlaces(items.slice(0, 5).map((place) => ({
           id: `place-${place.id}`, group: "장소", title: place.place_name,
           detail: place.road_address_name || place.address_name,
           latitude: Number(place.y), longitude: Number(place.x),
         })));
         setPlaceState("idle");
-      }).catch(() => { if (sequence.current === requestId) { setPlaces([]); setPlaceState("error"); } });
+      }).catch(() => { if (isSearchRequestCurrent(sequence.current, requestId)) { setPlaces([]); setPlaceState("error"); } });
     }, 280);
     return () => window.clearTimeout(timer);
   }, [query]);
@@ -78,6 +79,15 @@ function SearchBox({ onSelect }: { onSelect: (result: SearchResult) => void }) {
   }, [open]);
 
   const choose = (result: SearchResult) => { onSelect(result); setQuery(result.title); setOpen(false); };
+  const clear = () => {
+    const transition = getSearchClearTransition(sequence.current);
+    sequence.current = transition.sequence;
+    setQuery(transition.query);
+    setPlaces(transition.places);
+    setPlaceState(transition.placeState);
+    setActive(transition.active);
+    setOpen(true);
+  };
   const keyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown") { event.preventDefault(); setOpen(true); setActive((value) => Math.min(value + 1, Math.max(0, results.length - 1))); }
     if (event.key === "ArrowUp") { event.preventDefault(); setActive((value) => Math.max(value - 1, 0)); }
@@ -88,7 +98,7 @@ function SearchBox({ onSelect }: { onSelect: (result: SearchResult) => void }) {
   return <div className={styles.search} ref={root}>
     <Icon name="search" size={18} />
     <input value={query} placeholder="지역 · 장소 · 카메라 · 발견물 검색" role="combobox" aria-expanded={open} aria-controls="admin-map-search-results" aria-activedescendant={open && results[active] ? `admin-map-result-${results[active].id}` : undefined} onFocus={() => setOpen(true)} onChange={(event) => { const value = event.target.value; setQuery(value); setOpen(true); setActive(0); if (value.trim().length < 2) { setPlaces([]); setPlaceState("idle"); } }} onKeyDown={keyDown} />
-    {query && <button type="button" aria-label="검색어 지우기" onClick={() => { setQuery(""); setOpen(true); }}><Icon name="close" size={15} /></button>}
+    {query && <button type="button" aria-label="검색어 지우기" onClick={clear}><Icon name="close" size={15} /></button>}
     {open && <div className={styles.searchResults} id="admin-map-search-results" role="listbox">
       {placeState === "loading" && <p>카카오 장소를 검색하고 있어요.</p>}
       {placeState === "error" && <p>장소 검색을 불러오지 못했어요. 운영 정보 검색은 계속 사용할 수 있습니다.</p>}
@@ -194,11 +204,12 @@ export function AdminOperationsMap() {
   }, [expanded]);
 
   const selectSearch = (result: SearchResult) => {
+    const target = operationsMarkers.find((marker) => marker.id === result.markerId) ?? null;
+    const transition = getSearchSelectionTransition(result.markerId, target, spotlightCameraId);
     setFilter("all");
     setSearchPoint(result);
-    setSelectedId(result.markerId ?? null);
-    const target = operationsMarkers.find((marker) => marker.id === result.markerId);
-    if (spotlightCameraId && target?.kind === "camera") setSpotlightCameraId(target.id);
+    setSelectedId(transition.selectedId);
+    if (transition.spotlightCameraId !== spotlightCameraId) setSpotlightCameraId(transition.spotlightCameraId);
   };
   const selectDetection = (marker: MapMarker) => { setSelectedId(marker.id); setSearchPoint({ id: `focus-${marker.id}`, group: "AI 탐지", title: marker.title, detail: marker.subtitle, markerId: marker.id, latitude: marker.latitude, longitude: marker.longitude }); };
   const resetMap = () => { setSearchPoint(null); setSelectedId(null); setQueriedBounds(null); setFitToken((value) => value + 1); };

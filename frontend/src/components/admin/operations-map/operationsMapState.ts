@@ -1,6 +1,7 @@
 import type { MapMarkerKind } from "./mockOperationsMapData";
 
 type Layers = Record<MapMarkerKind, boolean>;
+type SearchTarget = { id: string; kind: MapMarkerKind } | null;
 
 export function getLayerToggleTransition(
   kind: MapMarkerKind,
@@ -18,4 +19,32 @@ export function getLayerToggleTransition(
         : spotlightCameraId,
     clearSelection: turningOff && selectedKind === kind,
   };
+}
+
+export function getSearchSelectionTransition(
+  markerId: string | undefined,
+  target: SearchTarget,
+  spotlightCameraId: string | null,
+) {
+  const keepsSpotlight =
+    target?.kind === "camera" && target.id === spotlightCameraId;
+
+  return {
+    selectedId: markerId ?? null,
+    spotlightCameraId: keepsSpotlight ? spotlightCameraId : null,
+  };
+}
+
+export function getSearchClearTransition(sequence: number) {
+  return {
+    query: "",
+    places: [],
+    placeState: "idle" as const,
+    active: 0,
+    sequence: sequence + 1,
+  };
+}
+
+export function isSearchRequestCurrent(sequence: number, requestId: number) {
+  return sequence === requestId;
 }

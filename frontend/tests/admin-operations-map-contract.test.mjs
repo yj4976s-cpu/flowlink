@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { getLayerToggleTransition } from "../src/components/admin/operations-map/operationsMapState.ts";
+import {
+  getLayerToggleTransition,
+  getSearchClearTransition,
+  getSearchSelectionTransition,
+  isSearchRequestCurrent,
+} from "../src/components/admin/operations-map/operationsMapState.ts";
 
 const pageSource = readFileSync(new URL("../src/app/admin/map/page.tsx", import.meta.url), "utf8");
 const screenSource = readFileSync(new URL("../src/components/admin/operations-map/AdminOperationsMap.tsx", import.meta.url), "utf8");
@@ -74,6 +79,38 @@ test("turning off the camera layer ends spotlight without restoring it on re-ena
   assert.equal(cameraOn.layers.camera, true);
   assert.equal(cameraOn.spotlightCameraId, null);
   assert.equal(cameraOn.clearSelection, false);
+});
+
+test("search selection only preserves spotlight for the same camera", () => {
+  const sameCamera = getSearchSelectionTransition("CAM-03", { id: "CAM-03", kind: "camera" }, "CAM-03");
+  assert.deepEqual(sameCamera, { selectedId: "CAM-03", spotlightCameraId: "CAM-03" });
+
+  const otherCamera = getSearchSelectionTransition("CAM-01", { id: "CAM-01", kind: "camera" }, "CAM-03");
+  assert.deepEqual(otherCamera, { selectedId: "CAM-01", spotlightCameraId: null });
+
+  const detection = getSearchSelectionTransition("DET-2042", { id: "DET-2042", kind: "detection" }, "CAM-03");
+  assert.deepEqual(detection, { selectedId: "DET-2042", spotlightCameraId: null });
+
+  const found = getSearchSelectionTransition("ITEM-01", { id: "ITEM-01", kind: "found" }, "CAM-03");
+  assert.deepEqual(found, { selectedId: "ITEM-01", spotlightCameraId: null });
+
+  const place = getSearchSelectionTransition(undefined, null, "CAM-03");
+  assert.deepEqual(place, { selectedId: null, spotlightCameraId: null });
+});
+
+test("clearing search resets local results and invalidates stale Kakao responses", () => {
+  const requestId = 7;
+  const cleared = getSearchClearTransition(requestId);
+
+  assert.deepEqual(cleared, {
+    query: "",
+    places: [],
+    placeState: "idle",
+    active: 0,
+    sequence: 8,
+  });
+  assert.equal(isSearchRequestCurrent(cleared.sequence, requestId), false);
+  assert.match(screenSource, /if \(!isSearchRequestCurrent\(sequence\.current, requestId\)\) return;/);
 });
 
 test("selected detection drawer separates back navigation from close", () => {
