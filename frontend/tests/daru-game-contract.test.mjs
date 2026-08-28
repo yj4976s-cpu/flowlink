@@ -134,6 +134,16 @@ test("history deletion provides state-specific and delete-all dialogs", () => {
   assert.match(leaderboardSource, /모든 플레이 기록을 삭제할까요/);
 });
 
+test("history delete dialogs reset stale errors and stay open while deleting", () => {
+  assert.match(leaderboardSource, /const openDeleteDialog = \(target: DaruHistoryItem \| "all"\) => \{ setDeleteError\(false\); setDeleteTarget\(target\); \}/);
+  assert.match(leaderboardSource, /const closeDeleteDialog = \(\) => \{ if \(deleting\) return; setDeleteError\(false\); setDeleteTarget\(null\); \}/);
+  assert.match(leaderboardSource, /event\.target === event\.currentTarget && !deleting/);
+  assert.match(leaderboardSource, /event\.key === "Escape" && !deleting/);
+  assert.match(leaderboardSource, /autoFocus onClick=\{closeDeleteDialog\} disabled=\{deleting\}/);
+  assert.match(leaderboardSource, /setDeleteError\(false\); setDeleteTarget\(null\);\s*setHistoryLoading\(true\); setRetryKey/);
+  assert.match(leaderboardSource, /catch \{ setDeleteError\(true\); \} finally \{ setDeleting\(false\); \}/);
+});
+
 test("history remains a full-width sibling after the ranking grid", () => {
   assert.match(leaderboardSource, /<\/div>\s*\{!preview && <section className=\{styles\.playHistory\}/);
   assert.match(leaderboardSource, /내 플레이 기록/);

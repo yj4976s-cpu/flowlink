@@ -53,13 +53,6 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState(false);
   useEffect(() => {
-    if (!deleteTarget) return;
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape" && !deleting) setDeleteTarget(null); };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [deleteTarget, deleting]);
-
-  useEffect(() => {
     if (preview) return;
     const controller = new AbortController();
     const frame = window.requestAnimationFrame(() => {
@@ -108,13 +101,21 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
     else setPage(request.page);
   };
   const goToMyRank = () => { if (myEntry && myEntry.rank > 3) setPage(Math.floor((myEntry.rank - 4) / PAGE_SIZE) + 1); };
+  const openDeleteDialog = (target: DaruHistoryItem | "all") => { setDeleteError(false); setDeleteTarget(target); };
+  const closeDeleteDialog = () => { if (deleting) return; setDeleteError(false); setDeleteTarget(null); };
+  useEffect(() => {
+    if (!deleteTarget) return;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape" && !deleting) { setDeleteError(false); setDeleteTarget(null); } };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [deleteTarget, deleting]);
   const confirmDelete = async () => {
     if (!deleteTarget || deleting) return;
     setDeleting(true); setDeleteError(false);
     try {
       if (deleteTarget === "all") await deleteAllDaruGameHistory();
       else await deleteDaruGameHistoryRecord(deleteTarget.id);
-      setDeleteTarget(null);
+      setDeleteError(false); setDeleteTarget(null);
       setHistoryLoading(true); setRetryKey((value) => value + 1);
     } catch { setDeleteError(true); } finally { setDeleting(false); }
   };
@@ -142,10 +143,10 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
       {loading && <div className={styles.rankingLoading} role="status">랭킹을 불러오는 중이에요.</div>}
     </div>
     {!preview && <section className={styles.playHistory} aria-labelledby="play-history-title" aria-busy={historyLoading}>
-      <header><div><HistoryIcon /><span><h3 id="play-history-title">내 플레이 기록</h3><small>총 {history?.total ?? 0}회</small></span></div>{(history?.total ?? 0) > 0 && <button type="button" onClick={() => setDeleteTarget("all")}><TrashIcon /> 기록 관리</button>}</header>
-      {!historyLoading && (history?.items.length ?? 0) === 0 ? <div className={styles.historyEmpty}><HistoryIcon /><strong>아직 플레이 기록이 없어요.</strong><span>게임을 완료하면 여기에 기록이 차곡차곡 쌓여요.</span></div> : <ul>{history?.items.map((item) => <li key={item.id}><time dateTime={item.achieved_at}>{new Intl.DateTimeFormat("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(item.achieved_at))}</time><strong>{formatMemoryScore(item.detection_power)}</strong><span>{item.attempts}회 · {formatElapsedTime(item.elapsed_seconds)} · 최고 콤보 {item.max_combo} · 힌트 {item.hints_used}회</span><div>{!item.completed && <em><ClockIcon /> 미완주</em>}{item.is_best && <em data-best><CrownIcon /> BEST</em>}{item.is_ranking_record && <em data-ranking><PawIcon /> 랭킹 반영</em>}</div><button type="button" aria-label="플레이 기록 삭제" onClick={() => setDeleteTarget(item)}><TrashIcon /></button></li>)}</ul>}
+      <header><div><HistoryIcon /><span><h3 id="play-history-title">내 플레이 기록</h3><small>총 {history?.total ?? 0}회</small></span></div>{(history?.total ?? 0) > 0 && <button type="button" onClick={() => openDeleteDialog("all")}><TrashIcon /> 기록 관리</button>}</header>
+      {!historyLoading && (history?.items.length ?? 0) === 0 ? <div className={styles.historyEmpty}><HistoryIcon /><strong>아직 플레이 기록이 없어요.</strong><span>게임을 완료하면 여기에 기록이 차곡차곡 쌓여요.</span></div> : <ul>{history?.items.map((item) => <li key={item.id}><time dateTime={item.achieved_at}>{new Intl.DateTimeFormat("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(item.achieved_at))}</time><strong>{formatMemoryScore(item.detection_power)}</strong><span>{item.attempts}회 · {formatElapsedTime(item.elapsed_seconds)} · 최고 콤보 {item.max_combo} · 힌트 {item.hints_used}회</span><div>{!item.completed && <em><ClockIcon /> 미완주</em>}{item.is_best && <em data-best><CrownIcon /> BEST</em>}{item.is_ranking_record && <em data-ranking><PawIcon /> 랭킹 반영</em>}</div><button type="button" aria-label="플레이 기록 삭제" onClick={() => openDeleteDialog(item)}><TrashIcon /></button></li>)}</ul>}
       {(history?.total_pages ?? 1) > 1 && <nav className={styles.rankingPagination} aria-label="플레이 기록 페이지"><button type="button" aria-label="이전 기록 페이지" disabled={(history?.page ?? 1) <= 1 || historyLoading} onClick={() => { setHistoryLoading(true); setHistoryPage((value) => Math.max(1, value - 1)); }}>‹</button><span>{String(history?.page ?? 1).padStart(2, "0")} / {String(history?.total_pages ?? 1).padStart(2, "0")}</span><button type="button" aria-label="다음 기록 페이지" disabled={(history?.page ?? 1) >= (history?.total_pages ?? 1) || historyLoading} onClick={() => { setHistoryLoading(true); setHistoryPage((value) => value + 1); }}>›</button></nav>}
     </section>}
-    {deleteTarget && <div className={styles.deleteBackdrop} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDeleteTarget(null); }}><div className={styles.deleteDialog} role="dialog" aria-modal="true" aria-labelledby="delete-title"><TrashIcon /><h3 id="delete-title">{deleteTarget === "all" ? "모든 플레이 기록을 삭제할까요?" : deleteTarget.is_best && deleteTarget.is_ranking_record ? "이 기록은 현재 BEST이자 랭킹 기록입니다." : deleteTarget.is_best ? "최고 기록을 삭제할까요?" : deleteTarget.is_ranking_record ? "현재 랭킹 기록을 삭제할까요?" : "이 플레이 기록을 삭제할까요?"}</h3><p>{deleteTarget === "all" ? "개인 BEST와 현재 랭킹 기록이 초기화됩니다. 획득한 다루 포인트와 누적 플레이 횟수는 유지됩니다." : deleteTarget.is_best && deleteTarget.is_ranking_record ? "삭제하면 개인 BEST가 다시 계산되고, 현재 랭킹에서는 빠집니다." : deleteTarget.is_best ? "삭제하면 남아 있는 정상 플레이 중 가장 높은 기록이 새로운 BEST가 됩니다." : deleteTarget.is_ranking_record ? "삭제하면 현재 랭킹에서 빠집니다. 다음 게임을 정상 완료하면 다시 랭킹에 등록돼요." : "삭제한 기록은 내 플레이 기록에서 다시 복구할 수 없어요."}</p>{deleteError && <p role="alert">기록을 삭제하지 못했어요. 다시 시도해 주세요.</p>}<div><button type="button" autoFocus onClick={() => setDeleteTarget(null)} disabled={deleting}>취소</button><button type="button" onClick={() => void confirmDelete()} disabled={deleting}>{deleteTarget === "all" ? "전체 삭제" : "삭제"}</button></div></div></div>}
+    {deleteTarget && <div className={styles.deleteBackdrop} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !deleting) closeDeleteDialog(); }}><div className={styles.deleteDialog} role="dialog" aria-modal="true" aria-labelledby="delete-title"><TrashIcon /><h3 id="delete-title">{deleteTarget === "all" ? "모든 플레이 기록을 삭제할까요?" : deleteTarget.is_best && deleteTarget.is_ranking_record ? "이 기록은 현재 BEST이자 랭킹 기록입니다." : deleteTarget.is_best ? "최고 기록을 삭제할까요?" : deleteTarget.is_ranking_record ? "현재 랭킹 기록을 삭제할까요?" : "이 플레이 기록을 삭제할까요?"}</h3><p>{deleteTarget === "all" ? "개인 BEST와 현재 랭킹 기록이 초기화됩니다. 획득한 다루 포인트와 누적 플레이 횟수는 유지됩니다." : deleteTarget.is_best && deleteTarget.is_ranking_record ? "삭제하면 개인 BEST가 다시 계산되고, 현재 랭킹에서는 빠집니다." : deleteTarget.is_best ? "삭제하면 남아 있는 정상 플레이 중 가장 높은 기록이 새로운 BEST가 됩니다." : deleteTarget.is_ranking_record ? "삭제하면 현재 랭킹에서 빠집니다. 다음 게임을 정상 완료하면 다시 랭킹에 등록돼요." : "삭제한 기록은 내 플레이 기록에서 다시 복구할 수 없어요."}</p>{deleteError && <p role="alert">기록을 삭제하지 못했어요. 다시 시도해 주세요.</p>}<div><button type="button" autoFocus onClick={closeDeleteDialog} disabled={deleting}>취소</button><button type="button" onClick={() => void confirmDelete()} disabled={deleting}>{deleteTarget === "all" ? "전체 삭제" : "삭제"}</button></div></div></div>}
   </section>;
 }
