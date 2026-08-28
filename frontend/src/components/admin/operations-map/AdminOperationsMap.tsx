@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { Icon } from "@/components/common/Icon";
 import { searchKakaoPlaces } from "@/lib/kakaoPlaces";
 import { AdminKakaoOperationsMap, type OperationsBounds } from "./AdminKakaoOperationsMap";
+import { getLayerToggleTransition } from "./operationsMapState";
 import {
   getOperationsMapSnapshot,
   operationsMarkers,
@@ -204,8 +205,10 @@ export function AdminOperationsMap() {
   const retry = () => { setMapState("loading"); void getOperationsMapSnapshot().then(() => setMapRetryKey((value) => value + 1)); };
   const changeFilter = (value: StatusFilter) => { setFilter(value); setSelectedId(spotlightCameraId); setSearchPoint(null); };
   const toggleLayer = (kind: MapMarkerKind) => {
-    if (selected?.kind === kind && layers[kind]) { setSelectedId(null); setSearchPoint(null); }
-    setLayers((current) => ({ ...current, [kind]: !current[kind] }));
+    const transition = getLayerToggleTransition(kind, layers, spotlightCameraId, selected?.kind ?? null);
+    if (transition.clearSelection) { setSelectedId(null); setSearchPoint(null); }
+    if (transition.spotlightCameraId !== spotlightCameraId) setSpotlightCameraId(transition.spotlightCameraId);
+    setLayers(transition.layers);
   };
   const dockItems: Array<{ value: StatusFilter; label: string; count: number }> = [
     { value: "detection", label: "AI 탐지", count: detections.length },

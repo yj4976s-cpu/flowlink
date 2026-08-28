@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { getLayerToggleTransition } from "../src/components/admin/operations-map/operationsMapState.ts";
 
 const pageSource = readFileSync(new URL("../src/app/admin/map/page.tsx", import.meta.url), "utf8");
 const screenSource = readFileSync(new URL("../src/components/admin/operations-map/AdminOperationsMap.tsx", import.meta.url), "utf8");
@@ -58,6 +59,21 @@ test("camera spotlight preserves map context and updates overlay DOM state", () 
   assert.equal((mapSource.match(/new kakao\.maps\.Map/g) ?? []).length, 1);
   assert.match(cssSource, /\.kakaoMarker\[data-spotlight\]/);
   assert.match(cssSource, /\.kakaoMarker\[data-dimmed\]/);
+});
+
+test("turning off the camera layer ends spotlight without restoring it on re-enable", () => {
+  const layers = { detection: true, found: true, camera: true, citizen: false };
+  const cameraOff = getLayerToggleTransition("camera", layers, "CAM-01", "camera");
+
+  assert.equal(cameraOff.layers.camera, false);
+  assert.equal(cameraOff.spotlightCameraId, null);
+  assert.equal(cameraOff.clearSelection, true);
+  assert.equal(Boolean(cameraOff.spotlightCameraId), false, "spotlight indicator and dock must return to their normal state");
+
+  const cameraOn = getLayerToggleTransition("camera", cameraOff.layers, cameraOff.spotlightCameraId, null);
+  assert.equal(cameraOn.layers.camera, true);
+  assert.equal(cameraOn.spotlightCameraId, null);
+  assert.equal(cameraOn.clearSelection, false);
 });
 
 test("selected detection drawer separates back navigation from close", () => {
