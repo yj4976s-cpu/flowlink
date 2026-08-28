@@ -211,9 +211,36 @@ export function DaruGame() {
   }, [beginFlipping, clearSequenceTimer, difficulty, phase]);
   useEffect(() => {
     if (phase === "flipping") { sequenceTimerRef.current = window.setTimeout(() => { setReadyCue("READY"); setPhase("ready"); }, 650); return clearSequenceTimer; }
-    if (phase === "ready") { sequenceTimerRef.current = window.setTimeout(() => { void (async () => { const runId = runIdRef.current; let authoritativeStart: number | null = null; if (currentUser?.role === "USER" && runId) { try { const response = await startDaruGameRun(runId); authoritativeStart = new Date(response.play_started_at).getTime(); } catch (error) { if (handleTerminalRunError(error)) return; try { const state = await getDaruGameRunState(runId); if (!state.play_started_at) throw new Error("Run did not start"); authoritativeStart = new Date(state.play_started_at).getTime(); } catch (recoveryError) { if (!handleTerminalRunError(recoveryError)) setRecordStatus("failed"); return; } } } setReadyCue("GO!"); setStartedAt(authoritativeStart ?? Date.now()); setPhase("playing"); })(); }, 700); return clearSequenceTimer; }
+    if (phase === "ready") {
+      sequenceTimerRef.current = window.setTimeout(() => {
+        void (async () => {
+          const runId = runIdRef.current;
+          let authoritativeStart: number | null = null;
+          if (currentUser?.role === "USER" && runId) {
+            try {
+              const response = await startDaruGameRun(runId);
+              authoritativeStart = new Date(response.play_started_at).getTime();
+            } catch (error) {
+              if (handleTerminalRunError(error)) return;
+              try {
+                const state = await getDaruGameRunState(runId);
+                if (!state.play_started_at) throw new Error("Run did not start");
+                authoritativeStart = new Date(state.play_started_at).getTime();
+              } catch (recoveryError) {
+                if (handleTerminalRunError(recoveryError)) return;
+                resetState(); clearDaruActiveRun(); runIdRef.current = null; setDifficulty(null); setCards([]); setPhase("lobby");
+                setRunRecoveryNotice("게임 시작을 확인하지 못했어요. 네트워크를 확인한 뒤 다시 시작해 주세요.");
+                return;
+              }
+            }
+          }
+          setReadyCue("GO!"); setStartedAt(authoritativeStart ?? Date.now()); setPhase("playing");
+        })();
+      }, 700);
+      return clearSequenceTimer;
+    }
     if (phase === "playing" && readyCue === "GO!") { sequenceTimerRef.current = window.setTimeout(() => setReadyCue(null), 500); return clearSequenceTimer; }
-  }, [clearSequenceTimer, currentUser, handleTerminalRunError, phase, readyCue, setPhase]);
+  }, [clearSequenceTimer, currentUser, handleTerminalRunError, phase, readyCue, resetState, setPhase]);
   useEffect(() => {
     if (phase !== "playing" || startedAt === 0 || !difficulty) return;
     const update = () => {
