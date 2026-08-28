@@ -23,6 +23,7 @@ import type { CitizenReport } from "@/types/discoveryNetwork";
 import { WebcamDetectionPanel } from "./WebcamDetectionPanel";
 import type { WebcamPanelStatus, WebcamReportCandidate } from "./WebcamDetectionPanel";
 import { getContainedMediaRect, getContainedMediaRectStyle, getOverlayPercentageStyle, normalizeBBoxForDisplayMedia } from "./detectionOverlayGeometry";
+import { loadDetectionMediaFile, prepareCurrentDetectionReport, prepareDetectionReportPreview } from "./detectionReportMedia";
 import { waitForDecodedVideoFrame, waitForSeekedDecodedFrame } from "./videoFrameReadiness";
 import styles from "./DetectionWorkbench.module.css";
 
@@ -769,6 +770,8 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
   const [webcamFrame, setWebcamFrame] = useState<WebcamDetectionFrame | null>(null);
   const [webcamStatus, setWebcamStatus] = useState<WebcamPanelStatus>("idle");
   const [webcamReportCandidate, setWebcamReportCandidate] = useState<FoundReportCandidate | null>(null);
+  const [reportPreparing, setReportPreparing] = useState(false);
+  const [historyDetailLoading, setHistoryDetailLoading] = useState(false);
   const [webcamReportSubmitting, setWebcamReportSubmitting] = useState(false);
   const [webcamReportError, setWebcamReportError] = useState("");
   const [webcamReportSuccess, setWebcamReportSuccess] = useState<CitizenReport | null>(null);
@@ -784,6 +787,11 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
   const previewUrlRef = useRef("");
   const reportPreviewUrlRef = useRef("");
   const webcamReportSubmittingRef = useRef(false);
+  const reportPreparingRef = useRef(false);
+  const reportContextGenerationRef = useRef(0);
+  const currentEventIdRef = useRef<number | null>(null);
+  const pendingHistoryDetailIdRef = useRef<number | null>(null);
+  const historyDetailLoadingRef = useRef(false);
   const webcamFoundSignatureRef = useRef("");
 
   useEffect(() => {
@@ -963,6 +971,11 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
   };
 
   const resetSelectedFile = () => {
+    reportContextGenerationRef.current += 1;
+    currentEventIdRef.current = null;
+    pendingHistoryDetailIdRef.current = null;
+    historyDetailLoadingRef.current = false;
+    setHistoryDetailLoading(false);
     revokeReportPreviewUrl();
     setFile(null);
     setVideoDuration(null);
@@ -987,6 +1000,11 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
 
   const acceptFile = (nextFile: File | undefined) => {
     if (!nextFile || tab === "webcam") return;
+    reportContextGenerationRef.current += 1;
+    currentEventIdRef.current = null;
+    pendingHistoryDetailIdRef.current = null;
+    historyDetailLoadingRef.current = false;
+    setHistoryDetailLoading(false);
     const validationMessage = validateFile(nextFile, tab);
     setCurrentEvent(null);
     setVideoDuration(null);
@@ -1034,6 +1052,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
     setError("");
     try {
       const result = tab === "image" ? await uploadDetectionImage(file) : await uploadDetectionVideo(file);
+      currentEventIdRef.current = result.id;
       setCurrentEvent(result);
       setSubmitState("success");
       cueDaru(result.detected_objects.length ? "found" : "look", { source: "service" });
@@ -1049,9 +1068,32 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
   };
 
   const loadHistoryDetail = async (id: number) => {
+    const historyGeneration = ++reportContextGenerationRef.current;
+    pendingHistoryDetailIdRef.current = id;
+    historyDetailLoadingRef.current = true;
+    setHistoryDetailLoading(true);
     setError("");
+    let detail:
+      | { status: "success"; value: DetectionEvent }
+      | { status: "failure"; error: unknown }
+      | { status: "stale" };
     try {
-      const result = await getMyDetection(id);
+      detail = await prepareCurrentDetectionReport({
+        generation: historyGeneration,
+        getCurrentGeneration: () => reportContextGenerationRef.current,
+        prepare: () => getMyDetection(id),
+      });
+    } finally {
+      if (pendingHistoryDetailIdRef.current === id && reportContextGenerationRef.current === historyGeneration) {
+        pendingHistoryDetailIdRef.current = null;
+        historyDetailLoadingRef.current = false;
+        setHistoryDetailLoading(false);
+      }
+    }
+    if (detail.status === "stale") return;
+    if (detail.status === "success") {
+      const result = detail.value;
+      currentEventIdRef.current = result.id;
       setCurrentEvent(result);
       setSubmitState("success");
       setFile(null);
@@ -1061,7 +1103,8 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
       setTab(result.source_type === "VIDEO" ? "video" : "image");
       setWebcamFrame(null);
       setWebcamStatus("idle");
-    } catch (caught) {
+    } else {
+      const caught = detail.error;
       const message = caught instanceof DetectionApiError ? caught.message : "확인 상세를 불러오지 못했습니다.";
       setError(message);
       setSubmitState("error");
@@ -1075,8 +1118,22 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
     try {
       await deleteMyDetection(id);
       setHistory((current) => current.filter((event) => event.id !== id));
-      setCurrentEvent((event) => (event?.id === id ? null : event));
-      if (currentEvent?.id === id) {
+      const deletesCurrentContext = currentEventIdRef.current === id;
+      const deletesPendingContext = pendingHistoryDetailIdRef.current === id;
+      const hasDifferentPendingContext =
+        pendingHistoryDetailIdRef.current !== null &&
+        pendingHistoryDetailIdRef.current !== id;
+      if (deletesPendingContext || (deletesCurrentContext && !hasDifferentPendingContext)) {
+        reportContextGenerationRef.current += 1;
+      }
+      if (deletesPendingContext) {
+        pendingHistoryDetailIdRef.current = null;
+        historyDetailLoadingRef.current = false;
+        setHistoryDetailLoading(false);
+      }
+      if (deletesCurrentContext) {
+        currentEventIdRef.current = null;
+        setCurrentEvent(null);
         setSubmitState(file ? "selected" : "idle");
       }
     } catch (caught) {
@@ -1100,6 +1157,11 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
     setDeletingAllHistory(true);
     try {
       await deleteAllMyDetections();
+      reportContextGenerationRef.current += 1;
+      currentEventIdRef.current = null;
+      pendingHistoryDetailIdRef.current = null;
+      historyDetailLoadingRef.current = false;
+      setHistoryDetailLoading(false);
       setHistory([]);
       setHistoryPage(1);
       setCurrentEvent(null);
@@ -1149,27 +1211,63 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
 
   const openDetectionReport = async (object: DetectionObject) => {
     const classCode = getReportableClassCode(object.class_code);
-    if (!classCode || !currentEvent) return;
-    const sourceType = tab;
-    const sourceFile = file;
+    if (!classCode || !currentEvent || reportPreparingRef.current || historyDetailLoadingRef.current) return;
     const sourceEvent = currentEvent;
+    const sourceType = sourceEvent.source_type === "VIDEO" ? "video" : "image";
+    const localFile = file;
+    const isHistorySource = !localFile;
+    const reportGeneration = reportContextGenerationRef.current;
     let image: File | null = null;
     let imageError = "";
+    let preparation:
+      | { status: "success"; value: File | null }
+      | { status: "failure"; error: unknown }
+      | { status: "stale" };
 
-    if (sourceType === "image" && sourceFile) {
-      try {
-        if (!sourceEvent.media_width || !sourceEvent.media_height) throw new Error("탐지 이미지 크기가 없습니다.");
-        image = await prepareCitizenReportImage(
-          sourceFile,
-          object.bbox,
-          sourceEvent.media_width,
-          sourceEvent.media_height,
-        );
-      } catch {
-        imageError = "이미지를 발견 제보용으로 준비하지 못했습니다. 이미지 없이 제보하거나 더 작은 이미지를 선택해주세요.";
+    reportPreparingRef.current = true;
+    setReportPreparing(true);
+    try {
+      preparation = await prepareCurrentDetectionReport({
+        generation: reportGeneration,
+        getCurrentGeneration: () => reportContextGenerationRef.current,
+        prepare: () => prepareDetectionReportPreview({
+          sourceType,
+          localFile,
+          originalMediaUrl: sourceEvent.original_media_url,
+          loadHistoryFile: () => loadDetectionMediaFile({
+            mediaUrl: sourceEvent.original_media_url,
+            eventId: sourceEvent.id,
+            sourceType,
+            resolveMediaUrl: resolveDetectionMediaUrl,
+          }),
+          prepareImage: async (sourceFile) => {
+            if (!sourceEvent.media_width || !sourceEvent.media_height) throw new Error("탐지 이미지 크기가 없습니다.");
+            return prepareCitizenReportImage(sourceFile, object.bbox, sourceEvent.media_width, sourceEvent.media_height);
+          },
+          captureVideo: (sourceFile) => captureVideoReportFrame(sourceFile, object),
+        }),
+      });
+    } finally {
+      reportPreparingRef.current = false;
+      setReportPreparing(false);
+    }
+
+    if (preparation.status === "stale" || currentEventIdRef.current !== sourceEvent.id) return;
+    if (preparation.status === "success") {
+      image = preparation.value;
+      if (isHistorySource && !image && sourceEvent.original_media_url) {
+        imageError = sourceType === "video"
+          ? "저장된 원본 영상에서 대표 이미지를 준비하지 못했습니다. 이미지 없이 제보를 계속할 수 있습니다."
+          : "저장된 원본 이미지에서 제보용 이미지를 준비하지 못했습니다. 이미지 없이 제보를 계속할 수 있습니다.";
       }
-    } else if (sourceType === "video" && sourceFile) {
-      image = await captureVideoReportFrame(sourceFile, object);
+    } else {
+      imageError = isHistorySource
+        ? sourceType === "video"
+          ? "저장된 원본 영상에서 대표 이미지를 준비하지 못했습니다. 이미지 없이 제보를 계속할 수 있습니다."
+          : "저장된 원본 이미지에서 제보용 이미지를 준비하지 못했습니다. 이미지 없이 제보를 계속할 수 있습니다."
+        : sourceType === "image"
+          ? "이미지를 발견 제보용으로 준비하지 못했습니다. 이미지 없이 제보하거나 더 작은 이미지를 선택해주세요."
+          : "영상에서 대표 이미지를 준비하지 못했습니다. 이미지 없이 제보를 계속할 수 있습니다.";
     }
 
     const reportPreviewUrl = image ? URL.createObjectURL(image) : "";
@@ -1409,8 +1507,8 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
                       <span>{object.class_name_ko || reportableClassNames[object.class_code]}</span>
                       <small>인식 신뢰도 {formatConfidence(object.confidence)}</small>
                       <div>
-                        <button className="button button-secondary" type="button" onClick={() => void openDetectionReport(object)}>
-                          발견한 물건을 제보할게요
+                        <button className="button button-secondary" type="button" onClick={() => void openDetectionReport(object)} disabled={reportPreparing || historyDetailLoading}>
+                          {reportPreparing ? "대표 이미지 준비 중..." : "발견한 물건을 제보할게요"}
                         </button>
                         <Link className="button button-primary" href={`/lost-reports/new?class_code=${encodeURIComponent(object.class_code)}&source=detection`}>
                           내가 잃어버린 물건이에요
