@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { waitForDecodedVideoFrame } from "../src/components/detection/videoFrameReadiness.ts";
+import { waitForDecodedVideoFrame, waitForSeekedDecodedFrame } from "../src/components/detection/videoFrameReadiness.ts";
 
 class FakeVideo extends EventTarget {
   readyState = 2;
@@ -44,6 +44,16 @@ function fakeFrameScheduler() {
       pending.forEach((callback) => callback(0));
     },
   };
+}
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 test("waits for a presented decoded frame when requestVideoFrameCallback is supported", async () => {
@@ -109,4 +119,41 @@ test("waits for a new presented frame for each consecutive timestamp capture", a
   video.presentFrame(14.2);
   await second;
   assert.equal(secondResolved, true);
+});
+
+test("aggregates seeked and decoded readiness regardless of resolution order", async () => {
+  for (const first of ["seeked", "decoded"]) {
+    const seeked = deferred();
+    const decoded = deferred();
+    let resolved = false;
+    const readiness = waitForSeekedDecodedFrame(seeked.promise, decoded.promise).then(() => { resolved = true; });
+
+    (first === "seeked" ? seeked : decoded).resolve();
+    await Promise.resolve();
+    assert.equal(resolved, false);
+
+    (first === "seeked" ? decoded : seeked).resolve();
+    await readiness;
+    assert.equal(resolved, true);
+  }
+});
+
+test("handles a decoded-frame rejection while seeked is still pending", async () => {
+  const seeked = deferred();
+  const decoded = deferred();
+  const readiness = waitForSeekedDecodedFrame(seeked.promise, decoded.promise);
+  const failure = new Error("decoded frame failed");
+
+  decoded.reject(failure);
+  await assert.rejects(readiness, failure);
+});
+
+test("handles a seeked rejection while decoded-frame readiness is still pending", async () => {
+  const seeked = deferred();
+  const decoded = deferred();
+  const readiness = waitForSeekedDecodedFrame(seeked.promise, decoded.promise);
+  const failure = new Error("seek failed");
+
+  seeked.reject(failure);
+  await assert.rejects(readiness, failure);
 });

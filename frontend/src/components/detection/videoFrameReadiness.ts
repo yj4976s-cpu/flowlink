@@ -15,6 +15,10 @@ function browserFrameScheduler(): FrameScheduler {
   };
 }
 
+export function waitForSeekedDecodedFrame(seeked: Promise<void>, decodedFrameReady: Promise<void>) {
+  return Promise.all([seeked, decodedFrameReady]).then(() => undefined);
+}
+
 export function waitForDecodedVideoFrame(
   video: VideoFrameReadyTarget,
   timeoutMs: number,
