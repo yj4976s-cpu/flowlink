@@ -23,6 +23,7 @@ import type { CitizenReport } from "@/types/discoveryNetwork";
 import { WebcamDetectionPanel } from "./WebcamDetectionPanel";
 import type { WebcamPanelStatus, WebcamReportCandidate } from "./WebcamDetectionPanel";
 import { getContainedMediaRect, getContainedMediaRectStyle, getOverlayPercentageStyle, normalizeBBoxForDisplayMedia } from "./detectionOverlayGeometry";
+import { loadDetectionMediaFile, prepareDetectionReportPreview } from "./detectionReportMedia";
 import { waitForDecodedVideoFrame, waitForSeekedDecodedFrame } from "./videoFrameReadiness";
 import styles from "./DetectionWorkbench.module.css";
 
@@ -769,6 +770,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
   const [webcamFrame, setWebcamFrame] = useState<WebcamDetectionFrame | null>(null);
   const [webcamStatus, setWebcamStatus] = useState<WebcamPanelStatus>("idle");
   const [webcamReportCandidate, setWebcamReportCandidate] = useState<FoundReportCandidate | null>(null);
+  const [reportPreparing, setReportPreparing] = useState(false);
   const [webcamReportSubmitting, setWebcamReportSubmitting] = useState(false);
   const [webcamReportError, setWebcamReportError] = useState("");
   const [webcamReportSuccess, setWebcamReportSuccess] = useState<CitizenReport | null>(null);
@@ -784,6 +786,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
   const previewUrlRef = useRef("");
   const reportPreviewUrlRef = useRef("");
   const webcamReportSubmittingRef = useRef(false);
+  const reportPreparingRef = useRef(false);
   const webcamFoundSignatureRef = useRef("");
 
   useEffect(() => {
@@ -1149,27 +1152,47 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
 
   const openDetectionReport = async (object: DetectionObject) => {
     const classCode = getReportableClassCode(object.class_code);
-    if (!classCode || !currentEvent) return;
-    const sourceType = tab;
-    const sourceFile = file;
+    if (!classCode || !currentEvent || reportPreparingRef.current) return;
     const sourceEvent = currentEvent;
+    const sourceType = sourceEvent.source_type === "VIDEO" ? "video" : "image";
+    const localFile = file;
+    const isHistorySource = !localFile;
     let image: File | null = null;
     let imageError = "";
 
-    if (sourceType === "image" && sourceFile) {
-      try {
-        if (!sourceEvent.media_width || !sourceEvent.media_height) throw new Error("탐지 이미지 크기가 없습니다.");
-        image = await prepareCitizenReportImage(
-          sourceFile,
-          object.bbox,
-          sourceEvent.media_width,
-          sourceEvent.media_height,
-        );
-      } catch {
-        imageError = "이미지를 발견 제보용으로 준비하지 못했습니다. 이미지 없이 제보하거나 더 작은 이미지를 선택해주세요.";
+    reportPreparingRef.current = true;
+    setReportPreparing(true);
+    try {
+      image = await prepareDetectionReportPreview({
+        sourceType,
+        localFile,
+        originalMediaUrl: sourceEvent.original_media_url,
+        loadHistoryFile: () => loadDetectionMediaFile({
+          mediaUrl: sourceEvent.original_media_url,
+          eventId: sourceEvent.id,
+          sourceType,
+          resolveMediaUrl: resolveDetectionMediaUrl,
+        }),
+        prepareImage: async (sourceFile) => {
+          if (!sourceEvent.media_width || !sourceEvent.media_height) throw new Error("탐지 이미지 크기가 없습니다.");
+          return prepareCitizenReportImage(sourceFile, object.bbox, sourceEvent.media_width, sourceEvent.media_height);
+        },
+        captureVideo: (sourceFile) => captureVideoReportFrame(sourceFile, object),
+      });
+      if (isHistorySource && !image && sourceEvent.original_media_url) {
+        throw new Error("저장된 원본에서 대표 이미지를 생성하지 못했습니다.");
       }
-    } else if (sourceType === "video" && sourceFile) {
-      image = await captureVideoReportFrame(sourceFile, object);
+    } catch {
+      imageError = isHistorySource
+        ? sourceType === "video"
+          ? "저장된 원본 영상에서 대표 이미지를 준비하지 못했습니다. 이미지 없이 제보를 계속할 수 있습니다."
+          : "저장된 원본 이미지에서 제보용 이미지를 준비하지 못했습니다. 이미지 없이 제보를 계속할 수 있습니다."
+        : sourceType === "image"
+          ? "이미지를 발견 제보용으로 준비하지 못했습니다. 이미지 없이 제보하거나 더 작은 이미지를 선택해주세요."
+          : "영상에서 대표 이미지를 준비하지 못했습니다. 이미지 없이 제보를 계속할 수 있습니다.";
+    } finally {
+      reportPreparingRef.current = false;
+      setReportPreparing(false);
     }
 
     const reportPreviewUrl = image ? URL.createObjectURL(image) : "";
@@ -1409,8 +1432,8 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
                       <span>{object.class_name_ko || reportableClassNames[object.class_code]}</span>
                       <small>인식 신뢰도 {formatConfidence(object.confidence)}</small>
                       <div>
-                        <button className="button button-secondary" type="button" onClick={() => void openDetectionReport(object)}>
-                          발견한 물건을 제보할게요
+                        <button className="button button-secondary" type="button" onClick={() => void openDetectionReport(object)} disabled={reportPreparing}>
+                          {reportPreparing ? "대표 이미지 준비 중..." : "발견한 물건을 제보할게요"}
                         </button>
                         <Link className="button button-primary" href={`/lost-reports/new?class_code=${encodeURIComponent(object.class_code)}&source=detection`}>
                           내가 잃어버린 물건이에요
