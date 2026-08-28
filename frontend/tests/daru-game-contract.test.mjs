@@ -195,7 +195,8 @@ test("play history shares difficulty and resets its page", () => {
 });
 
 test("history is fixed to five records and corrects an invalid last page", () => {
-  assert.match(apiSource, /history\?difficulty=\$\{difficulty\}&page=\$\{page\}&page_size=5/);
+  assert.match(apiSource, /getDaruGameHistory\([^)]*pageSize = 5\)/);
+  assert.match(apiSource, /history\?difficulty=\$\{difficulty\}&page=\$\{page\}&page_size=\$\{pageSize\}/);
   assert.match(leaderboardSource, /if \(next\.page !== historyPage\) setHistoryPage\(next\.page\)/);
 });
 
@@ -205,37 +206,155 @@ test("history exposes BEST ranking and partial labels with distinct icons", () =
   assert.match(leaderboardSource, /<ClockIcon \/> 미완주/);
 });
 
-test("history deletion provides state-specific and delete-all dialogs", () => {
-  assert.match(leaderboardSource, /최고 기록을 삭제할까요/);
-  assert.match(leaderboardSource, /현재 랭킹 기록을 삭제할까요/);
-  assert.match(leaderboardSource, /현재 BEST이자 랭킹 기록입니다/);
-  assert.match(leaderboardSource, /모든 플레이 기록을 삭제할까요/);
+test("history management provides selection mode and accessible individual deletion", () => {
+  assert.match(leaderboardSource, /setManagementMode\(true\)/);
+  assert.match(leaderboardSource, /type="checkbox"/);
+  assert.match(leaderboardSource, /개 선택/);
+  assert.match(leaderboardSource, /선택한 플레이 기록을 휴지통으로 이동/);
+  assert.match(leaderboardSource, /전체 선택/);
+  assert.match(leaderboardSource, /!managementMode && <button type="button" aria-label="플레이 기록을 휴지통으로 이동"/);
+});
+
+test("ordinary individual deletion skips the dialog while BEST and multiple deletion keep confirmation", () => {
+  assert.match(leaderboardSource, /item\.is_best \|\| item\.is_ranking_record \? openDeleteDialog\(item\) : void deleteSingleRecord\(item\)/);
+  assert.match(leaderboardSource, /최고 기록을 휴지통으로 이동할까요/);
+  assert.match(leaderboardSource, /현재 랭킹 기록을 휴지통으로 이동할까요/);
+  assert.match(leaderboardSource, /선택한 플레이 기록/);
+  assert.match(leaderboardSource, /selectedCount > 0 \? `\$\{selectedCount\}개 휴지통으로 이동` : "휴지통으로 이동"/);
+  assert.match(leaderboardSource, /현재 ‘.*’ 기록을 휴지통으로 이동할까요/);
+  assert.match(leaderboardSource, /모든 난이도 플레이 기록을 휴지통으로 이동할까요/);
+});
+
+test("ordinary deletion uses a real restore API and one six-second undo toast", () => {
+  assert.match(apiSource, /restoreDaruGameHistoryRecord/);
+  assert.match(apiSource, /history\/\$\{recordId\}\/restore/);
+  assert.match(leaderboardSource, /window\.setTimeout[\s\S]*6000/);
+  assert.match(leaderboardSource, /휴지통으로 이동했어요/);
+  assert.match(leaderboardSource, /되돌리기/);
+  assert.match(leaderboardSource, /await restoreDaruGameHistoryRecord\(item\.id\)/);
+  assert.match(leaderboardSource, /if \(undoTimerRef\.current !== null\) window\.clearTimeout/);
 });
 
 test("history delete dialogs reset stale errors and stay open while deleting", () => {
-  assert.match(leaderboardSource, /const openDeleteDialog = \(target: DaruHistoryItem \| "all"\) => \{ setDeleteError\(false\); setDeleteTarget\(target\); \}/);
-  assert.match(leaderboardSource, /const closeDeleteDialog = \(\) => \{ if \(deleting\) return; setDeleteError\(false\); setDeleteTarget\(null\); \}/);
+  assert.match(leaderboardSource, /const openDeleteDialog = \(target: DeleteTarget\)/);
+  assert.match(leaderboardSource, /if \(deleting\) return/);
   assert.match(leaderboardSource, /event\.target === event\.currentTarget && !deleting/);
   assert.match(leaderboardSource, /event\.key === "Escape" && !deleting/);
   assert.match(leaderboardSource, /autoFocus onClick=\{closeDeleteDialog\} disabled=\{deleting\}/);
-  assert.match(leaderboardSource, /setDeleteError\(false\); setDeleteTarget\(null\);\s*setHistoryLoading\(true\); setRetryKey/);
+  assert.match(leaderboardSource, /role="alertdialog"/);
+  assert.match(leaderboardSource, /event\.key !== "Tab"/);
   assert.match(leaderboardSource, /catch \{ setDeleteError\(true\); \} finally \{ setDeleting\(false\); \}/);
 });
 
 test("history remains a full-width sibling after the ranking grid", () => {
-  assert.match(leaderboardSource, /<\/div>\s*\{!preview && <section className=\{styles\.playHistory\}/);
+  assert.match(leaderboardSource, /<\/div>\s*\{!preview && <section className=\{`\$\{styles\.playHistory\} \$\{styles\.historySummary\}`\}/);
   assert.match(leaderboardSource, /내 플레이 기록/);
 });
 
 test("history has an accessible delete control and empty state", () => {
-  assert.match(leaderboardSource, /aria-label="플레이 기록 삭제"/);
+  assert.match(leaderboardSource, /aria-label="플레이 기록을 휴지통으로 이동"/);
+  assert.match(leaderboardSource, /기록 선택/);
   assert.match(leaderboardSource, /아직 플레이 기록이 없어요/);
+});
+
+test("main history expands from a three-record summary into an inline manager", () => {
+  assert.match(leaderboardSource, /getDaruGameHistory\(DIFFICULTY_CONFIG\[difficulty\]\.key, 1, controller\.signal, 3\)/);
+  assert.match(leaderboardSource, /recentHistory\.items\.slice\(0, 3\)/);
+  assert.match(leaderboardSource, /전체 기록 \{recentHistory\?\.total \?\? 0\}개/);
+  assert.match(leaderboardSource, /historyExpanded \? "간단히 보기"/);
+  assert.match(leaderboardSource, /id="history-manager" className=\{styles\.historyManager\}/);
+  assert.match(leaderboardSource, /role="tablist"[\s\S]*전체 기록[\s\S]*휴지통/);
+  assert.match(leaderboardSource, /className=\{styles\.historyManagerPagination\} aria-label="전체 기록 페이지"/);
+  assert.doesNotMatch(leaderboardSource, /historyDrawer|aria-haspopup="dialog"|role="dialog"/);
+  assert.doesNotMatch(leaderboardSource, /historySummaryList[\s\S]{0,1200}deleteSingleRecord/);
+});
+
+test("history manager stays inline, responsive, and out of overlay document behavior", () => {
+  const css = readFileSync(new URL("../src/components/daru-game/DaruGame.module.css", import.meta.url), "utf8");
+  assert.match(leaderboardSource, /data-expanded=\{historyExpanded \|\| undefined\}/);
+  assert.match(leaderboardSource, /aria-controls="history-manager"/);
+  assert.match(leaderboardSource, /manageButtonRef\.current\?\.focus\(\)/);
+  assert.match(css, /\.historyManager \{ min-width: 0;[^}]*animation: historyManagerIn/);
+  assert.match(css, /\.historyManagerListViewport \{ min-height: 360px; \}/);
+  assert.match(css, /@media \(max-width: 520px\)[^{]*\{ \.historyManagerListViewport \{ min-height: 320px/);
+  assert.match(css, /prefers-reduced-motion[\s\S]*historyManager/);
+  assert.doesNotMatch(leaderboardSource, /document\.body\.style\.overflow|aria-modal="true" aria-labelledby="history-drawer-title"/);
+  assert.doesNotMatch(css, /historyDrawer|position: fixed; z-index: 110/);
+});
+
+test("trash view supports count, pagination, restore, permanent delete, and scoped emptying", () => {
+  assert.match(apiSource, /getDaruGameTrash/);
+  assert.match(apiSource, /history\/trash\?difficulty=\$\{difficulty\}&page=\$\{page\}&page_size=5/);
+  assert.match(apiSource, /permanentlyDeleteDaruGameHistoryRecord/);
+  assert.match(apiSource, /emptyDaruGameTrash/);
+  assert.match(leaderboardSource, /휴지통에 보관된 기록은 복원하거나 영구 삭제할 수 있어요/);
+  assert.match(leaderboardSource, /<TrashIcon \/> 휴지통 비우기/);
+  assert.doesNotMatch(leaderboardSource, /DIFFICULTY_CONFIG\[difficulty\]\.label\} 휴지통 비우기/);
+  assert.match(leaderboardSource, /휴지통이 비어 있어요/);
+  assert.match(leaderboardSource, /<RestoreIcon \/> 복원/);
+  assert.match(leaderboardSource, /<TrashIcon \/> 영구 삭제/);
+  assert.match(leaderboardSource, /aria-label="휴지통 페이지"/);
+});
+
+test("ranking records are excluded from selection and retain a dedicated dialog", () => {
+  assert.match(leaderboardSource, /managementMode && !item\.is_ranking_record/);
+  assert.match(leaderboardSource, /현재 랭킹 기록을 휴지통으로 이동할까요/);
+  assert.match(leaderboardSource, /이전 기록이 자동으로 등록되지는 않아요/);
+  assert.match(leaderboardSource, /랭킹에서 제외하고 이동/);
+});
+
+test("history selection deletion uses one server request and supports whole-difficulty scope", () => {
+  assert.match(apiSource, /deleteDaruGameHistorySelection/);
+  assert.match(apiSource, /\/api\/daru-game\/history\/delete/);
+  assert.match(leaderboardSource, /exclude_record_ids/);
+  assert.match(leaderboardSource, /setRetryKey/);
 });
 
 test("history styles derive accents from the shared theme variables", () => {
   const css = readFileSync(new URL("../src/components/daru-game/DaruGame.module.css", import.meta.url), "utf8");
   assert.match(css, /\.playHistory[\s\S]*var\(--rank-accent\)/);
   assert.match(css, /html\[data-theme="dawn"\][\s\S]*html\[data-theme="day"\][\s\S]*html\[data-theme="night"\]/);
+  assert.match(css, /\.historyUndoToast[\s\S]*html\[data-theme="dawn"\][\s\S]*html\[data-theme="night"\]/);
+  assert.match(css, /prefers-reduced-motion/);
+});
+
+test("trash actions share one rounded icon and horizontal button alignment", () => {
+  const css = readFileSync(new URL("../src/components/daru-game/DaruGame.module.css", import.meta.url), "utf8");
+  assert.match(leaderboardSource, /function TrashIcon\(\)[\s\S]*viewBox="0 0 24 24"[\s\S]*M3 6h18/);
+  assert.match(leaderboardSource, /aria-label="선택한 플레이 기록을 휴지통으로 이동"/);
+  assert.match(leaderboardSource, /aria-label="기록 관리 옵션"/);
+  assert.match(leaderboardSource, /현재 난이도 기록 전체 정리/);
+  assert.match(leaderboardSource, /모든 난이도 기록 정리/);
+  assert.match(css, /\.playHistory \.trashIcon \{ width: 18px; height: 18px; stroke-width: 2;/);
+  assert.match(css, /\.historyManagement button \{ display: inline-flex; align-items: center; justify-content: center; gap: 7px;/);
+  assert.match(css, /\.historyManager \.historyManagement \{[^}]*grid-template-columns: auto minmax\(60px, 1fr\) auto/);
+  assert.match(css, /\.historyManagement \.selectedDelete:disabled \{[^}]*opacity: \.58/);
+  assert.match(leaderboardSource, /historyUndoToast[\s\S]*<TrashIcon \/>[\s\S]*되돌리기/);
+  assert.doesNotMatch(leaderboardSource, /historyUndoToast[^\n]*<button[^>]*><RestoreIcon/);
+});
+
+test("history management is conditional and rare bulk actions stay in a confirmed menu", () => {
+  assert.match(leaderboardSource, /managementMode && \(history\?\.total \?\? 0\) > 0 && <div className=\{styles\.historyManagement\}/);
+  assert.match(leaderboardSource, /aria-haspopup="menu" aria-expanded=\{bulkMenuOpen\}/);
+  assert.match(leaderboardSource, /openDeleteDialog\("difficulty"\)/);
+  assert.match(leaderboardSource, /openDeleteDialog\("all"\)/);
+  assert.match(leaderboardSource, /쉬움 · 보통 · 어려움의 기록이 모두 휴지통으로 이동합니다/);
+  assert.match(leaderboardSource, /deleteTarget === "all" \? "모든 기록 이동"/);
+  assert.match(leaderboardSource, /setManagementMode\(false\); resetSelection\(\)/);
+});
+
+test("history typography keeps readable sizes and stable responsive rows", () => {
+  const css = readFileSync(new URL("../src/components/daru-game/DaruGame.module.css", import.meta.url), "utf8");
+  assert.match(css, /--record-section-title-size: 17px/);
+  assert.match(css, /--record-primary-size: 13px/);
+  assert.match(css, /--record-score-size: 22px/);
+  assert.match(css, /--record-meta-size: 13px/);
+  assert.match(css, /--record-badge-size: 12px/);
+  assert.match(css, /--record-action-size: 13px/);
+  assert.match(css, /\.playHistory li \{[^}]*min-height: 72px/);
+  assert.match(css, /\.playHistory li > span \{[^}]*line-height: 1\.45/);
+  assert.match(css, /\.historyDestructive button \{[^}]*font-size: 12px; font-weight: 600/);
+  assert.match(css, /@media \(max-width: 720px\)[^{]*\{[^}]*\.playHistory li \{ grid-template-columns: 1fr auto/);
 });
 
 test("only the explicit outdated deck 409 is treated as a legacy run", () => {

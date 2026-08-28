@@ -456,29 +456,152 @@ def recompute_best(db: Session, stat: DaruGameStat) -> None:
 
 
 def soft_delete_play_record(db: Session, *, user_id: int, record_id: int) -> DaruGamePlayRecord | None:
-    record = db.scalar(select(DaruGamePlayRecord).where(DaruGamePlayRecord.id == record_id, DaruGamePlayRecord.user_id == user_id, DaruGamePlayRecord.deleted_at.is_(None)).with_for_update())
+    records = soft_delete_play_records(db, user_id=user_id, record_ids=[record_id], protect_ranking=False)
+    return records[0] if records else None
+
+
+def restore_play_record(db: Session, *, user_id: int, record_id: int) -> DaruGamePlayRecord | None:
+    record = db.scalar(
+        select(DaruGamePlayRecord)
+        .where(
+            DaruGamePlayRecord.id == record_id,
+            DaruGamePlayRecord.user_id == user_id,
+            DaruGamePlayRecord.deleted_at.is_not(None),
+        )
+        .with_for_update()
+    )
     if record is None:
         return None
-    stat = db.scalar(select(DaruGameStat).where(DaruGameStat.user_id == user_id, DaruGameStat.difficulty == record.difficulty).with_for_update())
-    record.deleted_at = utc_now()
+    stat = db.scalar(
+        select(DaruGameStat)
+        .where(DaruGameStat.user_id == user_id, DaruGameStat.difficulty == record.difficulty)
+        .with_for_update()
+    )
+    record.deleted_at = None
     db.flush()
     if stat is not None:
-        if stat.ranking_record_id == record.id:
-            stat.ranking_record_id = None
         recompute_best(db, stat)
     db.commit()
     return record
 
 
+def permanently_delete_play_record(db: Session, *, user_id: int, record_id: int) -> DaruGamePlayRecord | None:
+    record = db.scalar(
+        select(DaruGamePlayRecord)
+        .where(
+            DaruGamePlayRecord.id == record_id,
+            DaruGamePlayRecord.user_id == user_id,
+            DaruGamePlayRecord.deleted_at.is_not(None),
+        )
+        .with_for_update()
+    )
+    if record is None:
+        return None
+    stat = db.scalar(
+        select(DaruGameStat)
+        .where(DaruGameStat.user_id == user_id, DaruGameStat.difficulty == record.difficulty)
+        .with_for_update()
+    )
+    if stat is not None and stat.ranking_record_id == record.id:
+        stat.ranking_record_id = None
+    db.delete(record)
+    db.flush()
+    if stat is not None:
+        recompute_best(db, stat)
+    db.commit()
+    return record
+
+
+def permanently_delete_trash(db: Session, *, user_id: int, difficulty: str) -> int:
+    records = db.scalars(
+        select(DaruGamePlayRecord)
+        .where(
+            DaruGamePlayRecord.user_id == user_id,
+            DaruGamePlayRecord.difficulty == difficulty,
+            DaruGamePlayRecord.deleted_at.is_not(None),
+        )
+        .with_for_update()
+    ).all()
+    if not records:
+        return 0
+    deleted_ids = {record.id for record in records}
+    stat = db.scalar(
+        select(DaruGameStat)
+        .where(DaruGameStat.user_id == user_id, DaruGameStat.difficulty == difficulty)
+        .with_for_update()
+    )
+    if stat is not None and stat.ranking_record_id in deleted_ids:
+        stat.ranking_record_id = None
+    for record in records:
+        db.delete(record)
+    db.flush()
+    if stat is not None:
+        recompute_best(db, stat)
+    db.commit()
+    return len(records)
+
+
+def soft_delete_play_records(
+    db: Session,
+    *,
+    user_id: int,
+    record_ids: list[int] | None = None,
+    difficulty: str | None = None,
+    exclude_record_ids: list[int] | None = None,
+    protect_ranking: bool = True,
+) -> list[DaruGamePlayRecord] | None:
+    selected_ids = set(record_ids or [])
+    excluded_ids = set(exclude_record_ids or [])
+    ranking_ids = set(db.scalars(select(DaruGameStat.ranking_record_id).where(DaruGameStat.user_id == user_id, DaruGameStat.ranking_record_id.is_not(None))).all())
+    query = select(DaruGamePlayRecord).where(
+        DaruGamePlayRecord.user_id == user_id,
+        DaruGamePlayRecord.deleted_at.is_(None),
+    )
+    if difficulty is not None:
+        query = query.where(DaruGamePlayRecord.difficulty == difficulty)
+        if protect_ranking and ranking_ids:
+            query = query.where(DaruGamePlayRecord.id.not_in(ranking_ids))
+        if excluded_ids:
+            query = query.where(DaruGamePlayRecord.id.not_in(excluded_ids))
+    else:
+        if protect_ranking and selected_ids & ranking_ids:
+            db.rollback()
+            return None
+        query = query.where(DaruGamePlayRecord.id.in_(selected_ids))
+    records = db.scalars(query.with_for_update()).all()
+    if difficulty is None and {record.id for record in records} != selected_ids:
+        db.rollback()
+        return None
+
+    now = utc_now()
+    affected_difficulties = {record.difficulty for record in records}
+    for record in records:
+        record.deleted_at = now
+    db.flush()
+    if affected_difficulties:
+        stats = db.scalars(
+            select(DaruGameStat)
+            .where(DaruGameStat.user_id == user_id, DaruGameStat.difficulty.in_(affected_difficulties))
+            .with_for_update()
+        ).all()
+        for stat in stats:
+            recompute_best(db, stat)
+    db.commit()
+    return records
+
+
 def soft_delete_all_play_records(db: Session, *, user_id: int) -> int:
-    records = db.scalars(select(DaruGamePlayRecord).where(DaruGamePlayRecord.user_id == user_id, DaruGamePlayRecord.deleted_at.is_(None)).with_for_update()).all()
+    ranking_ids = set(db.scalars(select(DaruGameStat.ranking_record_id).where(DaruGameStat.user_id == user_id, DaruGameStat.ranking_record_id.is_not(None))).all())
+    query = select(DaruGamePlayRecord).where(DaruGamePlayRecord.user_id == user_id, DaruGamePlayRecord.deleted_at.is_(None))
+    if ranking_ids:
+        query = query.where(DaruGamePlayRecord.id.not_in(ranking_ids))
+    records = db.scalars(query.with_for_update()).all()
     now = utc_now()
     for record in records:
         record.deleted_at = now
     db.flush()
     stats = db.scalars(select(DaruGameStat).where(DaruGameStat.user_id == user_id).with_for_update()).all()
     for stat in stats:
-        stat.ranking_record_id = None
         recompute_best(db, stat)
     db.commit()
     return len(records)

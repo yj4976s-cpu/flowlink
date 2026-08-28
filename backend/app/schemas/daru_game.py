@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 Difficulty = Literal["EASY", "NORMAL", "HARD"]
@@ -161,6 +161,7 @@ class DaruGameHistoryItem(BaseModel):
     completed: bool
     within_time_limit: bool
     achieved_at: datetime
+    deleted_at: datetime | None = None
     is_best: bool
     is_ranking_record: bool
 
@@ -172,3 +173,25 @@ class DaruGameHistoryResponse(BaseModel):
     page: int
     page_size: int
     total_pages: int
+
+
+class DaruGameHistoryBatchDeleteInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    record_ids: list[int] = Field(default_factory=list, max_length=500)
+    difficulty: Difficulty | None = None
+    exclude_record_ids: list[int] = Field(default_factory=list, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_scope(self):
+        if self.difficulty is None and not self.record_ids:
+            raise ValueError("Select at least one play record")
+        if self.difficulty is not None and self.record_ids:
+            raise ValueError("Choose record_ids or a difficulty scope, not both")
+        if self.difficulty is None and self.exclude_record_ids:
+            raise ValueError("exclude_record_ids requires a difficulty scope")
+        return self
+
+
+class DaruGameHistoryBatchDeleteResponse(BaseModel):
+    deleted_count: int

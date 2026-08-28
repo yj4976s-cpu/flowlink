@@ -11,8 +11,8 @@ from app.core.security import create_access_token
 from app.api.auth import set_login_cookie
 from app.db.session import get_db
 from app.models import DaruGamePlayRecord, DaruGameStat, User
-from app.schemas.daru_game import DaruGameActionInput, DaruGameFlipInput, DaruGameFlipResponse, DaruGameHintResponse, DaruGameHistoryItem, DaruGameHistoryResponse, DaruGameMetrics, DaruGamePreviewResponse, DaruGameRecord, DaruGameResultInput, DaruGameResultResponse, DaruGameRunInput, DaruGameRunResponse, DaruGameRunStateResponse, DaruGameStartResponse, DaruLeaderboardEntry, DaruLeaderboardResponse, Difficulty
-from app.services.daru_game import GameRunConflictError, GameRunExpiredError, GameRunNotFoundError, OutdatedGameRunError, create_game_run, flip_card, game_run_preview, game_run_state, leaderboard_rank, perform_game_action, rank_for, ranking_query, soft_delete_all_play_records, soft_delete_play_record, start_gameplay, submit_result, use_game_hint
+from app.schemas.daru_game import DaruGameActionInput, DaruGameFlipInput, DaruGameFlipResponse, DaruGameHintResponse, DaruGameHistoryBatchDeleteInput, DaruGameHistoryBatchDeleteResponse, DaruGameHistoryItem, DaruGameHistoryResponse, DaruGameMetrics, DaruGamePreviewResponse, DaruGameRecord, DaruGameResultInput, DaruGameResultResponse, DaruGameRunInput, DaruGameRunResponse, DaruGameRunStateResponse, DaruGameStartResponse, DaruLeaderboardEntry, DaruLeaderboardResponse, Difficulty
+from app.services.daru_game import GameRunConflictError, GameRunExpiredError, GameRunNotFoundError, OutdatedGameRunError, create_game_run, flip_card, game_run_preview, game_run_state, leaderboard_rank, perform_game_action, permanently_delete_play_record, permanently_delete_trash, rank_for, ranking_query, restore_play_record, soft_delete_all_play_records, soft_delete_play_record, soft_delete_play_records, start_gameplay, submit_result, use_game_hint
 
 router = APIRouter(prefix="/api/daru-game", tags=["daru-game"])
 
@@ -113,8 +113,25 @@ def history(current_user: Annotated[User, Depends(require_user)], db: Annotated[
     current_page = min(page, total_pages)
     records = db.scalars(select(DaruGamePlayRecord).where(*active).order_by(DaruGamePlayRecord.achieved_at.desc(), DaruGamePlayRecord.id.desc()).offset((current_page - 1) * page_size).limit(page_size)).all()
     stat = db.scalar(select(DaruGameStat).where(DaruGameStat.user_id == current_user.id, DaruGameStat.difficulty == difficulty))
-    items = [DaruGameHistoryItem(id=item.id, difficulty=item.difficulty, detection_power=float(item.detection_power), attempts=item.attempts, elapsed_seconds=item.elapsed_seconds, max_combo=item.max_combo, hints_used=item.hints_used, earned_daru_points=item.earned_daru_points, completed=item.completed, within_time_limit=item.within_time_limit, achieved_at=item.achieved_at, is_best=bool(stat and item.completed and stat.best_achieved_at == item.achieved_at and stat.best_detection_power == item.detection_power and stat.best_attempts == item.attempts and stat.best_elapsed_seconds == item.elapsed_seconds), is_ranking_record=bool(stat and stat.ranking_record_id == item.id)) for item in records]
+    items = [DaruGameHistoryItem(id=item.id, difficulty=item.difficulty, detection_power=float(item.detection_power), attempts=item.attempts, elapsed_seconds=item.elapsed_seconds, max_combo=item.max_combo, hints_used=item.hints_used, earned_daru_points=item.earned_daru_points, completed=item.completed, within_time_limit=item.within_time_limit, achieved_at=item.achieved_at, deleted_at=None, is_best=bool(stat and item.completed and stat.best_achieved_at == item.achieved_at and stat.best_detection_power == item.detection_power and stat.best_attempts == item.attempts and stat.best_elapsed_seconds == item.elapsed_seconds), is_ranking_record=bool(stat and stat.ranking_record_id == item.id)) for item in records]
     return DaruGameHistoryResponse(difficulty=difficulty, items=items, total=total, page=current_page, page_size=page_size, total_pages=total_pages)
+
+
+@router.get("/history/trash", response_model=DaruGameHistoryResponse)
+def trash_history(current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)], difficulty: Annotated[Difficulty, Query()] = "EASY", page: Annotated[int, Query(ge=1)] = 1, page_size: Annotated[int, Query(ge=1, le=20)] = 5) -> DaruGameHistoryResponse:
+    deleted = (DaruGamePlayRecord.user_id == current_user.id, DaruGamePlayRecord.difficulty == difficulty, DaruGamePlayRecord.deleted_at.is_not(None))
+    total = db.scalar(select(func.count()).select_from(DaruGamePlayRecord).where(*deleted)) or 0
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    current_page = min(page, total_pages)
+    records = db.scalars(select(DaruGamePlayRecord).where(*deleted).order_by(DaruGamePlayRecord.deleted_at.desc(), DaruGamePlayRecord.id.desc()).offset((current_page - 1) * page_size).limit(page_size)).all()
+    stat = db.scalar(select(DaruGameStat).where(DaruGameStat.user_id == current_user.id, DaruGameStat.difficulty == difficulty))
+    items = [DaruGameHistoryItem(id=item.id, difficulty=item.difficulty, detection_power=float(item.detection_power), attempts=item.attempts, elapsed_seconds=item.elapsed_seconds, max_combo=item.max_combo, hints_used=item.hints_used, earned_daru_points=item.earned_daru_points, completed=item.completed, within_time_limit=item.within_time_limit, achieved_at=item.achieved_at, deleted_at=item.deleted_at, is_best=False, is_ranking_record=bool(stat and stat.ranking_record_id == item.id)) for item in records]
+    return DaruGameHistoryResponse(difficulty=difficulty, items=items, total=total, page=current_page, page_size=page_size, total_pages=total_pages)
+
+
+@router.delete("/history/trash", response_model=DaruGameHistoryBatchDeleteResponse)
+def empty_trash(difficulty: Annotated[Difficulty, Query()], current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> DaruGameHistoryBatchDeleteResponse:
+    return DaruGameHistoryBatchDeleteResponse(deleted_count=permanently_delete_trash(db, user_id=current_user.id, difficulty=difficulty))
 
 
 @router.delete("/history/{record_id}", status_code=204)
@@ -122,6 +139,38 @@ def delete_history_record(record_id: int, current_user: Annotated[User, Depends(
     if soft_delete_play_record(db, user_id=current_user.id, record_id=record_id) is None:
         raise HTTPException(status_code=404, detail="Play record not found")
     return Response(status_code=204)
+
+
+@router.post("/history/{record_id}/restore", status_code=204)
+def restore_history_record(record_id: int, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> Response:
+    if restore_play_record(db, user_id=current_user.id, record_id=record_id) is None:
+        raise HTTPException(status_code=404, detail="Deleted play record not found")
+    return Response(status_code=204)
+
+
+@router.delete("/history/{record_id}/permanent", status_code=204)
+def permanently_delete_history_record(record_id: int, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> Response:
+    if permanently_delete_play_record(db, user_id=current_user.id, record_id=record_id) is None:
+        raise HTTPException(status_code=404, detail="Deleted play record not found")
+    return Response(status_code=204)
+
+
+@router.post("/history/delete", response_model=DaruGameHistoryBatchDeleteResponse)
+def delete_selected_history(
+    payload: DaruGameHistoryBatchDeleteInput,
+    current_user: Annotated[User, Depends(require_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> DaruGameHistoryBatchDeleteResponse:
+    records = soft_delete_play_records(
+        db,
+        user_id=current_user.id,
+        record_ids=payload.record_ids,
+        difficulty=payload.difficulty,
+        exclude_record_ids=payload.exclude_record_ids,
+    )
+    if records is None:
+        raise HTTPException(status_code=404, detail="One or more play records were not found")
+    return DaruGameHistoryBatchDeleteResponse(deleted_count=len(records))
 
 
 @router.delete("/history", status_code=204)
