@@ -417,3 +417,64 @@ class AdminOperationsBriefingResponse(AdminOperationsBriefingStatus):
     metrics: AdminOperationsBriefingMetrics
     priority_task: AdminOperationsBriefingTask | None = None
     tasks: list[AdminOperationsBriefingTask]
+
+
+class AdminModelComparisonEvaluation(BaseModel):
+    dataset_name: str
+    dataset_version: str | None = None
+    dataset_hash: str | None = None
+    test_image_count: int | None = Field(default=None, ge=0)
+    image_size: int | None = Field(default=None, ge=1)
+    confidence_threshold: float | None = Field(default=None, ge=0, le=1)
+    iou_threshold: float | None = Field(default=None, ge=0, le=1)
+    batch: int | None = Field(default=None, ge=1)
+    device: str | None = None
+    ultralytics_version: str | None = None
+    notes: str | None = None
+
+
+class AdminModelClassMetric(BaseModel):
+    code: str
+    label: str
+    supported: bool
+    precision: float | None = Field(default=None, ge=0, le=1)
+    recall: float | None = Field(default=None, ge=0, le=1)
+    map50: float | None = Field(default=None, ge=0, le=1)
+    map50_95: float | None = Field(default=None, ge=0, le=1)
+
+
+class AdminModelExampleResult(BaseModel):
+    title: str
+    media_url: str
+    description: str | None = None
+
+
+class AdminModelComparisonModel(BaseModel):
+    id: str
+    display_name: str
+    file_name: str
+    architecture: str | None = None
+    optimizer: str | None = None
+    epochs: int | None = Field(default=None, ge=1)
+    image_size: int | None = Field(default=None, ge=1)
+    batch_size: int | None = Field(default=None, ge=1)
+    classes: list[str]
+    file_size_bytes: int | None = Field(default=None, ge=0)
+    precision: float | None = Field(default=None, ge=0, le=1)
+    recall: float | None = Field(default=None, ge=0, le=1)
+    map50: float | None = Field(default=None, ge=0, le=1)
+    map50_95: float | None = Field(default=None, ge=0, le=1)
+    class_metrics: list[AdminModelClassMetric]
+    average_inference_ms: float | None = Field(default=None, ge=0)
+    fps: float | None = Field(default=None, ge=0)
+    example_results: list[AdminModelExampleResult] = Field(default_factory=list)
+    notes: str | None = None
+
+
+class AdminModelComparisonResponse(BaseModel):
+    schema_version: int
+    generated_at: datetime
+    evaluation: AdminModelComparisonEvaluation
+    current_deployed_model_id: str | None = None
+    current_deployed_model_status: str | None = None
+    models: list[AdminModelComparisonModel]

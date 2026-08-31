@@ -11,6 +11,8 @@ import {
   type AdminOperationsBriefing,
   type AdminOperationsBriefingStatus,
 } from "@/lib/adminAiReportApi";
+import { getAdminModelComparison, type AdminModelComparison } from "@/lib/adminModelComparisonApi";
+import { modelComparisonStatusView } from "@/components/admin/model-comparison/modelComparisonViewState";
 import { adminOperationsBriefingFallbackTasks, geminiBriefingLabel } from "./adminAiReportViewState";
 import styles from "./AdminAiReportClient.module.css";
 
@@ -26,6 +28,9 @@ export function AdminAiReportClient() {
   const [briefingStatus, setBriefingStatus] = useState<AdminOperationsBriefingStatus | null>(null);
   const [briefingLoading, setBriefingLoading] = useState(false);
   const [briefingError, setBriefingError] = useState("");
+  const [modelComparison, setModelComparison] = useState<AdminModelComparison | null>(null);
+  const [modelComparisonLoading, setModelComparisonLoading] = useState(true);
+  const [modelComparisonError, setModelComparisonError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const applyRequest = (signal?: AbortSignal) => getAdminAiReport(signal).then(setReport).catch((reason: unknown) => { if (!isAbortError(reason)) setError("AI 운영 분석 데이터를 불러오지 못했습니다."); }).finally(() => { if (!signal?.aborted) setLoading(false); });
@@ -36,6 +41,21 @@ export function AdminAiReportClient() {
     getAdminOperationsBriefingStatus(controller.signal).then(setBriefingStatus).catch((reason: unknown) => {
       if (!isAbortError(reason)) setBriefingStatus(null);
     });
+    return () => controller.abort();
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    getAdminModelComparison(controller.signal)
+      .then((payload) => {
+        setModelComparison(payload);
+        setModelComparisonError(false);
+      })
+      .catch((reason: unknown) => {
+        if (!isAbortError(reason)) setModelComparisonError(true);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setModelComparisonLoading(false);
+      });
     return () => controller.abort();
   }, []);
   const requestBriefing = () => {
@@ -53,7 +73,7 @@ export function AdminAiReportClient() {
       <small>전체 운영 탐지 데이터 기준</small>
     </header>
     <OperationsBriefing briefing={briefing} status={briefingStatus} loading={briefingLoading} error={briefingError} onGenerate={requestBriefing} />
-    {loading ? <ReportState loading /> : error ? <ReportState error={error} retry={retry} /> : !report || report.summary.total === 0 ? <EmptyReport /> : <Report report={report} />}
+    {loading ? <ReportState loading /> : error ? <ReportState error={error} retry={retry} /> : !report || report.summary.total === 0 ? <EmptyReport /> : <Report report={report} modelComparison={modelComparison} modelComparisonLoading={modelComparisonLoading} modelComparisonError={modelComparisonError} />}
   </main>;
 }
 
@@ -93,7 +113,7 @@ function OperationsBriefing({ briefing, status, loading, error, onGenerate }: { 
   </section>;
 }
 
-function Report({ report }: { report: AdminAiReport }) {
+function Report({ report, modelComparison, modelComparisonLoading, modelComparisonError }: { report: AdminAiReport; modelComparison: AdminModelComparison | null; modelComparisonLoading: boolean; modelComparisonError: boolean }) {
   const maxClassCount = Math.max(1, ...report.class_metrics.map((item) => item.count));
   const reviewedRate = report.summary.total ? Math.round(report.summary.reviewed / report.summary.total * 100) : 0;
   const correctionRate = report.summary.reviewed ? Math.round(report.summary.corrected / report.summary.reviewed * 100) : 0;
@@ -140,8 +160,20 @@ function Report({ report }: { report: AdminAiReport }) {
       <CorrectionPatterns data={report.correction_patterns} />
     </section>
 
-    <section className={`${styles.panel} ${styles.modelEmpty}`}><Icon name="layers" size={30} /><div><h2>모델 평가 데이터는 아직 별도로 연결되지 않았어요.</h2><p>현재 저장소에는 ground truth 기반 Precision, Recall, F1, mAP 또는 혼동행렬 결과가 없습니다. 실제 평가 결과가 연결되면 운영 데이터와 구분해 보여줄 수 있습니다.</p></div></section>
+    <ModelComparisonStatus comparison={modelComparison} loading={modelComparisonLoading} error={modelComparisonError} />
   </>;
+}
+
+function ModelComparisonStatus({ comparison, loading, error }: { comparison: AdminModelComparison | null; loading: boolean; error: boolean }) {
+  const status = modelComparisonStatusView(comparison, { loading, error });
+  return <section className={`${styles.panel} ${styles.modelEmpty}`} data-tone={status.tone} aria-label="모델 비교 상태">
+    <Icon name="layers" size={30} />
+    <div>
+      <h2>{status.title}</h2>
+      <p>{status.description}</p>
+      <Link href="/admin/model-comparison">{status.actionLabel}<Icon name="arrow" size={13} /></Link>
+    </div>
+  </section>;
 }
 
 function Metric({ label, value, note, tone }: { label: string; value: string; note: string; tone: string }) {

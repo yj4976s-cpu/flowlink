@@ -26,7 +26,7 @@ from app.repositories.user_flow import (
     list_ownership_claims,
     waste_collection_completed_ids,
 )
-from app.schemas.admin import AdminAiReportResponse, AdminCameraResponse, AdminCommunityPostListResponse, AdminDashboardResponse, AdminDetectedObjectCollectionResponse, AdminDetectedObjectFoundItemResponse, AdminDetectionEventResponse, AdminFoundItemListResponse, AdminMobileWasteRegistrationResponse, AdminOperationsBriefingResponse, AdminOperationsBriefingStatus, AdminOwnershipClaimResponse, AdminUserListResponse, DetectedObjectUpdateRequest
+from app.schemas.admin import AdminAiReportResponse, AdminCameraResponse, AdminCommunityPostListResponse, AdminDashboardResponse, AdminDetectedObjectCollectionResponse, AdminDetectedObjectFoundItemResponse, AdminDetectionEventResponse, AdminFoundItemListResponse, AdminMobileWasteRegistrationResponse, AdminModelComparisonResponse, AdminOperationsBriefingResponse, AdminOperationsBriefingStatus, AdminOwnershipClaimResponse, AdminUserListResponse, DetectedObjectUpdateRequest
 from app.schemas.citizen_report import AdminCitizenReportResponse, AdminCitizenReportUpdateRequest, ResolveCitizenReportRequest
 from app.schemas.common import MessageResponse
 from app.schemas.found_item import FoundItemUpdateRequest
@@ -42,6 +42,7 @@ from app.services.matching import reconcile_match_candidates_for_found_item
 from app.services.geocoding import GeocodingError, geocode_location
 from app.services.found_item_images import representative_found_item_image_url
 from app.services.mobile_waste import register_mobile_waste_candidate
+from app.services.model_comparison import ModelComparisonDataError, load_model_comparison
 from app.services.admin_operations_briefing import create_admin_operations_briefing, get_admin_operations_briefing_status
 from app.api.detections import IMAGE_CONTENT_TYPES, IMAGE_MAX_BYTES, WEBCAM_FRAME_MAX_BYTES, save_upload_file
 
@@ -75,6 +76,20 @@ async def generate_admin_operations_briefing(
 ) -> AdminOperationsBriefingResponse:
     del current_admin
     return AdminOperationsBriefingResponse.model_validate(await create_admin_operations_briefing(db, settings))
+
+
+@router.get("/model-comparison", response_model=AdminModelComparisonResponse, summary="관리자 모델 비교 평가 결과")
+def get_admin_model_comparison(
+    current_admin: Annotated[User, Depends(require_admin)],
+) -> AdminModelComparisonResponse:
+    del current_admin
+    try:
+        return load_model_comparison()
+    except ModelComparisonDataError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Model comparison data is unavailable",
+        ) from exc
 
 
 def detected_object_payload(item, *, collected_ids: set[int] | None = None, operational: bool = True) -> dict:
