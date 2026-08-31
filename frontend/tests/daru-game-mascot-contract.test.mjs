@@ -104,6 +104,20 @@ test("game speed reduction applies only to autonomous movement", () => {
   assert.doesNotMatch(stageSource, /DARU_GROUNDED_ROAMING_CONFIG\.(?:desktopSpeed|mobileSpeed) \* DARU_GAME_AUTONOMOUS_SPEED_RATIO/);
 });
 
+test("game walking uses near-linear easing without changing the home transition", () => {
+  assert.match(mascotCss, /\.stage\[data-roaming\] \{[^}]*cubic-bezier\(\.45,0,\.22,1\)/);
+  assert.match(mascotCss, /\.stage\[data-game-safe\]\[data-roaming\] \{[^}]*cubic-bezier\(\.2,\.1,\.8,\.9\)/);
+  assert.match(mascotCss, /prefers-reduced-motion: reduce[\s\S]*\.stage\[data-game-safe\]\[data-roaming\][^}]*cubic-bezier\(\.2,\.1,\.8,\.9\) !important/);
+});
+
+test("stop walk keeps the current sprite pose until idle without progressing distance", () => {
+  const characterSource = readFileSync(new URL("../src/components/mascot/DaruCharacter.tsx", import.meta.url), "utf8");
+  assert.match(characterSource, /const spriteVisible = state\.locomotion === "start_walk" \|\| state\.locomotion === "walk" \|\| state\.locomotion === "stop_walk"/);
+  assert.match(characterSource, /if \(spriteVisible && !state\.reducedMotion\) return <DaruSpriteRenderer/);
+  assert.match(spriteSource, /const walking = !state\.reducedMotion && \(state\.locomotion === "start_walk" \|\| state\.locomotion === "walk"\)/);
+  assert.doesNotMatch(spriteSource, /const walking =[^;]*stop_walk/);
+});
+
 test("game-safe destination rejects blockers and keeps the current position when no safe candidate exists", () => {
   assert.match(stageSource, /const chooseGameSafeDestination = useCallback\(\(\) => \{[\s\S]*const currentPosition = positionRef\.current;[\s\S]*const safeCandidates = candidates\.filter[\s\S]*pathIsClear\(left, baselineTop\)[\s\S]*return currentPosition;\s*\}, \[\]\)/);
   assert.doesNotMatch(stageSource, /const chooseGameSafeDestination = useCallback\(\(\) => \{[\s\S]*return \{ x: 0, y: 0 \};\s*\}, \[\]\)/);

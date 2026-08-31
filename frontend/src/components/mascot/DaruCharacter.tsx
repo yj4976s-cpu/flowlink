@@ -19,8 +19,8 @@ export function DaruCharacter({ state, action }: { state: DaruRendererState; act
     void preloadDaruWalkFrames(theme);
   }, [theme]);
 
-  const walking = state.locomotion === "start_walk" || state.locomotion === "walk";
-  if (walking && !state.reducedMotion) return <DaruSpriteRenderer state={state} theme={theme} />;
+  const spriteVisible = state.locomotion === "start_walk" || state.locomotion === "walk" || state.locomotion === "stop_walk";
+  if (spriteVisible && !state.reducedMotion) return <DaruSpriteRenderer state={state} theme={theme} />;
   if (!DARU_RIVE_CONFIG.assetPath || riveFailed) return <StaticDaruFallback state={state} theme={theme} action={action} />;
   return <RiveDaruRenderer state={state} onFallback={() => setRiveFailed(true)} />;
 }
