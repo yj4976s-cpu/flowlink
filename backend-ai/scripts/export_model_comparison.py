@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Sequence
@@ -57,7 +58,8 @@ class ModelComparisonExportError(RuntimeError):
 
 def normalize_class_name(value: str) -> str:
     normalized = " ".join(value.strip().lower().replace("_", " ").replace("-", " ").split())
-    if normalized in {"shoe", "shoes", "sneaker", "sneakers", "footwear"}:
+    compact = normalized.replace(" ", "")
+    if normalized in {"shoe", "shoes", "sneaker", "sneakers"} or compact == "footwear":
         return "FOOTWEAR"
     if normalized == "ball":
         return "BALL"
@@ -167,18 +169,35 @@ def null_metrics_for_classes(classes: set[str]) -> list[dict[str, Any]]:
     ]
 
 
-def _metric_sequence(metric: Any) -> Sequence[Any] | None:
-    if metric is None:
+def metric_at(values: Any, index: int) -> float | None:
+    if values is None or isinstance(values, (str, bytes, dict)) or index < 0:
         return None
-    return metric if isinstance(metric, Sequence) else None
+    try:
+        if index >= len(values):
+            return None
+        value = float(values[index])
+    except (TypeError, ValueError, IndexError):
+        return None
+    return value if math.isfinite(value) else None
 
 
-def _metric_at(metric: Any, index: int) -> float | None:
-    values = _metric_sequence(metric)
-    if values is None or index >= len(values):
-        return None
-    value = values[index]
-    return float(value) if value is not None else None
+def class_metric_positions(box: Any) -> list[tuple[int, int]]:
+    ap_class_index = getattr(box, "ap_class_index", None)
+    if ap_class_index is None or isinstance(ap_class_index, (str, bytes, dict)):
+        return []
+
+    positions: list[tuple[int, int]] = []
+    try:
+        length = len(ap_class_index)
+    except TypeError:
+        return []
+
+    for metric_position in range(length):
+        class_id = metric_at(ap_class_index, metric_position)
+        if class_id is None or not class_id.is_integer():
+            continue
+        positions.append((metric_position, int(class_id)))
+    return positions
 
 
 def class_metrics_from_results(model: Any, results: Any, classes: set[str]) -> list[dict[str, Any]]:
@@ -187,29 +206,92 @@ def class_metrics_from_results(model: Any, results: Any, classes: set[str]) -> l
     by_code = {item["code"]: item for item in metrics}
 
     box = getattr(results, "box", None)
-    maps = getattr(box, "maps", None)
+    if box is None:
+        return metrics
+
     precision = getattr(box, "p", None)
     recall = getattr(box, "r", None)
     map50 = getattr(box, "ap50", None)
+    map50_95 = getattr(box, "ap", None)
 
-    for index, code in names.items():
+    for metric_position, class_id in class_metric_positions(box):
+        code = names.get(class_id)
         if code not in by_code:
             continue
-        by_code[code]["map50_95"] = _metric_at(maps, index)
-        by_code[code]["precision"] = _metric_at(precision, index)
-        by_code[code]["recall"] = _metric_at(recall, index)
-        by_code[code]["map50"] = _metric_at(map50, index)
+        by_code[code]["precision"] = metric_at(precision, metric_position)
+        by_code[code]["recall"] = metric_at(recall, metric_position)
+        by_code[code]["map50"] = metric_at(map50, metric_position)
+        by_code[code]["map50_95"] = metric_at(map50_95, metric_position)
     return metrics
 
 
-def test_image_count_from_model(model: Any) -> int | None:
-    dataset = getattr(getattr(getattr(model, "validator", None), "dataloader", None), "dataset", None)
-    if dataset is None:
-        return None
+def _finite_count(value: Any) -> int | None:
     try:
-        return len(dataset)
-    except TypeError:
+        parsed = float(value)
+    except (TypeError, ValueError):
         return None
+    if not math.isfinite(parsed) or parsed < 0 or not parsed.is_integer():
+        return None
+    return int(parsed)
+
+
+def _count_images_in_test_path(data_path: Path) -> int | None:
+    image_suffixes = {".bmp", ".dng", ".jpeg", ".jpg", ".mpo", ".png", ".tif", ".tiff", ".webp"}
+    try:
+        lines = data_path.read_text(encoding="utf-8").splitlines()
+    except UnicodeDecodeError:
+        lines = data_path.read_text().splitlines()
+
+    values: dict[str, str] = {}
+    for line in lines:
+        stripped = line.split("#", 1)[0].strip()
+        if ":" not in stripped:
+            continue
+        key, raw_value = stripped.split(":", 1)
+        if key.strip() in {"path", "test"}:
+            values[key.strip()] = raw_value.strip().strip("\"'")
+
+    test_value = values.get("test")
+    if not test_value or test_value.startswith("["):
+        return None
+
+    base = Path(values["path"]).expanduser() if values.get("path") else data_path.parent
+    if not base.is_absolute():
+        base = data_path.parent / base
+    target = Path(test_value).expanduser()
+    if not target.is_absolute():
+        target = base / target
+
+    if target.is_file() and target.suffix.lower() == ".txt":
+        return sum(1 for line in target.read_text(encoding="utf-8").splitlines() if line.strip())
+    if target.is_file() and target.suffix.lower() in image_suffixes:
+        return 1
+    if target.is_dir():
+        return sum(1 for path in target.rglob("*") if path.suffix.lower() in image_suffixes)
+    if any(char in str(target) for char in "*?[]"):
+        return sum(1 for path in target.parent.glob(target.name) if path.suffix.lower() in image_suffixes)
+    return None
+
+
+def test_image_count_from_results(results: Any, data_path: Path) -> int | None:
+    for candidate in (
+        getattr(results, "seen", None),
+        getattr(results, "num_images", None),
+        getattr(results, "n_images", None),
+    ):
+        count = _finite_count(candidate)
+        if count is not None:
+            return count
+
+    validator = getattr(results, "validator", None)
+    dataset = getattr(getattr(validator, "dataloader", None), "dataset", None)
+    if dataset is not None:
+        try:
+            return len(dataset)
+        except TypeError:
+            pass
+
+    return _count_images_in_test_path(data_path)
 
 
 def average_inference_ms_from_results(results: Any) -> float | None:
@@ -219,13 +301,22 @@ def average_inference_ms_from_results(results: Any) -> float | None:
     inference_ms = speed.get("inference")
     if inference_ms is None:
         return None
-    inference_ms = float(inference_ms)
+    try:
+        inference_ms = float(inference_ms)
+    except (TypeError, ValueError):
+        return None
     return inference_ms if inference_ms > 0 else None
 
 
 def _box_metric(box: Any, name: str) -> float | None:
     value = getattr(box, name, None)
-    return float(value) if value is not None else None
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
 
 
 def export(args: argparse.Namespace) -> dict[str, Any]:
@@ -255,7 +346,7 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
             device=args.device,
             verbose=False,
         )
-        test_counts.append(test_image_count_from_model(model))
+        test_counts.append(test_image_count_from_results(results, data_path))
         avg_ms = average_inference_ms_from_results(results)
         box = getattr(results, "box", None)
         export_spec = {key: value for key, value in spec.items() if key != "expected_classes"}

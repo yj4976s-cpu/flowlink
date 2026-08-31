@@ -14,8 +14,8 @@
     "ultralytics_version": null,
     "notes": "동일 테스트셋 평가 결과가 아직 JSON으로 확정되지 않아 Precision, Recall, mAP 값은 측정 전으로 둡니다."
   },
-  "current_deployed_model_id": null,
-  "current_deployed_model_status": "확인 필요",
+  "current_deployed_model_id": "flowlink-4class-hat-v7",
+  "current_deployed_model_status": "신규 HAT 모델 배포 확인",
   "models": [
     {
       "id": "flowlink-3class-v6-7",

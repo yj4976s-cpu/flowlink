@@ -100,8 +100,8 @@ def test_admin_model_comparison_reads_versioned_json_without_loading_models(
     assert response.status_code == 200
     body = response.json()
     assert body["schema_version"] == 1
-    assert body["current_deployed_model_id"] is None
-    assert body["current_deployed_model_status"] == "확인 필요"
+    assert body["current_deployed_model_id"] == "flowlink-4class-hat-v7"
+    assert body["current_deployed_model_status"] == "신규 HAT 모델 배포 확인"
     assert [model["id"] for model in body["models"]] == ["flowlink-3class-v6-7", "flowlink-4class-hat-v7"]
     assert body["models"][0]["precision"] is None
     assert body["models"][1]["map50"] is None
