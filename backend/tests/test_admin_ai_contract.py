@@ -21,6 +21,7 @@ from app.models import Camera, DetectedObject, DetectionEvent, FoundItem, LostRe
 from app.services.matching import create_match_candidates_for_found_item, reconcile_match_candidates_for_found_item
 from app.services.geocoding import Coordinates
 from app.services.detection_inference import DetectionBBox, DetectionInferenceResult, DetectionPrediction, get_inference_service
+from app.services.copilot_providers import ProviderResult
 
 
 @pytest.fixture
@@ -260,6 +261,87 @@ def test_admin_ai_report_handles_empty_data_and_requires_admin(client: TestClien
     assert body["summary"] == {"total": 0, "average_confidence": None, "reviewed": 0, "corrected": 0}
     assert body["class_metrics"] == [] and body["correction_patterns"] == []
     assert len(body["confidence_distribution"]) == 6
+
+
+def admin_briefing_dashboard() -> dict:
+    return {
+        "metrics": {
+            "operation_detection_pending": 3,
+            "waste_collection_pending": 2,
+            "citizen_review_pending": 1,
+            "ownership_claim_pending": 4,
+            "ownership_return_pending": 5,
+        },
+        "average_confidence": Decimal("0.847"),
+    }
+
+
+def test_admin_operations_briefing_status_does_not_call_provider(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_admin(db)
+    login(client)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "CHAT_MODEL_PROVIDER", "gemini")
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(settings, "GEMINI_MODEL", "gemini-test")
+    monkeypatch.setattr("app.services.admin_operations_briefing.create_chat_provider", lambda *_: (_ for _ in ()).throw(AssertionError("status must not call Gemini")))
+
+    response = client.get("/api/admin/ai-report/operations-briefing/status")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["gemini_configured"] is True
+    assert body["gemini_connected"] is False
+    assert body["model"] == "gemini-test"
+
+
+def test_admin_operations_briefing_uses_rule_based_fallback_without_gemini(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_admin(db)
+    login(client)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "CHAT_MODEL_PROVIDER", "gemini")
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "")
+    monkeypatch.setattr("app.services.admin_operations_briefing.get_admin_dashboard_data", lambda *_args, **_kwargs: admin_briefing_dashboard())
+    monkeypatch.setattr("app.services.admin_operations_briefing.create_chat_provider", lambda *_: (_ for _ in ()).throw(AssertionError("Gemini must not be called without a key")))
+
+    response = client.post("/api/admin/ai-report/operations-briefing")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "오늘 확인이 필요한 운영 작업" in body["summary"]
+    assert body["metrics"]["operation_detection_pending"] == 3
+    assert body["metrics"]["waste_collection_pending"] == 2
+    assert body["metrics"]["citizen_review_pending"] == 1
+    assert body["metrics"]["ownership_claim_pending"] == 4
+    assert body["metrics"]["ownership_return_pending"] == 5
+    assert body["metrics"]["average_confidence"] == "0.847"
+    assert body["priority_task"]["label"] == "탐지 검토 대기"
+    assert body["fallback_used"] is True
+    assert body["gemini_connected"] is False
+
+
+def test_admin_operations_briefing_can_use_gemini_on_manual_request(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    class Provider:
+        async def generate(self, **_kwargs):
+            return ProviderResult(text='{"message":"오늘은 소유권 요청과 반환 대기를 먼저 확인하세요."}', provider="gemini", model="gemini-test")
+
+    seed_admin(db)
+    login(client)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "CHAT_MODEL_PROVIDER", "gemini")
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(settings, "GEMINI_MODEL", "gemini-test")
+    monkeypatch.setattr("app.services.admin_operations_briefing.get_admin_dashboard_data", lambda *_args, **_kwargs: admin_briefing_dashboard())
+    monkeypatch.setattr("app.services.admin_operations_briefing.create_chat_provider", lambda *_: Provider())
+
+    response = client.post("/api/admin/ai-report/operations-briefing")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["summary"] == "오늘은 소유권 요청과 반환 대기를 먼저 확인하세요."
+    assert body["provider"] == "gemini"
+    assert body["model"] == "gemini-test"
+    assert body["gemini_connected"] is True
+    assert body["fallback_used"] is False
 
 
 def test_admin_found_item_register_supports_full_lifecycle_counts_filters_and_pagination(client: TestClient, db: Session) -> None:

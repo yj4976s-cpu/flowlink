@@ -59,6 +59,28 @@
 .intro span { display: block; max-width: 700px; margin-top: 8px; color: var(--color-text-muted); font-size: 13px; line-height: 1.6; }
 .intro small { flex: none; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface-soft); color: var(--color-text-muted); font-size: 10px; }
 
+.briefing { margin: 0 0 18px; overflow: hidden; }
+.briefingHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.briefingActions { flex: none; display: grid; justify-items: end; gap: 9px; }
+.briefingActions small { padding: 7px 10px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface-soft); color: var(--color-text-muted); font-size: 10px; font-weight: 850; }
+.briefingActions small[data-connected] { border-color: color-mix(in srgb, var(--color-success) 36%, var(--color-border)); background: color-mix(in srgb, var(--color-success) 10%, var(--color-surface-soft)); color: var(--color-success); }
+.briefingActions button { min-height: 38px; padding: 0 14px; border: 0; border-radius: 999px; background: linear-gradient(135deg, var(--color-primary), var(--color-secondary)); color: white; font: inherit; font-size: 12px; font-weight: 900; cursor: pointer; box-shadow: 0 12px 24px color-mix(in srgb, var(--color-primary) 22%, transparent); }
+.briefingActions button:disabled { cursor: progress; opacity: .68; }
+.briefingSummary { margin: 4px 0 16px; padding: 16px 18px; border: 1px solid color-mix(in srgb, var(--color-primary) 15%, var(--color-border)); border-radius: 18px; background: linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 6%, transparent), transparent 58%), var(--report-inner-wash); color: var(--color-text); font-size: 15px; line-height: 1.7; word-break: keep-all; }
+.briefingMetrics { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
+.briefingMetrics a, .briefingMetrics article { min-width: 0; padding: 13px; border: 1px solid var(--color-border); border-radius: 16px; background: var(--report-inner-wash); display: grid; gap: 7px; color: inherit; }
+.briefingMetrics span { color: var(--color-text-muted); font-size: 10px; font-weight: 800; line-height: 1.35; }
+.briefingMetrics strong { color: var(--color-primary); font-size: 20px; line-height: 1; }
+.briefingFoot { margin-top: 13px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 18px; color: var(--color-text-muted); font-size: 11px; }
+.briefingFoot b { color: var(--color-primary); }
+.briefingNotice, .briefingError { margin: 12px 0 0; padding: 10px 12px; border-radius: 14px; font-size: 11px; line-height: 1.5; }
+.briefingNotice { background: color-mix(in srgb, var(--color-accent) 10%, transparent); color: var(--color-text-muted); }
+.briefingError { border: 1px solid color-mix(in srgb, var(--color-danger, #ef4444) 30%, var(--color-border)); color: var(--color-danger, #ef4444); }
+.briefingEmpty { min-height: 128px; padding: 18px; border: 1px dashed color-mix(in srgb, var(--color-primary) 22%, var(--color-border)); border-radius: 18px; background: var(--report-inner-wash); display: grid; place-items: center; align-content: center; gap: 7px; text-align: center; color: var(--color-text-muted); }
+.briefingEmpty > :global(.icon) { color: var(--color-primary); }
+.briefingEmpty strong { color: var(--color-text); }
+.briefingEmpty span { max-width: 520px; font-size: 12px; line-height: 1.55; }
+
 .heroGrid { margin-bottom: 16px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
 .metric { position: relative; min-width: 0; min-height: 126px; overflow: hidden; padding: 19px; border: 1px solid var(--color-border); border-radius: 22px; background: linear-gradient(135deg, color-mix(in srgb, var(--metric-tone) 10%, transparent), transparent 48%), var(--report-card-wash); box-shadow: var(--shadow-card); display: grid; align-content: space-between; gap: 8px; }
 .metric::before { content: ""; position: absolute; inset: 0; background: linear-gradient(115deg, transparent 0 34%, color-mix(in srgb, var(--metric-tone) 10%, transparent) 48%, transparent 66%); opacity: .72; pointer-events: none; }
@@ -149,12 +171,16 @@
 @media (max-width: 1000px) {
   .heroGrid { grid-template-columns: repeat(2, 1fr); }
   .overview { grid-template-columns: 1fr; }
+  .briefingMetrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .classCard { grid-template-columns: 1fr; }
   .patterns { grid-template-columns: 1fr; }
 }
 @media (max-width: 680px) {
   .page { width: calc(100% - 28px); padding-top: 28px; }
   .intro { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .briefingHead { flex-direction: column; }
+  .briefingActions { width: 100%; justify-items: stretch; }
+  .briefingMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .heroGrid { grid-template-columns: 1fr 1fr; gap: 8px; }
   .metric { min-height: 112px; padding: 15px; }
   .metric strong { font-size: 25px; }
@@ -165,7 +191,9 @@
   .classCard dl { grid-template-columns: 1fr; }
   .modelEmpty { grid-template-columns: 1fr; }
 }
-@media (max-width: 420px) { .heroGrid { grid-template-columns: 1fr; } }
+@media (max-width: 420px) {
+  .heroGrid, .briefingMetrics { grid-template-columns: 1fr; }
+}
 @media (prefers-reduced-motion: reduce) {
   .state i { animation: none; }
   .distribution i b { transition: none; }
