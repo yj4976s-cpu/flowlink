@@ -34,7 +34,7 @@ test("registration renders a five-condition guide and live confirmation feedback
 test("registration exposes exactly one live confirmation message", () => {
   assert.equal((authSource.match(/비밀번호와 일치해요/g) ?? []).length, 1);
   assert.equal((authSource.match(/비밀번호가 일치하지 않아요/g) ?? []).length, 1);
-  assert.match(authSource, /renderErrorMessage=\{false\}>\{passwordConfirm\.length > 0 && <p[^>]+id="password-confirm-status"[^>]+aria-live="polite"/);
+  assert.match(authSource, /renderErrorMessage=\{false\}>\{passwordConfirmMessage && <p[^>]+id="password-confirm-status"[^>]+aria-live="polite"/);
   assert.match(authSource, /aria-describedby=\{\[describedBy, error && renderErrorMessage \? errorId : undefined\]/);
 });
 
@@ -42,8 +42,17 @@ test("confirmation status reacts to either password and submit keeps one mismatc
   assert.match(authSource, /if \(passwordConfirm\) setErrors\(\(current\) => passwordConfirm === nextPassword/);
   assert.match(authSource, /setPasswordConfirm\(nextConfirm\);[\s\S]*nextConfirm === password/);
   assert.match(authSource, /else if \(password !== confirm\) nextErrors\["password-confirm"\] = passwordMismatchMessage/);
-  assert.match(authSource, /passwordConfirm === password \? <><Icon[^>]+\/>비밀번호와 일치해요<\/> : passwordMismatchMessage/);
+  assert.match(authSource, /passwordConfirm === password \? passwordMatchMessage : passwordMismatchMessage/);
+  assert.match(authSource, /\{passwordConfirmMessage\}<\/p>/);
   assert.doesNotMatch(authSource, /! 비밀번호가 일치하지 않아요/);
+});
+
+test("empty confirmation is silent until submit then exposes one described required error", () => {
+  assert.equal((authSource.match(/비밀번호를 한 번 더 입력해주세요\./g) ?? []).length, 1);
+  assert.match(authSource, /const passwordConfirmMessage = passwordConfirm[\s\S]*: errors\["password-confirm"\]/);
+  assert.match(authSource, /if \(!confirm\) nextErrors\["password-confirm"\] = "비밀번호를 한 번 더 입력해주세요\."/);
+  assert.match(authSource, /describedBy=\{passwordConfirmMessage \? "password-confirm-status" : undefined\}/);
+  assert.match(authSource, /error=\{errors\["password-confirm"\]\}/);
 });
 
 test("login CTA is prominent for users but absent from admin and social registration paths", () => {

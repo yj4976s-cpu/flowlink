@@ -97,6 +97,7 @@ function SocialAuthSection({
 }
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const passwordMatchMessage = "비밀번호와 일치해요";
 const passwordMismatchMessage = "비밀번호가 일치하지 않아요";
 const passwordConditionKeys = Object.keys(PASSWORD_CONDITION_LABELS) as (keyof PasswordConditionState)[];
 
@@ -392,6 +393,10 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
   }, [isAdminPortal, isLogin]);
 
   const isSocialRegistration = !isLogin && socialRegistrationProvider !== null;
+  const passwordConfirmMessage = passwordConfirm
+    ? passwordConfirm === password ? passwordMatchMessage : passwordMismatchMessage
+    : errors["password-confirm"];
+  const passwordConfirmMatches = passwordConfirm.length > 0 && passwordConfirm === password;
 
   useEffect(() => {
     if (!isLogin) return;
@@ -608,7 +613,7 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
               >
                 {!isLogin && <PasswordConditions password={password} invalid={Boolean(errors.password)} />}
               </PasswordField>}
-              {!isLogin && !isSocialRegistration && <PasswordField id="password-confirm" label="비밀번호 확인" placeholder="비밀번호를 한 번 더 입력해주세요" error={errors["password-confirm"]} autoComplete="new-password" onChange={handleConfirmChange} onBlur={handleConfirmBlur} value={passwordConfirm} valid={passwordConfirm.length > 0 && passwordConfirm === password} shakeKey={confirmShakeKey} describedBy={passwordConfirm.length > 0 ? "password-confirm-status" : undefined} renderErrorMessage={false}>{passwordConfirm.length > 0 && <p className={passwordConfirm === password ? "auth-password-success" : "auth-password-mismatch"} id="password-confirm-status" aria-live="polite">{passwordConfirm === password ? <><Icon name="check" size={15} />비밀번호와 일치해요</> : passwordMismatchMessage}</p>}</PasswordField>}
+              {!isLogin && !isSocialRegistration && <PasswordField id="password-confirm" label="비밀번호 확인" placeholder="비밀번호를 한 번 더 입력해주세요" error={errors["password-confirm"]} autoComplete="new-password" onChange={handleConfirmChange} onBlur={handleConfirmBlur} value={passwordConfirm} valid={passwordConfirmMatches} shakeKey={confirmShakeKey} describedBy={passwordConfirmMessage ? "password-confirm-status" : undefined} renderErrorMessage={false}>{passwordConfirmMessage && <p className={passwordConfirmMatches ? "auth-password-success" : "auth-password-mismatch"} id="password-confirm-status" aria-live="polite">{passwordConfirmMatches && <Icon name="check" size={15} />}{passwordConfirmMessage}</p>}</PasswordField>}
             </div>
 
             {!isLogin && (
