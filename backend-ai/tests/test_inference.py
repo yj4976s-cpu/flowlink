@@ -159,6 +159,7 @@ def test_inference_returns_raw_yolo_predictions(client: TestClient) -> None:
     assert response.status_code == 200
     assert fake_runtime.calls == 1
     body = response.json()
+    assert body["model_id"] is None
     assert body["media_width"] == 32
     assert body["media_height"] == 24
     assert body["inference_ms"] >= 0
@@ -217,6 +218,7 @@ def test_video_inference_streams_temp_file_and_returns_tracks(client: TestClient
     assert response.status_code == 200
     assert fake_service.calls == 1
     assert response.json() == {
+        "model_id": None,
         "media_width": 640,
         "media_height": 360,
         "duration_ms": 2000,

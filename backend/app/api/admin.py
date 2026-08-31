@@ -26,7 +26,7 @@ from app.repositories.user_flow import (
     list_ownership_claims,
     waste_collection_completed_ids,
 )
-from app.schemas.admin import AdminAiReportResponse, AdminCameraResponse, AdminCommunityPostListResponse, AdminDashboardResponse, AdminDetectedObjectCollectionResponse, AdminDetectedObjectFoundItemResponse, AdminDetectionEventResponse, AdminFoundItemListResponse, AdminMobileWasteRegistrationResponse, AdminModelComparisonResponse, AdminOperationsBriefingResponse, AdminOperationsBriefingStatus, AdminOwnershipClaimResponse, AdminUserListResponse, DetectedObjectUpdateRequest
+from app.schemas.admin import AdminAiReportResponse, AdminCameraResponse, AdminCommunityPostListResponse, AdminDashboardResponse, AdminDetectedObjectCollectionResponse, AdminDetectedObjectFoundItemResponse, AdminDetectionEventResponse, AdminFoundItemListResponse, AdminMobileWasteRegistrationResponse, AdminModelComparisonResponse, AdminModelDeploymentHistoryResponse, AdminModelDeploymentRequest, AdminModelDeploymentRollbackRequest, AdminModelDeploymentStatusResponse, AdminModelDeploymentSwitchResponse, AdminOperationsBriefingResponse, AdminOperationsBriefingStatus, AdminOwnershipClaimResponse, AdminUserListResponse, DetectedObjectUpdateRequest
 from app.schemas.citizen_report import AdminCitizenReportResponse, AdminCitizenReportUpdateRequest, ResolveCitizenReportRequest
 from app.schemas.common import MessageResponse
 from app.schemas.found_item import FoundItemUpdateRequest
@@ -43,6 +43,8 @@ from app.services.geocoding import GeocodingError, geocode_location
 from app.services.found_item_images import representative_found_item_image_url
 from app.services.mobile_waste import register_mobile_waste_candidate
 from app.services.model_comparison import ModelComparisonDataError, load_model_comparison
+from app.services.ai_inference_client import get_ai_inference_client
+from app.services.model_deployment import activate_model, get_model_deployment_status, list_model_deployment_history, rollback_model
 from app.services.admin_operations_briefing import create_admin_operations_briefing, get_admin_operations_briefing_status
 from app.api.detections import IMAGE_CONTENT_TYPES, IMAGE_MAX_BYTES, WEBCAM_FRAME_MAX_BYTES, save_upload_file
 
@@ -92,6 +94,55 @@ def get_admin_model_comparison(
         ) from exc
 
 
+@router.get("/model-deployment", response_model=AdminModelDeploymentStatusResponse, summary="관리자 모델 런타임 상태 조회")
+def get_admin_model_deployment(
+    current_admin: Annotated[User, Depends(require_admin)],
+) -> AdminModelDeploymentStatusResponse:
+    del current_admin
+    return get_model_deployment_status(get_ai_inference_client())
+
+
+@router.get("/model-deployment/history", response_model=AdminModelDeploymentHistoryResponse, summary="관리자 모델 전환 이력 조회")
+def get_admin_model_deployment_history(
+    current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> AdminModelDeploymentHistoryResponse:
+    del current_admin
+    return AdminModelDeploymentHistoryResponse(events=list_model_deployment_history(db, limit=limit))
+
+
+@router.post("/model-deployment/activate", response_model=AdminModelDeploymentSwitchResponse, summary="관리자 모델 활성화")
+def activate_admin_model(
+    request: AdminModelDeploymentRequest,
+    current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+) -> AdminModelDeploymentSwitchResponse:
+    return activate_model(
+        db,
+        admin=current_admin,
+        ai_client=get_ai_inference_client(),
+        model_id=request.model_id,
+        expected_active_model_id=request.expected_active_model_id,
+        request_id=request.request_id,
+    )
+
+
+@router.post("/model-deployment/rollback", response_model=AdminModelDeploymentSwitchResponse, summary="관리자 모델 롤백")
+def rollback_admin_model(
+    request: AdminModelDeploymentRollbackRequest,
+    current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+) -> AdminModelDeploymentSwitchResponse:
+    return rollback_model(
+        db,
+        admin=current_admin,
+        ai_client=get_ai_inference_client(),
+        expected_active_model_id=request.expected_active_model_id,
+        request_id=request.request_id,
+    )
+
+
 def detected_object_payload(item, *, collected_ids: set[int] | None = None, operational: bool = True) -> dict:
     group = effective_group(item)
     return {
@@ -127,6 +178,7 @@ def detection_event_payload(event, *, collected_ids: set[int] | None = None) -> 
         "source_type": event.source_type,
         "original_media_url": event.original_media_url,
         "result_media_url": event.result_media_url,
+        "ai_model_id": event.ai_model_id,
         "status": event.status,
         "captured_at": event.captured_at,
         "processing_started_at": event.processing_started_at,

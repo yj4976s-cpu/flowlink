@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     AI_INTERNAL_API_KEY: str = ""
     AI_SERVICE_TIMEOUT_SECONDS: float = 30.0
     AI_VIDEO_SERVICE_TIMEOUT_SECONDS: float = 120.0
+    AI_MODEL_SWITCH_TIMEOUT_SECONDS: float = 60.0
     CHAT_MODEL_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-3.6-flash"

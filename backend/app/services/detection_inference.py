@@ -31,6 +31,7 @@ class DetectionInferenceResult:
     media_height: int | None
     detections: list[DetectionPrediction]
     rendered_video: bytes | None = None
+    model_id: str | None = None
 
 
 class DetectionInferenceUnavailableError(RuntimeError):
@@ -137,6 +138,7 @@ class DetectionInferenceService:
             media_width=result.media_width,
             media_height=result.media_height,
             detections=deduplicate_same_class_detections(detections),
+            model_id=result.model_id,
         )
 
     def analyze_video(self, media_path: Path) -> DetectionInferenceResult:
@@ -170,6 +172,7 @@ class DetectionInferenceService:
             media_height=result.media_height,
             detections=detections,
             rendered_video=result.rendered_video,
+            model_id=result.model_id,
         )
 
 

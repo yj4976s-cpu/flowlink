@@ -4,10 +4,16 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@/components/common/Icon";
 import {
+  activateAdminModel,
   getAdminModelComparison,
+  getAdminModelDeployment,
+  getAdminModelDeploymentHistory,
+  rollbackAdminModel,
   type AdminModelClassMetric,
   type AdminModelComparison,
   type AdminModelComparisonModel,
+  type AdminModelDeploymentEvent,
+  type AdminModelDeploymentStatus,
 } from "@/lib/adminModelComparisonApi";
 import {
   classComparisonStatus,
@@ -65,10 +71,25 @@ function classAccent(code: string) {
   return "ball";
 }
 
+function modelById(models: AdminModelComparisonModel[], modelId: string | null) {
+  return modelId ? models.find((model) => model.id === modelId) ?? null : null;
+}
+
+function hasMissingMetrics(model: AdminModelComparisonModel | null) {
+  return Boolean(model && [model.precision, model.recall, model.map50, model.map50_95].some((value) => !isMeasuredNumber(value)));
+}
+
 export function AdminModelComparisonClient() {
   const [data, setData] = useState<AdminModelComparison | null>(null);
+  const [deployment, setDeployment] = useState<AdminModelDeploymentStatus | null>(null);
+  const [history, setHistory] = useState<AdminModelDeploymentEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [deploymentLoading, setDeploymentLoading] = useState(true);
+  const [deploymentError, setDeploymentError] = useState("");
+  const [pendingModelId, setPendingModelId] = useState<string | null>(null);
+  const [busyAction, setBusyAction] = useState<"ACTIVATE" | "ROLLBACK" | null>(null);
+  const [notice, setNotice] = useState("");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -86,63 +107,150 @@ export function AdminModelComparisonClient() {
     return () => controller.abort();
   }, []);
 
+  const loadDeployment = (signal?: AbortSignal) => {
+    setDeploymentLoading(true);
+    setDeploymentError("");
+    return Promise.all([getAdminModelDeployment(signal), getAdminModelDeploymentHistory(signal)])
+      .then(([status, historyPayload]) => {
+        setDeployment(status);
+        setHistory(historyPayload.events);
+      })
+      .catch((reason: unknown) => {
+        if (!isAbortError(reason)) {
+          setDeployment(null);
+          setDeploymentError(reason instanceof Error ? reason.message : "실시간 모델 상태를 확인하지 못했습니다.");
+        }
+      })
+      .finally(() => {
+        if (!signal?.aborted) setDeploymentLoading(false);
+      });
+  };
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void Promise.resolve().then(() => loadDeployment(controller.signal));
+    return () => controller.abort();
+  }, []);
+
+  const activate = (modelId: string) => {
+    if (busyAction || !deployment || deployment.active_model_id === modelId) return;
+    setBusyAction("ACTIVATE");
+    setNotice("");
+    activateAdminModel(modelId, deployment.active_model_id, crypto.randomUUID())
+      .then(() => {
+        setPendingModelId(null);
+        setNotice("모델 전환이 완료되었습니다. 이후 새 분석부터 활성 모델이 적용됩니다.");
+        return loadDeployment();
+      })
+      .catch((reason: unknown) => setNotice(reason instanceof Error ? reason.message : "모델 전환에 실패했습니다. 기존 모델은 유지됩니다."))
+      .finally(() => setBusyAction(null));
+  };
+
+  const rollback = () => {
+    if (busyAction || !deployment?.rollback_available) return;
+    setBusyAction("ROLLBACK");
+    setNotice("");
+    rollbackAdminModel(deployment.active_model_id, crypto.randomUUID())
+      .then(() => {
+        setNotice("직전 모델로 롤백했습니다.");
+        return loadDeployment();
+      })
+      .catch((reason: unknown) => setNotice(reason instanceof Error ? reason.message : "모델 롤백에 실패했습니다. 기존 모델은 유지됩니다."))
+      .finally(() => setBusyAction(null));
+  };
+
   if (loading) return <main className={styles.page}><State loading /></main>;
   if (error) return <main className={styles.page}><State error={error} /></main>;
   if (!data || data.models.length < 2) {
     return <main className={styles.page}><State error="비교할 모델 평가 데이터가 아직 충분하지 않습니다." /></main>;
   }
 
-  return <ModelComparison data={data} />;
+  return <ModelComparison
+    data={data}
+    deployment={deployment}
+    deploymentLoading={deploymentLoading}
+    deploymentError={deploymentError}
+    history={history}
+    pendingModelId={pendingModelId}
+    busyAction={busyAction}
+    notice={notice}
+    onRefreshDeployment={() => void loadDeployment()}
+    onRequestActivate={setPendingModelId}
+    onCancelActivate={() => setPendingModelId(null)}
+    onConfirmActivate={activate}
+    onRollback={rollback}
+  />;
 }
 
-function ModelComparison({ data }: { data: AdminModelComparison }) {
+function ModelComparison(props: {
+  data: AdminModelComparison;
+  deployment: AdminModelDeploymentStatus | null;
+  deploymentLoading: boolean;
+  deploymentError: string;
+  history: AdminModelDeploymentEvent[];
+  pendingModelId: string | null;
+  busyAction: "ACTIVATE" | "ROLLBACK" | null;
+  notice: string;
+  onRefreshDeployment: () => void;
+  onRequestActivate: (modelId: string) => void;
+  onCancelActivate: () => void;
+  onConfirmActivate: (modelId: string) => void;
+  onRollback: () => void;
+}) {
+  const { data, deployment, deploymentLoading, deploymentError, history, pendingModelId, busyAction, notice, onRefreshDeployment, onRequestActivate, onCancelActivate, onConfirmActivate, onRollback } = props;
   const [previous, current] = data.models;
-  const currentDeployed = currentModelLabel(data.models, data.current_deployed_model_id, data.current_deployed_model_status);
+  const jsonDeployed = currentModelLabel(data.models, data.current_deployed_model_id, data.current_deployed_model_status);
+  const runtimeModel = modelById(data.models, deployment?.active_model_id ?? null);
+  const pendingModel = modelById(data.models, pendingModelId);
   const classRows = useMemo(() => CLASS_ORDER.map((code) => ({
     code,
     before: classMetricByCode(previous, code),
     after: classMetricByCode(current, code),
   })), [current, previous]);
-  const previousMeasured = completedMetricCount(previous);
-  const currentMeasured = completedMetricCount(current);
 
   return <main className={styles.page}>
     <header className={styles.intro}>
       <div>
         <p>ADMIN · MODEL COMPARISON</p>
         <h1>모델 비교</h1>
-        <span>기존 3클래스 모델과 HAT가 추가된 신규 4클래스 모델의 사전 평가 JSON을 비교합니다.</span>
+        <span>기존 3클래스 모델과 HAT가 추가된 신규 4클래스 모델을 사전 평가 JSON으로 비교합니다.</span>
       </div>
       <Link href="/admin/ai-report">AI 리포트로 돌아가기 <Icon name="arrow" size={13} /></Link>
     </header>
 
+    <DeploymentPanel
+      models={data.models}
+      deployment={deployment}
+      deploymentLoading={deploymentLoading}
+      deploymentError={deploymentError}
+      runtimeModel={runtimeModel}
+      notice={notice}
+      busyAction={busyAction}
+      onRefresh={onRefreshDeployment}
+      onRequestActivate={onRequestActivate}
+      onRollback={onRollback}
+    />
+
     <section className={styles.notice} role="note">
       <Icon name="info" size={18} />
-      <p>이 화면은 사전 평가 결과를 읽는 관리자 전용 화면이며, 실시간 모델 전환 화면이 아닙니다. 웹 요청 중 YOLO 모델을 로딩하지 않습니다. 동일 테스트셋 결과만 직접 비교할 수 있으며, mAP와 매칭 점수는 소유권 확률이 아닙니다.</p>
+      <p>이 화면은 사전 평가 결과를 확인하고 운영 모델을 안전하게 전환하는 관리자 화면이며, 웹 요청마다 추론하는 실시간 모델 전환 화면이 아닙니다. 실제 운영 모델의 기준은 Backend-AI 런타임 상태입니다. 모델 전환은 버튼을 눌렀을 때만 후보 모델을 로드·검증하며, 진행 중인 분석은 시작 당시 모델로 완료됩니다. mAP와 매칭 점수는 소유권 확률이 아닙니다.</p>
     </section>
 
     <section className={styles.modelHero} aria-label="모델 비교 요약">
-      <ModelCard model={previous} label="기존 3클래스" measured={previousMeasured} />
-      <div className={styles.compareBadge} aria-hidden="true">
-        <span>VS</span>
-        <i />
-      </div>
-      <ModelCard model={current} label="신규 HAT 4클래스" measured={currentMeasured} highlight />
+      <ModelCard model={previous} label="기존 3클래스" measured={completedMetricCount(previous)} />
+      <div className={styles.compareBadge} aria-hidden="true"><span>VS</span><i /></div>
+      <ModelCard model={current} label="신규 HAT 4클래스" measured={completedMetricCount(current)} highlight />
       <aside className={styles.deployCard}>
-        <span>현재 배포 모델</span>
-        <strong>{currentDeployed}</strong>
-        <small>평가 생성 {dateTime(data.generated_at)} · {data.evaluation.dataset_name}</small>
+        <span>평가 JSON의 배포 메모</span>
+        <strong>{jsonDeployed}</strong>
+        <small>실제 운영 모델은 위 런타임 상태를 기준으로 확인하세요. 평가 생성 {dateTime(data.generated_at)} · {data.evaluation.dataset_name}</small>
       </aside>
     </section>
 
     <MetricComparisonPanel previous={previous} current={current} />
 
     <section className={styles.panel}>
-      <div className={styles.panelTitle}>
-        <span>CLASS PERFORMANCE</span>
-        <h2>클래스별 성능</h2>
-        <p>HAT는 기존 모델에 없는 신규 클래스이므로 0점이 아니라 미지원/N/A로 표시합니다.</p>
-      </div>
+      <div className={styles.panelTitle}><span>CLASS PERFORMANCE</span><h2>클래스별 성능</h2><p>HAT는 기존 모델에 없는 신규 클래스이므로 0점이 아니라 미지원으로 표시합니다.</p></div>
       <div className={styles.classCards} role="list" aria-label="클래스별 모델 성능 비교">
         {classRows.map(({ code, before, after }) => <ClassCard key={code} code={code} before={before} after={after} />)}
       </div>
@@ -154,10 +262,7 @@ function ModelComparison({ data }: { data: AdminModelComparison }) {
     </section>
 
     <section className={styles.panel}>
-      <div className={styles.panelTitle}>
-        <span>EVALUATION BASIS</span>
-        <h2>평가 기준</h2>
-      </div>
+      <div className={styles.panelTitle}><span>EVALUATION BASIS</span><h2>평가 기준</h2></div>
       <dl className={styles.evalGrid}>
         <Info label="Dataset" value={data.evaluation.dataset_name} />
         <Info label="Version" value={data.evaluation.dataset_version ?? "확인 필요"} />
@@ -173,10 +278,7 @@ function ModelComparison({ data }: { data: AdminModelComparison }) {
     </section>
 
     <section className={styles.panel}>
-      <div className={styles.panelTitle}>
-        <span>EXAMPLES</span>
-        <h2>이미지·영상 예시</h2>
-      </div>
+      <div className={styles.panelTitle}><span>EXAMPLES</span><h2>이미지·영상 예시</h2></div>
       {current.example_results.length ? (
         <div className={styles.examples}>{current.example_results.map((example) => <article key={example.title}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -184,96 +286,141 @@ function ModelComparison({ data }: { data: AdminModelComparison }) {
           <strong>{example.title}</strong>
           {example.description && <span>{example.description}</span>}
         </article>)}</div>
-      ) : (
-        <p className={styles.empty}>등록된 예시 결과가 없습니다.</p>
-      )}
+      ) : <p className={styles.empty}>등록된 예시 결과가 없습니다.</p>}
     </section>
+
+    <DeploymentHistory history={history} />
+
+    {pendingModel && (
+      <ConfirmActivateModal
+        current={runtimeModel}
+        target={pendingModel}
+        busy={busyAction === "ACTIVATE"}
+        onCancel={onCancelActivate}
+        onConfirm={() => onConfirmActivate(pendingModel.id)}
+      />
+    )}
   </main>;
 }
 
-function ModelCard({ model, label, measured, highlight = false }: { model: AdminModelComparisonModel; label: string; measured: number; highlight?: boolean }) {
-  return <article className={styles.modelCard} data-highlight={highlight || undefined}>
-    <div>
-      <span>{label}</span>
-      <strong>{model.display_name}</strong>
-      <small>{model.file_name}</small>
+function DeploymentPanel(props: {
+  models: AdminModelComparisonModel[];
+  deployment: AdminModelDeploymentStatus | null;
+  deploymentLoading: boolean;
+  deploymentError: string;
+  runtimeModel: AdminModelComparisonModel | null;
+  notice: string;
+  busyAction: "ACTIVATE" | "ROLLBACK" | null;
+  onRefresh: () => void;
+  onRequestActivate: (modelId: string) => void;
+  onRollback: () => void;
+}) {
+  const { models, deployment, deploymentLoading, deploymentError, runtimeModel, notice, busyAction, onRefresh, onRequestActivate, onRollback } = props;
+  return <section className={`${styles.panel} ${styles.deploymentPanel}`} aria-label="실제 운영 모델 제어">
+    <div className={styles.deploymentHead}>
+      <div className={styles.panelTitle}><span>RUNTIME CONTROL</span><h2>실제 운영 모델</h2><p>Backend-AI가 현재 사용 중인 모델을 조회하고, 등록된 후보 모델로만 안전하게 전환합니다.</p></div>
+      <div className={styles.deploymentActions}>
+        <button type="button" onClick={onRefresh} disabled={deploymentLoading || Boolean(busyAction)}>{deploymentLoading ? "확인 중" : "상태 새로고침"}</button>
+        <button type="button" onClick={onRollback} disabled={!deployment?.rollback_available || Boolean(busyAction)}>{busyAction === "ROLLBACK" ? "롤백 중" : "직전 모델 롤백"}</button>
+      </div>
     </div>
-    <ul aria-label={`${model.display_name} 클래스`}>
-      {model.classes.map((item) => <li key={item}>{item}</li>)}
-    </ul>
-    <footer>
-      <b>{measured}/{METRICS.length}</b>
-      <span>측정 지표 등록</span>
-    </footer>
-  </article>;
-}
-
-function MetricComparisonPanel({ previous, current }: { previous: AdminModelComparisonModel; current: AdminModelComparisonModel }) {
-  return <section className={`${styles.panel} ${styles.metricPanel}`} aria-label="핵심 지표 비교 차트">
-    <div className={styles.panelTitle}>
-      <span>METRIC DASHBOARD</span>
-      <h2>핵심 지표 비교</h2>
-      <p>측정값이 없는 지표는 비어 있는 상태로 두어, 실제 평가가 끝난 항목과 아직 대기 중인 항목을 구분합니다.</p>
-    </div>
-    <div className={styles.metricRows}>
-      {METRICS.map((metric) => {
-        const before = metricValue(previous, metric.key);
-        const after = metricValue(current, metric.key);
-        const measuredValues = [before, after].filter(isMeasuredNumber);
-        const max = metric.percentPoint ? 1 : Math.max(...measuredValues, 1);
-        const delta = metricDelta(before, after, {
-          lowerIsBetter: metric.lowerIsBetter,
-          percentPoint: metric.percentPoint,
-        });
-        const beforeState = metricBarViewState(before, max);
-        const afterState = metricBarViewState(after, max);
-
-        return <article key={metric.key} className={styles.metricRow}>
-          <div className={styles.metricLabel}>
-            <strong>{metric.label}</strong>
-            <b data-tone={delta.tone}>{delta.label}</b>
-          </div>
-          <MetricBar label={previous.display_name} value={metric.format(before)} state={beforeState} />
-          <MetricBar label={current.display_name} value={metric.format(after)} state={afterState} highlight />
+    {deploymentError ? <p className={styles.deploymentError} role="alert">실시간 상태 확인 실패 · {deploymentError}</p> : (
+      <div className={styles.runtimeGrid}>
+        <article><span>현재 활성 모델</span><strong>{deployment?.active_display_name ?? runtimeModel?.display_name ?? "확인 중"}</strong><small>{deployment?.active_model_id ?? "runtime 상태를 조회하는 중입니다."}</small></article>
+        <article><span>모델 서비스</span><strong>{deployment?.switching ? "전환 중" : deployment?.model_ready ? "준비 완료" : "확인 필요"}</strong><small>{deployment?.switched_at ? `마지막 전환 ${dateTime(deployment.switched_at)}` : "전환 이력 없음"}</small></article>
+        <article><span>활성 클래스</span><strong>{deployment?.active_classes.join(" · ") || "확인 중"}</strong><small>{deployment?.active_classes.includes("HAT") ? "HAT 지원" : "HAT 미지원 또는 확인 전"}</small></article>
+      </div>
+    )}
+    {notice && <p className={styles.deploymentNotice} role="status">{notice}</p>}
+    <div className={styles.runtimeModels} role="list" aria-label="전환 가능한 모델">
+      {models.map((model) => {
+        const runtimeInfo = deployment?.available_models.find((item) => item.id === model.id);
+        const active = deployment?.active_model_id === model.id;
+        const available = runtimeInfo?.available ?? false;
+        return <article key={model.id} role="listitem" data-active={active || undefined}>
+          <span>{runtimeInfo?.supports_hat ? "HAT 지원" : "3클래스"}</span>
+          <strong>{model.display_name}</strong>
+          <small>{model.classes.join(" · ")}</small>
+          {hasMissingMetrics(model) && <em>동일 테스트셋 성능 평가 미등록</em>}
+          <button type="button" disabled={!deployment || !available || active || Boolean(busyAction)} onClick={() => onRequestActivate(model.id)}>
+            {active ? "운영 중" : available ? "이 모델로 전환" : "모델 파일 없음"}
+          </button>
         </article>;
       })}
     </div>
   </section>;
 }
 
+function ConfirmActivateModal({ current, target, busy, onCancel, onConfirm }: { current: AdminModelComparisonModel | null; target: AdminModelComparisonModel; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  const added = target.classes.filter((item) => !current?.classes.includes(item));
+  const removed = current ? current.classes.filter((item) => !target.classes.includes(item)) : [];
+  return <div className={styles.modalBackdrop} role="presentation" onClick={onCancel}>
+    <section className={styles.confirmModal} role="dialog" aria-modal="true" aria-label="모델 전환 확인" onClick={(event) => event.stopPropagation()}>
+      <div className={styles.panelTitle}><span>CONFIRM SWITCH</span><h2>운영 모델을 전환할까요?</h2><p>진행 중인 분석은 시작 당시 모델로 완료되고, 전환 이후 새 분석부터 선택한 모델이 적용됩니다.</p></div>
+      <dl><Info label="현재 모델" value={current?.display_name ?? "확인 중"} /><Info label="전환 대상" value={target.display_name} /><Info label="추가 클래스" value={added.length ? added.join(" · ") : "없음"} /><Info label="제거 클래스" value={removed.length ? removed.join(" · ") : "없음"} /></dl>
+      {hasMissingMetrics(target) && <p role="note">이 모델은 동일 테스트셋 성능 평가값이 아직 비어 있습니다. 기술 검증을 통과한 등록 모델만 전환할 수 있지만, 성능 비교는 별도 확인이 필요합니다.</p>}
+      <footer><button type="button" onClick={onCancel} disabled={busy}>취소</button><button type="button" onClick={onConfirm} disabled={busy}>{busy ? "전환 중" : "확인 후 전환"}</button></footer>
+    </section>
+  </div>;
+}
+
+function DeploymentHistory({ history }: { history: AdminModelDeploymentEvent[] }) {
+  return <section className={styles.panel}>
+    <div className={styles.panelTitle}><span>AUDIT LOG</span><h2>최근 모델 전환 이력</h2><p>관리자 요청 시각, 작업, 이전/대상 모델, 성공 여부를 확인합니다.</p></div>
+    {history.length ? <div className={styles.historyList}>
+      {history.map((event) => <article key={event.id}>
+        <span>{event.action}</span>
+        <strong>{event.from_model_id ?? "없음"} → {event.to_model_id ?? event.requested_model_id ?? "확인 필요"}</strong>
+        <small>{event.requester_email ?? `관리자 #${event.requested_by ?? "-"}`} · {dateTime(event.requested_at)}</small>
+        <b data-status={event.status}>{event.status}{event.failure_code ? ` · ${event.failure_code}` : ""}</b>
+      </article>)}
+    </div> : <p className={styles.empty}>아직 모델 전환 이력이 없습니다.</p>}
+  </section>;
+}
+
+function ModelCard({ model, label, measured, highlight = false }: { model: AdminModelComparisonModel; label: string; measured: number; highlight?: boolean }) {
+  return <article className={styles.modelCard} data-highlight={highlight || undefined}>
+    <div><span>{label}</span><strong>{model.display_name}</strong><small>{model.file_name}</small></div>
+    <ul aria-label={`${model.display_name} 클래스`}>{model.classes.map((item) => <li key={item}>{item}</li>)}</ul>
+    <footer><b>{measured}/{METRICS.length}</b><span>측정 지표 등록</span></footer>
+  </article>;
+}
+
+function MetricComparisonPanel({ previous, current }: { previous: AdminModelComparisonModel; current: AdminModelComparisonModel }) {
+  return <section className={`${styles.panel} ${styles.metricPanel}`} aria-label="핵심 지표 비교 차트">
+    <div className={styles.panelTitle}><span>METRIC DASHBOARD</span><h2>핵심 지표 비교</h2><p>측정값이 없는 지표는 측정 전으로 표시해 실제 평가값과 대기 중인 항목을 구분합니다.</p></div>
+    <div className={styles.metricRows}>{METRICS.map((metric) => {
+      const before = metricValue(previous, metric.key);
+      const after = metricValue(current, metric.key);
+      const measuredValues = [before, after].filter(isMeasuredNumber);
+      const max = metric.percentPoint ? 1 : Math.max(...measuredValues, 1);
+      const delta = metricDelta(before, after, { lowerIsBetter: metric.lowerIsBetter, percentPoint: metric.percentPoint });
+      return <article key={metric.key} className={styles.metricRow}>
+        <div className={styles.metricLabel}><strong>{metric.label}</strong><b data-tone={delta.tone}>{delta.label}</b></div>
+        <MetricBar label={previous.display_name} value={metric.format(before)} state={metricBarViewState(before, max)} />
+        <MetricBar label={current.display_name} value={metric.format(after)} state={metricBarViewState(after, max)} highlight />
+      </article>;
+    })}</div>
+  </section>;
+}
+
 function MetricBar({ label, value, state, highlight = false }: { label: string; value: string; state: ReturnType<typeof metricBarViewState>; highlight?: boolean }) {
   return <div className={styles.metricBar} data-highlight={highlight || undefined} data-empty={!state.measured || undefined} data-zero={state.zero || undefined}>
-    <span>{label}</span>
-    <i aria-hidden="true"><b style={{ width: `${state.width}%` }} /></i>
-    <strong>{value}</strong>
+    <span>{label}</span><i aria-hidden="true"><b style={{ width: `${state.width}%` }} /></i><strong>{value}</strong>
   </div>;
 }
 
 function ClassCard({ code, before, after }: { code: string; before?: AdminModelClassMetric; after?: AdminModelClassMetric }) {
   const status = classComparisonStatus(before, after);
   const label = after?.label ?? before?.label ?? code;
-
   return <article className={styles.classCard} data-accent={classAccent(code)} role="listitem">
-    <header>
-      <span><strong>{label}</strong><small>{code}</small></span>
-      <b data-tone={status.tone}>{status.label}</b>
-    </header>
-    <div className={styles.classCompare}>
-      <div>
-        <em>기존 모델</em>
-        <MetricCell metric={before} />
-      </div>
-      <div>
-        <em>신규 모델</em>
-        <MetricCell metric={after} />
-      </div>
-    </div>
+    <header><span><strong>{label}</strong><small>{code}</small></span><b data-tone={status.tone}>{status.label}</b></header>
+    <div className={styles.classCompare}><div><em>기존 모델</em><MetricCell metric={before} /></div><div><em>신규 모델</em><MetricCell metric={after} /></div></div>
   </article>;
 }
 
 function MetricCell({ metric }: { metric?: AdminModelClassMetric }) {
   if (!metric?.supported) return <span className={styles.unsupported}>미지원</span>;
-
   return <span className={styles.metricCell}>
     <small>Precision {metricLabel(metric.precision, { percent: true })}</small>
     <small>Recall {metricLabel(metric.recall, { percent: true })}</small>
@@ -284,10 +431,7 @@ function MetricCell({ metric }: { metric?: AdminModelClassMetric }) {
 
 function TrainingCard({ model, highlight = false }: { model: AdminModelComparisonModel; highlight?: boolean }) {
   return <section className={styles.panel} data-highlight={highlight || undefined}>
-    <div className={styles.panelTitle}>
-      <span>TRAINING SETUP</span>
-      <h2>{model.display_name}</h2>
-    </div>
+    <div className={styles.panelTitle}><span>TRAINING SETUP</span><h2>{model.display_name}</h2></div>
     <dl className={styles.trainGrid}>
       <Info label="Architecture" value={model.architecture ?? "확인 필요"} />
       <Info label="Optimizer" value={model.optimizer ?? "확인 필요"} />
@@ -306,16 +450,6 @@ function Info({ label, value }: { label: string; value: string }) {
 
 function State({ loading = false, error }: { loading?: boolean; error?: string }) {
   return <section className={styles.state} role={error ? "alert" : "status"}>
-    {loading ? (
-      <>
-        <div><i /><i /><i /></div>
-        <strong>모델 비교 데이터를 불러오고 있습니다.</strong>
-      </>
-    ) : (
-      <>
-        <Icon name="info" size={26} />
-        <strong>{error}</strong>
-      </>
-    )}
+    {loading ? <><div><i /><i /><i /></div><strong>모델 비교 데이터를 불러오고 있습니다.</strong></> : <><Icon name="info" size={26} /><strong>{error}</strong></>}
   </section>;
 }
