@@ -261,6 +261,9 @@ CREATE TABLE ai_model_deployment_events (
     completed_at TIMESTAMPTZ
 );
 
+ALTER TABLE public.ai_model_deployment_events
+ENABLE ROW LEVEL SECURITY;
+
 
 -- =========================================================
 -- 5. 영상 추적 작업
@@ -1171,6 +1174,7 @@ VALUES
     ('BAG', '가방', 'PERSONAL_ITEM', 11),
     ('UMBRELLA', '우산', 'PERSONAL_ITEM', 12),
     ('FOOTWEAR', '신발·슬리퍼류', 'PERSONAL_ITEM', 13),
+    ('HAT', '모자', 'PERSONAL_ITEM', 14),
     -- AI 모델 클래스가 아닌 관리자 재분류용 서비스 클래스
     ('UNKNOWN', '미확인 부유물', 'UNKNOWN', 99)
 ON CONFLICT (code)
