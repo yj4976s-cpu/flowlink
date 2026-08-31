@@ -244,8 +244,8 @@ export function DaruStage() {
     const rect = stage.getBoundingClientRect();
     const baseLeft = rect.left - currentPosition.x;
     const baseTop = rect.top - currentPosition.y;
-    const blockers = Array.from(document.querySelectorAll<HTMLElement>('[data-daru-game-blocker], [class*="copilot" i], [aria-label*="FlowLink AI"]'))
-      .filter((element) => !stage.contains(element) && element.offsetParent !== null)
+    const blockers = Array.from(document.querySelectorAll<HTMLElement>('[data-daru-game-blocker], [data-flow-copilot-root]'))
+      .filter((element) => !stage.contains(element) && element.getClientRects().length > 0 && getComputedStyle(element).visibility !== "hidden")
       .map((element) => element.getBoundingClientRect());
     const margin = 12;
     const overlaps = (left: number, top: number) => blockers.some((item) => left < item.right + margin && left + rect.width > item.left - margin && top < item.bottom + margin && top + rect.height > item.top - margin);

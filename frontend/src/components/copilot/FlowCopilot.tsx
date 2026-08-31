@@ -1422,7 +1422,7 @@ export function FlowCopilot() {
   const contextLabel = `${context.replaceAll("_", " ")}${entityId ? ` · #${entityId}` : ""}`;
 
   return (
-    <div className={styles.copilotRoot} data-open={open || undefined}>
+    <div className={styles.copilotRoot} data-flow-copilot-root="true" data-open={open || undefined}>
       {open && (
         <section
           id="flowlink-copilot-panel"

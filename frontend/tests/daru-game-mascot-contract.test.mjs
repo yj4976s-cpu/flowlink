@@ -6,6 +6,8 @@ const stageSource = readFileSync(new URL("../src/components/mascot/DaruStage.tsx
 const mascotCss = readFileSync(new URL("../src/components/mascot/DaruMascot.module.css", import.meta.url), "utf8");
 const gameSource = readFileSync(new URL("../src/components/daru-game/DaruGame.tsx", import.meta.url), "utf8");
 const gameStatusSource = readFileSync(new URL("../src/components/daru-game/GameStatus.tsx", import.meta.url), "utf8");
+const copilotSource = readFileSync(new URL("../src/components/copilot/FlowCopilot.tsx", import.meta.url), "utf8");
+const difficultySource = readFileSync(new URL("../src/components/daru-game/DifficultySelector.tsx", import.meta.url), "utf8");
 
 test("daru-game no longer hard-hides the global mascot while hidden mode still does", () => {
   assert.doesNotMatch(stageSource, /mode === "hidden"\s*\|\|\s*pathname === "\/daru-game"/);
@@ -28,6 +30,11 @@ test("game-safe active uses constrained autonomous movement while drag stays dis
   assert.match(stageSource, /<DaruMascot[\s\S]+onInteract=\{handleCharacterClick\}/);
   assert.match(gameSource, /data-daru-game-blocker/);
   assert.match(gameStatusSource, /data-daru-game-blocker/);
+  assert.match(copilotSource, /data-flow-copilot-root="true"/);
+  assert.match(stageSource, /'\[data-daru-game-blocker\], \[data-flow-copilot-root\]'/);
+  assert.match(stageSource, /element\.getClientRects\(\)\.length > 0 && getComputedStyle\(element\)\.visibility !== "hidden"/);
+  assert.doesNotMatch(stageSource, /const chooseGameSafeDestination[\s\S]*\[class\*="copilot" i\]/);
+  assert.doesNotMatch(stageSource, /const chooseGameSafeDestination[\s\S]*\[aria-label\*="FlowLink AI"\]/);
   assert.match(stageSource, /const maxTravelX = mobile \? Math\.min\(96, window\.innerWidth \* 0\.22\) : tablet \? Math\.min\(220, window\.innerWidth \* 0\.26\) : Math\.min\(360, window\.innerWidth \* 0\.32\)/);
   assert.match(stageSource, /const safeCandidates = candidates\.filter/);
   assert.match(stageSource, /const maximumRightOffset = Math\.max\(0, Math\.min\(maxTravelX \* 0\.45/);
@@ -58,7 +65,7 @@ test("game-safe destination rejects blockers and keeps the current position when
   assert.doesNotMatch(stageSource, /const chooseGameSafeDestination = useCallback\(\(\) => \{[\s\S]*return \{ x: 0, y: 0 \};\s*\}, \[\]\)/);
 });
 
-test("game-safe active and quiet have distinct sizes and transform policies", () => {
+test("game-safe active and quiet inherit the general route sizes", () => {
   const desktopGameSafe = mascotCss.match(/\.stage\[data-game-safe\] \{([^}]*)\}/)?.[1] ?? "";
   const mobileGameSafe = mascotCss.match(/@media \(max-width: 600px\) \{\s*\.stage\[data-game-safe\] \{([^}]*)\}/)?.[1] ?? "";
 
@@ -73,12 +80,23 @@ test("game-safe active and quiet have distinct sizes and transform policies", ()
   assert.match(mascotCss, /\.character \{[\s\S]*?width: 148px;[\s\S]*?height: 148px/);
   assert.match(mascotCss, /@media \(max-width: 1024px\) \{ \.stage \{ right: 91px; width: 122px; \}\.character \{ width: 112px; height: 112px/);
   assert.match(mascotCss, /@media \(max-width: 600px\) \{ \.stage \{ right: 76px;[\s\S]*?\.character, \.mascot\[data-mode="quiet"\] \.character \{ width: 88px; height: 88px/);
-  assert.match(mascotCss, /\.stage\[data-game-safe\] \.mascot\[data-mode="quiet"\] \.character \{ width: 118px; height: 118px/);
-  assert.match(mascotCss, /@media \(max-width: 1024px\) \{ \.stage\[data-game-safe\] \.mascot\[data-mode="quiet"\] \.character \{ width: 92px; height: 92px/);
-  assert.match(mascotCss, /@media \(max-width: 600px\)[\s\S]*\.stage\[data-game-safe\] \.mascot\[data-mode="quiet"\] \.character \{ width: 72px; height: 72px/);
+  assert.doesNotMatch(mascotCss, /\.stage\[data-game-safe\] \.mascot\[data-mode="quiet"\] \.character \{[^}]*width:/);
+  assert.match(mascotCss, /\.mascot\[data-mode="quiet"\] \.character \{ width: 118px; height: 118px/);
+  assert.match(mascotCss, /@media \(max-width: 600px\)[\s\S]*\.character, \.mascot\[data-mode="quiet"\] \.character \{ width: 88px; height: 88px/);
   assert.match(mascotCss, /\.stage \{[\s\S]*?right: 102px/);
   assert.match(mascotCss, /@media \(max-width: 1024px\) \{ \.stage \{ right: 91px/);
   assert.match(mascotCss, /@media \(max-width: 600px\) \{ \.stage \{ right: 76px/);
+});
+
+test("mobile memory hero gives the ready bubble a card-free centered area below Daru", () => {
+  assert.match(mascotCss, /@media \(max-width: 600px\)/);
+  const gameCss = readFileSync(new URL("../src/components/daru-game/DaruGame.module.css", import.meta.url), "utf8");
+  assert.match(gameCss, /@media \(max-width: 720px\)[\s\S]*\.previewBoard \{ height: 300px/);
+  assert.match(gameCss, /\.previewBubble \{ left: 50%; top: 198px;[\s\S]*transform: translateX\(-50%\)/);
+  assert.match(gameCss, /\.previewBubble::before \{ top: -6px; bottom: auto; left: calc\(50% - 5px\)/);
+  assert.match(difficultySource, /data-memory-preview-card="true"/);
+  assert.match(difficultySource, /data-memory-preview-daru="true"/);
+  assert.match(difficultySource, /data-memory-preview-bubble="true"/);
 });
 
 test("direct greeting moves only active game-safe Daru through the constrained policy", () => {
