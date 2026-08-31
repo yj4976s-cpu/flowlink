@@ -97,7 +97,7 @@ function SocialAuthSection({
 }
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const passwordMismatchMessage = "비밀번호가 일치하지 않습니다.";
+const passwordMismatchMessage = "비밀번호가 일치하지 않아요";
 const passwordConditionKeys = Object.keys(PASSWORD_CONDITION_LABELS) as (keyof PasswordConditionState)[];
 
 const loginScene = {
@@ -203,6 +203,7 @@ function PasswordField({
   valid = false,
   shakeKey = 0,
   describedBy,
+  renderErrorMessage = true,
   children,
 }: {
   id: string;
@@ -219,6 +220,7 @@ function PasswordField({
   valid?: boolean;
   shakeKey?: number;
   describedBy?: string;
+  renderErrorMessage?: boolean;
   children?: React.ReactNode;
 }) {
   const [visible, setVisible] = useState(false);
@@ -247,7 +249,7 @@ function PasswordField({
           placeholder={placeholder}
           autoComplete={autoComplete}
           aria-invalid={Boolean(error)}
-          aria-describedby={[describedBy, error ? errorId : undefined].filter(Boolean).join(" ") || undefined}
+          aria-describedby={[describedBy, error && renderErrorMessage ? errorId : undefined].filter(Boolean).join(" ") || undefined}
           minLength={minLength}
           maxLength={maxLength}
           pattern={pattern}
@@ -272,7 +274,7 @@ function PasswordField({
         </button>
       </div>
       {children}
-      {error && <p className="auth-error" id={errorId}>{error}</p>}
+      {error && renderErrorMessage && <p className="auth-error" id={errorId}>{error}</p>}
     </div>
   );
 }
@@ -606,7 +608,7 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
               >
                 {!isLogin && <PasswordConditions password={password} invalid={Boolean(errors.password)} />}
               </PasswordField>}
-              {!isLogin && !isSocialRegistration && <PasswordField id="password-confirm" label="비밀번호 확인" placeholder="비밀번호를 한 번 더 입력해주세요" error={errors["password-confirm"]} autoComplete="new-password" onChange={handleConfirmChange} onBlur={handleConfirmBlur} value={passwordConfirm} valid={passwordConfirm.length > 0 && passwordConfirm === password} shakeKey={confirmShakeKey} describedBy={passwordConfirm.length > 0 ? "password-confirm-status" : undefined}>{passwordConfirm.length > 0 && <p className={passwordConfirm === password ? "auth-password-success" : "auth-password-mismatch"} id="password-confirm-status" aria-live="polite">{passwordConfirm === password ? <><Icon name="check" size={15} />비밀번호와 일치해요</> : <>! 비밀번호가 일치하지 않아요</>}</p>}</PasswordField>}
+              {!isLogin && !isSocialRegistration && <PasswordField id="password-confirm" label="비밀번호 확인" placeholder="비밀번호를 한 번 더 입력해주세요" error={errors["password-confirm"]} autoComplete="new-password" onChange={handleConfirmChange} onBlur={handleConfirmBlur} value={passwordConfirm} valid={passwordConfirm.length > 0 && passwordConfirm === password} shakeKey={confirmShakeKey} describedBy={passwordConfirm.length > 0 ? "password-confirm-status" : undefined} renderErrorMessage={false}>{passwordConfirm.length > 0 && <p className={passwordConfirm === password ? "auth-password-success" : "auth-password-mismatch"} id="password-confirm-status" aria-live="polite">{passwordConfirm === password ? <><Icon name="check" size={15} />비밀번호와 일치해요</> : passwordMismatchMessage}</p>}</PasswordField>}
             </div>
 
             {!isLogin && (
