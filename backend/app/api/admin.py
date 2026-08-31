@@ -8,6 +8,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.auth import require_admin
+from app.core.config import Settings, get_settings
 from app.core.security import utc_now
 from app.db.session import get_db
 from app.models import Camera, CommunityComment, CommunityPost, FoundItem, ProcessingHistory, User
@@ -25,7 +26,7 @@ from app.repositories.user_flow import (
     list_ownership_claims,
     waste_collection_completed_ids,
 )
-from app.schemas.admin import AdminAiReportResponse, AdminCameraResponse, AdminCommunityPostListResponse, AdminDashboardResponse, AdminDetectedObjectCollectionResponse, AdminDetectedObjectFoundItemResponse, AdminDetectionEventResponse, AdminFoundItemListResponse, AdminMobileWasteRegistrationResponse, AdminOwnershipClaimResponse, AdminUserListResponse, DetectedObjectUpdateRequest
+from app.schemas.admin import AdminAiReportResponse, AdminCameraResponse, AdminCommunityPostListResponse, AdminDashboardResponse, AdminDetectedObjectCollectionResponse, AdminDetectedObjectFoundItemResponse, AdminDetectionEventResponse, AdminFoundItemListResponse, AdminMobileWasteRegistrationResponse, AdminOperationsBriefingResponse, AdminOperationsBriefingStatus, AdminOwnershipClaimResponse, AdminUserListResponse, DetectedObjectUpdateRequest
 from app.schemas.citizen_report import AdminCitizenReportResponse, AdminCitizenReportUpdateRequest, ResolveCitizenReportRequest
 from app.schemas.common import MessageResponse
 from app.schemas.found_item import FoundItemUpdateRequest
@@ -41,6 +42,7 @@ from app.services.matching import reconcile_match_candidates_for_found_item
 from app.services.geocoding import GeocodingError, geocode_location
 from app.services.found_item_images import representative_found_item_image_url
 from app.services.mobile_waste import register_mobile_waste_candidate
+from app.services.admin_operations_briefing import create_admin_operations_briefing, get_admin_operations_briefing_status
 from app.api.detections import IMAGE_CONTENT_TYPES, IMAGE_MAX_BYTES, WEBCAM_FRAME_MAX_BYTES, save_upload_file
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -54,6 +56,25 @@ def get_admin_ai_report(
     db: Annotated[Session, Depends(get_db)],
 ) -> AdminAiReportResponse:
     return AdminAiReportResponse.model_validate(get_admin_ai_report_data(db))
+
+
+@router.get("/ai-report/operations-briefing/status", response_model=AdminOperationsBriefingStatus, summary="운영 AI 브리핑 연결 상태")
+def get_admin_operations_briefing_connection_status(
+    current_admin: Annotated[User, Depends(require_admin)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AdminOperationsBriefingStatus:
+    del current_admin
+    return AdminOperationsBriefingStatus.model_validate(get_admin_operations_briefing_status(settings))
+
+
+@router.post("/ai-report/operations-briefing", response_model=AdminOperationsBriefingResponse, summary="운영 AI 브리핑 수동 생성")
+async def generate_admin_operations_briefing(
+    current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AdminOperationsBriefingResponse:
+    del current_admin
+    return AdminOperationsBriefingResponse.model_validate(await create_admin_operations_briefing(db, settings))
 
 
 def detected_object_payload(item, *, collected_ids: set[int] | None = None, operational: bool = True) -> dict:

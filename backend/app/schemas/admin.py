@@ -384,3 +384,36 @@ class AdminAiReportResponse(BaseModel):
     class_metrics: list[AdminAiReportClassMetric]
     confidence_distribution: list[AdminAiReportConfidenceBucket]
     correction_patterns: list[AdminAiReportCorrectionPattern]
+
+
+class AdminOperationsBriefingMetrics(BaseModel):
+    operation_detection_pending: int
+    waste_collection_pending: int
+    citizen_review_pending: int
+    ownership_claim_pending: int
+    ownership_return_pending: int
+    average_confidence: Decimal | None = None
+
+
+class AdminOperationsBriefingTask(BaseModel):
+    key: str
+    label: str
+    count: int
+    href: str
+
+
+class AdminOperationsBriefingStatus(BaseModel):
+    provider: str
+    model: str | None = None
+    gemini_configured: bool
+    gemini_connected: bool
+    fallback_used: bool
+    fallback_reason: str | None = None
+
+
+class AdminOperationsBriefingResponse(AdminOperationsBriefingStatus):
+    summary: str
+    generated_at: datetime
+    metrics: AdminOperationsBriefingMetrics
+    priority_task: AdminOperationsBriefingTask | None = None
+    tasks: list[AdminOperationsBriefingTask]
