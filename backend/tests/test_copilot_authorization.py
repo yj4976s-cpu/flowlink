@@ -16,12 +16,18 @@ def test_user_and_admin_receive_different_tool_sets() -> None:
     assert "get_my_matches" in user_names
     assert {"get_my_analysis_results", "get_my_ownership_claims"}.issubset(user_names)
     assert "get_operations_summary" not in user_names
-    assert admin_names == {"get_operations_summary"}
+    assert admin_names == {"get_operations_summary", "get_operations_queue"}
 
 
 def test_user_tools_are_filtered_by_message_intent() -> None:
     names = {item["name"] for item in tool_definitions_for_message("USER", "내 매칭 후보만 알려줘")}
     assert names == {"get_my_matches", "get_match_detail"}
+
+
+def test_admin_tools_are_filtered_by_message_intent() -> None:
+    assert {item["name"] for item in tool_definitions_for_message("ADMIN", "\uc624\ub298 \uc6b4\uc601 \ud604\ud669 \uc694\uc57d\ud574\uc918")} == {"get_operations_summary"}
+    assert {item["name"] for item in tool_definitions_for_message("ADMIN", "\uc9c0\uae08 \uc6b0\uc120 \ucc98\ub9ac\ud560 \ub300\uae30\uc5f4\uc774 \ubb50\uc57c?")} == {"get_operations_queue"}
+    assert {item["name"] for item in tool_definitions_for_message("ADMIN", "\uad00\ub9ac\uc790 \ud654\uba74\uc740 \uc5b4\ub514\uc57c?")} == set()
 
 
 def test_tool_execution_rejects_wrong_role_before_database_access() -> None:
@@ -30,6 +36,7 @@ def test_tool_execution_rejects_wrong_role_before_database_access() -> None:
     user = Mock(role="USER", id=2)
     assert "error" in execute_tool(db, admin, "get_my_matches", {})
     assert "error" in execute_tool(db, user, "get_operations_summary", {})
+    assert "error" in execute_tool(db, user, "get_operations_queue", {})
     assert "error" in execute_tool(db, admin, "get_my_analysis_results", {})
     assert "error" in execute_tool(db, admin, "get_my_ownership_claims", {})
     db.assert_not_called()
@@ -129,3 +136,74 @@ def test_detection_tool_payload_limits_objects_and_excludes_bounding_boxes(monke
 ])
 def test_operations_today_since_uses_kst_midnight(now: datetime, expected: datetime) -> None:
     assert operations_today_since(now) == expected
+
+
+def test_admin_operations_summary_uses_dashboard_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+    dashboard = {
+        "period": "today",
+        "metrics": {
+            "ai_detections": 12,
+            "official_found_items": 5,
+            "matched": 4,
+            "claims": 3,
+            "approved": 2,
+            "returned": 1,
+            "lost_reports": 9,
+            "operation_detection_pending": 7,
+        },
+        "category_counts": [{"code": "BAG", "name": "\uac00\ubc29", "count": 2}],
+        "claim_status_counts": [{"status": "PENDING", "count": 3}],
+        "average_confidence": 0.842,
+        "recent_items": [{"image_url": "/uploads/private.png"}],
+        "recent_history": [{"note": "internal memo"}],
+    }
+    monkeypatch.setattr("app.services.copilot_tools.get_admin_dashboard_data", lambda *_args, **_kwargs: dashboard)
+
+    result = execute_tool(Mock(), Mock(role="ADMIN", id=1), "get_operations_summary", {})
+
+    assert result["counts"] == {
+        "today_ai_detections": 12,
+        "official_found_items": 5,
+        "matches": 4,
+        "ownership_claims": 3,
+        "approved": 2,
+        "returned": 1,
+        "lost_reports": 9,
+    }
+    assert result["average_detection_confidence"] == 0.842
+    assert result["class_detection_counts"] == [{"code": "BAG", "name": "\uac00\ubc29", "count": 2}]
+    assert result["ownership_claim_status_counts"] == [{"status": "PENDING", "count": 3}]
+    assert "recent_items" not in result
+    assert "recent_history" not in result
+
+
+def test_admin_operations_queue_returns_safe_paths_and_counts(monkeypatch: pytest.MonkeyPatch) -> None:
+    dashboard = {
+        "metrics": {
+            "operation_detection_pending": 1,
+            "waste_collection_pending": 2,
+            "citizen_review_pending": 3,
+            "ownership_claim_pending": 4,
+            "ownership_return_pending": 5,
+        }
+    }
+    monkeypatch.setattr("app.services.copilot_tools.get_admin_dashboard_data", lambda *_args, **_kwargs: dashboard)
+
+    result = execute_tool(Mock(), Mock(role="ADMIN", id=1), "get_operations_queue", {})
+
+    assert [item["code"] for item in result["items"]] == [
+        "operation_detection_pending",
+        "waste_collection_pending",
+        "citizen_review_pending",
+        "ownership_claim_pending",
+        "ownership_return_pending",
+    ]
+    assert [item["pending_count"] for item in result["items"]] == [1, 2, 3, 4, 5]
+    assert [item["path"] for item in result["items"]] == [
+        "/admin/detections",
+        "/admin/detections/mobile",
+        "/admin/citizen-reports",
+        "/admin/ownership-claims",
+        "/admin/ownership-claims",
+    ]
+    assert "\uc0c1\ud0dc \ubcc0\uacbd" in result["notice"]

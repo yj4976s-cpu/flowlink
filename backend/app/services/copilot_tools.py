@@ -19,7 +19,7 @@ USER_TOOL_NAMES = {
     "get_my_notifications",
     "search_public_community",
 }
-ADMIN_TOOL_NAMES = {"get_operations_summary"}
+ADMIN_TOOL_NAMES = {"get_operations_summary", "get_operations_queue"}
 COMMUNITY_CATEGORIES = {"FIELD_STORY", "QUESTION", "EXPERIENCE", "OPINION"}
 KST = ZoneInfo("Asia/Seoul")
 
@@ -112,19 +112,42 @@ def tool_definitions(role: str | None) -> list[dict]:
             {
                 "type": "function",
                 "name": "get_operations_summary",
-                "description": "관리자가 오늘의 탐지, 발견물, 매칭, 소유권 요청 운영 집계를 조회한다.",
+                "description": "\uad00\ub9ac\uc790\uac00 \uc6b4\uc601 \ud604\ud669, AI \ud0d0\uc9c0 \uc218, \uacf5\uc2dd \ubc1c\uacac\ubb3c, \ub9e4\uce6d, \uc18c\uc720\uad8c \uc694\uccad, \ubc18\ud658 \uc644\ub8cc \ub4f1 \uc548\uc804\ud55c \uc9d1\uacc4\ub9cc \uba85\uc2dc\uc801\uc73c\ub85c \ubb3c\uc744 \ub54c \uc870\ud68c\ud55c\ub2e4.",
                 "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
-            }
+            },
+            {
+                "type": "function",
+                "name": "get_operations_queue",
+                "description": "\uad00\ub9ac\uc790\uac00 \uc9c0\uae08 \ucc98\ub9ac\ud574\uc57c \ud560 \uc6b4\uc601 \ub300\uae30\uc5f4\uacfc \uc774\ub3d9\ud560 \uad00\ub9ac\uc790 \ud654\uba74\uc744 \uba85\uc2dc\uc801\uc73c\ub85c \ubb3c\uc744 \ub54c \uc870\ud68c\ud55c\ub2e4. \uc0c1\ud0dc \ubcc0\uacbd\uc740 \uc218\ud589\ud558\uc9c0 \uc54a\ub294\ub2e4.",
+                "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+            },
         ]
     return []
 
 
 def tool_definitions_for_message(role: str | None, message: str) -> list[dict]:
     definitions = tool_definitions(role)
-    if role != "USER" or not definitions:
+    if not definitions:
         return definitions
 
     text = message.strip().lower()
+    if role == "ADMIN":
+        selected: set[str] = set()
+        if any(keyword in text for keyword in (
+            "\uc6b4\uc601", "\ud604\ud669", "\uc694\uc57d", "\uc9d1\uacc4", "\ud1b5\uacc4", "\ud3c9\uade0", "\uc2e0\ub8b0\ub3c4", "confidence",
+            "\ud0d0\uc9c0 \uac74\uc218", "\ubc1c\uacac\ubb3c", "\ub9e4\uce6d", "\uc18c\uc720\uad8c", "\ubc18\ud658", "\ubd84\uc2e4 \uc2e0\uace0", "\ud074\ub798\uc2a4",
+        )):
+            selected.add("get_operations_summary")
+        if any(keyword in text for keyword in (
+            "\ub300\uae30", "\ucc98\ub9ac", "\uc6b0\uc120", "queue", "\uac80\ud1a0", "\ud3d0\uae30\ubb3c", "\uc218\uac70", "\uc81c\ubcf4",
+            "\uc18c\uc720\uad8c \uc694\uccad", "\ubc18\ud658 \ub300\uae30", "\ud560 \uc77c", "\ud574\uc57c", "\uc5c5\ubb34",
+        )):
+            selected.add("get_operations_queue")
+        return [item for item in definitions if item["name"] in selected]
+
+    if role != "USER":
+        return definitions
+
     selected: set[str] = set()
     if any(keyword in text for keyword in ("신고", "분실", "lost report", "lost_report", "내 물건")):
         selected.add("get_my_lost_reports")
@@ -295,6 +318,62 @@ def search_public_community(
     return [_community_projection(post, int(count or 0)) for post, count in rows]
 
 
+def _operations_summary_payload(data: dict) -> dict:
+    metrics = data.get("metrics") if isinstance(data.get("metrics"), dict) else {}
+    average_confidence = data.get("average_confidence")
+    return {
+        "period": data.get("period"),
+        "counts": {
+            "today_ai_detections": int(metrics.get("ai_detections") or 0),
+            "official_found_items": int(metrics.get("official_found_items") or 0),
+            "matches": int(metrics.get("matched") or 0),
+            "ownership_claims": int(metrics.get("claims") or 0),
+            "approved": int(metrics.get("approved") or 0),
+            "returned": int(metrics.get("returned") or 0),
+            "lost_reports": int(metrics.get("lost_reports") or 0),
+        },
+        "average_detection_confidence": float(average_confidence) if average_confidence is not None else None,
+        "class_detection_counts": [
+            {
+                "code": str(item.get("code") or ""),
+                "name": str(item.get("name") or item.get("name_ko") or ""),
+                "count": int(item.get("count") or 0),
+            }
+            for item in data.get("category_counts", [])
+            if isinstance(item, dict)
+        ],
+        "ownership_claim_status_counts": [
+            {"status": str(item.get("status") or ""), "count": int(item.get("count") or 0)}
+            for item in data.get("claim_status_counts", [])
+            if isinstance(item, dict)
+        ],
+        "notice": "집계는 운영 판단을 돕는 통계이며, 탐지 신뢰도나 매칭 점수를 소유 확률처럼 표현하지 않는다.",
+    }
+
+
+def _operations_queue_payload(data: dict) -> dict:
+    metrics = data.get("metrics") if isinstance(data.get("metrics"), dict) else {}
+    queue_items = [
+        ("operation_detection_pending", "AI 탐지 검토 대기", "/admin/detections"),
+        ("waste_collection_pending", "폐기물 수거 대기", "/admin/detections/mobile"),
+        ("citizen_review_pending", "시민 제보 검토 대기", "/admin/citizen-reports"),
+        ("ownership_claim_pending", "소유권 요청 검토 대기", "/admin/ownership-claims"),
+        ("ownership_return_pending", "승인 후 실제 반환 대기", "/admin/ownership-claims"),
+    ]
+    return {
+        "items": [
+            {
+                "code": code,
+                "label": label,
+                "pending_count": int(metrics.get(code) or 0),
+                "path": path,
+            }
+            for code, label, path in queue_items
+        ],
+        "notice": "\uc774 \ub3c4\uad6c\ub294 \ub300\uae30\uc5f4 \uc870\ud68c \uc804\uc6a9\uc774\uba70 \uc2b9\uc778, \uac70\uc808, \uc0ad\uc81c, \uc218\uac70 \uc644\ub8cc \uac19\uc740 \uc0c1\ud0dc \ubcc0\uacbd\uc744 \uc218\ud589\ud558\uc9c0 \uc54a\ub294\ub2e4.",
+    }
+
+
 def execute_tool(db: Session, current_user: User | None, name: str, arguments: dict) -> dict | list:
     role = current_user.role if current_user else None
     if name in USER_TOOL_NAMES and role != "USER":
@@ -332,6 +411,10 @@ def execute_tool(db: Session, current_user: User | None, name: str, arguments: d
         now = utc_now()
         since = operations_today_since(now)
         data = get_admin_dashboard_data(db, since=since, period="today", now=now)
-        allowed = ("summary", "kpis", "status_counts", "claim_status_counts", "average_confidence")
-        return {key: data[key] for key in allowed if key in data}
+        return _operations_summary_payload(data)
+    if name == "get_operations_queue":
+        now = utc_now()
+        since = operations_today_since(now)
+        data = get_admin_dashboard_data(db, since=since, period="today", now=now)
+        return _operations_queue_payload(data)
     return {"error": "허용되지 않은 도구입니다."}
