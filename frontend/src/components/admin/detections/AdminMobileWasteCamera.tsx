@@ -42,6 +42,25 @@ type RegistrationResult = {
   detectedObjectId: number;
 };
 
+const FIELD_STEPS = [
+  { key: "camera", title: "카메라 준비", description: "현장 카메라를 켜고 폐기물을 화면 안에 맞춰주세요." },
+  { key: "select", title: "폐기물 후보 선택", description: "상자 표시된 TRASH/WASTE 후보를 눌러 등록할 프레임을 고정하세요." },
+  { key: "register", title: "회수 대상으로 등록", description: "선택한 프레임과 탐지 결과를 확인하고 등록하세요." },
+  { key: "complete", title: "수거 완료", description: "실제 현장 수거를 마친 뒤 완료 처리하세요." },
+] as const;
+
+const STATUS_LABELS: Record<CameraStatus, string> = {
+  idle: "대기",
+  requesting: "카메라 권한 요청 중",
+  ready: "카메라 준비",
+  running: "실시간 탐지 중",
+  selected: "후보 선택됨",
+  registering: "등록 중",
+  registered: "회수 등록 완료",
+  collecting: "수거 완료 처리 중",
+  completed: "수거 완료",
+};
+
 function isAbortError(reason: unknown) {
   return reason instanceof DOMException && reason.name === "AbortError";
 }
@@ -123,6 +142,15 @@ export function AdminMobileWasteCamera() {
   const selectedObjectId = frozen ? `${frozen.object.bbox.x}-${frozen.object.bbox.y}-${frozen.object.bbox.width}-${frozen.object.bbox.height}` : "";
   const cameraActive = status !== "idle" && status !== "requesting";
   const secureHint = typeof window !== "undefined" && !window.isSecureContext && location.hostname !== "localhost" && location.hostname !== "127.0.0.1";
+  const selectedCamera = cameras.find((camera) => String(camera.id) === cameraId) ?? null;
+  const currentStepIndex = status === "completed" || registered || status === "collecting"
+    ? 3
+    : frozen
+      ? 2
+      : status === "running"
+        ? 1
+        : 0;
+  const currentStepDescription = FIELD_STEPS[currentStepIndex]?.description ?? FIELD_STEPS[0].description;
 
   const liveMediaRect = useMemo(() => {
     if (!snapshot) return null;
@@ -274,6 +302,11 @@ export function AdminMobileWasteCamera() {
     }
   }, [facingMode, revokeFrozen, stopStream, updateVideoSize]);
 
+  const startCameraAndDetection = useCallback(async () => {
+    await startCamera();
+    if (streamRef.current) startDetection();
+  }, [startCamera, startDetection]);
+
   const switchCamera = async () => {
     const wasRunning = runningRef.current;
     stopDetection();
@@ -313,6 +346,8 @@ export function AdminMobileWasteCamera() {
 
   const completeCollection = async () => {
     if (!registered) return;
+    const confirmed = window.confirm("실제 현장에서 폐기물 수거를 완료했나요? 완료 처리하면 운영 이력에 기록됩니다.");
+    if (!confirmed) return;
     setStatus("collecting");
     setError("");
     try {
@@ -376,6 +411,24 @@ export function AdminMobileWasteCamera() {
         </p>
       )}
 
+      <section className={styles.fieldStatus} aria-label="현장 작업 진행 단계">
+        <div className={styles.stepper}>
+          {FIELD_STEPS.map((step, index) => (
+            <div key={step.key} data-active={index === currentStepIndex} data-complete={index < currentStepIndex}>
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <strong>{step.title}</strong>
+            </div>
+          ))}
+        </div>
+        <p>{currentStepDescription}</p>
+        <div className={styles.statusChips} aria-label="현재 카메라와 탐지 상태">
+          <span>{STATUS_LABELS[status]}</span>
+          <span>{selectedCamera ? `${selectedCamera.name} · ${selectedCamera.area_name}` : "운영 카메라 미선택"}</span>
+          <span>{isRunning ? "서버 연결 · 탐지 요청 중" : "서버 연결 · 대기"}</span>
+          <span>{wasteObjects.length ? `선택 가능 후보 ${wasteObjects.length}개` : status === "running" ? "후보 찾는 중" : "후보 없음"}</span>
+        </div>
+      </section>
+
       <section className={styles.shell}>
         <div className={styles.cameraPanel}>
           <div className={styles.controls}>
@@ -388,8 +441,8 @@ export function AdminMobileWasteCamera() {
               </select>
             </label>
             <div>
-              <button type="button" className="button button-secondary" onClick={() => void startCamera()} disabled={status === "requesting"}>
-                <Icon name="camera" size={17} />{cameraActive ? "카메라 재시작" : "카메라 켜기"}
+              <button type="button" className={cameraActive ? "button button-secondary" : "button button-primary"} onClick={() => void (cameraActive ? startCamera() : startCameraAndDetection())} disabled={status === "requesting"}>
+                <Icon name="camera" size={17} />{cameraActive ? "카메라 재시작" : "카메라 켜고 탐지 시작"}
               </button>
               {cameraActive && (
                 <button type="button" className="button button-secondary" onClick={() => void switchCamera()} disabled={status === "registering" || status === "collecting"}>
@@ -440,6 +493,17 @@ export function AdminMobileWasteCamera() {
             )}
           </div>
           <canvas ref={canvasRef} className={styles.hiddenCanvas} aria-hidden="true" />
+
+          {frozen && (
+            <dl className={styles.captureMeta} aria-label="선택한 폐기물 확인 정보">
+              <div><dt>탐지 클래스</dt><dd>{objectLabel(frozen.object)}</dd></div>
+              <div><dt>탐지 신뢰도</dt><dd>{Math.round(frozen.object.confidence * 100)}%</dd></div>
+              <div><dt>운영 카메라</dt><dd>{selectedCamera?.name ?? "미선택"}</dd></div>
+              <div><dt>운영 구역</dt><dd>{selectedCamera?.area_name ?? "-"}</dd></div>
+              <div><dt>프레임 해상도</dt><dd>{frozen.frame.media_width}×{frozen.frame.media_height}</dd></div>
+              <div><dt>저장 안내</dt><dd>선택한 이 프레임만 등록됩니다.</dd></div>
+            </dl>
+          )}
 
           {error && <p className={styles.error} role="alert">{error}</p>}
 
