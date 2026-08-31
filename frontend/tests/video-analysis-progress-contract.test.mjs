@@ -42,6 +42,18 @@ test("analysis shows only actual frame progress while rendering and saving remai
   assert.match(cssSource, /prefers-reduced-motion: reduce[\s\S]*videoProgressIndeterminate/);
 });
 
+test("failed video steps preserve the stage that actually failed", () => {
+  assert.match(apiSource, /failed_stage: "QUEUED" \| "ANALYZING" \| "RENDERING" \| "SAVING" \| null/);
+  assert.match(workbenchSource, /activeStageForServerStatus/);
+  assert.match(workbenchSource, /getVideoStepState/);
+  assert.match(workbenchSource, /setVideoFailedFromStage\("uploading"\)/);
+  assert.match(workbenchSource, /영상 분석을 시작하지 못했어요/);
+  assert.match(workbenchSource, /영상 분석을 완료하지 못했어요/);
+  assert.match(workbenchSource, /결과 영상을 준비하지 못했어요/);
+  assert.match(workbenchSource, /분석 결과를 저장하지 못했어요/);
+  assert.match(workbenchSource, /data-failed/);
+});
+
 test("polling has retry bounds plus abort and stale request protection", () => {
   assert.match(workbenchSource, /transientFailures >= 3/);
   assert.match(workbenchSource, /videoRequestGenerationRef/);

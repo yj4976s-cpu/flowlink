@@ -48,6 +48,7 @@ export type VideoProcessingStatus = {
   video_job_id: number;
   status: "PROCESSING" | "COMPLETED" | "FAILED";
   stage: "QUEUED" | "ANALYZING" | "RENDERING" | "SAVING" | "COMPLETED" | "FAILED";
+  failed_stage: "QUEUED" | "ANALYZING" | "RENDERING" | "SAVING" | null;
   processed_frames: number;
   total_frames: number | null;
   analysis_progress: number | null;
@@ -182,7 +183,7 @@ export function uploadDetectionVideo(file: File, options: DetectionVideoUploadOp
         reject(new DetectionApiError("영상 분석 결과를 확인하지 못했습니다.", xhr.status));
       }
     };
-    xhr.onerror = () => { cleanup(); reject(new DetectionApiError(getFallbackMessage(xhr.status), xhr.status || undefined)); };
+    xhr.onerror = () => { cleanup(); reject(new DetectionApiError("영상을 업로드하지 못했어요. 네트워크 연결을 확인한 뒤 다시 시도해주세요.", xhr.status || undefined)); };
     xhr.onabort = () => { cleanup(); reject(new DOMException("Video upload aborted", "AbortError")); };
     if (options.signal) {
       if (options.signal.aborted) {

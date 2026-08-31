@@ -32,6 +32,9 @@ import styles from "./DetectionWorkbench.module.css";
 type DetectionTab = "image" | "video" | "webcam";
 type SubmitState = "idle" | "selected" | "analyzing" | "success" | "error";
 type VideoProcessingState = "idle" | "uploading" | "queued" | "analyzing" | "rendering" | "saving" | "completed" | "failed";
+type VideoActiveStage = Exclude<VideoProcessingState, "idle" | "completed" | "failed">;
+type VideoStepKey = "upload" | "analysis" | "render" | "save";
+type VideoStepState = "pending" | "active" | "complete" | "failed";
 type FoundReportCandidate = {
   sourceType: DetectionTab;
   objectClassCode: string;
@@ -118,24 +121,48 @@ function processingStateForStage(stage: VideoProcessingStatus["stage"]): VideoPr
   return "failed";
 }
 
-function VideoProcessingCard({ state, uploadProgress, serverStatus, elapsedSeconds, error }: { state: Exclude<VideoProcessingState, "idle" | "completed">; uploadProgress: number | null; serverStatus: VideoProcessingStatus | null; elapsedSeconds: number; error: string }) {
+function activeStageForServerStatus(status: VideoProcessingStatus): VideoActiveStage {
+  const stage = status.status === "FAILED" ? status.failed_stage : status.stage;
+  if (stage === "RENDERING") return "rendering";
+  if (stage === "SAVING") return "saving";
+  if (stage === "ANALYZING") return "analyzing";
+  return "queued";
+}
+
+function getVideoStepState(step: VideoStepKey, stage: VideoActiveStage, failed: boolean): VideoStepState {
+  const stepOrder: VideoStepKey[] = ["upload", "analysis", "render", "save"];
+  const activeStep: VideoStepKey = stage === "uploading" ? "upload" : stage === "queued" || stage === "analyzing" ? "analysis" : stage === "rendering" ? "render" : "save";
+  const stepIndex = stepOrder.indexOf(step);
+  const activeIndex = stepOrder.indexOf(activeStep);
+  if (failed && stepIndex === activeIndex) return "failed";
+  if (stepIndex < activeIndex) return "complete";
+  if (!failed && stepIndex === activeIndex) return "active";
+  return "pending";
+}
+
+function VideoProcessingCard({ state, failedFromStage, uploadProgress, serverStatus, elapsedSeconds, error }: { state: Exclude<VideoProcessingState, "idle" | "completed">; failedFromStage: VideoActiveStage | null; uploadProgress: number | null; serverStatus: VideoProcessingStatus | null; elapsedSeconds: number; error: string }) {
   const uploading = state === "uploading";
   const failed = state === "failed";
   const analyzing = state === "analyzing";
+  const displayedStage = failed ? failedFromStage ?? "uploading" : state;
   const actualProgress = analyzing ? serverStatus?.analysis_progress ?? null : null;
-  const status = failed ? "영상 분석을 완료하지 못했어요"
+  const failureStatus = displayedStage === "uploading" ? "영상을 업로드하지 못했어요."
+    : displayedStage === "queued" ? "영상 분석을 시작하지 못했어요."
+      : displayedStage === "analyzing" ? "영상 분석을 완료하지 못했어요."
+        : displayedStage === "rendering" ? "결과 영상을 준비하지 못했어요."
+          : "분석 결과를 저장하지 못했어요.";
+  const status = failed ? failureStatus
     : uploading ? "영상을 업로드하고 있어요"
       : state === "queued" ? "분석을 준비하고 있어요"
         : analyzing ? "AI가 영상을 분석하고 있어요"
           : state === "rendering" ? "결과 영상을 준비하고 있어요"
             : "분석 결과를 안전하게 저장하고 있어요";
-  const steps = [
-    ["upload", "영상 업로드", !uploading],
-    ["analysis", "AI 객체 탐지 · 추적", state === "rendering" || state === "saving"],
-    ["render", "결과 영상 생성", state === "saving"],
-    ["save", "결과 저장", false],
+  const steps: ReadonlyArray<readonly [VideoStepKey, string]> = [
+    ["upload", "영상 업로드"],
+    ["analysis", "AI 객체 탐지 · 추적"],
+    ["render", "결과 영상 생성"],
+    ["save", "결과 저장"],
   ] as const;
-  const activeStep = uploading ? "upload" : state === "queued" || analyzing ? "analysis" : state === "rendering" ? "render" : state === "saving" ? "save" : null;
   return (
     <section className={`${styles.videoProcessingCard}${failed ? ` ${styles.videoProcessingFailed}` : ""}`} aria-labelledby="video-processing-title">
       <div className={styles.videoProcessingHeading}>
@@ -144,7 +171,10 @@ function VideoProcessingCard({ state, uploadProgress, serverStatus, elapsedSecon
       </div>
       <p className={styles.videoProcessingStatus} role={failed ? "alert" : "status"} aria-live="polite">{status}</p>
       <ol className={styles.videoProcessingSteps}>
-        {steps.map(([key, label, complete]) => <li key={key} data-complete={complete || undefined} data-active={key === activeStep || undefined}>{complete ? "✓" : key === activeStep ? "●" : "○"} {label}</li>)}
+        {steps.map(([key, label]) => {
+          const stepState = getVideoStepState(key, displayedStage, failed);
+          return <li key={key} data-complete={stepState === "complete" || undefined} data-active={stepState === "active" || undefined} data-failed={stepState === "failed" || undefined}>{stepState === "complete" ? "✓" : stepState === "active" ? "●" : stepState === "failed" ? "!" : "○"} {label}</li>;
+        })}
       </ol>
       {!failed && ((uploading && uploadProgress !== null) || (analyzing && actualProgress !== null) ? (
         <div className={styles.videoProgressGroup}>
@@ -835,6 +865,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
   const [videoThumbnailUrl, setVideoThumbnailUrl] = useState("");
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
   const [videoProcessingState, setVideoProcessingState] = useState<VideoProcessingState>("idle");
+  const [videoFailedFromStage, setVideoFailedFromStage] = useState<VideoActiveStage | null>(null);
   const [videoUploadProgress, setVideoUploadProgress] = useState<number | null>(null);
   const [videoServerStatus, setVideoServerStatus] = useState<VideoProcessingStatus | null>(null);
   const [videoProcessingStartedAt, setVideoProcessingStartedAt] = useState<number | null>(null);
@@ -1075,6 +1106,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
     setError("");
     setSubmitState("idle");
     setVideoProcessingState("idle");
+    setVideoFailedFromStage(null);
     setVideoUploadProgress(null);
     setVideoServerStatus(null);
     setVideoProcessingStartedAt(null);
@@ -1101,6 +1133,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
     setVideoDuration(null);
     setVideoThumbnailUrl("");
     setVideoProcessingState("idle");
+    setVideoFailedFromStage(null);
     setVideoUploadProgress(null);
     setVideoServerStatus(null);
     setVideoProcessingStartedAt(null);
@@ -1151,6 +1184,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
       videoAbortControllerRef.current?.abort();
       videoAbortControllerRef.current = new AbortController();
       setVideoProcessingState("uploading");
+      setVideoFailedFromStage("uploading");
       setVideoUploadProgress(null);
       setVideoServerStatus(null);
       setVideoProcessingStartedAt(Date.now());
@@ -1165,7 +1199,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
         const accepted = await uploadDetectionVideo(file, {
           signal: controller.signal,
           onUploadProgress: (progress) => { if (requestGeneration === videoRequestGenerationRef.current) setVideoUploadProgress(progress); },
-          onUploadComplete: () => { if (requestGeneration === videoRequestGenerationRef.current) { setVideoUploadProgress(null); setVideoProcessingState("queued"); } },
+          onUploadComplete: () => { if (requestGeneration === videoRequestGenerationRef.current) { setVideoUploadProgress(null); setVideoProcessingState("queued"); setVideoFailedFromStage("queued"); } },
         });
         let transientFailures = 0;
         while (true) {
@@ -1174,6 +1208,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
             const status = await getVideoProcessingStatus(accepted.detection_event_id, controller.signal);
             transientFailures = 0;
             setVideoServerStatus(status);
+            setVideoFailedFromStage(activeStageForServerStatus(status));
             setVideoProcessingState(processingStateForStage(status.stage));
             if (status.status === "FAILED") throw new Error(status.error_message ?? "영상 분석을 완료하지 못했어요. 잠시 후 다시 시도해주세요.");
             if (status.status === "COMPLETED") break;
@@ -1600,7 +1635,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
                   )}
                 </label>
 
-                {tab === "video" && videoProcessingState !== "idle" && videoProcessingState !== "completed" && <VideoProcessingCard state={videoProcessingState} uploadProgress={videoUploadProgress} serverStatus={videoServerStatus} elapsedSeconds={videoElapsedSeconds} error={error} />}
+                {tab === "video" && videoProcessingState !== "idle" && videoProcessingState !== "completed" && <VideoProcessingCard state={videoProcessingState} failedFromStage={videoFailedFromStage} uploadProgress={videoUploadProgress} serverStatus={videoServerStatus} elapsedSeconds={videoElapsedSeconds} error={error} />}
 
                 {error && !(tab === "video" && videoProcessingState === "failed") && <p className={styles.error} role="alert">{error}</p>}
 

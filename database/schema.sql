@@ -256,6 +256,8 @@ CREATE TABLE video_jobs (
 
     processed_frames INTEGER NOT NULL DEFAULT 0 CHECK (processed_frames >= 0),
     total_frames INTEGER CHECK (total_frames IS NULL OR total_frames > 0),
+    failed_stage VARCHAR(20)
+        CHECK (failed_stage IS NULL OR failed_stage IN ('QUEUED', 'ANALYZING', 'RENDERING', 'SAVING')),
 
     tracking_algorithm VARCHAR(20) NOT NULL DEFAULT 'BYTE_TRACK'
         CHECK (

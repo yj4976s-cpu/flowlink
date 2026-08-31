@@ -42,7 +42,7 @@ from app.services.webcam_inference import (
     WebcamInferenceUnavailableError,
     get_webcam_inference_service,
 )
-from app.repositories.detections import claim_next_queued_video_job
+from app.repositories.detections import claim_next_queued_video_job, fail_detection_event
 from app.workers.video_detection_worker import fail_stale_jobs, process_one_job
 
 
@@ -936,12 +936,22 @@ def test_video_status_is_owner_scoped_and_internal_progress_requires_key(
     endpoint = f"/api/internal/video-jobs/{job_id}/progress"
     assert client.post(endpoint, json={"stage": "ANALYZING", "processed_frames": 3, "total_frames": 10}).status_code == 403
     assert client.post(endpoint, headers={"X-Internal-API-Key": "wrong"}, json={"stage": "ANALYZING"}).status_code == 403
-    assert client.post(endpoint, headers={"X-Internal-API-Key": key}, json={"stage": "ANALYZING", "processed_frames": 3, "total_frames": 10}).status_code == 204
+    assert client.post(endpoint, headers={"X-Internal-API-Key": key}, json={"stage": "ANALYZING", "processed_frames": 298, "total_frames": 300}).status_code == 204
     db.expire_all()
     job = db.get(VideoJob, job_id)
     assert job.processing_stage == "ANALYZING"
-    assert job.processed_frames == 3
-    assert job.total_frames == 10
+    assert job.processed_frames == 298
+    assert job.total_frames == 300
+
+    assert client.post(endpoint, headers={"X-Internal-API-Key": key}, json={"stage": "RENDERING"}).status_code == 204
+    db.expire_all()
+    job = db.get(VideoJob, job_id)
+    assert job.processing_stage == "RENDERING"
+    assert job.processed_frames == 298
+    authenticate(client, owner)
+    status_response = client.get(f"/api/detections/{event_id}/processing-status")
+    assert status_response.json()["stage"] == "RENDERING"
+    assert status_response.json()["analysis_progress"] == 99
 
 
 def test_video_job_claim_is_single_use_and_stale_processing_fails(client: TestClient, db: Session) -> None:
@@ -959,6 +969,24 @@ def test_video_job_claim_is_single_use_and_stale_processing_fails(client: TestCl
     job = db.get(VideoJob, job_id)
     assert job.status == "FAILED"
     assert job.processing_stage == "FAILED"
+    assert job.failed_stage == "ANALYZING"
+
+
+@pytest.mark.parametrize("failed_stage", ["QUEUED", "ANALYZING", "RENDERING", "SAVING"])
+def test_video_status_preserves_failure_stage(client: TestClient, db: Session, failed_stage: str) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    accepted = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")}).json()
+    event = db.get(DetectionEvent, accepted["detection_event_id"])
+    event.video_job.processing_stage = failed_stage
+    fail_detection_event(db, event=event, message="safe failure", completed_at=utc_now())
+    db.commit()
+
+    response = client.get(f"/api/detections/{event.id}/processing-status")
+    assert response.status_code == 200
+    assert response.json()["status"] == "FAILED"
+    assert response.json()["stage"] == "FAILED"
+    assert response.json()["failed_stage"] == failed_stage
 
 
 def test_video_detection_fails_when_rendered_result_video_is_missing(client: TestClient, db: Session) -> None:

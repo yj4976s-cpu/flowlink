@@ -29,8 +29,6 @@ def update_video_job_progress(
         job.processed_frames = max(job.processed_frames, payload.processed_frames)
     if payload.stage == "RENDERING":
         job.processing_stage = "RENDERING"
-        if job.total_frames is not None:
-            job.processed_frames = max(job.processed_frames, job.total_frames)
     elif job.processing_stage in {"QUEUED", "ANALYZING"}:
         job.processing_stage = "ANALYZING"
     job.status = "PROCESSING"

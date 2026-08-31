@@ -138,6 +138,7 @@ def complete_detection_event(
         event.video_job.status = "COMPLETED"
         event.video_job.processing_progress = 100
         event.video_job.processing_stage = "COMPLETED"
+        event.video_job.failed_stage = None
         event.video_job.processing_completed_at = completed_at
         event.video_job.error_message = None
         db.add(event.video_job)
@@ -159,7 +160,9 @@ def fail_detection_event(
     event.processing_completed_at = completed_at
     db.add(event)
     if event.video_job is not None:
+        failed_stage = event.video_job.processing_stage
         event.video_job.status = "FAILED"
+        event.video_job.failed_stage = failed_stage if failed_stage in {"QUEUED", "ANALYZING", "RENDERING", "SAVING"} else None
         event.video_job.processing_stage = "FAILED"
         event.video_job.error_message = message
         event.video_job.processing_completed_at = completed_at

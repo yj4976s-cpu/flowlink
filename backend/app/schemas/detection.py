@@ -58,6 +58,7 @@ class VideoProcessingStatusResponse(BaseModel):
     video_job_id: int
     status: str
     stage: str
+    failed_stage: str | None = None
     processed_frames: int
     total_frames: int | None
     analysis_progress: int | None

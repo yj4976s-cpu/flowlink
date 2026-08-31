@@ -631,6 +631,7 @@
 .videoProcessingSteps { margin: 14px 0 0; padding: 0; display: grid; gap: 6px; list-style: none; color: var(--color-text-muted); font-size: 12px; }
 .videoProcessingSteps li[data-active] { color: var(--color-primary); font-weight: 850; }
 .videoProcessingSteps li[data-complete] { color: var(--color-success); }
+.videoProcessingSteps li[data-failed] { color: var(--color-error); font-weight: 850; }
 .videoProcessingDescription { margin-top: 13px; color: var(--color-text-muted); font-size: 13px; font-weight: 700; line-height: 1.65; }
 .videoProcessingCard small { display: block; margin-top: 8px; color: var(--color-text-muted); font-weight: 700; }
 

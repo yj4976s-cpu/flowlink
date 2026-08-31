@@ -246,6 +246,7 @@ def get_video_processing_status(
         video_job_id=job.id,
         status=job.status,
         stage=job.processing_stage,
+        failed_stage=job.failed_stage,
         processed_frames=job.processed_frames,
         total_frames=job.total_frames,
         analysis_progress=analysis_progress,

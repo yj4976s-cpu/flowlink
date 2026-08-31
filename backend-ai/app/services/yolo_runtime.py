@@ -85,6 +85,7 @@ class YoloRuntime:
         writer = None
         intermediate_video_path: Path | None = None
         frames_written = 0
+        processed_frame_count = 0
         with self._inference_lock:
             tracking_error: Exception | None = None
             try:
@@ -116,6 +117,7 @@ class YoloRuntime:
                     verbose=False,
                 )
                 for frame_index, result in enumerate(results):
+                    processed_frame_count = frame_index + 1
                     if writer is not None:
                         writer.write(result.plot())
                         frames_written += 1
@@ -134,7 +136,7 @@ class YoloRuntime:
                             YoloTrackObservation(prediction=prediction, frame_index=frame_index)
                         )
                     if progress_callback is not None:
-                        progress_callback("ANALYZING", frame_index + 1, total_frames, False)
+                        progress_callback("ANALYZING", processed_frame_count, total_frames, False)
             except Exception as exc:
                 tracking_error = exc
             finally:
@@ -151,7 +153,7 @@ class YoloRuntime:
                     if intermediate_video_path is None or frames_written <= 0:
                         raise RuntimeError("Rendered video contains no frames")
                     if progress_callback is not None:
-                        progress_callback("ANALYZING", total_frames or frames_written, total_frames, True)
+                        progress_callback("ANALYZING", processed_frame_count, total_frames, True)
                         progress_callback("RENDERING", None, total_frames, True)
                     _transcode_h264_mp4(intermediate_video_path, rendered_video_path)
                 except Exception as exc:

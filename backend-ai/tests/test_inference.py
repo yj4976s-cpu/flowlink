@@ -585,7 +585,7 @@ def test_yolo_runtime_transcodes_rendered_video_to_browser_h264(
         media_width=100,
         media_height=80,
         rendered_video_path=result_path,
-        total_frames=2,
+        total_frames=300,
         progress_callback=lambda stage, processed, total, force: progress_updates.append((stage, processed, total, force)),
     )
 
@@ -598,7 +598,8 @@ def test_yolo_runtime_transcodes_rendered_video_to_browser_h264(
     assert command[command.index("-pix_fmt") + 1] == "yuv420p"
     assert command[command.index("-movflags") + 1] == "+faststart"
     assert captured["kwargs"]["capture_output"] is True
-    assert progress_updates[-2:] == [("ANALYZING", 2, 2, True), ("RENDERING", None, 2, True)]
+    assert progress_updates[-2:] == [("ANALYZING", 4, 300, True), ("RENDERING", None, 300, True)]
+    assert progress_updates[-2][1] != progress_updates[-2][2]
 
 
 def test_yolo_runtime_render_failure_cleans_intermediate_video(
