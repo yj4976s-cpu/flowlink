@@ -1171,7 +1171,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
       return;
     }
     if (tab === "video" && videoDuration !== null && videoDuration > VIDEO_MAX_SECONDS) {
-      setError("영상은 최대 30초까지 권장합니다. 짧은 MP4 파일을 선택해주세요.");
+      setError("영상은 30초 이내로 업로드해주세요.");
       setSubmitState("error");
       return;
     }
@@ -1204,23 +1204,38 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
         let transientFailures = 0;
         while (true) {
           if (requestGeneration !== videoRequestGenerationRef.current) return;
+          let status: VideoProcessingStatus;
           try {
-            const status = await getVideoProcessingStatus(accepted.detection_event_id, controller.signal);
-            transientFailures = 0;
-            setVideoServerStatus(status);
-            setVideoFailedFromStage(activeStageForServerStatus(status));
-            setVideoProcessingState(processingStateForStage(status.stage));
-            if (status.status === "FAILED") throw new Error(status.error_message ?? "영상 분석을 완료하지 못했어요. 잠시 후 다시 시도해주세요.");
-            if (status.status === "COMPLETED") break;
+            status = await getVideoProcessingStatus(accepted.detection_event_id, controller.signal);
           } catch (pollError) {
             if (pollError instanceof DOMException && pollError.name === "AbortError") throw pollError;
             if (pollError instanceof DetectionApiError && (pollError.status === 401 || pollError.status === 404)) throw pollError;
             transientFailures += 1;
             if (transientFailures >= 3) throw pollError;
+            await waitForVideoPoll(controller.signal);
+            continue;
+          }
+          transientFailures = 0;
+          setVideoServerStatus(status);
+          setVideoFailedFromStage(activeStageForServerStatus(status));
+          setVideoProcessingState(processingStateForStage(status.stage));
+          if (status.status === "FAILED") throw new Error(status.error_message ?? "영상 분석을 완료하지 못했어요. 잠시 후 다시 시도해주세요.");
+          if (status.status === "COMPLETED") {
+            setVideoProcessingState("completed");
+            setVideoProcessingStartedAt(null);
+            break;
           }
           await waitForVideoPoll(controller.signal);
         }
-        result = await getMyDetection(accepted.detection_event_id, controller.signal);
+        try {
+          result = await getMyDetection(accepted.detection_event_id, controller.signal);
+        } catch (resultError) {
+          if (resultError instanceof DOMException && resultError.name === "AbortError") throw resultError;
+          if (requestGeneration !== videoRequestGenerationRef.current) return;
+          setError("영상 분석은 완료됐지만 결과를 불러오지 못했어요. 잠시 후 다시 확인해주세요.");
+          setSubmitState("error");
+          return;
+        }
       }
       if (requestGeneration !== videoRequestGenerationRef.current) return;
       currentEventIdRef.current = result.id;

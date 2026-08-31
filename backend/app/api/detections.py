@@ -33,6 +33,8 @@ from app.schemas.detection import (
 from app.services.detection_inference import DetectionInferenceService, get_inference_service
 from app.services.detections import (
     DetectionModelUnavailableError,
+    SAFE_VIDEO_FAILURE_MESSAGE,
+    SAFE_VIDEO_TIMEOUT_MESSAGE,
     create_user_detection_event,
     process_detection_event,
 )
@@ -253,7 +255,11 @@ def get_video_processing_status(
         processing_started_at=job.processing_started_at,
         processing_completed_at=job.processing_completed_at,
         result_ready=job.status == "COMPLETED",
-        error_message="영상 분석을 완료하지 못했어요. 잠시 후 다시 시도해주세요." if job.status == "FAILED" else None,
+        error_message=(
+            SAFE_VIDEO_TIMEOUT_MESSAGE
+            if job.status == "FAILED" and job.error_message == SAFE_VIDEO_TIMEOUT_MESSAGE
+            else SAFE_VIDEO_FAILURE_MESSAGE if job.status == "FAILED" else None
+        ),
     )
 
 

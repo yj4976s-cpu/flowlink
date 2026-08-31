@@ -27,6 +27,7 @@ from app.services.color_estimation import estimate_standard_color
 
 SAFE_MODEL_UNAVAILABLE_MESSAGE = "AI detection model is not configured"
 SAFE_VIDEO_TIMEOUT_MESSAGE = "영상 분석 시간이 예상보다 길어 중단되었어요. 잠시 후 다시 시도해주세요."
+SAFE_VIDEO_FAILURE_MESSAGE = "영상 분석을 완료하지 못했어요. 잠시 후 다시 시도해주세요."
 
 
 class DetectionProcessingError(RuntimeError):

@@ -62,9 +62,33 @@ test("polling has retry bounds plus abort and stale request protection", () => {
   assert.match(workbenchSource, /getMyDetection\(accepted\.detection_event_id/);
 });
 
+test("FAILED is terminal immediately while only request failures consume retry budget", () => {
+  const requestIndex = workbenchSource.indexOf("status = await getVideoProcessingStatus");
+  const requestCatchIndex = workbenchSource.indexOf("} catch (pollError)", requestIndex);
+  const failedIndex = workbenchSource.indexOf('if (status.status === "FAILED")', requestCatchIndex);
+  assert.ok(requestIndex >= 0);
+  assert.ok(requestCatchIndex > requestIndex);
+  assert.ok(failedIndex > requestCatchIndex);
+  assert.match(workbenchSource, /transientFailures \+= 1;[\s\S]+continue;[\s\S]+transientFailures = 0;/);
+});
+
+test("COMPLETED remains authoritative across result and history loading failures", () => {
+  const completedIndex = workbenchSource.indexOf('if (status.status === "COMPLETED")');
+  const completedStateIndex = workbenchSource.indexOf('setVideoProcessingState("completed")', completedIndex);
+  const resultFetchIndex = workbenchSource.indexOf("result = await getMyDetection", completedStateIndex);
+  const resultErrorIndex = workbenchSource.indexOf("영상 분석은 완료됐지만 결과를 불러오지 못했어요", resultFetchIndex);
+  assert.ok(completedIndex >= 0);
+  assert.ok(completedStateIndex > completedIndex);
+  assert.ok(resultFetchIndex > completedStateIndex);
+  assert.ok(resultErrorIndex > resultFetchIndex);
+  assert.match(workbenchSource, /const refreshHistory = useCallback\(async[\s\S]+catch \(caught\)[\s\S]+setHistoryError/);
+  assert.doesNotMatch(workbenchSource.slice(resultFetchIndex, resultErrorIndex + 80), /setVideoProcessingState\("failed"\)/);
+});
+
 test("video upload and processing copy states the actual constraints without a fixed ETA", () => {
   assert.match(workbenchSource, /MP4 · 100MB 이하 · 영상 30초 이내/);
   assert.match(workbenchSource, /영상 길이와 실행 환경에 따라 수 분이 소요될 수 있어요/);
   assert.doesNotMatch(workbenchSource, /MP4 \/ 100MB · 최대 30초 안내/);
   assert.doesNotMatch(workbenchSource, /1~2분 정도 소요될 수 있어요/);
+  assert.match(workbenchSource, /영상은 30초 이내로 업로드해주세요/);
 });

@@ -15,6 +15,7 @@ def test_development_allows_local_defaults() -> None:
     settings = Settings(_env_file=None, APP_ENV="development")
 
     assert settings.APP_ENV == "development"
+    assert settings.BACKEND_INTERNAL_URL == "http://127.0.0.1:8000"
 
 
 def test_production_requires_ai_internal_api_key() -> None:

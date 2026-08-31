@@ -1035,6 +1035,42 @@ def test_video_status_preserves_failure_stage(client: TestClient, db: Session, f
     assert response.json()["status"] == "FAILED"
     assert response.json()["stage"] == "FAILED"
     assert response.json()["failed_stage"] == failed_stage
+    assert response.json()["error_message"] == "영상 분석을 완료하지 못했어요. 잠시 후 다시 시도해주세요."
+
+
+@pytest.mark.parametrize(
+    ("stored_message", "expected_message"),
+    [
+        (
+            "영상 분석 시간이 예상보다 길어 중단되었어요. 잠시 후 다시 시도해주세요.",
+            "영상 분석 시간이 예상보다 길어 중단되었어요. 잠시 후 다시 시도해주세요.",
+        ),
+        (
+            "httpx failure at C:/private/video.mp4 using secret-key",
+            "영상 분석을 완료하지 못했어요. 잠시 후 다시 시도해주세요.",
+        ),
+    ],
+)
+def test_video_status_exposes_only_whitelisted_failure_messages(
+    client: TestClient,
+    db: Session,
+    stored_message: str,
+    expected_message: str,
+) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    accepted = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")}).json()
+    event = db.get(DetectionEvent, accepted["detection_event_id"])
+    event.video_job.processing_stage = "ANALYZING"
+    fail_detection_event(db, event=event, message=stored_message, completed_at=utc_now())
+    db.commit()
+
+    response = client.get(f"/api/detections/{event.id}/processing-status")
+
+    assert response.status_code == 200
+    assert response.json()["error_message"] == expected_message
+    assert "secret-key" not in response.text
+    assert "C:/private" not in response.text
 
 
 def test_video_detection_fails_when_rendered_result_video_is_missing(client: TestClient, db: Session) -> None:
