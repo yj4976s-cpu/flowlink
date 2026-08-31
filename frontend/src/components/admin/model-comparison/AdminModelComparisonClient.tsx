@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent, MouseEvent } from "react";
+import type { CSSProperties, KeyboardEvent, MouseEvent } from "react";
 import { Icon } from "@/components/common/Icon";
 import {
   activateAdminModel,
@@ -32,6 +32,36 @@ import styles from "./AdminModelComparisonClient.module.css";
 type MetricKey = "precision" | "recall" | "map50" | "map50_95" | "average_inference_ms" | "fps" | "file_size_bytes";
 
 const CLASS_ORDER = ["BALL", "FOOTWEAR", "TRASH", "HAT"];
+const RADAR_METRICS: Array<{ key: MetricKey; label: string }> = [
+  { key: "precision", label: "Precision" },
+  { key: "recall", label: "Recall" },
+  { key: "map50", label: "mAP@50" },
+  { key: "map50_95", label: "mAP@50:95" },
+];
+const PERFORMANCE_METRICS: Array<{
+  key: MetricKey;
+  label: string;
+  shortLabel: string;
+  lowerIsBetter?: boolean;
+  percentPoint?: boolean;
+  format: (value: number | null) => string;
+}> = [
+  { key: "precision", label: "Precision", shortLabel: "Precision", percentPoint: true, format: (value) => metricLabel(value, { percent: true }) },
+  { key: "recall", label: "Recall", shortLabel: "Recall", percentPoint: true, format: (value) => metricLabel(value, { percent: true }) },
+  { key: "map50", label: "mAP@50", shortLabel: "mAP50", percentPoint: true, format: (value) => metricLabel(value, { percent: true }) },
+  { key: "map50_95", label: "mAP@50:95", shortLabel: "mAP95", percentPoint: true, format: (value) => metricLabel(value, { percent: true }) },
+  { key: "average_inference_ms", label: "평균 추론 시간", shortLabel: "Latency", lowerIsBetter: true, format: (value) => metricLabel(value, { suffix: "ms" }) },
+  { key: "fps", label: "FPS", shortLabel: "FPS", format: (value) => metricLabel(value, { suffix: "fps" }) },
+];
+type PerformanceMetric = typeof PERFORMANCE_METRICS[number];
+type MetricChartRow = {
+  metric: PerformanceMetric;
+  before: number | null;
+  after: number | null;
+  beforeRatio: number | null;
+  afterRatio: number | null;
+  delta: ReturnType<typeof metricDelta>;
+};
 
 const METRICS: Array<{
   key: MetricKey;
@@ -79,6 +109,26 @@ function modelById(models: AdminModelComparisonModel[], modelId: string | null) 
 
 function hasMissingMetrics(model: AdminModelComparisonModel | null) {
   return Boolean(model && [model.precision, model.recall, model.map50, model.map50_95].some((value) => !isMeasuredNumber(value)));
+}
+
+function supportedClassCount(model: AdminModelComparisonModel) {
+  const supported = CLASS_ORDER.filter((code) => classMetricByCode(model, code)?.supported || model.classes.includes(code)).length;
+  return { supported, total: CLASS_ORDER.length, percent: Math.round(supported / CLASS_ORDER.length * 100) };
+}
+
+function measuredMetricCount(model: AdminModelComparisonModel) {
+  const measured = RADAR_METRICS.filter((metric) => isMeasuredNumber(metricValue(model, metric.key))).length;
+  return { measured, total: RADAR_METRICS.length, percent: Math.round(measured / RADAR_METRICS.length * 100) };
+}
+
+function chartRatio(value: number | null, max: number) {
+  return isMeasuredNumber(value) && max > 0 ? Math.max(0, Math.min(1, value / max)) : null;
+}
+
+function classSupportState(metric: AdminModelClassMetric | undefined) {
+  if (!metric?.supported) return { label: "미지원", tone: "missing" };
+  if ([metric.precision, metric.recall, metric.map50, metric.map50_95].some(isMeasuredNumber)) return { label: "측정 완료", tone: "better" };
+  return { label: "측정 전", tone: "neutral" };
 }
 
 export function AdminModelComparisonClient() {
@@ -306,6 +356,8 @@ function ModelComparison(props: {
       </aside>
     </section>
 
+    <VisualComparisonPanel previous={previous} current={current} />
+
     <MetricComparisonPanel previous={previous} current={current} />
 
     <section className={styles.panel}>
@@ -488,28 +540,225 @@ function ModelCard({ model, label, measured, highlight = false }: { model: Admin
   </article>;
 }
 
-function MetricComparisonPanel({ previous, current }: { previous: AdminModelComparisonModel; current: AdminModelComparisonModel }) {
-  return <section className={`${styles.panel} ${styles.metricPanel}`} aria-label="핵심 지표 비교 차트">
-    <div className={styles.panelTitle}><span>METRIC DASHBOARD</span><h2>핵심 지표 비교</h2><p>측정값이 없는 지표는 측정 전으로 표시해 실제 평가값과 대기 중인 항목을 구분합니다.</p></div>
-    <div className={styles.metricRows}>{METRICS.map((metric) => {
-      const before = metricValue(previous, metric.key);
-      const after = metricValue(current, metric.key);
-      const measuredValues = [before, after].filter(isMeasuredNumber);
-      const max = metric.percentPoint ? 1 : Math.max(...measuredValues, 1);
-      const delta = metricDelta(before, after, { lowerIsBetter: metric.lowerIsBetter, percentPoint: metric.percentPoint });
-      return <article key={metric.key} className={styles.metricRow}>
-        <div className={styles.metricLabel}><strong>{metric.label}</strong><b data-tone={delta.tone}>{delta.label}</b></div>
-        <MetricBar label={previous.display_name} value={metric.format(before)} state={metricBarViewState(before, max)} />
-        <MetricBar label={current.display_name} value={metric.format(after)} state={metricBarViewState(after, max)} highlight />
-      </article>;
-    })}</div>
+function VisualComparisonPanel({ previous, current }: { previous: AdminModelComparisonModel; current: AdminModelComparisonModel }) {
+  return <section className={`${styles.panel} ${styles.visualPanel}`} aria-label="모델 비교 시각 요약">
+    <div className={styles.panelTitle}>
+      <span>VISUAL SUMMARY</span>
+      <h2>한눈에 보는 모델 변화</h2>
+      <p>정확도 값은 실제 평가 JSON에 있을 때만 그립니다. 현재는 클래스 지원 범위와 모델 크기, 측정 준비도를 중심으로 비교합니다.</p>
+    </div>
+    <div className={styles.visualGrid}>
+      <CoverageGauge model={previous} label="기존 모델" />
+      <ComparisonRadar previous={previous} current={current} />
+      <CoverageGauge model={current} label="신규 HAT 모델" highlight />
+      <SizeComparisonBars previous={previous} current={current} />
+    </div>
   </section>;
 }
 
-function MetricBar({ label, value, state, highlight = false }: { label: string; value: string; state: ReturnType<typeof metricBarViewState>; highlight?: boolean }) {
-  return <div className={styles.metricBar} data-highlight={highlight || undefined} data-empty={!state.measured || undefined} data-zero={state.zero || undefined}>
-    <span>{label}</span><i aria-hidden="true"><b style={{ width: `${state.width}%` }} /></i><strong>{value}</strong>
+function CoverageGauge({ model, label, highlight = false }: { model: AdminModelComparisonModel; label: string; highlight?: boolean }) {
+  const coverage = supportedClassCount(model);
+  const measured = measuredMetricCount(model);
+  return <article className={styles.coverageCard} data-highlight={highlight || undefined}>
+    <div
+      className={styles.coverageDial}
+      style={{ "--coverage": `${coverage.percent}%` } as CSSProperties}
+      aria-label={`${label} 클래스 지원 ${coverage.supported}/${coverage.total}`}
+    >
+      <strong>{coverage.supported}/{coverage.total}</strong>
+      <span>classes</span>
+    </div>
+    <div>
+      <span>{label}</span>
+      <h3>{model.display_name}</h3>
+      <p>{model.classes.join(" · ")}</p>
+      <small>핵심 지표 {measured.measured}/{measured.total}개 측정 완료</small>
+      <i aria-hidden="true"><b style={{ width: `${measured.percent}%` }} /></i>
+    </div>
+  </article>;
+}
+
+function ComparisonRadar({ previous, current }: { previous: AdminModelComparisonModel; current: AdminModelComparisonModel }) {
+  const hasMeasured = RADAR_METRICS.some((metric) => isMeasuredNumber(metricValue(previous, metric.key)) || isMeasuredNumber(metricValue(current, metric.key)));
+  return <article className={styles.radarCard}>
+    <header><span>CORE METRICS</span><strong>성능 지표 레이더</strong></header>
+    <svg viewBox="0 0 160 160" role="img" aria-label="Precision, Recall, mAP 성능 비교 차트">
+      <g className={styles.radarGrid}>
+        {[.25, .5, .75, 1].map((scale) => <polygon key={scale} points={radarPoints(() => scale)} />)}
+        {RADAR_METRICS.map((metric, index) => {
+          const end = radarPoint(1, index);
+          return <line key={metric.key} x1="80" y1="80" x2={end.x} y2={end.y} />;
+        })}
+      </g>
+      {hasMeasured && <g>
+        <polygon className={styles.radarBefore} points={radarPoints((metric) => metricValue(previous, metric.key) ?? 0)} />
+        <polygon className={styles.radarAfter} points={radarPoints((metric) => metricValue(current, metric.key) ?? 0)} />
+      </g>}
+      {RADAR_METRICS.map((metric, index) => {
+        const point = radarPoint(1.18, index);
+        return <text key={metric.key} x={point.x} y={point.y}>{metric.label.replace("mAP@", "@")}</text>;
+      })}
+    </svg>
+    {hasMeasured ? <div className={styles.radarLegend}><span>기존</span><span>신규</span></div> : <p>Precision · Recall · mAP 평가값은 아직 측정 전입니다.</p>}
+  </article>;
+}
+
+function radarPoint(value: number, index: number) {
+  const angle = -Math.PI / 2 + index * (Math.PI * 2 / RADAR_METRICS.length);
+  const radius = 52 * Math.max(0, Math.min(1.18, value));
+  return {
+    x: 80 + Math.cos(angle) * radius,
+    y: 80 + Math.sin(angle) * radius,
+  };
+}
+
+function radarPoints(valueFor: (metric: { key: MetricKey; label: string }, index: number) => number) {
+  return RADAR_METRICS.map((metric, index) => {
+    const point = radarPoint(valueFor(metric, index), index);
+    return `${point.x.toFixed(2)},${point.y.toFixed(2)}`;
+  }).join(" ");
+}
+
+function SizeComparisonBars({ previous, current }: { previous: AdminModelComparisonModel; current: AdminModelComparisonModel }) {
+  const max = Math.max(previous.file_size_bytes ?? 0, current.file_size_bytes ?? 0, 1);
+  return <article className={styles.sizeCard}>
+    <header><span>MODEL SIZE</span><strong>파일 크기 비교</strong></header>
+    <SizeBar model={previous} max={max} />
+    <SizeBar model={current} max={max} highlight />
+    <p>작을수록 배포·로딩 부담이 낮습니다. 실제 정확도 비교는 평가 지표가 채워진 뒤 판단합니다.</p>
+  </article>;
+}
+
+function SizeBar({ model, max, highlight = false }: { model: AdminModelComparisonModel; max: number; highlight?: boolean }) {
+  const value = model.file_size_bytes;
+  const width = isMeasuredNumber(value) ? Math.max(4, Math.min(100, value / max * 100)) : 0;
+  return <div className={styles.sizeBar} data-highlight={highlight || undefined}>
+    <span>{model.display_name}</span>
+    <i aria-hidden="true"><b style={{ width: `${width}%` }} /></i>
+    <strong>{fileSizeLabel(value)}</strong>
   </div>;
+}
+
+function MetricComparisonPanel({ previous, current }: { previous: AdminModelComparisonModel; current: AdminModelComparisonModel }) {
+  return <section className={`${styles.panel} ${styles.metricPanel}`} aria-label="핵심 지표 비교 차트">
+    <div className={styles.panelTitle}><span>METRIC DASHBOARD</span><h2>핵심 지표 비교</h2><p>측정값이 없는 지표는 측정 전으로 표시해 실제 평가값과 대기 중인 항목을 구분합니다.</p></div>
+    <MetricTrendChart previous={previous} current={current} />
+  </section>;
+}
+
+function MetricTrendChart({ previous, current }: { previous: AdminModelComparisonModel; current: AdminModelComparisonModel }) {
+  const rows = PERFORMANCE_METRICS.map((metric) => {
+    const before = metricValue(previous, metric.key);
+    const after = metricValue(current, metric.key);
+    const measuredValues = [before, after].filter(isMeasuredNumber);
+    const max = metric.percentPoint ? 1 : Math.max(...measuredValues, 1);
+    const delta = metricDelta(before, after, { lowerIsBetter: metric.lowerIsBetter, percentPoint: metric.percentPoint });
+    return {
+      metric,
+      before,
+      after,
+      beforeRatio: chartRatio(before, max),
+      afterRatio: chartRatio(after, max),
+      delta,
+    };
+  });
+  const measuredRows = rows.filter((row) => row.beforeRatio != null || row.afterRatio != null).length;
+  const sizeMax = Math.max(previous.file_size_bytes ?? 0, current.file_size_bytes ?? 0, 1);
+
+  return <div className={styles.metricShowcase}>
+    <div className={styles.metricShowcaseCopy}>
+      <span>MODEL SCOREBOARD</span>
+      <strong>핵심 지표는 측정 대기, 모델 구성은 비교 완료</strong>
+      <p>성능 수치는 동일 테스트셋 평가 JSON이 채워질 때만 표시합니다. 지금은 HAT 클래스 추가와 파일 크기 차이를 먼저 확인합니다.</p>
+      <div className={styles.metricShowcaseLegend}>
+        <span>기존 모델</span>
+        <span>신규 HAT 모델</span>
+      </div>
+      <dl className={styles.metricShowcaseStats}>
+        <div><dt>성능 지표</dt><dd>{measuredRows}/{PERFORMANCE_METRICS.length}</dd></div>
+        <div><dt>기존 크기</dt><dd>{fileSizeLabel(previous.file_size_bytes)}</dd></div>
+        <div><dt>신규 크기</dt><dd>{fileSizeLabel(current.file_size_bytes)}</dd></div>
+      </dl>
+    </div>
+    <div className={styles.metricLineChart}>
+      <div className={styles.metricBoardHeader}>
+        <span>기존 3클래스</span>
+        <strong>6개 지표 통합 차트</strong>
+        <span>신규 HAT 4클래스</span>
+      </div>
+      <div className={styles.metricUnifiedChart}>
+        <MetricSlopeSvg rows={rows} variant="desktop" />
+        <MetricSlopeSvg rows={rows} variant="mobile" />
+      </div>
+      <div className={styles.modelSizeRibbon} aria-label="모델 파일 크기 비교">
+        <SizeBar model={previous} max={sizeMax} />
+        <SizeBar model={current} max={sizeMax} highlight />
+      </div>
+    </div>
+  </div>;
+}
+
+function MetricSlopeSvg({ rows, variant }: { rows: MetricChartRow[]; variant: "desktop" | "mobile" }) {
+  const compact = variant === "mobile";
+  const width = compact ? 340 : 860;
+  const rowGap = compact ? 72 : 46;
+  const firstY = compact ? 76 : 62;
+  const height = firstY + (rows.length - 1) * rowGap + (compact ? 72 : 56);
+  const labelX = compact ? 20 : 24;
+  const beforeX = compact ? 84 : 176;
+  const afterX = compact ? 262 : 648;
+  const deltaX = compact ? 320 : 820;
+  const amplitude = compact ? 12 : 13;
+
+  return <svg
+    className={`${styles.metricSlopeChart} ${compact ? styles.metricSlopeChartMobile : styles.metricSlopeChartDesktop}`}
+    viewBox={`0 0 ${width} ${height}`}
+    role="img"
+    aria-label="기존 모델과 신규 HAT 모델의 6개 핵심 지표 통합 SVG 비교 차트"
+  >
+    <defs>
+      <linearGradient id={`metricSlopeLine-${variant}`} x1="0" x2="1" y1="0" y2="0">
+        <stop offset="0%" stopColor="var(--color-primary)" />
+        <stop offset="100%" stopColor="var(--color-accent)" />
+      </linearGradient>
+    </defs>
+    <text className={styles.metricSlopeHead} x={beforeX} y="24" textAnchor="middle">기존 모델</text>
+    <text className={styles.metricSlopeTitle} x={compact ? width / 2 : (beforeX + afterX) / 2} y={compact ? 46 : 24} textAnchor="middle">SVG 통합 비교</text>
+    <text className={styles.metricSlopeHead} x={afterX} y="24" textAnchor="middle">신규 HAT 모델</text>
+    {rows.map((row, index) => {
+      const y = firstY + index * rowGap;
+      const beforeMeasured = row.beforeRatio != null;
+      const afterMeasured = row.afterRatio != null;
+      const beforeRatio = row.beforeRatio ?? .5;
+      const afterRatio = row.afterRatio ?? .5;
+      const beforeY = beforeMeasured ? y + (.5 - beforeRatio) * amplitude * 2 : y;
+      const afterY = afterMeasured ? y + (.5 - afterRatio) * amplitude * 2 : y;
+      const missing = !beforeMeasured && !afterMeasured;
+      return <g key={row.metric.key}>
+        <line className={styles.metricSlopeDivider} x1={labelX} y1={y + (compact ? 35 : 26)} x2={width - labelX} y2={y + (compact ? 35 : 26)} />
+        <text className={styles.metricSlopeName} x={labelX} y={compact ? y - 22 : y + 5}>{row.metric.label}</text>
+        <line
+          className={styles.metricSlopeTrack}
+          data-empty={missing || undefined}
+          x1={beforeX}
+          y1={beforeY}
+          x2={afterX}
+          y2={afterY}
+        />
+        <circle className={styles.metricSlopePointBefore} data-empty={!beforeMeasured || undefined} cx={beforeX} cy={beforeY} r={compact ? 6 : 7} />
+        <circle className={styles.metricSlopePointAfter} data-empty={!afterMeasured || undefined} cx={afterX} cy={afterY} r={compact ? 6 : 7} />
+        {missing ? (
+          <text className={styles.metricSlopePending} x={compact ? (beforeX + afterX) / 2 : afterX + 28} y={compact ? y + 24 : y + 5} textAnchor={compact ? "middle" : "start"}>측정 대기</text>
+        ) : (
+          <>
+            <text className={styles.metricSlopeValue} x={beforeX} y={y + (compact ? 24 : 26)} textAnchor="middle">{row.metric.format(row.before)}</text>
+            <text className={styles.metricSlopeValue} x={afterX} y={y + (compact ? 24 : 26)} textAnchor="middle">{row.metric.format(row.after)}</text>
+            {!compact && <text className={styles.metricSlopeDelta} data-tone={row.delta.tone} x={deltaX} y={y + 5} textAnchor="end">{row.delta.label}</text>}
+          </>
+        )}
+      </g>;
+    })}
+  </svg>;
 }
 
 function ClassCard({ code, before, after }: { code: string; before?: AdminModelClassMetric; after?: AdminModelClassMetric }) {
@@ -517,8 +766,28 @@ function ClassCard({ code, before, after }: { code: string; before?: AdminModelC
   const label = after?.label ?? before?.label ?? code;
   return <article className={styles.classCard} data-accent={classAccent(code)} role="listitem">
     <header><span><strong>{label}</strong><small>{code}</small></span><b data-tone={status.tone}>{status.label}</b></header>
+    <ClassMiniChart before={before} after={after} />
     <div className={styles.classCompare}><div><em>기존 모델</em><MetricCell metric={before} /></div><div><em>신규 모델</em><MetricCell metric={after} /></div></div>
   </article>;
+}
+
+function ClassMiniChart({ before, after }: { before?: AdminModelClassMetric; after?: AdminModelClassMetric }) {
+  const beforeState = classSupportState(before);
+  const afterState = classSupportState(after);
+  const beforeWidth = before?.supported ? Math.max(10, metricBarViewState(before.map50, 1).width) : 0;
+  const afterWidth = after?.supported ? Math.max(10, metricBarViewState(after.map50, 1).width) : 0;
+  return <div className={styles.classMiniChart} aria-label={`기존 모델 ${beforeState.label}, 신규 모델 ${afterState.label}`}>
+    <div data-tone={beforeState.tone}>
+      <span>기존</span>
+      <i aria-hidden="true"><b style={{ width: `${beforeWidth}%` }} /></i>
+      <strong>{beforeState.label}</strong>
+    </div>
+    <div data-tone={afterState.tone}>
+      <span>신규</span>
+      <i aria-hidden="true"><b style={{ width: `${afterWidth}%` }} /></i>
+      <strong>{afterState.label}</strong>
+    </div>
+  </div>;
 }
 
 function MetricCell({ metric }: { metric?: AdminModelClassMetric }) {
