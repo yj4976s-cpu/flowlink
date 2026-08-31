@@ -6,6 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from shutil import which
 from threading import Lock
+from collections.abc import Callable
 
 from PIL import Image
 
@@ -76,6 +77,8 @@ class YoloRuntime:
         media_width: int,
         media_height: int,
         rendered_video_path: Path | None = None,
+        total_frames: int | None = None,
+        progress_callback: Callable[[str, int | None, int | None, bool], None] | None = None,
     ) -> list[YoloTrackPrediction]:
         model = self._get_model()
         observations: dict[tuple[str, int | None], list[YoloTrackObservation]] = {}
@@ -130,6 +133,8 @@ class YoloRuntime:
                         observations.setdefault(key, []).append(
                             YoloTrackObservation(prediction=prediction, frame_index=frame_index)
                         )
+                    if progress_callback is not None:
+                        progress_callback("ANALYZING", frame_index + 1, total_frames, False)
             except Exception as exc:
                 tracking_error = exc
             finally:
@@ -145,6 +150,9 @@ class YoloRuntime:
                 try:
                     if intermediate_video_path is None or frames_written <= 0:
                         raise RuntimeError("Rendered video contains no frames")
+                    if progress_callback is not None:
+                        progress_callback("ANALYZING", total_frames or frames_written, total_frames, True)
+                        progress_callback("RENDERING", None, total_frames, True)
                     _transcode_h264_mp4(intermediate_video_path, rendered_video_path)
                 except Exception as exc:
                     raise YoloRuntimeUnavailableError("YOLO video tracking model is unavailable") from exc

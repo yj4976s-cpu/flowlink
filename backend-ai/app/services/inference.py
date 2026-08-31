@@ -17,6 +17,7 @@ from app.schemas.inference import (
     VideoInferenceResponse,
 )
 from app.services.yolo_runtime import YoloRuntime, YoloRuntimeUnavailableError, get_yolo_runtime
+from app.services.video_progress import VideoProgressReporter
 
 IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 VIDEO_CONTENT_TYPES = {"video/mp4"}
@@ -93,6 +94,7 @@ class ImageInferenceService:
         *,
         content_type: str,
         rendered_video_path: Path | None = None,
+        video_job_id: int | None = None,
     ) -> VideoInferenceResponse:
         settings = get_settings()
         if content_type not in VIDEO_CONTENT_TYPES:
@@ -111,7 +113,16 @@ class ImageInferenceService:
                 "fps": metadata["fps"],
                 "media_width": metadata["media_width"],
                 "media_height": metadata["media_height"],
+                "total_frames": metadata["frame_count"],
             }
+            if video_job_id is not None:
+                reporter = VideoProgressReporter(job_id=video_job_id)
+                reporter.report("ANALYZING", 0, metadata["frame_count"], force=True)
+                tracking_options["progress_callback"] = (
+                    lambda stage, processed, total, force: reporter.report(
+                        stage, processed, total, force=force
+                    )
+                )
             if rendered_video_path is not None:
                 tracking_options["rendered_video_path"] = rendered_video_path
             tracks = self.runtime.track_video(video_path, **tracking_options)

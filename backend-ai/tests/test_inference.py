@@ -16,6 +16,7 @@ from app.main import app
 from app.schemas.inference import InferenceBBox, InferenceVideoTrack, VideoInferenceResponse
 from app.services.inference import ImageInferenceService, InferenceModelUnavailableError, get_inference_service
 from app.services.yolo_runtime import YoloBBox, YoloPrediction, YoloRuntime, get_yolo_runtime
+from app.services.video_progress import VideoProgressReporter
 
 TEST_INTERNAL_API_KEY = "test-internal-api-key"
 
@@ -50,12 +51,13 @@ class FakeVideoService:
         self.video_paths = []
         self.rendered_paths = []
 
-    def analyze_video_file(self, video_path, *, content_type: str, rendered_video_path=None) -> VideoInferenceResponse:
+    def analyze_video_file(self, video_path, *, content_type: str, rendered_video_path=None, video_job_id=None) -> VideoInferenceResponse:
         self.calls += 1
         self.video_paths.append(video_path)
         self.rendered_paths.append(rendered_video_path)
         assert video_path.exists()
         assert content_type == "video/mp4"
+        assert video_job_id is None or video_job_id > 0
         if rendered_video_path is not None and self.write_rendered:
             rendered_video_path.write_bytes(b"rendered-h264-mp4")
         return VideoInferenceResponse(
@@ -451,6 +453,47 @@ def test_yolo_runtime_uses_midpoint_frame_bbox_but_keeps_max_track_confidence(tm
     assert tracks[0].appearance_count == 3
 
 
+def test_yolo_runtime_reports_actual_processed_frames_from_one_to_total(tmp_path) -> None:
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"fake")
+    runtime = YoloRuntime(model_path="fake.pt", confidence=0.5, imgsz=640)
+    runtime._model = FakeMovingTrackModel()
+    updates = []
+
+    runtime.track_video(
+        video_path,
+        fps=10,
+        media_width=100,
+        media_height=80,
+        total_frames=3,
+        progress_callback=lambda stage, processed, total, force: updates.append((stage, processed, total, force)),
+    )
+
+    assert [(item[1], item[2]) for item in updates] == [(1, 3), (2, 3), (3, 3)]
+
+
+def test_progress_reporter_throttles_updates_and_callback_failure_is_non_fatal(monkeypatch) -> None:
+    calls = []
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr("app.services.video_progress.httpx.post", lambda *args, **kwargs: calls.append(kwargs["json"]) or Response())
+    reporter = VideoProgressReporter(job_id=7, min_interval_seconds=999)
+    reporter.report("ANALYZING", 1, 100, force=True)
+    reporter.report("ANALYZING", 2, 100)
+    reporter.report("ANALYZING", 100, 100, force=True)
+    assert [call["processed_frames"] for call in calls] == [1, 100]
+
+    def fail(*args, **kwargs):
+        import httpx
+        raise httpx.ConnectError("offline")
+
+    monkeypatch.setattr("app.services.video_progress.httpx.post", fail)
+    reporter.report("RENDERING", None, 100, force=True)
+
+
 def test_yolo_runtime_midpoint_tie_prefers_higher_confidence_frame(tmp_path) -> None:
     video_path = tmp_path / "sample.mp4"
     video_path.write_bytes(b"fake")
@@ -535,7 +578,16 @@ def test_yolo_runtime_transcodes_rendered_video_to_browser_h264(
     monkeypatch.setattr("app.services.yolo_runtime._ffmpeg_executable", lambda: "ffmpeg")
     monkeypatch.setattr("app.services.yolo_runtime.subprocess.run", fake_run)
 
-    tracks = runtime.track_video(video_path, fps=10, media_width=100, media_height=80, rendered_video_path=result_path)
+    progress_updates = []
+    tracks = runtime.track_video(
+        video_path,
+        fps=10,
+        media_width=100,
+        media_height=80,
+        rendered_video_path=result_path,
+        total_frames=2,
+        progress_callback=lambda stage, processed, total, force: progress_updates.append((stage, processed, total, force)),
+    )
 
     assert tracks
     assert captured["intermediate_codec"] == "mp4v"
@@ -546,6 +598,7 @@ def test_yolo_runtime_transcodes_rendered_video_to_browser_h264(
     assert command[command.index("-pix_fmt") + 1] == "yuv420p"
     assert command[command.index("-movflags") + 1] == "+faststart"
     assert captured["kwargs"]["capture_output"] is True
+    assert progress_updates[-2:] == [("ANALYZING", 2, 2, True), ("RENDERING", None, 2, True)]
 
 
 def test_yolo_runtime_render_failure_cleans_intermediate_video(
