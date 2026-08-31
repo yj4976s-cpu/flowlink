@@ -1,4 +1,5 @@
 import { buildApiUrl as buildCommonApiUrl, resolveMediaUrl } from "@/lib/apiBase";
+import { calculateVideoUploadProgress } from "@/lib/videoUploadProgress";
 
 export type DetectionBBox = {
   x: number;
@@ -89,6 +90,20 @@ async function readErrorMessage(response: Response) {
   return getFallbackMessage(response.status);
 }
 
+function readXhrErrorMessage(xhr: XMLHttpRequest) {
+  try {
+    const body: unknown = JSON.parse(xhr.responseText);
+    if (body && typeof body === "object" && "detail" in body) {
+      const detail = (body as { detail: unknown }).detail;
+      if (detail === "AI detection model is not configured") return getFallbackMessage(503);
+      if (detail === "Webcam detection model is unavailable") return getFallbackMessage(503);
+    }
+  } catch {
+    return getFallbackMessage(xhr.status);
+  }
+  return getFallbackMessage(xhr.status);
+}
+
 async function requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(url, {
     ...init,
@@ -115,8 +130,48 @@ export function uploadDetectionImage(file: File) {
   return uploadDetection("/api/detections/images", file);
 }
 
-export function uploadDetectionVideo(file: File) {
-  return uploadDetection("/api/detections/videos", file);
+export type DetectionVideoUploadOptions = {
+  onUploadProgress?: (progress: number | null) => void;
+  onUploadComplete?: () => void;
+  signal?: AbortSignal;
+};
+
+export function uploadDetectionVideo(file: File, options: DetectionVideoUploadOptions = {}) {
+  return new Promise<DetectionEvent>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const formData = new FormData();
+    const abortRequest = () => xhr.abort();
+    const cleanup = () => options.signal?.removeEventListener("abort", abortRequest);
+    formData.append("file", file);
+    xhr.open("POST", buildApiUrl("/api/detections/videos"));
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = (event) => options.onUploadProgress?.(
+      calculateVideoUploadProgress(event.loaded, event.total, event.lengthComputable),
+    );
+    xhr.upload.onload = () => options.onUploadComplete?.();
+    xhr.onload = () => {
+      cleanup();
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new DetectionApiError(readXhrErrorMessage(xhr), xhr.status));
+        return;
+      }
+      try {
+        resolve(JSON.parse(xhr.responseText) as DetectionEvent);
+      } catch {
+        reject(new DetectionApiError("영상 분석 결과를 확인하지 못했습니다.", xhr.status));
+      }
+    };
+    xhr.onerror = () => { cleanup(); reject(new DetectionApiError(getFallbackMessage(xhr.status), xhr.status || undefined)); };
+    xhr.onabort = () => { cleanup(); reject(new DOMException("Video upload aborted", "AbortError")); };
+    if (options.signal) {
+      if (options.signal.aborted) {
+        reject(new DOMException("Video upload aborted", "AbortError"));
+        return;
+      }
+      options.signal.addEventListener("abort", abortRequest, { once: true });
+    }
+    xhr.send(formData);
+  });
 }
 
 export function detectWebcamFrame(blob: Blob, signal?: AbortSignal) {
