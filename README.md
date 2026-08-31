@@ -260,7 +260,8 @@ KAKAO_REST_API_KEY=
 AI_SERVICE_URL=http://127.0.0.1:8001
 AI_INTERNAL_API_KEY=
 AI_SERVICE_TIMEOUT_SECONDS=30
-AI_VIDEO_SERVICE_TIMEOUT_SECONDS=120
+AI_VIDEO_SERVICE_TIMEOUT_SECONDS=300
+VIDEO_JOB_STALE_SECONDS=600
 ```
 
 ### Backend AI
@@ -268,12 +269,14 @@ AI_VIDEO_SERVICE_TIMEOUT_SECONDS=120
 ```env
 APP_ENV=development
 AI_INTERNAL_API_KEY=
+BACKEND_INTERNAL_URL=http://127.0.0.1:8000
 DETECTION_MODEL=../models/best_v7_8n_100_640_16_SGD_0005.pt
 DETECTION_CONFIDENCE=0.25
 DETECTION_IMGSZ=640
 ```
 
 `AI_INTERNAL_API_KEY`는 Backend와 Backend AI에 같은 값을 설정합니다. `NEXT_PUBLIC_*`로 만들지 않습니다.
+localhost에서 Backend AI의 영상 진행률 callback은 `BACKEND_INTERNAL_URL=http://127.0.0.1:8000`을 사용합니다. Docker Compose는 서비스 이름 기반 `http://backend:8000`으로 명시적으로 override합니다.
 로컬 `.env`에는 현재 리포지토리에 올리지 않는 임의의 secret을 Backend와 Backend AI 두 곳에 동일하게 넣어줍니다. 생성한 값 자체는 README나 Git에 기록하지 않습니다.
 
 ```powershell

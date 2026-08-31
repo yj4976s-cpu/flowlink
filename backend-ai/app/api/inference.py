@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Response, UploadFile, status
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import get_settings
@@ -41,6 +41,7 @@ async def infer_video(
     service: Annotated[ImageInferenceService, Depends(get_inference_service)],
     file: Annotated[UploadFile, File(description="추론할 MP4 영상")],
     render: Annotated[bool, Query()] = False,
+    video_job_id: Annotated[int | None, Header(alias="X-Video-Job-ID", ge=1)] = None,
 ) -> VideoInferenceResponse | Response:
     content_type = file.content_type or ""
     if content_type not in VIDEO_CONTENT_TYPES:
@@ -52,6 +53,8 @@ async def infer_video(
         analyze_options = {"content_type": content_type}
         if rendered_path is not None:
             analyze_options["rendered_video_path"] = rendered_path
+        if video_job_id is not None:
+            analyze_options["video_job_id"] = video_job_id
         result = await run_in_threadpool(service.analyze_video_file, video_path, **analyze_options)
         if not render:
             return result

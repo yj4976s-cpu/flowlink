@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     APP_HOST: str = "127.0.0.1"
     APP_PORT: int = 8001
     AI_INTERNAL_API_KEY: str = ""
+    BACKEND_INTERNAL_URL: str = "http://127.0.0.1:8000"
     DETECTION_MODEL: str = DEFAULT_DETECTION_MODEL
     DETECTION_CONFIDENCE: float = 0.25
     DETECTION_IMGSZ: int = 640

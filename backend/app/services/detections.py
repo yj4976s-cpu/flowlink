@@ -20,11 +20,14 @@ from app.repositories.detections import (
 from app.services.detection_inference import (
     DetectionInferenceResult,
     DetectionInferenceService,
+    DetectionInferenceTimeoutError,
     DetectionInferenceUnavailableError,
 )
 from app.services.color_estimation import estimate_standard_color
 
 SAFE_MODEL_UNAVAILABLE_MESSAGE = "AI detection model is not configured"
+SAFE_VIDEO_TIMEOUT_MESSAGE = "영상 분석 시간이 예상보다 길어 중단되었어요. 잠시 후 다시 시도해주세요."
+SAFE_VIDEO_FAILURE_MESSAGE = "영상 분석을 완료하지 못했어요. 잠시 후 다시 시도해주세요."
 
 
 class DetectionProcessingError(RuntimeError):
@@ -72,8 +75,9 @@ def create_user_detection_event(
                 detection_event_id=event.id,
                 status="PROCESSING",
                 processing_progress=0,
+                processing_stage="QUEUED",
+                processed_frames=0,
                 tracking_algorithm="BYTE_TRACK",
-                processing_started_at=now,
                 created_at=now,
                 updated_at=now,
             ),
@@ -104,6 +108,7 @@ def process_detection_event(
     event_id: int,
     media_path: Path,
     inference_service: DetectionInferenceService,
+    video_job_id: int | None = None,
 ) -> DetectionEvent:
     event = get_detection_event_by_id(db, event_id)
     if event is None:
@@ -111,11 +116,19 @@ def process_detection_event(
 
     try:
         result = (
-            inference_service.analyze_video(media_path)
+            inference_service.analyze_video(media_path, video_job_id=video_job_id)
             if event.source_type == "VIDEO"
             else inference_service.analyze_image(media_path)
         )
+        if event.source_type == "VIDEO" and event.video_job is not None:
+            db.refresh(event.video_job)
+            event.video_job.processing_stage = "SAVING"
+            event.video_job.updated_at = utc_now()
+            db.commit()
         return _complete_with_result(db, event=event, result=result, media_path=media_path)
+    except DetectionInferenceTimeoutError as exc:
+        _mark_failed(db, event=event, message=SAFE_VIDEO_TIMEOUT_MESSAGE)
+        raise DetectionProcessingError(SAFE_VIDEO_TIMEOUT_MESSAGE) from exc
     except DetectionInferenceUnavailableError as exc:
         failed_event = _mark_failed(db, event=event, message=sanitize_error_message(str(exc)))
         raise DetectionModelUnavailableError(SAFE_MODEL_UNAVAILABLE_MESSAGE) from exc

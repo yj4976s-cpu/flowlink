@@ -6,6 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from shutil import which
 from threading import Lock
+from collections.abc import Callable
 
 from PIL import Image
 
@@ -110,12 +111,15 @@ class YoloRuntime:
         media_width: int,
         media_height: int,
         rendered_video_path: Path | None = None,
+        total_frames: int | None = None,
+        progress_callback: Callable[[str, int | None, int | None, bool], None] | None = None,
     ) -> list[YoloTrackPrediction]:
         model = self._get_model()
         observations: dict[tuple[str, int | None], list[YoloTrackObservation]] = {}
         writer = None
         intermediate_video_path: Path | None = None
         frames_written = 0
+        processed_frame_count = 0
         with self._inference_lock:
             tracking_error: Exception | None = None
             try:
@@ -147,6 +151,7 @@ class YoloRuntime:
                     verbose=False,
                 )
                 for frame_index, result in enumerate(results):
+                    processed_frame_count = frame_index + 1
                     if writer is not None:
                         writer.write(result.plot())
                         frames_written += 1
@@ -164,6 +169,8 @@ class YoloRuntime:
                         observations.setdefault(key, []).append(
                             YoloTrackObservation(prediction=prediction, frame_index=frame_index)
                         )
+                    if progress_callback is not None:
+                        progress_callback("ANALYZING", processed_frame_count, total_frames, False)
             except Exception as exc:
                 tracking_error = exc
             finally:
@@ -179,6 +186,9 @@ class YoloRuntime:
                 try:
                     if intermediate_video_path is None or frames_written <= 0:
                         raise RuntimeError("Rendered video contains no frames")
+                    if progress_callback is not None:
+                        progress_callback("ANALYZING", processed_frame_count, total_frames, True)
+                        progress_callback("RENDERING", None, total_frames, True)
                     _transcode_h264_mp4(intermediate_video_path, rendered_video_path)
                 except Exception as exc:
                     raise YoloRuntimeUnavailableError("YOLO video tracking model is unavailable") from exc

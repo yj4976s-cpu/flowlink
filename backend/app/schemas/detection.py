@@ -47,6 +47,34 @@ class DetectionEventListResponse(DetectionEventResponse):
     pass
 
 
+class VideoDetectionAcceptedResponse(BaseModel):
+    detection_event_id: int
+    video_job_id: int
+    status: str
+    stage: str
+
+
+class VideoProcessingStatusResponse(BaseModel):
+    detection_event_id: int
+    video_job_id: int
+    status: str
+    stage: str
+    failed_stage: str | None = None
+    processed_frames: int
+    total_frames: int | None
+    analysis_progress: int | None
+    processing_started_at: datetime | None
+    processing_completed_at: datetime | None
+    result_ready: bool
+    error_message: str | None = None
+
+
+class VideoProgressUpdate(BaseModel):
+    stage: str = Field(pattern="^(ANALYZING|RENDERING)$")
+    processed_frames: int | None = Field(default=None, ge=0)
+    total_frames: int | None = Field(default=None, ge=1)
+
+
 class WebcamDetectionObjectResponse(BaseModel):
     label: str
     class_code: str | None = None

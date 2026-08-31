@@ -4,13 +4,20 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import jwt
-from fastapi import HTTPException, status
+from fastapi import Header, HTTPException, status
+from secrets import compare_digest
 from jwt import ExpiredSignatureError, InvalidTokenError
 from pwdlib import PasswordHash
 
 from app.core.config import get_settings
 
 password_hash = PasswordHash.recommended()
+
+
+def require_internal_api_key(api_key: str | None = Header(default=None, alias="X-Internal-API-Key")) -> None:
+    configured = get_settings().AI_INTERNAL_API_KEY
+    if not configured or api_key is None or not compare_digest(api_key, configured):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
 
 def utc_now() -> datetime:
