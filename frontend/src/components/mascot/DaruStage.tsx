@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePathname } from "next/navigation";
 import { getCurrentUser, type AuthUser } from "@/lib/authApi";
@@ -66,6 +66,7 @@ export function DaruStage() {
   const locomotionTimerRef = useRef<number | null>(null);
   const directGreetingTimerRef = useRef<number | null>(null);
   const nextRoamDelayRef = useRef<number | null>(null);
+  const previousIsDaruGameRef = useRef(isDaruGame);
   const gameSafeGroundYRef = useRef(0);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const positionRef = useRef(position);
@@ -255,7 +256,13 @@ export function DaruStage() {
       .map((element) => element.getBoundingClientRect());
     const margin = 12;
     const blockerMargin = 6;
-    const overlaps = (left: number, top: number) => blockers.some((item) => left < item.right + blockerMargin && left + rect.width > item.left - blockerMargin && top < item.bottom + blockerMargin && top + rect.height > item.top - blockerMargin);
+    const intersectionArea = (left: number, top: number, blocker: DOMRect) => {
+      const overlapWidth = Math.max(0, Math.min(left + rect.width, blocker.right + blockerMargin) - Math.max(left, blocker.left - blockerMargin));
+      const overlapHeight = Math.max(0, Math.min(top + rect.height, blocker.bottom + blockerMargin) - Math.max(top, blocker.top - blockerMargin));
+      return overlapWidth * overlapHeight;
+    };
+    const startOverlapAreas = blockers.map((blocker) => intersectionArea(rect.left, rect.top, blocker));
+    const hasStartOverlap = startOverlapAreas.some((area) => area > 0);
     const mobile = window.innerWidth <= 600;
     const tablet = !mobile && window.innerWidth <= 1024;
     const maxTravelX = mobile ? Math.min(150, Math.max(120, window.innerWidth * 0.38)) : tablet ? Math.min(220, window.innerWidth * 0.26) : Math.min(360, window.innerWidth * 0.32);
@@ -275,13 +282,24 @@ export function DaruStage() {
     })).filter((candidate) => Math.abs(candidate.x - currentPosition.x) >= gameMinimumTravel);
     const pathIsClear = (endLeft: number, endTop: number) => {
       const steps = 16;
+      const previousAreas = [...startOverlapAreas];
+      const escaped = startOverlapAreas.map((area) => area === 0);
       for (let step = 1; step <= steps; step += 1) {
         const progress = step / steps;
         const left = rect.left + (endLeft - rect.left) * progress;
         const top = rect.top + (endTop - rect.top) * progress;
-        if (overlaps(left, top)) return false;
+        for (let index = 0; index < blockers.length; index += 1) {
+          const area = intersectionArea(left, top, blockers[index]);
+          if (startOverlapAreas[index] === 0 || escaped[index]) {
+            if (area > 0) return false;
+            continue;
+          }
+          if (area > previousAreas[index]) return false;
+          previousAreas[index] = area;
+          if (area === 0) escaped[index] = true;
+        }
       }
-      return true;
+      return escaped.every(Boolean);
     };
     const safeCandidates = candidates.filter((candidate) => {
       const left = baseLeft + candidate.x;
@@ -293,7 +311,9 @@ export function DaruStage() {
       return distance >= DARU_GAME_MOBILE_PREFERRED_MIN_TRAVEL && distance <= DARU_GAME_MOBILE_PREFERRED_MAX_TRAVEL;
     }) : safeCandidates;
     if (preferredCandidates.length > 0) return preferredCandidates[Math.floor(Math.random() * preferredCandidates.length)];
-    if (safeCandidates.length > 0) return safeCandidates.sort((first, second) => Math.abs(second.x - currentPosition.x) - Math.abs(first.x - currentPosition.x))[0];
+    if (safeCandidates.length > 0) return safeCandidates.sort((first, second) => hasStartOverlap
+      ? Math.abs(first.x - currentPosition.x) - Math.abs(second.x - currentPosition.x)
+      : Math.abs(second.x - currentPosition.x) - Math.abs(first.x - currentPosition.x))[0];
     return currentPosition;
   }, []);
 
@@ -324,6 +344,14 @@ export function DaruStage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     resetGameSafePosition();
   }, [freezeRoaming, isDaruGame, resetGameSafePosition]);
+
+  useLayoutEffect(() => {
+    const wasDaruGame = previousIsDaruGameRef.current;
+    previousIsDaruGameRef.current = isDaruGame;
+    if (!wasDaruGame || isDaruGame) return;
+    nextRoamDelayRef.current = null;
+    freezeRoaming();
+  }, [freezeRoaming, isDaruGame]);
 
   useEffect(() => {
     if (!isDaruGame || mode === "active") return;

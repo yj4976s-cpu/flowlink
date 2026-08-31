@@ -48,12 +48,12 @@ test("game-safe active constrains automatic movement while reusing manual drag",
   assert.doesNotMatch(stageSource, /const chooseGameSafeDestination[\s\S]*y: currentPosition\.y/);
   assert.match(stageSource, /const gameMinimumTravel = Math\.min\(minimumTravel, 32\)/);
   assert.match(stageSource, /Math\.abs\(candidate\.x - currentPosition\.x\) >= gameMinimumTravel/);
-  assert.match(stageSource, /const pathIsClear = \(endLeft: number, endTop: number\) => \{[\s\S]*const steps = 16;[\s\S]*for \(let step = 1; step <= steps; step \+= 1\)[\s\S]*if \(overlaps\(left, top\)\) return false/);
+  assert.match(stageSource, /const pathIsClear = \(endLeft: number, endTop: number\) => \{[\s\S]*const steps = 16;[\s\S]*for \(let step = 1; step <= steps; step \+= 1\)[\s\S]*const area = intersectionArea\(left, top, blockers\[index\]\)/);
   assert.match(stageSource, /pathIsClear\(left, baselineTop\)/);
   assert.match(stageSource, /const preferredCandidates = mobile \? safeCandidates\.filter/);
   assert.match(stageSource, /DARU_GAME_MOBILE_PREFERRED_MIN_TRAVEL[\s\S]*DARU_GAME_MOBILE_PREFERRED_MAX_TRAVEL/);
   assert.match(stageSource, /if \(preferredCandidates\.length > 0\) return preferredCandidates\[Math\.floor\(Math\.random\(\) \* preferredCandidates\.length\)\]/);
-  assert.match(stageSource, /safeCandidates\.sort\(\(first, second\) => Math\.abs\(second\.x - currentPosition\.x\) - Math\.abs\(first\.x - currentPosition\.x\)\)\[0\]/);
+  assert.match(stageSource, /safeCandidates\.sort\(\(first, second\) => hasStartOverlap[\s\S]*: Math\.abs\(second\.x - currentPosition\.x\) - Math\.abs\(first\.x - currentPosition\.x\)\)\[0\]/);
   assert.doesNotMatch(stageSource, /const chooseGameSafeDestination[\s\S]*maxTravelY/);
   assert.match(stageSource, /const returningToGround = gameSafe && Math\.abs\(currentPosition\.y - gameSafeGroundYRef\.current\) >= 1/);
   assert.match(stageSource, /const distance = returningToGround[\s\S]*Math\.hypot\(target\.x - currentPosition\.x, target\.y - currentPosition\.y\)[\s\S]*Math\.abs\(target\.x - currentPosition\.x\)/);
@@ -72,6 +72,14 @@ test("route entry resets inherited roaming before game-safe active movement can 
   assert.match(stageSource, /const freezeRoaming = useCallback\(\(\) => \{[\s\S]*window\.clearTimeout\(locomotionTimerRef\.current\)[\s\S]*setRoaming\(false\)[\s\S]*setMovementSpeed\(0\)[\s\S]*setLocomotion\("idle"\)/);
   assert.match(stageSource, /if \(!isDaruGame \|\| mode === "active"\) return;[\s\S]*freezeRoaming\(\);\s*\}, \[freezeRoaming, isDaruGame, mode\]\)/);
   assert.doesNotMatch(stageSource, /if \(!isDaruGame \|\| mode === "active"\) return;[\s\S]*resetGameSafePosition\(\)/);
+});
+
+test("route exit freezes game locomotion before handing off to general roaming", () => {
+  assert.match(stageSource, /const previousIsDaruGameRef = useRef\(isDaruGame\)/);
+  assert.match(stageSource, /useLayoutEffect\(\(\) => \{\s*const wasDaruGame/);
+  assert.match(stageSource, /const wasDaruGame = previousIsDaruGameRef\.current;\s*previousIsDaruGameRef\.current = isDaruGame;\s*if \(!wasDaruGame \|\| isDaruGame\) return;\s*nextRoamDelayRef\.current = null;\s*freezeRoaming\(\)/);
+  assert.match(stageSource, /const freezeRoaming = useCallback[\s\S]*setReturningToGameGround\(false\)[\s\S]*setRoaming\(false\)[\s\S]*setMovementSpeed\(0\)[\s\S]*setLocomotion\("idle"\)/);
+  assert.doesNotMatch(stageSource, /if \(!wasDaruGame \|\| isDaruGame\) return;[\s\S]*resetGameSafePosition\(\)/);
 });
 
 test("airborne game-safe Daru walks diagonally to a safe grounded destination", () => {
@@ -99,6 +107,16 @@ test("game speed reduction applies only to autonomous movement", () => {
 test("game-safe destination rejects blockers and keeps the current position when no safe candidate exists", () => {
   assert.match(stageSource, /const chooseGameSafeDestination = useCallback\(\(\) => \{[\s\S]*const currentPosition = positionRef\.current;[\s\S]*const safeCandidates = candidates\.filter[\s\S]*pathIsClear\(left, baselineTop\)[\s\S]*return currentPosition;\s*\}, \[\]\)/);
   assert.doesNotMatch(stageSource, /const chooseGameSafeDestination = useCallback\(\(\) => \{[\s\S]*return \{ x: 0, y: 0 \};\s*\}, \[\]\)/);
+});
+
+test("game-safe destination can escape a start-overlapped blocker without crossing blockers", () => {
+  assert.match(stageSource, /const startOverlapAreas = blockers\.map[\s\S]*const hasStartOverlap = startOverlapAreas\.some/);
+  assert.match(stageSource, /const previousAreas = \[\.\.\.startOverlapAreas\];[\s\S]*const escaped = startOverlapAreas\.map/);
+  assert.match(stageSource, /if \(startOverlapAreas\[index\] === 0 \|\| escaped\[index\]\)[\s\S]*if \(area > 0\) return false/);
+  assert.match(stageSource, /if \(area > previousAreas\[index\]\) return false;[\s\S]*if \(area === 0\) escaped\[index\] = true/);
+  assert.match(stageSource, /return escaped\.every\(Boolean\)/);
+  assert.match(stageSource, /hasStartOverlap[\s\S]*Math\.abs\(first\.x - currentPosition\.x\) - Math\.abs\(second\.x - currentPosition\.x\)/);
+  assert.match(stageSource, /return currentPosition;\s*\}, \[\]\)/);
 });
 
 test("game-safe active and quiet inherit general route size and drag transforms", () => {
