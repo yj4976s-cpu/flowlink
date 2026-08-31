@@ -29,6 +29,7 @@ import styles from "./DetectionWorkbench.module.css";
 
 type DetectionTab = "image" | "video" | "webcam";
 type SubmitState = "idle" | "selected" | "analyzing" | "success" | "error";
+type VideoProcessingState = "idle" | "uploading" | "processing" | "completed" | "failed";
 type FoundReportCandidate = {
   sourceType: DetectionTab;
   objectClassCode: string;
@@ -92,6 +93,39 @@ const sourceTypeLabels: Record<string, string> = {
   VIDEO: "영상",
   WEBCAM: "카메라",
 };
+
+function formatElapsedTime(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
+}
+
+function VideoProcessingCard({ state, uploadProgress, elapsedSeconds, error }: { state: Exclude<VideoProcessingState, "idle" | "completed">; uploadProgress: number | null; elapsedSeconds: number; error: string }) {
+  const uploading = state === "uploading";
+  const failed = state === "failed";
+  const status = failed
+    ? "영상 분석을 완료하지 못했어요"
+    : uploading ? "영상을 업로드하고 있어요" : "AI가 영상을 분석하고 있어요";
+  return (
+    <section className={`${styles.videoProcessingCard}${failed ? ` ${styles.videoProcessingFailed}` : ""}`} aria-labelledby="video-processing-title">
+      <div className={styles.videoProcessingHeading}>
+        <div><p className={styles.eyebrow}>PROCESSING</p><h3 id="video-processing-title">AI 영상 분석</h3></div>
+        <span>경과 시간 <b>{formatElapsedTime(elapsedSeconds)}</b></span>
+      </div>
+      <p className={styles.videoProcessingStatus} role={failed ? "alert" : "status"} aria-live="polite">{status}</p>
+      {!failed && (uploading && uploadProgress !== null ? (
+        <div className={styles.videoProgressGroup}>
+          <div className={styles.videoProgressRail} role="progressbar" aria-label="영상 업로드 진행률" aria-valuemin={0} aria-valuemax={100} aria-valuenow={uploadProgress}><span style={{ width: `${uploadProgress}%` }} /></div>
+          <strong>{uploadProgress}% 업로드 완료</strong>
+        </div>
+      ) : (
+        <div className={`${styles.videoProgressRail} ${styles.videoProgressIndeterminate}`} role="progressbar" aria-label={uploading ? "영상 업로드 진행 중" : "AI 영상 분석 진행 중"}><span /></div>
+      ))}
+      <p className={styles.videoProcessingDescription}>{failed ? error : uploading ? "브라우저에서 서버로 영상을 안전하게 전송하고 있습니다." : "객체와 이동 경로를 확인한 뒤 결과 영상을 준비하고 있습니다."}</p>
+      {!failed && <small>영상 길이와 서버 상태에 따라 1~2분 정도 소요될 수 있어요.</small>}
+    </section>
+  );
+}
 
 const groupLabels: Record<string, string> = {
   WASTE: "폐기물",
@@ -765,6 +799,10 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
   const [videoThumbnailUrl, setVideoThumbnailUrl] = useState("");
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
+  const [videoProcessingState, setVideoProcessingState] = useState<VideoProcessingState>("idle");
+  const [videoUploadProgress, setVideoUploadProgress] = useState<number | null>(null);
+  const [videoProcessingStartedAt, setVideoProcessingStartedAt] = useState<number | null>(null);
+  const [videoElapsedSeconds, setVideoElapsedSeconds] = useState(0);
   const [error, setError] = useState("");
   const [currentEvent, setCurrentEvent] = useState<DetectionEvent | null>(null);
   const [webcamFrame, setWebcamFrame] = useState<WebcamDetectionFrame | null>(null);
@@ -793,6 +831,16 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
   const pendingHistoryDetailIdRef = useRef<number | null>(null);
   const historyDetailLoadingRef = useRef(false);
   const webcamFoundSignatureRef = useRef("");
+  const videoRequestGenerationRef = useRef(0);
+  const videoAbortControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if ((videoProcessingState !== "uploading" && videoProcessingState !== "processing") || videoProcessingStartedAt === null) return;
+    const updateElapsed = () => setVideoElapsedSeconds(Math.floor((Date.now() - videoProcessingStartedAt) / 1000));
+    updateElapsed();
+    const interval = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(interval);
+  }, [videoProcessingStartedAt, videoProcessingState]);
 
   useEffect(() => {
     if (tab !== "webcam") return;
@@ -867,6 +915,8 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
 
   useEffect(() => {
     return () => {
+      videoRequestGenerationRef.current += 1;
+      videoAbortControllerRef.current?.abort();
       if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
       if (reportPreviewUrlRef.current) URL.revokeObjectURL(reportPreviewUrlRef.current);
     };
@@ -988,6 +1038,10 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
     setWebcamReportSuccess(null);
     setError("");
     setSubmitState("idle");
+    setVideoProcessingState("idle");
+    setVideoUploadProgress(null);
+    setVideoProcessingStartedAt(null);
+    setVideoElapsedSeconds(0);
     replacePreviewUrl(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
@@ -999,7 +1053,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
   };
 
   const acceptFile = (nextFile: File | undefined) => {
-    if (!nextFile || tab === "webcam") return;
+    if (!nextFile || tab === "webcam" || submitState === "analyzing") return;
     reportContextGenerationRef.current += 1;
     currentEventIdRef.current = null;
     pendingHistoryDetailIdRef.current = null;
@@ -1009,6 +1063,10 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
     setCurrentEvent(null);
     setVideoDuration(null);
     setVideoThumbnailUrl("");
+    setVideoProcessingState("idle");
+    setVideoUploadProgress(null);
+    setVideoProcessingStartedAt(null);
+    setVideoElapsedSeconds(0);
     if (validationMessage) {
       setFile(null);
       replacePreviewUrl(null);
@@ -1047,23 +1105,42 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
       return;
     }
 
+    const requestGeneration = ++videoRequestGenerationRef.current;
     setSubmitState("analyzing");
     cueDaru("scan", { source: "service" });
     setError("");
+    if (tab === "video") {
+      videoAbortControllerRef.current?.abort();
+      videoAbortControllerRef.current = new AbortController();
+      setVideoProcessingState("uploading");
+      setVideoUploadProgress(null);
+      setVideoProcessingStartedAt(Date.now());
+      setVideoElapsedSeconds(0);
+    }
     try {
-      const result = tab === "image" ? await uploadDetectionImage(file) : await uploadDetectionVideo(file);
+      const result = tab === "image" ? await uploadDetectionImage(file) : await uploadDetectionVideo(file, {
+        signal: videoAbortControllerRef.current?.signal,
+        onUploadProgress: (progress) => { if (requestGeneration === videoRequestGenerationRef.current) setVideoUploadProgress(progress); },
+        onUploadComplete: () => { if (requestGeneration === videoRequestGenerationRef.current) { setVideoUploadProgress(null); setVideoProcessingState("processing"); } },
+      });
+      if (requestGeneration !== videoRequestGenerationRef.current) return;
       currentEventIdRef.current = result.id;
       setCurrentEvent(result);
       setSubmitState("success");
+      if (tab === "video") setVideoProcessingState("completed");
       cueDaru(result.detected_objects.length ? "found" : "look", { source: "service" });
       setHistoryLoading(true);
       setHistoryError("");
       await refreshHistory();
     } catch (caught) {
+      if (requestGeneration !== videoRequestGenerationRef.current || (caught instanceof DOMException && caught.name === "AbortError")) return;
       const message = caught instanceof DetectionApiError ? caught.message : "물건 확인을 처리하지 못했습니다.";
       setError(message);
       setSubmitState("error");
+      if (tab === "video") setVideoProcessingState("failed");
       cueDaru("rest", { source: "service" });
+    } finally {
+      if (requestGeneration === videoRequestGenerationRef.current) videoAbortControllerRef.current = null;
     }
   };
 
@@ -1412,6 +1489,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
                     type="file"
                     accept={tab === "image" ? "image/jpeg,image/png,image/webp" : "video/mp4"}
                     onChange={handleFileChange}
+                    disabled={submitState === "analyzing"}
                   />
                   {(previewUrl && file) || displayedVideoUrl ? (
                     <div className={`${styles.dropzonePreview} ${tab === "video" ? styles.videoDropzonePreview : ""}`}>
@@ -1458,11 +1536,13 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
                   )}
                 </label>
 
-                {error && <p className={styles.error} role="alert">{error}</p>}
+                {tab === "video" && (videoProcessingState === "uploading" || videoProcessingState === "processing" || videoProcessingState === "failed") && <VideoProcessingCard state={videoProcessingState} uploadProgress={videoUploadProgress} elapsedSeconds={videoElapsedSeconds} error={error} />}
+
+                {error && !(tab === "video" && videoProcessingState === "failed") && <p className={styles.error} role="alert">{error}</p>}
 
                 <div className={styles.actions}>
                   <button className="button button-primary" type="submit" disabled={!file || submitState === "analyzing"}>
-                    {submitState === "analyzing" ? "물건 확인 중..." : "물건 확인 시작"}
+                    {submitState === "analyzing" ? videoProcessingState === "uploading" ? "영상 업로드 중" : tab === "video" ? "분석 진행 중" : "물건 확인 중..." : "물건 확인 시작"}
                     <Icon name="arrow" size={18} />
                   </button>
                   <button className="button button-secondary" type="button" onClick={resetSelectedFile} disabled={submitState === "analyzing"}>

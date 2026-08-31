@@ -597,6 +597,51 @@
   opacity: .68;
 }
 
+.videoProcessingCard {
+  margin-top: 18px;
+  padding: clamp(18px, 2.4vw, 24px);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 32%, var(--color-border));
+  border-radius: 22px;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--color-primary-soft) 55%, var(--color-surface)), var(--color-surface));
+  color: var(--color-text);
+}
+
+.videoProcessingFailed {
+  border-color: color-mix(in srgb, var(--color-error) 38%, var(--color-border));
+  background: color-mix(in srgb, var(--color-error) 7%, var(--color-surface));
+}
+
+.videoProcessingHeading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.videoProcessingHeading h3,
+.videoProcessingStatus,
+.videoProcessingDescription {
+  margin: 0;
+}
+
+.videoProcessingHeading h3 { font-size: 20px; }
+.videoProcessingHeading > span { color: var(--color-text-muted); font-size: 13px; font-weight: 800; white-space: nowrap; }
+.videoProcessingHeading b { color: var(--color-text); font-variant-numeric: tabular-nums; }
+.videoProcessingStatus { margin-top: 18px; font-size: 17px; font-weight: 900; }
+.videoProcessingDescription { margin-top: 13px; color: var(--color-text-muted); font-size: 13px; font-weight: 700; line-height: 1.65; }
+.videoProcessingCard small { display: block; margin-top: 8px; color: var(--color-text-muted); font-weight: 700; }
+
+.videoProgressGroup { margin-top: 16px; }
+.videoProgressGroup strong { display: block; margin-top: 8px; color: var(--color-primary); font-size: 13px; text-align: right; }
+.videoProgressRail { position: relative; overflow: hidden; height: 10px; margin-top: 16px; border-radius: 999px; background: color-mix(in srgb, var(--color-primary) 12%, var(--color-border)); }
+.videoProgressRail > span { display: block; height: 100%; border-radius: inherit; background: var(--color-primary); transition: width .18s ease; }
+.videoProgressIndeterminate > span { width: 42%; animation: videoProgressSweep 1.35s ease-in-out infinite; }
+
+@keyframes videoProgressSweep {
+  from { transform: translateX(-120%); }
+  to { transform: translateX(340%); }
+}
+
 .error {
   margin: 14px 0 0;
   padding: 14px 16px;
@@ -1272,6 +1317,9 @@
     flex-direction: column;
   }
 
+  .videoProcessingHeading { flex-direction: column; gap: 8px; }
+  .videoProcessingCard { border-radius: 18px; }
+
   .webcamStage {
     min-height: min(520px, 62svh);
   }
@@ -1328,4 +1376,9 @@
   .ctaBox :global(.button) {
     width: 100%;
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .videoProgressIndeterminate > span { animation: none; width: 100%; opacity: .55; }
+  .videoProgressRail > span { transition: none; }
 }
