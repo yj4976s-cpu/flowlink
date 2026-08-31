@@ -42,8 +42,11 @@ test("game-safe active constrains automatic movement while reusing manual drag",
   assert.match(stageSource, /const maxTravelX = mobile \? Math\.min\(96, window\.innerWidth \* 0\.22\) : tablet \? Math\.min\(220, window\.innerWidth \* 0\.26\) : Math\.min\(360, window\.innerWidth \* 0\.32\)/);
   assert.match(stageSource, /const safeCandidates = candidates\.filter/);
   assert.match(stageSource, /const maximumRightOffset = Math\.max\(0, Math\.min\(maxTravelX \* 0\.45/);
-  assert.match(stageSource, /y: currentPosition\.y/);
-  assert.match(stageSource, /Math\.abs\(candidate\.x - currentPosition\.x\) >= minimumTravel/);
+  assert.match(stageSource, /const groundY = gameSafeGroundYRef\.current/);
+  assert.match(stageSource, /y: groundY/);
+  assert.doesNotMatch(stageSource, /const chooseGameSafeDestination[\s\S]*y: currentPosition\.y/);
+  assert.match(stageSource, /const gameMinimumTravel = Math\.min\(minimumTravel, 32\)/);
+  assert.match(stageSource, /Math\.abs\(candidate\.x - currentPosition\.x\) >= gameMinimumTravel/);
   assert.match(stageSource, /const pathOverlaps = blockers\.some/);
   assert.match(stageSource, /pathLeft < item\.right && pathRight > item\.left && baselineTop < item\.bottom && baselineTop \+ rect\.height > item\.top/);
   assert.match(stageSource, /!overlaps\(left, baselineTop\) && !pathOverlaps/);
@@ -51,17 +54,45 @@ test("game-safe active constrains automatic movement while reusing manual drag",
   assert.doesNotMatch(stageSource, /const chooseGameSafeDestination[\s\S]*maxTravelY/);
   assert.match(stageSource, /const distance = Math\.abs\(target\.x - currentPosition\.x\)/);
   assert.doesNotMatch(stageSource, /const distance = gameSafe/);
-  assert.match(stageSource, /const speed = mobile \? DARU_GROUNDED_ROAMING_CONFIG\.mobileSpeed : DARU_GROUNDED_ROAMING_CONFIG\.desktopSpeed/);
+  assert.match(stageSource, /const homeSpeed = mobile \? DARU_GROUNDED_ROAMING_CONFIG\.mobileSpeed : DARU_GROUNDED_ROAMING_CONFIG\.desktopSpeed/);
+  assert.match(stageSource, /const speed = gameSafe \? homeSpeed \* DARU_GAME_AUTONOMOUS_SPEED_RATIO : homeSpeed/);
+  assert.match(stageSource, /const DARU_GAME_AUTONOMOUS_SPEED_RATIO = 0\.88/);
   assert.match(stageSource, /distance \/ speed \* 1000/);
+  assert.match(stageSource, /const requiredTravelDistance = gameSafe \? Math\.min\(minTravelDistance, 32\) : minTravelDistance/);
   assert.match(stageSource, /setLocomotion\("start_walk"\)[\s\S]*setLocomotion\("walk"\)/);
   assert.match(stageSource, /setLocomotion\("stop_walk"\)/);
 });
 
 test("route entry resets inherited roaming before game-safe active movement can start", () => {
-  assert.match(stageSource, /const resetGameSafePosition = useCallback\(\(\) => \{\s*setPosition\(\{ x: 0, y: 0 \}\)/);
+  assert.match(stageSource, /const resetGameSafePosition = useCallback\(\(\) => \{\s*gameSafeGroundYRef\.current = 0;\s*setPosition\(\{ x: 0, y: 0 \}\)/);
   assert.match(stageSource, /useEffect\(\(\) => \{\s*if \(!isDaruGame\) return;\s*nextRoamDelayRef\.current = null;\s*freezeRoaming\(\);[\s\S]*?resetGameSafePosition\(\);\s*\}, \[freezeRoaming, isDaruGame, resetGameSafePosition\]\)/);
   assert.match(stageSource, /const freezeRoaming = useCallback\(\(\) => \{[\s\S]*window\.clearTimeout\(locomotionTimerRef\.current\)[\s\S]*setRoaming\(false\)[\s\S]*setMovementSpeed\(0\)[\s\S]*setLocomotion\("idle"\)/);
-  assert.match(stageSource, /if \(!isDaruGame \|\| mode === "active"\) return;[\s\S]*freezeRoaming\(\);[\s\S]*resetGameSafePosition\(\)/);
+  assert.match(stageSource, /if \(!isDaruGame \|\| mode === "active"\) return;[\s\S]*freezeRoaming\(\);\s*\}, \[freezeRoaming, isDaruGame, mode\]\)/);
+  assert.doesNotMatch(stageSource, /if \(!isDaruGame \|\| mode === "active"\) return;[\s\S]*resetGameSafePosition\(\)/);
+});
+
+test("airborne game-safe Daru settles without walk locomotion before horizontal roaming", () => {
+  assert.match(stageSource, /const gameSafeGroundYRef = useRef\(0\)/);
+  assert.match(stageSource, /if \(gameSafe && Math\.abs\(currentPosition\.y - gameSafeGroundYRef\.current\) >= 1\) \{\s*settleToGameSafeGround\(\);\s*return false/);
+  assert.match(stageSource, /const settleToGameSafeGround = useCallback[\s\S]*setMovementSpeed\(0\)[\s\S]*setLocomotion\("land"\)[\s\S]*setPosition\(\{ x: currentPosition\.x, y: groundY \}\)/);
+  const settleBody = stageSource.match(/const settleToGameSafeGround = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[\]\);/)?.[1] ?? "";
+  assert.doesNotMatch(settleBody, /start_walk|stop_walk|setLocomotion\("walk"\)/);
+  assert.match(stageSource, /data-game-ground-settling=\{gameGroundSettling \|\| undefined\}/);
+  assert.match(mascotCss, /\.stage\[data-game-ground-settling\][\s\S]*transform var\(--daru-ground-settle-duration/);
+  assert.match(stageSource, /nextRoamDelayRef\.current = 0;[\s\S]*setRoamRetry/);
+});
+
+test("quiet preserves manual position and never enables autonomous game roaming", () => {
+  assert.match(stageSource, /if \(!isDaruGame \|\| mode === "active"\) return;\s*nextRoamDelayRef\.current = null;\s*freezeRoaming\(\)/);
+  assert.match(stageSource, /mode !== "active"[\s\S]*return;/);
+  assert.doesNotMatch(stageSource, /if \(!isDaruGame \|\| mode === "active"\) return;[\s\S]*resetGameSafePosition/);
+});
+
+test("game speed reduction applies only to autonomous movement", () => {
+  assert.match(stageSource, /const speed = gameSafe \? homeSpeed \* DARU_GAME_AUTONOMOUS_SPEED_RATIO : homeSpeed/);
+  assert.match(stageSource, /distance \/ speed \* 1000/);
+  assert.doesNotMatch(stageSource, /handlePointer(?:Down|Move|Up)[\s\S]*DARU_GAME_AUTONOMOUS_SPEED_RATIO/);
+  assert.doesNotMatch(stageSource, /DARU_GROUNDED_ROAMING_CONFIG\.(?:desktopSpeed|mobileSpeed) \* DARU_GAME_AUTONOMOUS_SPEED_RATIO/);
 });
 
 test("game-safe destination rejects blockers and keeps the current position when no safe candidate exists", () => {
