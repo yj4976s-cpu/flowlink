@@ -63,9 +63,9 @@ class Settings(BaseSettings):
     AI_SERVICE_URL: str = "http://127.0.0.1:8001"
     AI_INTERNAL_API_KEY: str = ""
     AI_SERVICE_TIMEOUT_SECONDS: float = 30.0
-    AI_VIDEO_SERVICE_TIMEOUT_SECONDS: float = 120.0
+    AI_VIDEO_SERVICE_TIMEOUT_SECONDS: float = 300.0
     VIDEO_JOB_POLL_SECONDS: float = 1.0
-    VIDEO_JOB_STALE_SECONDS: int = 300
+    VIDEO_JOB_STALE_SECONDS: int = 600
     CHAT_MODEL_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-3.6-flash"

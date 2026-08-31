@@ -9,7 +9,11 @@ import httpx
 
 import pytest
 
-from app.services.ai_inference_client import AIInferenceClient, AIInferenceUnavailableError
+from app.services.ai_inference_client import (
+    AIInferenceClient,
+    AIInferenceTimeoutError,
+    AIInferenceUnavailableError,
+)
 
 
 def video_response_payload() -> dict[str, object]:
@@ -107,6 +111,21 @@ def test_ai_inference_client_uses_video_timeout(tmp_path: Path, monkeypatch) -> 
 
     assert captured["url"] == "http://ai-service/api/inference/videos?render=true"
     assert captured["timeout"] == 90
+
+
+def test_ai_inference_client_classifies_video_timeout(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(httpx, "post", lambda *args, **kwargs: (_ for _ in ()).throw(httpx.ReadTimeout("slow")))
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"mp4")
+    client = AIInferenceClient(
+        base_url="http://ai-service",
+        internal_api_key="test-key",
+        timeout_seconds=12,
+        video_timeout_seconds=90,
+    )
+
+    with pytest.raises(AIInferenceTimeoutError, match="AI video inference timed out"):
+        client.infer_video_file(video_path)
 
 
 def test_ai_inference_client_reads_zip_video_result(tmp_path: Path, monkeypatch) -> None:

@@ -37,6 +37,10 @@ class DetectionInferenceUnavailableError(RuntimeError):
     pass
 
 
+class DetectionInferenceTimeoutError(RuntimeError):
+    pass
+
+
 MODEL_LABEL_TO_CLASS_CODE = {
     "bag": "BAG",
     "backpack": "BAG",
@@ -140,10 +144,12 @@ class DetectionInferenceService:
         )
 
     def analyze_video(self, media_path: Path, *, video_job_id: int | None = None) -> DetectionInferenceResult:
-        from app.services.ai_inference_client import AIInferenceUnavailableError
+        from app.services.ai_inference_client import AIInferenceTimeoutError, AIInferenceUnavailableError
 
         try:
             result = self.ai_client.infer_video_file(media_path, video_job_id=video_job_id) if video_job_id is not None else self.ai_client.infer_video_file(media_path)
+        except AIInferenceTimeoutError as exc:
+            raise DetectionInferenceTimeoutError("AI video inference timed out") from exc
         except AIInferenceUnavailableError as exc:
             raise DetectionInferenceUnavailableError("AI detection model is not configured") from exc
         except RuntimeError as exc:

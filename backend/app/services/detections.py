@@ -20,11 +20,13 @@ from app.repositories.detections import (
 from app.services.detection_inference import (
     DetectionInferenceResult,
     DetectionInferenceService,
+    DetectionInferenceTimeoutError,
     DetectionInferenceUnavailableError,
 )
 from app.services.color_estimation import estimate_standard_color
 
 SAFE_MODEL_UNAVAILABLE_MESSAGE = "AI detection model is not configured"
+SAFE_VIDEO_TIMEOUT_MESSAGE = "영상 분석 시간이 예상보다 길어 중단되었어요. 잠시 후 다시 시도해주세요."
 
 
 class DetectionProcessingError(RuntimeError):
@@ -123,6 +125,9 @@ def process_detection_event(
             event.video_job.updated_at = utc_now()
             db.commit()
         return _complete_with_result(db, event=event, result=result, media_path=media_path)
+    except DetectionInferenceTimeoutError as exc:
+        _mark_failed(db, event=event, message=SAFE_VIDEO_TIMEOUT_MESSAGE)
+        raise DetectionProcessingError(SAFE_VIDEO_TIMEOUT_MESSAGE) from exc
     except DetectionInferenceUnavailableError as exc:
         failed_event = _mark_failed(db, event=event, message=sanitize_error_message(str(exc)))
         raise DetectionModelUnavailableError(SAFE_MODEL_UNAVAILABLE_MESSAGE) from exc

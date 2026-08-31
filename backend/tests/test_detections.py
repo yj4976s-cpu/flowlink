@@ -514,6 +514,29 @@ def test_detection_inference_maps_ai_unavailable_to_service_error(tmp_path: Path
         service.analyze_image(image_path)
 
 
+def test_video_timeout_is_not_reported_as_model_unavailable(tmp_path: Path) -> None:
+    from app.services.ai_inference_client import AIInferenceTimeoutError
+    from app.services.detection_inference import DetectionInferenceTimeoutError
+
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"mp4")
+    service = DetectionInferenceService(ai_client=FailingAIInferenceClient(AIInferenceTimeoutError("slow")))
+
+    with pytest.raises(DetectionInferenceTimeoutError, match="AI video inference timed out"):
+        service.analyze_video(video_path)
+
+
+def test_video_generic_ai_unavailable_keeps_existing_safe_handling(tmp_path: Path) -> None:
+    from app.services.ai_inference_client import AIInferenceUnavailableError
+
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"mp4")
+    service = DetectionInferenceService(ai_client=FailingAIInferenceClient(AIInferenceUnavailableError("down")))
+
+    with pytest.raises(DetectionInferenceUnavailableError, match="AI detection model is not configured"):
+        service.analyze_video(video_path)
+
+
 def test_image_inference_deduplicates_overlapping_same_class_predictions(
     client: TestClient,
     db: Session,
@@ -913,6 +936,29 @@ def test_video_worker_completes_queued_job_and_zero_detection_is_success(client:
     assert job.processing_progress == 100
 
 
+def test_video_worker_records_safe_timeout_message(client: TestClient, db: Session) -> None:
+    from app.services.detection_inference import DetectionInferenceTimeoutError
+
+    class TimeoutInferenceService:
+        def analyze_video(self, media_path: Path, *, video_job_id: int | None = None) -> DetectionInferenceResult:
+            raise DetectionInferenceTimeoutError("AI video inference timed out")
+
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
+    assert response.status_code == 202
+
+    assert process_one_job(db, inference_service=TimeoutInferenceService()) is True
+
+    event = db.query(DetectionEvent).one()
+    job = db.query(VideoJob).one()
+    assert event.status == "FAILED"
+    assert job.status == "FAILED"
+    assert job.failed_stage == "ANALYZING"
+    assert event.error_message == "영상 분석 시간이 예상보다 길어 중단되었어요. 잠시 후 다시 시도해주세요."
+    assert "model is not configured" not in event.error_message
+
+
 def test_video_status_is_owner_scoped_and_internal_progress_requires_key(
     client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -961,7 +1007,7 @@ def test_video_job_claim_is_single_use_and_stale_processing_fails(client: TestCl
     authenticate(client, user)
     client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
 
-    claimed_at = utc_now() - timedelta(minutes=10)
+    claimed_at = utc_now() - timedelta(seconds=get_settings().VIDEO_JOB_STALE_SECONDS + 1)
     job_id = claim_next_queued_video_job(db, started_at=claimed_at)
     db.commit()
     assert job_id is not None

@@ -17,6 +17,10 @@ class AIInferenceUnavailableError(RuntimeError):
     pass
 
 
+class AIInferenceTimeoutError(RuntimeError):
+    pass
+
+
 class AIInferenceRejectedError(RuntimeError):
     pass
 
@@ -146,6 +150,8 @@ class AIInferenceClient:
                 )
         except OSError as exc:
             raise AIInferenceRejectedError("AI inference video file could not be opened") from exc
+        except httpx.TimeoutException as exc:
+            raise AIInferenceTimeoutError("AI video inference timed out") from exc
         except httpx.RequestError as exc:
             raise AIInferenceUnavailableError("AI inference service is unavailable") from exc
 
