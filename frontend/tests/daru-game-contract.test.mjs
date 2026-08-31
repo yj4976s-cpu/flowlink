@@ -13,6 +13,8 @@ const OLD_HARD_KEY = "flowlink:daru-game:v2:best-detection:hard";
 const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const apiSource = readFileSync(new URL("../src/lib/daruGameApi.ts", import.meta.url), "utf8");
 const gameSource = readFileSync(new URL("../src/components/daru-game/DaruGame.tsx", import.meta.url), "utf8");
+const activeRunSource = readFileSync(new URL("../src/lib/daruActiveRun.ts", import.meta.url), "utf8");
+const memoryBoardSource = readFileSync(new URL("../src/components/daru-game/MemoryBoard.tsx", import.meta.url), "utf8");
 const leaderboardSource = readFileSync(new URL("../src/components/daru-game/DaruLeaderboard.tsx", import.meta.url), "utf8");
 
 function seededRandom(seed) {
@@ -121,6 +123,23 @@ test("authoritative card flips are optimistic, bounded to two visuals, and sent 
   assert.match(gameSource, /const response = await flipDaruGameCard\(runId, action\.position\)/);
   assert.match(gameSource, /if \(response\.matched === null\) \{[\s\S]*action = queuedServerFlipRef\.current;[\s\S]*continue;/);
   assert.doesNotMatch(gameSource, /actionPendingRef\.current = true; setLocked\(true\);\s*void flipDaruGameCard/);
+});
+
+test("active runs preserve optional preview identity for optimistic resume", () => {
+  assert.match(activeRunSource, /previewCards\?: Array</);
+  assert.match(activeRunSource, /Array\.isArray\(parsed\.previewCards\)/);
+  assert.match(activeRunSource, /\.\.\.\(previewCards \? \{ previewCards \} : \{\}\)/);
+  assert.match(gameSource, /previewCards: preview\.cards\.map\(\(card\) => \(\{ position: card\.position, cardId: card\.card_id \}\)\)/);
+});
+
+test("playing resume restores preview identity before applying authoritative state", () => {
+  assert.match(gameSource, /const resumedCards = stored\.previewCards \? restoreStoredPreviewCards\(state\.positions, stored\.previewCards\) : null;\s*if \(resumedCards\) setCards\(resumedCards\);\s*applyRunState\(state, nextDifficulty\)/);
+  assert.match(gameSource, /previewCards\.length !== positions\.length/);
+});
+
+test("two selected cards disable every other unopened card at the button boundary", () => {
+  assert.match(memoryBoardSource, /flippedIds\.length >= 2 && !flippedIds\.includes\(card\.id\) && !matched\.has\(card\.pairId\)/);
+  assert.match(memoryBoardSource, /locked=\{locked \|\| hintActive \|\| phase !== "playing" \|\|/);
 });
 
 test("authoritative match, mismatch, and recovery reconcile optimistic visuals", () => {

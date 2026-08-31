@@ -45,6 +45,15 @@ function previewServerCards(positions: number[], revealed: { position: number; c
   return revealed.reduce((cards, card) => revealServerCard(cards, card.position, card.card_id), hiddenServerCards(positions));
 }
 
+function restoreStoredPreviewCards(positions: number[], previewCards: Array<{ position: number; cardId: string }>): GameCard[] | null {
+  if (previewCards.length !== positions.length || positions.some((position) => previewCards.filter((card) => card.position === position).length !== 1)) return null;
+  try {
+    return previewServerCards(positions, previewCards.map((card) => ({ position: card.position, card_id: card.cardId })));
+  } catch {
+    return null;
+  }
+}
+
 function responseMetrics(metrics: ServerGameMetrics): DetectionMetrics {
   return { memoryAccuracy: metrics.memory_accuracy, speedScore: metrics.speed_score, comboScore: metrics.combo_score, hintScore: metrics.hint_score, detectionPower: metrics.detection_power };
 }
@@ -178,6 +187,7 @@ export function DaruGame() {
           const response = await createDaruGameRun(DIFFICULTY_CONFIG[nextDifficulty].key);
           runId = response.run_id; storeDaruActiveRun({ runId, difficulty: response.difficulty }); runIdRef.current = runId;
           const preview = await getDaruGameRunPreview(runId);
+          storeDaruActiveRun({ runId, difficulty: response.difficulty, previewCards: preview.cards.map((card) => ({ position: card.position, cardId: card.card_id })) });
           setCards(previewServerCards(response.positions, preview.cards)); setPreviewRetry(null);
         }
         catch (error) {
@@ -201,6 +211,7 @@ export function DaruGame() {
       const state = await getDaruGameRunState(previewRetry.runId);
       if (state.status !== "CREATED") throw new DaruGameApiError(409);
       const preview = await getDaruGameRunPreview(previewRetry.runId);
+      storeDaruActiveRun({ runId: previewRetry.runId, difficulty: state.difficulty, previewCards: preview.cards.map((card) => ({ position: card.position, cardId: card.card_id })) });
       resetState(previewRetry.difficulty); runIdRef.current = previewRetry.runId; setDifficulty(previewRetry.difficulty);
       setCards(previewServerCards(state.positions, preview.cards)); setPhase("preview");
     } catch (error) {
@@ -310,8 +321,13 @@ export function DaruGame() {
       resetState(nextDifficulty); runIdRef.current = stored.runId; setDifficulty(nextDifficulty); setAuthExpired(false);
       if (state.status === "CREATED") {
         const preview = await getDaruGameRunPreview(stored.runId);
+        storeDaruActiveRun({ runId: stored.runId, difficulty: stored.difficulty, previewCards: preview.cards.map((card) => ({ position: card.position, cardId: card.card_id })) });
         setCards(previewServerCards(state.positions, preview.cards)); setPhase("preview");
-      } else applyRunState(state, nextDifficulty);
+      } else {
+        const resumedCards = stored.previewCards ? restoreStoredPreviewCards(state.positions, stored.previewCards) : null;
+        if (resumedCards) setCards(resumedCards);
+        applyRunState(state, nextDifficulty);
+      }
     }).catch((error) => {
       if (handleTerminalRunError(error)) return;
       else if (error instanceof DaruGameApiError && error.status === 404) { clearDaruActiveRun(); runIdRef.current = null; }
