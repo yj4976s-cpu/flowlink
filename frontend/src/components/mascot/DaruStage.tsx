@@ -245,6 +245,12 @@ export function DaruStage() {
     setLocomotion("idle");
   }, [roaming]);
 
+  useEffect(() => {
+    if (!isDaruGame) return;
+    nextRoamDelayRef.current = null;
+    freezeRoaming();
+  }, [freezeRoaming, isDaruGame]);
+
   const beginMovementTo = useCallback((target: { x: number; y: number }) => {
     if (isDaruGame) return false;
     const latest = directGreetingStateRef.current;
