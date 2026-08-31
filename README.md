@@ -59,7 +59,7 @@ FlowLink는 이미지·영상·웹캠에서 수면 위 객체를 탐지하고,
             │                     │
             ▼                     ▼
       PostgreSQL              YOLO Model
-        :5432                  best.pt
+        :5432                  best_v7_8n_100_640_16_SGD_0005.pt
 ```
 
 | 서비스 | 개발 주소 | 역할 |
@@ -268,7 +268,7 @@ AI_VIDEO_SERVICE_TIMEOUT_SECONDS=120
 ```env
 APP_ENV=development
 AI_INTERNAL_API_KEY=
-DETECTION_MODEL=yolo11n.pt
+DETECTION_MODEL=../models/best_v7_8n_100_640_16_SGD_0005.pt
 DETECTION_CONFIDENCE=0.25
 DETECTION_IMGSZ=640
 ```
@@ -289,7 +289,7 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 - `FRONTEND_URL`: 배포된 Frontend HTTPS origin, localhost/127.0.0.1 및 HTTP 금지
 - `AI_INTERNAL_API_KEY`: Backend와 Backend AI에 동일하게 넣는 32자 이상 비공개 값
 
-Backend AI도 운영 환경에서는 startup 단계에서 설정을 즉시 검증합니다. `AI_INTERNAL_API_KEY`가 비어 있거나 32자 미만이면 `/health`가 뜨기 전에 서버 시작이 실패합니다. 운영에서는 팀 custom YOLO 모델을 사용해야 하므로 `DETECTION_MODEL`도 비어 있거나 기본 `yolo11n.pt` 그대로이면 시작되지 않습니다. 모델 파일은 Git에 올리지 않고 배포 환경에만 두며, 운영 `.env`에 `DETECTION_MODEL=models/best.pt`와 팀 권장 `DETECTION_CONFIDENCE` 값을 명시합니다.
+Backend AI도 운영 환경에서는 startup 단계에서 설정을 즉시 검증합니다. `AI_INTERNAL_API_KEY`가 비어 있거나 32자 미만이면 `/health`가 뜨기 전에 서버 시작이 실패합니다. 운영에서는 팀 custom YOLO 모델을 사용해야 하므로 `DETECTION_MODEL`도 비어 있거나 기본 `yolo11n.pt` 그대로이면 시작되지 않습니다. 모델 파일은 Git에 올리지 않고 배포 환경에만 두며, 운영 `.env`에 `DETECTION_MODEL=/app/models/best_v7_8n_100_640_16_SGD_0005.pt`와 팀 권장 `DETECTION_CONFIDENCE` 값을 명시합니다.
 Supabase Storage는 선택 사항입니다. `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET` 세 값이 모두 설정되면 공개 이미지가 Supabase Storage에 저장되고, 하나라도 비어 있으면 기존 로컬 `/uploads` 저장소를 사용합니다.
 
 ---
@@ -356,7 +356,7 @@ Backend AI의 `/health`는 모델을 로드하지 않습니다. 첫 추론 요�
 - 이미지 AI: Backend → Backend AI → YOLO 실제 추론
 - 웹캠 AI: 실시간 raw inference frame은 자동 DB 저장하지 않지만, 사용자가 발견 제보를 확정하면 선택된 탐지 frame이 CitizenReport evidence 이미지로 저장됨
 - 영상 AI: 업로드, VideoJob 저장, Backend AI ByteTrack 추론 메타데이터 보존
-- Custom model: 모델 파일은 Git에 올리지 않고 `backend-ai/.env`의 `DETECTION_MODEL=models/best.pt`처럼 배포 환경에서만 경로 지정
+- Custom model: 모델 파일은 Git에 올리지 않고 `backend-ai/.env`의 `DETECTION_MODEL=../models/best_v7_8n_100_640_16_SGD_0005.pt`처럼 배포 환경에서만 경로 지정
 
 ---
 
@@ -364,7 +364,7 @@ Backend AI의 `/health`는 모델을 로드하지 않습니다. 첫 추론 요�
 
 AI 담당자는 모델 파일만 전달하지 말고 아래 정보를 함께 전달합니다.
 
-- `best.pt`
+- `best_v7_8n_100_640_16_SGD_0005.pt`
 - Ultralytics version
 - class id → class name 매핑
 - 권장 confidence
@@ -542,7 +542,7 @@ FlowLink는 이미지·영상·웹캠에서 동일한 YOLO 모델을 사용하�
 ```text
              YOLO Runtime
                   │
-               best.pt
+               best_v7_8n_100_640_16_SGD_0005.pt
                   │
         ┌─────────┼─────────┐
         │         │         │
@@ -551,7 +551,7 @@ FlowLink는 이미지·영상·웹캠에서 동일한 YOLO 모델을 사용하�
 
 모델 담당자는 최종 모델 전달 시 다음 정보를 함께 공유합니다.
 
-- `best.pt`
+- `best_v7_8n_100_640_16_SGD_0005.pt`
 - Ultralytics 버전
 - 클래스 목록
 - `class id → class name`
@@ -583,7 +583,7 @@ API Key
 JWT Secret
 DB Password
 
-best.pt
+best_v7_8n_100_640_16_SGD_0005.pt
 last.pt
 *.pt
 *.pth

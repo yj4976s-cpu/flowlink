@@ -25,6 +25,7 @@ import {
   isMeasuredNumber,
   metricDelta,
   metricBarViewState,
+  metricRatioViewState,
   metricLabel,
 } from "./modelComparisonViewState";
 import styles from "./AdminModelComparisonClient.module.css";
@@ -122,7 +123,7 @@ function measuredMetricCount(model: AdminModelComparisonModel) {
 }
 
 function chartRatio(value: number | null, max: number) {
-  return isMeasuredNumber(value) && max > 0 ? Math.max(0, Math.min(1, value / max)) : null;
+  return metricRatioViewState(value, max).ratio;
 }
 
 function classSupportState(metric: AdminModelClassMetric | undefined) {

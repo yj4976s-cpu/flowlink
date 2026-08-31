@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from app.services.model_registry import ModelRegistryDocument, ModelRegistryError, RegisteredModel, load_model_registry, normalize_model_label
+from app.services.model_registry import ModelRegistryDocument, ModelRegistryError, RegisteredModel, load_model_registry, normalize_model_label, registered_model_path
 from app.services.model_runtime_manager import (
     ActiveModelState,
     ModelRuntimeConflictError,
@@ -88,6 +88,52 @@ def test_registry_rejects_path_traversal() -> None:
             file_name="../secret.pt",
             expected_classes=["BALL"],
         )
+
+
+def test_registry_rejects_absolute_model_paths() -> None:
+    with pytest.raises(ValidationError):
+        RegisteredModel(
+            id="absolute",
+            display_name="absolute",
+            file_name="/tmp/model.pt",
+            expected_classes=["BALL"],
+        )
+
+
+def test_registered_model_path_uses_backend_ai_models_first(tmp_path) -> None:
+    model = RegisteredModel(id="old", display_name="old", file_name="old.pt", expected_classes=["BALL"])
+    backend_ai_models = tmp_path / "backend-ai" / "models"
+    repo_models = tmp_path / "models"
+    backend_ai_models.mkdir(parents=True)
+    repo_models.mkdir(parents=True)
+    (backend_ai_models / "old.pt").write_bytes(b"backend-ai")
+    (repo_models / "old.pt").write_bytes(b"repo")
+
+    assert registered_model_path(model, model_dirs=(backend_ai_models, repo_models)) == backend_ai_models / "old.pt"
+
+
+def test_registered_model_path_falls_back_to_repo_models(tmp_path) -> None:
+    model = RegisteredModel(id="new", display_name="new", file_name="new.pt", expected_classes=["BALL"])
+    backend_ai_models = tmp_path / "backend-ai" / "models"
+    repo_models = tmp_path / "models"
+    backend_ai_models.mkdir(parents=True)
+    repo_models.mkdir(parents=True)
+    (repo_models / "new.pt").write_bytes(b"repo")
+
+    assert registered_model_path(model, model_dirs=(backend_ai_models, repo_models)) == repo_models / "new.pt"
+
+
+def test_registered_model_path_returns_safe_candidate_when_missing(tmp_path) -> None:
+    model = RegisteredModel(id="missing", display_name="missing", file_name="missing.pt", expected_classes=["BALL"])
+    backend_ai_models = tmp_path / "backend-ai" / "models"
+    repo_models = tmp_path / "models"
+    backend_ai_models.mkdir(parents=True)
+    repo_models.mkdir(parents=True)
+
+    resolved = registered_model_path(model, model_dirs=(backend_ai_models, repo_models))
+
+    assert resolved == backend_ai_models / "missing.pt"
+    assert not resolved.exists()
 
 
 def test_validate_model_classes_uses_names_not_class_order() -> None:

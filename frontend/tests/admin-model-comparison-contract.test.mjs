@@ -9,6 +9,7 @@ import {
   hasMeasuredModelComparison,
   isMeasuredNumber,
   metricBarViewState,
+  metricRatioViewState,
   metricDelta,
   metricLabel,
   modelComparisonStatusView,
@@ -35,6 +36,12 @@ test("model comparison metric bar state separates zero from empty values", () =>
   assert.deepEqual(metricBarViewState(Number.NaN, 1), { measured: false, zero: false, width: 0 });
   assert.deepEqual(metricBarViewState(0, 1), { measured: true, zero: true, width: 0 });
   assert.deepEqual(metricBarViewState(0.5, 1), { measured: true, zero: false, width: 50 });
+  assert.deepEqual(metricRatioViewState(null, 1), { measured: false, zero: false, ratio: null });
+  assert.deepEqual(metricRatioViewState(Number.NaN, 1), { measured: false, zero: false, ratio: null });
+  assert.deepEqual(metricRatioViewState(0, 1), { measured: true, zero: true, ratio: 0 });
+  assert.deepEqual(metricRatioViewState(0.5, 1), { measured: true, zero: false, ratio: 0.5 });
+  assert.deepEqual(metricRatioViewState(2, 1), { measured: true, zero: false, ratio: 1 });
+  assert.deepEqual(metricRatioViewState(-1, 1), { measured: true, zero: false, ratio: 0 });
 });
 
 test("model comparison deltas show percent points and lower-is-better timing", () => {
@@ -148,11 +155,13 @@ test("model comparison dashboard keeps zero bars measured and empty bars visuall
   const client = readFileSync("src/components/admin/model-comparison/AdminModelComparisonClient.tsx", "utf8");
   const css = readFileSync("src/components/admin/model-comparison/AdminModelComparisonClient.module.css", "utf8");
 
-  assert.match(client, /metricBarViewState\(before, max\)/);
-  assert.match(client, /data-empty=\{!state\.measured \|\| undefined\}/);
-  assert.match(client, /data-zero=\{state\.zero \|\| undefined\}/);
+  assert.match(client, /metricRatioViewState\(value, max\)\.ratio/);
+  assert.match(client, /beforeMeasured = row\.beforeRatio != null/);
+  assert.match(client, /data-empty=\{missing \|\| undefined\}/);
+  assert.match(client, /data-empty=\{!beforeMeasured \|\| undefined\}/);
   assert.doesNotMatch(client, /const measured = width > 0/);
-  assert.match(css, /\.metricBar\[data-zero\] i b/);
+  assert.match(css, /\.metricSlopeTrack\[data-empty\]/);
+  assert.match(css, /\.metricSlopePointBefore\[data-empty\]/);
   assert.match(css, /min-width: 0/);
 });
 
@@ -199,6 +208,7 @@ test("model deployment status and history load independently", () => {
   assert.match(client, /getAdminModelDeployment\(signal\)/);
   assert.match(client, /getAdminModelDeploymentHistory\(signal\)/);
   assert.match(client, /Promise\.allSettled/);
+  assert.doesNotMatch(client, /Promise\.all\(\[getAdminModelComparison\(controller\.signal\), getAdminModelDeployment\(controller\.signal\)\]\)/);
   assert.doesNotMatch(client, /Promise\.all\(\[getAdminModelDeployment\(signal\), getAdminModelDeploymentHistory\(signal\)\]\)/);
 });
 

@@ -6,10 +6,10 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
-from app.core.config import BACKEND_AI_DIR
+from app.core.config import BACKEND_AI_DIR, REPO_ROOT
 
 MODEL_REGISTRY_PATH = BACKEND_AI_DIR / "app" / "data" / "model_registry.json"
-MODEL_DIR = BACKEND_AI_DIR / "models"
+MODEL_DIRS = (BACKEND_AI_DIR / "models", REPO_ROOT / "models")
 ALLOWED_MODEL_SUFFIXES = {".pt"}
 LABEL_ALIASES = {
     "ball": "BALL",
@@ -113,12 +113,19 @@ def load_model_registry(path: Path = MODEL_REGISTRY_PATH) -> ModelRegistryDocume
         raise ModelRegistryError("Model registry is unavailable") from exc
 
 
-def registered_model_path(model: RegisteredModel, *, model_dir: Path = MODEL_DIR) -> Path:
-    root = model_dir.resolve()
-    candidate = (root / model.file_name).resolve()
-    if root != candidate.parent:
-        raise ModelRegistryError("Model registry contains an invalid model path")
-    return candidate
+def registered_model_path(model: RegisteredModel, *, model_dirs: tuple[Path, ...] = MODEL_DIRS) -> Path:
+    candidates: list[Path] = []
+    for model_dir in model_dirs:
+        root = model_dir.resolve()
+        candidate = (root / model.file_name).resolve()
+        if root != candidate.parent:
+            raise ModelRegistryError("Model registry contains an invalid model path")
+        candidates.append(candidate)
+        if candidate.is_file():
+            return candidate
+    if not candidates:
+        raise ModelRegistryError("Model registry has no allowed model directory")
+    return candidates[0]
 
 
 def find_model_by_id(model_id: str, *, registry: ModelRegistryDocument | None = None) -> RegisteredModel | None:
@@ -134,6 +141,6 @@ def find_model_by_file_name(file_name: str, *, registry: ModelRegistryDocument |
 
 def available_model_statuses(registry: ModelRegistryDocument) -> list[ModelFileStatus]:
     return [
-        ModelFileStatus(model=model, path=registered_model_path(model), available=registered_model_path(model).is_file())
+        ModelFileStatus(model=model, path=(path := registered_model_path(model)), available=path.is_file())
         for model in registry.models
     ]

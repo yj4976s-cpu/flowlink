@@ -13,6 +13,12 @@ export type MetricBarViewState = {
   width: number;
 };
 
+export type MetricRatioViewState = {
+  measured: boolean;
+  zero: boolean;
+  ratio: number | null;
+};
+
 export function isMeasuredNumber(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
@@ -23,6 +29,14 @@ export function metricBarViewState(value: number | null | undefined, max: number
   const width = measured && max > 0 ? Math.max(0, Math.min(100, value / max * 100)) : 0;
 
   return { measured, zero, width };
+}
+
+export function metricRatioViewState(value: number | null | undefined, max: number): MetricRatioViewState {
+  const measured = isMeasuredNumber(value);
+  const zero = measured && value === 0;
+  const ratio = measured && max > 0 ? Math.max(0, Math.min(1, value / max)) : null;
+
+  return { measured, zero, ratio };
 }
 
 export function metricLabel(value: number | null, options: { percent?: boolean; suffix?: string; digits?: number } = {}) {

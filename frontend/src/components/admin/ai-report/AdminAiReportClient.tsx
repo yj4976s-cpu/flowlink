@@ -32,6 +32,8 @@ export function AdminAiReportClient() {
   const [modelDeployment, setModelDeployment] = useState<AdminModelDeploymentStatus | null>(null);
   const [modelComparisonLoading, setModelComparisonLoading] = useState(true);
   const [modelComparisonError, setModelComparisonError] = useState(false);
+  const [modelDeploymentLoading, setModelDeploymentLoading] = useState(true);
+  const [modelDeploymentError, setModelDeploymentError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const applyRequest = (signal?: AbortSignal) => getAdminAiReport(signal).then(setReport).catch((reason: unknown) => { if (!isAbortError(reason)) setError("AI 운영 분석 데이터를 불러오지 못했습니다."); }).finally(() => { if (!signal?.aborted) setLoading(false); });
@@ -46,10 +48,9 @@ export function AdminAiReportClient() {
   }, []);
   useEffect(() => {
     const controller = new AbortController();
-    Promise.all([getAdminModelComparison(controller.signal), getAdminModelDeployment(controller.signal)])
-      .then(([comparisonPayload, deploymentPayload]) => {
+    getAdminModelComparison(controller.signal)
+      .then((comparisonPayload) => {
         setModelComparison(comparisonPayload);
-        setModelDeployment(deploymentPayload);
         setModelComparisonError(false);
       })
       .catch((reason: unknown) => {
@@ -57,6 +58,21 @@ export function AdminAiReportClient() {
       })
       .finally(() => {
         if (!controller.signal.aborted) setModelComparisonLoading(false);
+      });
+    return () => controller.abort();
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    getAdminModelDeployment(controller.signal)
+      .then((deploymentPayload) => {
+        setModelDeployment(deploymentPayload);
+        setModelDeploymentError(false);
+      })
+      .catch((reason: unknown) => {
+        if (!isAbortError(reason)) setModelDeploymentError(true);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setModelDeploymentLoading(false);
       });
     return () => controller.abort();
   }, []);
@@ -75,7 +91,7 @@ export function AdminAiReportClient() {
       <small>전체 운영 탐지 데이터 기준</small>
     </header>
     <OperationsBriefing briefing={briefing} status={briefingStatus} loading={briefingLoading} error={briefingError} onGenerate={requestBriefing} />
-    {loading ? <ReportState loading /> : error ? <ReportState error={error} retry={retry} /> : !report || report.summary.total === 0 ? <EmptyReport /> : <Report report={report} modelComparison={modelComparison} modelDeployment={modelDeployment} modelComparisonLoading={modelComparisonLoading} modelComparisonError={modelComparisonError} />}
+    {loading ? <ReportState loading /> : error ? <ReportState error={error} retry={retry} /> : !report || report.summary.total === 0 ? <EmptyReport /> : <Report report={report} modelComparison={modelComparison} modelDeployment={modelDeployment} modelComparisonLoading={modelComparisonLoading} modelComparisonError={modelComparisonError} modelDeploymentLoading={modelDeploymentLoading} modelDeploymentError={modelDeploymentError} />}
   </main>;
 }
 
@@ -115,7 +131,7 @@ function OperationsBriefing({ briefing, status, loading, error, onGenerate }: { 
   </section>;
 }
 
-function Report({ report, modelComparison, modelDeployment, modelComparisonLoading, modelComparisonError }: { report: AdminAiReport; modelComparison: AdminModelComparison | null; modelDeployment: AdminModelDeploymentStatus | null; modelComparisonLoading: boolean; modelComparisonError: boolean }) {
+function Report({ report, modelComparison, modelDeployment, modelComparisonLoading, modelComparisonError, modelDeploymentLoading, modelDeploymentError }: { report: AdminAiReport; modelComparison: AdminModelComparison | null; modelDeployment: AdminModelDeploymentStatus | null; modelComparisonLoading: boolean; modelComparisonError: boolean; modelDeploymentLoading: boolean; modelDeploymentError: boolean }) {
   const maxClassCount = Math.max(1, ...report.class_metrics.map((item) => item.count));
   const reviewedRate = report.summary.total ? Math.round(report.summary.reviewed / report.summary.total * 100) : 0;
   const correctionRate = report.summary.reviewed ? Math.round(report.summary.corrected / report.summary.reviewed * 100) : 0;
@@ -162,18 +178,20 @@ function Report({ report, modelComparison, modelDeployment, modelComparisonLoadi
       <CorrectionPatterns data={report.correction_patterns} />
     </section>
 
-    <ModelComparisonStatus comparison={modelComparison} deployment={modelDeployment} loading={modelComparisonLoading} error={modelComparisonError} />
+    <ModelComparisonStatus comparison={modelComparison} deployment={modelDeployment} comparisonLoading={modelComparisonLoading} comparisonError={modelComparisonError} deploymentLoading={modelDeploymentLoading} deploymentError={modelDeploymentError} />
   </>;
 }
 
-function ModelComparisonStatus({ comparison, deployment, loading, error }: { comparison: AdminModelComparison | null; deployment: AdminModelDeploymentStatus | null; loading: boolean; error: boolean }) {
-  const status = modelComparisonStatusView(comparison, { loading, error });
+function ModelComparisonStatus({ comparison, deployment, comparisonLoading, comparisonError, deploymentLoading, deploymentError }: { comparison: AdminModelComparison | null; deployment: AdminModelDeploymentStatus | null; comparisonLoading: boolean; comparisonError: boolean; deploymentLoading: boolean; deploymentError: boolean }) {
+  const status = modelComparisonStatusView(comparison, { loading: comparisonLoading, error: comparisonError });
   const jsonRuntimeMismatch = Boolean(
     comparison?.current_deployed_model_id
     && deployment?.active_model_id
     && comparison.current_deployed_model_id !== deployment.active_model_id,
   );
-  const runtimeTitle = deployment?.active_display_name ? `${deployment.active_display_name} 운영 중` : status.title;
+  const runtimeTitle = deploymentLoading
+    ? "Backend-AI runtime 상태를 확인하고 있습니다."
+    : deployment?.active_display_name ? `${deployment.active_display_name} 운영 중` : status.title;
   const runtimeDescription = deployment
     ? `Backend-AI runtime 기준 활성 모델입니다. 활성 클래스: ${deployment.active_classes.join(", ") || "확인 중"}`
     : status.description;
@@ -183,7 +201,8 @@ function ModelComparisonStatus({ comparison, deployment, loading, error }: { com
     <Icon name="layers" size={30} />
     <div>
       <h2>{runtimeTitle}</h2>
-      <p>{error ? "모델 서비스 상태 확인에 실패했습니다. 특정 모델이 운영 중이라고 단정하지 않습니다." : runtimeDescription}</p>
+      <p>{deploymentError ? "Backend-AI runtime 상태 확인에 실패했습니다. 특정 모델이 현재 운영 중이라고 단정하지 않습니다." : runtimeDescription}</p>
+      {comparisonError && deployment && <p>평가 데이터만 불러오지 못했습니다. 현재 운영 모델 상태는 Backend-AI runtime 기준으로 표시합니다.</p>}
       {warning && <p role="alert">{warning}</p>}
       <Link href="/admin/model-comparison">{status.actionLabel}<Icon name="arrow" size={13} /></Link>
     </div>
