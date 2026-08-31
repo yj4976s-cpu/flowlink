@@ -28,6 +28,7 @@ export type DetectionEvent = {
   purpose: "USER_ANALYSIS" | "OPERATION";
   original_media_url: string;
   result_media_url: string | null;
+  ai_model_id: string | null;
   media_width: number | null;
   media_height: number | null;
   created_at: string;

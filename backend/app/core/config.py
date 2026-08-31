@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     AI_VIDEO_SERVICE_TIMEOUT_SECONDS: float = 300.0
     VIDEO_JOB_POLL_SECONDS: float = 1.0
     VIDEO_JOB_STALE_SECONDS: int = 600
+    AI_MODEL_SWITCH_TIMEOUT_SECONDS: float = 60.0
     CHAT_MODEL_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-3.6-flash"

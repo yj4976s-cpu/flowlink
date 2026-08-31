@@ -11,8 +11,8 @@ import {
   type AdminOperationsBriefing,
   type AdminOperationsBriefingStatus,
 } from "@/lib/adminAiReportApi";
-import { getAdminModelComparison, type AdminModelComparison } from "@/lib/adminModelComparisonApi";
-import { modelComparisonStatusView } from "@/components/admin/model-comparison/modelComparisonViewState";
+import { getAdminModelComparison, getAdminModelDeployment, type AdminModelComparison, type AdminModelDeploymentStatus } from "@/lib/adminModelComparisonApi";
+import { getAdminAiReportModelStatusView } from "@/components/admin/model-comparison/modelComparisonViewState";
 import { adminOperationsBriefingFallbackTasks, geminiBriefingLabel } from "./adminAiReportViewState";
 import styles from "./AdminAiReportClient.module.css";
 
@@ -29,8 +29,11 @@ export function AdminAiReportClient() {
   const [briefingLoading, setBriefingLoading] = useState(false);
   const [briefingError, setBriefingError] = useState("");
   const [modelComparison, setModelComparison] = useState<AdminModelComparison | null>(null);
+  const [modelDeployment, setModelDeployment] = useState<AdminModelDeploymentStatus | null>(null);
   const [modelComparisonLoading, setModelComparisonLoading] = useState(true);
   const [modelComparisonError, setModelComparisonError] = useState(false);
+  const [modelDeploymentLoading, setModelDeploymentLoading] = useState(true);
+  const [modelDeploymentError, setModelDeploymentError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const applyRequest = (signal?: AbortSignal) => getAdminAiReport(signal).then(setReport).catch((reason: unknown) => { if (!isAbortError(reason)) setError("AI 운영 분석 데이터를 불러오지 못했습니다."); }).finally(() => { if (!signal?.aborted) setLoading(false); });
@@ -46,8 +49,8 @@ export function AdminAiReportClient() {
   useEffect(() => {
     const controller = new AbortController();
     getAdminModelComparison(controller.signal)
-      .then((payload) => {
-        setModelComparison(payload);
+      .then((comparisonPayload) => {
+        setModelComparison(comparisonPayload);
         setModelComparisonError(false);
       })
       .catch((reason: unknown) => {
@@ -55,6 +58,21 @@ export function AdminAiReportClient() {
       })
       .finally(() => {
         if (!controller.signal.aborted) setModelComparisonLoading(false);
+      });
+    return () => controller.abort();
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    getAdminModelDeployment(controller.signal)
+      .then((deploymentPayload) => {
+        setModelDeployment(deploymentPayload);
+        setModelDeploymentError(false);
+      })
+      .catch((reason: unknown) => {
+        if (!isAbortError(reason)) setModelDeploymentError(true);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setModelDeploymentLoading(false);
       });
     return () => controller.abort();
   }, []);
@@ -73,7 +91,7 @@ export function AdminAiReportClient() {
       <small>전체 운영 탐지 데이터 기준</small>
     </header>
     <OperationsBriefing briefing={briefing} status={briefingStatus} loading={briefingLoading} error={briefingError} onGenerate={requestBriefing} />
-    {loading ? <ReportState loading /> : error ? <ReportState error={error} retry={retry} /> : !report || report.summary.total === 0 ? <EmptyReport /> : <Report report={report} modelComparison={modelComparison} modelComparisonLoading={modelComparisonLoading} modelComparisonError={modelComparisonError} />}
+    {loading ? <ReportState loading /> : error ? <ReportState error={error} retry={retry} /> : !report || report.summary.total === 0 ? <EmptyReport /> : <Report report={report} modelComparison={modelComparison} modelDeployment={modelDeployment} modelComparisonLoading={modelComparisonLoading} modelComparisonError={modelComparisonError} modelDeploymentLoading={modelDeploymentLoading} modelDeploymentError={modelDeploymentError} />}
   </main>;
 }
 
@@ -113,7 +131,7 @@ function OperationsBriefing({ briefing, status, loading, error, onGenerate }: { 
   </section>;
 }
 
-function Report({ report, modelComparison, modelComparisonLoading, modelComparisonError }: { report: AdminAiReport; modelComparison: AdminModelComparison | null; modelComparisonLoading: boolean; modelComparisonError: boolean }) {
+function Report({ report, modelComparison, modelDeployment, modelComparisonLoading, modelComparisonError, modelDeploymentLoading, modelDeploymentError }: { report: AdminAiReport; modelComparison: AdminModelComparison | null; modelDeployment: AdminModelDeploymentStatus | null; modelComparisonLoading: boolean; modelComparisonError: boolean; modelDeploymentLoading: boolean; modelDeploymentError: boolean }) {
   const maxClassCount = Math.max(1, ...report.class_metrics.map((item) => item.count));
   const reviewedRate = report.summary.total ? Math.round(report.summary.reviewed / report.summary.total * 100) : 0;
   const correctionRate = report.summary.reviewed ? Math.round(report.summary.corrected / report.summary.reviewed * 100) : 0;
@@ -160,17 +178,25 @@ function Report({ report, modelComparison, modelComparisonLoading, modelComparis
       <CorrectionPatterns data={report.correction_patterns} />
     </section>
 
-    <ModelComparisonStatus comparison={modelComparison} loading={modelComparisonLoading} error={modelComparisonError} />
+    <ModelComparisonStatus comparison={modelComparison} deployment={modelDeployment} comparisonLoading={modelComparisonLoading} comparisonError={modelComparisonError} deploymentLoading={modelDeploymentLoading} deploymentError={modelDeploymentError} />
   </>;
 }
 
-function ModelComparisonStatus({ comparison, loading, error }: { comparison: AdminModelComparison | null; loading: boolean; error: boolean }) {
-  const status = modelComparisonStatusView(comparison, { loading, error });
+function ModelComparisonStatus({ comparison, deployment, comparisonLoading, comparisonError, deploymentLoading, deploymentError }: { comparison: AdminModelComparison | null; deployment: AdminModelDeploymentStatus | null; comparisonLoading: boolean; comparisonError: boolean; deploymentLoading: boolean; deploymentError: boolean }) {
+  const status = getAdminAiReportModelStatusView({
+    comparison,
+    deployment,
+    comparisonLoading,
+    comparisonError,
+    deploymentLoading,
+    deploymentError,
+  });
   return <section className={`${styles.panel} ${styles.modelEmpty}`} data-tone={status.tone} aria-label="모델 비교 상태">
     <Icon name="layers" size={30} />
     <div>
       <h2>{status.title}</h2>
       <p>{status.description}</p>
+      {status.warning && <p role="alert">{status.warning}</p>}
       <Link href="/admin/model-comparison">{status.actionLabel}<Icon name="arrow" size={13} /></Link>
     </div>
   </section>;

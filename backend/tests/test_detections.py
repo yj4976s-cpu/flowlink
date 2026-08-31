@@ -86,6 +86,7 @@ class FakeAIInferenceClient:
         self.video_result = video_result
         self.file_calls = 0
         self.video_file_calls = 0
+        self.video_job_ids: list[int | None] = []
         self.image_calls = 0
 
     def infer_image_file(self, media_path: Path) -> AIInferenceResult:
@@ -93,8 +94,9 @@ class FakeAIInferenceClient:
         assert media_path.exists()
         return self.result
 
-    def infer_video_file(self, media_path: Path) -> AIInferenceVideoResult:
+    def infer_video_file(self, media_path: Path, *, video_job_id: int | None = None) -> AIInferenceVideoResult:
         self.video_file_calls += 1
+        self.video_job_ids.append(video_job_id)
         assert media_path.exists()
         assert self.video_result is not None
         return self.video_result
@@ -103,6 +105,7 @@ class FakeAIInferenceClient:
         self.image_calls += 1
         assert image.mode == "RGB"
         return AIInferenceResult(
+            model_id=self.result.model_id,
             media_width=image.width,
             media_height=image.height,
             inference_ms=self.result.inference_ms,
@@ -117,7 +120,7 @@ class FailingAIInferenceClient:
     def infer_image_file(self, media_path: Path) -> AIInferenceResult:
         raise self.error
 
-    def infer_video_file(self, media_path: Path) -> AIInferenceVideoResult:
+    def infer_video_file(self, media_path: Path, *, video_job_id: int | None = None) -> AIInferenceVideoResult:
         raise self.error
 
     def infer_image(self, image: Image.Image) -> AIInferenceResult:
@@ -297,6 +300,7 @@ def test_default_image_inference_uses_backend_ai_client(client: TestClient, db: 
     authenticate(client, user)
     fake_client = FakeAIInferenceClient(
         AIInferenceResult(
+            model_id="flowlink-4class-hat-v7",
             media_width=80,
             media_height=60,
             inference_ms=18.2,
@@ -317,10 +321,12 @@ def test_default_image_inference_uses_backend_ai_client(client: TestClient, db: 
     assert fake_client.file_calls == 1
     body = response.json()
     assert body["status"] == "COMPLETED"
+    assert body["ai_model_id"] == "flowlink-4class-hat-v7"
     assert body["media_width"] == 80
     assert body["media_height"] == 60
     assert body["detected_objects"][0]["class_code"] == "BAG"
     assert body["detected_objects"][0]["confidence"] == 0.87
+    assert db.query(DetectionEvent).one().ai_model_id == "flowlink-4class-hat-v7"
 
 
 def test_default_video_inference_uses_backend_ai_client_and_preserves_tracks(client: TestClient, db: Session) -> None:
@@ -332,6 +338,7 @@ def test_default_video_inference_uses_backend_ai_client_and_preserves_tracks(cli
     fake_client = FakeAIInferenceClient(
         AIInferenceResult(media_width=1, media_height=1, inference_ms=0, predictions=[]),
         video_result=AIInferenceVideoResult(
+            model_id="flowlink-4class-hat-v7",
             media_width=640,
             media_height=360,
             duration_ms=2800,
@@ -386,6 +393,24 @@ def test_default_video_inference_uses_backend_ai_client_and_preserves_tracks(cli
     assert job.status == "PROCESSING"
     assert job.processing_stage == "QUEUED"
     assert job.processing_progress == 0
+
+    assert process_one_job(db, inference_service=DetectionInferenceService(ai_client=fake_client)) is True
+    assert fake_client.video_job_ids == [job.id]
+    db.expire_all()
+    event = db.query(DetectionEvent).one()
+    job = db.query(VideoJob).one()
+    assert event.status == "COMPLETED"
+    assert event.ai_model_id == "flowlink-4class-hat-v7"
+    assert event.result_media_url is not None
+    assert event.result_media_url.endswith("-result.mp4")
+    assert [item.object_class.code for item in event.detected_objects] == ["FOOTWEAR", "BALL", "TRASH"]
+    assert event.detected_objects[0].track_id == 4
+    assert event.detected_objects[0].first_seen_ms == 133
+    assert event.detected_objects[0].last_seen_ms == 2200
+    assert event.detected_objects[0].appearance_count == 41
+    assert job.status == "COMPLETED"
+    assert job.processing_stage == "COMPLETED"
+    assert job.processing_progress == 100
 
 
 def test_video_detection_processes_event_through_threadpool(

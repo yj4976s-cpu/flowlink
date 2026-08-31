@@ -52,13 +52,47 @@ class YoloRuntimeUnavailableError(RuntimeError):
 
 
 class YoloRuntime:
-    def __init__(self, *, model_path: str, confidence: float, imgsz: int) -> None:
+    def __init__(
+        self,
+        *,
+        model_path: str,
+        confidence: float,
+        imgsz: int,
+        model_id: str | None = None,
+        display_name: str | None = None,
+        expected_classes: list[str] | None = None,
+    ) -> None:
         self.model_path = model_path
         self.confidence = confidence
         self.imgsz = imgsz
+        self.model_id = model_id
+        self.display_name = display_name
+        self.expected_classes = expected_classes or []
         self._model: object | None = None
         self._model_lock = Lock()
         self._inference_lock = Lock()
+        self._validated_classes: tuple[str, ...] | None = None
+
+    def validate_ready(self, *, expected_classes: list[str] | None = None) -> None:
+        model = self._get_model()
+        classes = expected_classes or self.expected_classes
+        normalized_expected = tuple(sorted(classes))
+        if self._validated_classes == normalized_expected:
+            return
+        if classes:
+            from app.services.model_registry import validate_model_class_names
+
+            names = getattr(model, "names", {})
+            if not validate_model_class_names(names, classes):
+                raise YoloRuntimeUnavailableError("YOLO detection model class names do not match registry")
+        with self._inference_lock:
+            try:
+                results = model.predict(source=Image.new("RGB", (32, 32), color=(255, 255, 255)), conf=self.confidence, imgsz=self.imgsz, verbose=False)
+            except Exception as exc:
+                raise YoloRuntimeUnavailableError("YOLO detection model warm-up failed") from exc
+        if not isinstance(results, (list, tuple)) or not results or not hasattr(results[0], "boxes"):
+            raise YoloRuntimeUnavailableError("YOLO detection model warm-up returned an invalid result")
+        self._validated_classes = normalized_expected
 
     def predict(self, image: Image.Image) -> list[YoloPrediction]:
         model = self._get_model()
@@ -303,6 +337,7 @@ def get_yolo_runtime() -> YoloRuntime:
         model_path=settings.DETECTION_MODEL,
         confidence=settings.DETECTION_CONFIDENCE,
         imgsz=settings.DETECTION_IMGSZ,
+        model_id=Path(settings.DETECTION_MODEL).stem,
     )
 
 

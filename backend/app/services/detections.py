@@ -155,6 +155,7 @@ def _complete_with_result(
             rendered_media_path = media_path.with_name(f"{media_path.stem}-result.mp4")
             rendered_media_path.write_bytes(result.rendered_video)
             event.result_media_url = rendered_media_path.relative_to(media_path.parents[3]).as_posix()
+        event.ai_model_id = result.model_id
         for prediction in result.detections:
             class_code = prediction.class_code.strip().upper()
             object_class = get_active_object_class_by_code(db, class_code)

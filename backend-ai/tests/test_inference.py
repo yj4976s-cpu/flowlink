@@ -162,6 +162,7 @@ def test_inference_returns_raw_yolo_predictions(client: TestClient) -> None:
     assert response.status_code == 200
     assert fake_runtime.calls == 1
     body = response.json()
+    assert body["model_id"] is None
     assert body["media_width"] == 32
     assert body["media_height"] == 24
     assert body["inference_ms"] >= 0
@@ -220,6 +221,7 @@ def test_video_inference_streams_temp_file_and_returns_tracks(client: TestClient
     assert response.status_code == 200
     assert fake_service.calls == 1
     assert response.json() == {
+        "model_id": None,
         "media_width": 640,
         "media_height": 360,
         "duration_ms": 2000,
@@ -666,6 +668,61 @@ def test_yolo_runtime_transcodes_rendered_video_to_browser_h264(
     assert captured["kwargs"]["capture_output"] is True
     assert progress_updates[-2:] == [("ANALYZING", 4, 300, True), ("RENDERING", None, 300, True)]
     assert progress_updates[-2][1] != progress_updates[-2][2]
+
+
+def test_video_progress_keeps_the_starting_model_snapshot_during_switch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reports: list[tuple[str, int | None, int | None, bool]] = []
+    active_snapshot: dict[str, object] = {}
+
+    class FakeReporter:
+        def __init__(self, *, job_id: int) -> None:
+            assert job_id == 77
+
+        def report(self, stage: str, processed: int | None, total: int | None, *, force: bool = False) -> None:
+            reports.append((stage, processed, total, force))
+
+    class SnapshotRuntime:
+        def __init__(self, model_id: str, *, switch_to=None) -> None:
+            self.model_id = model_id
+            self.switch_to = switch_to
+
+        def track_video(self, _video_path: Path, **options):
+            callback = options["progress_callback"]
+            callback("ANALYZING", 1, options["total_frames"], False)
+            if self.switch_to is not None:
+                active_snapshot["value"] = self.switch_to
+            callback("ANALYZING", 3, options["total_frames"], True)
+            callback("RENDERING", None, options["total_frames"], True)
+            return []
+
+    snapshot_y = types.SimpleNamespace(model_id="model-y", runtime=SnapshotRuntime("model-y"))
+    snapshot_x = types.SimpleNamespace(model_id="model-x", runtime=SnapshotRuntime("model-x", switch_to=snapshot_y))
+    active_snapshot["value"] = snapshot_x
+    monkeypatch.setattr("app.services.inference.VideoProgressReporter", FakeReporter)
+    monkeypatch.setattr("app.services.inference.get_active_yolo_runtime_snapshot", lambda: active_snapshot["value"])
+    service = ImageInferenceService()
+    monkeypatch.setattr(
+        service,
+        "_read_video_metadata",
+        lambda _path: {"frame_count": 3, "fps": 1.0, "media_width": 64, "media_height": 48},
+    )
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"video")
+
+    first = service.analyze_video_file(video_path, content_type="video/mp4", video_job_id=77)
+    second = service.analyze_video_file(video_path, content_type="video/mp4", video_job_id=77)
+
+    assert first.model_id == "model-x"
+    assert second.model_id == "model-y"
+    assert reports[:4] == [
+        ("ANALYZING", 0, 3, True),
+        ("ANALYZING", 1, 3, False),
+        ("ANALYZING", 3, 3, True),
+        ("RENDERING", None, 3, True),
+    ]
 
 
 def test_yolo_runtime_render_failure_cleans_intermediate_video(

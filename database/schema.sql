@@ -184,6 +184,8 @@ CREATE TABLE detection_events (
 
     result_media_url TEXT,
 
+    ai_model_id VARCHAR(100),
+
     media_width INTEGER
         CHECK (
             media_width IS NULL
@@ -221,6 +223,42 @@ CREATE TABLE detection_events (
         OR processing_started_at IS NULL
         OR processing_completed_at >= processing_started_at
     )
+);
+
+
+CREATE TABLE ai_model_deployment_events (
+    id BIGSERIAL PRIMARY KEY,
+
+    requested_by BIGINT
+        REFERENCES users(id)
+        ON DELETE SET NULL,
+
+    request_id VARCHAR(120) NOT NULL UNIQUE,
+
+    action VARCHAR(20) NOT NULL
+        CHECK (
+            action IN (
+                'ACTIVATE',
+                'ROLLBACK'
+            )
+        ),
+
+    requested_model_id VARCHAR(100),
+    from_model_id VARCHAR(100),
+    to_model_id VARCHAR(100),
+
+    status VARCHAR(20) NOT NULL DEFAULT 'REQUESTED'
+        CHECK (
+            status IN (
+                'REQUESTED',
+                'SUCCEEDED',
+                'FAILED'
+            )
+        ),
+
+    failure_code VARCHAR(80),
+    requested_at TIMESTAMPTZ NOT NULL,
+    completed_at TIMESTAMPTZ
 );
 
 
@@ -963,6 +1001,9 @@ CREATE INDEX idx_detection_events_user_purpose_created
         purpose,
         created_at DESC
     );
+
+CREATE INDEX ix_ai_model_deployment_events_requested_at
+    ON ai_model_deployment_events (requested_at DESC);
 
 CREATE INDEX idx_detected_objects_event
     ON detected_objects (detection_event_id);

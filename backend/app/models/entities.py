@@ -220,6 +220,7 @@ class DetectionEvent(Base):
     source_type: Mapped[str] = mapped_column(String(10), nullable=False)
     original_media_url: Mapped[str] = mapped_column(Text, nullable=False)
     result_media_url: Mapped[str | None] = mapped_column(Text)
+    ai_model_id: Mapped[str | None] = mapped_column(String(100))
     media_width: Mapped[int | None] = mapped_column(Integer)
     media_height: Mapped[int | None] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")
@@ -234,6 +235,30 @@ class DetectionEvent(Base):
     camera: Mapped[Camera | None] = relationship(back_populates="detection_events")
     detected_objects: Mapped[list[DetectedObject]] = relationship(back_populates="detection_event")
     video_job: Mapped[VideoJob | None] = relationship(back_populates="detection_event", uselist=False)
+
+
+class AiModelDeploymentEvent(Base):
+    __tablename__ = "ai_model_deployment_events"
+    __table_args__ = (
+        CheckConstraint("action IN ('ACTIVATE', 'ROLLBACK')", name="ck_ai_model_deployment_events_action"),
+        CheckConstraint("status IN ('REQUESTED', 'SUCCEEDED', 'FAILED')", name="ck_ai_model_deployment_events_status"),
+        UniqueConstraint("request_id", name="uq_ai_model_deployment_events_request_id"),
+        Index("ix_ai_model_deployment_events_requested_at", "requested_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    requested_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    request_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    action: Mapped[str] = mapped_column(String(20), nullable=False)
+    requested_model_id: Mapped[str | None] = mapped_column(String(100))
+    from_model_id: Mapped[str | None] = mapped_column(String(100))
+    to_model_id: Mapped[str | None] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="REQUESTED")
+    failure_code: Mapped[str | None] = mapped_column(String(80))
+    requested_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+    requester: Mapped[User | None] = relationship()
 
 
 class VideoJob(Base):
