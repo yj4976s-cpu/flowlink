@@ -14,6 +14,7 @@ from app.services.ai_inference_client import AIInferenceClient, AIInferenceUnava
 
 def video_response_payload() -> dict[str, object]:
     return {
+        "model_id": "flowlink-4class-hat-v7",
         "media_width": 640,
         "media_height": 360,
         "duration_ms": 1000,
@@ -130,10 +131,33 @@ def test_ai_inference_client_reads_zip_video_result(tmp_path: Path, monkeypatch)
     result = client.infer_video_file(video_path)
 
     assert result.media_width == 640
+    assert result.model_id == "flowlink-4class-hat-v7"
     assert result.media_height == 360
     assert result.rendered_video == b"rendered-video"
     assert result.tracks[0].model_label == "bag"
     assert result.tracks[0].track_id == 4
+
+
+def test_ai_inference_client_preserves_image_model_id(monkeypatch) -> None:
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda *args, **kwargs: httpx.Response(
+            200,
+            json={
+                "model_id": "flowlink-4class-hat-v7",
+                "media_width": 10,
+                "media_height": 8,
+                "inference_ms": 1.2,
+                "predictions": [],
+            },
+        ),
+    )
+    client = AIInferenceClient(base_url="http://ai-service", internal_api_key="test-key", timeout_seconds=12)
+
+    result = client.infer_image_bytes(b"image", filename="sample.jpg", content_type="image/jpeg")
+
+    assert result.model_id == "flowlink-4class-hat-v7"
 
 
 @pytest.mark.parametrize(

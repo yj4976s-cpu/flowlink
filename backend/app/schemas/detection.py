@@ -34,6 +34,7 @@ class DetectionEventResponse(BaseModel):
     purpose: str
     original_media_url: str
     result_media_url: str | None
+    ai_model_id: str | None = None
     media_width: int | None
     media_height: int | None
     created_at: datetime

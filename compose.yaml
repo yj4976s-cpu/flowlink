@@ -106,15 +106,17 @@ services:
       APP_HOST: 0.0.0.0
       APP_PORT: "8001"
       AI_INTERNAL_API_KEY: ${AI_INTERNAL_API_KEY:?Set AI_INTERNAL_API_KEY}
-      DETECTION_MODEL: ${DETECTION_MODEL:-/app/models/best.pt}
+      DETECTION_MODEL: ${DETECTION_MODEL:?Set DETECTION_MODEL to a registered model path}
       DETECTION_CONFIDENCE: ${DETECTION_CONFIDENCE:-0.25}
       DETECTION_IMGSZ: ${DETECTION_IMGSZ:-640}
       IMAGE_MAX_BYTES: ${IMAGE_MAX_BYTES:-20971520}
       IMAGE_MAX_PIXELS: ${IMAGE_MAX_PIXELS:-16000000}
       VIDEO_MAX_BYTES: ${VIDEO_MAX_BYTES:-104857600}
       VIDEO_MAX_DURATION_SECONDS: ${VIDEO_MAX_DURATION_SECONDS:-30}
+      MODEL_STATE_PATH: ${MODEL_STATE_PATH:-/app/state/active-model.json}
     volumes:
       - ./models:/app/models:ro
+      - flowlink_ai_state:/app/state
     networks:
       - flowlink
     healthcheck:
@@ -122,7 +124,7 @@ services:
         - CMD
         - python
         - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=5)"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/ready', timeout=5)"
       interval: 30s
       timeout: 5s
       retries: 5
@@ -137,3 +139,4 @@ networks:
 
 volumes:
   flowlink_uploads:
+  flowlink_ai_state:

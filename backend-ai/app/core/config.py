@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     IMAGE_MAX_PIXELS: int = 16_000_000
     VIDEO_MAX_BYTES: int = 100 * 1024 * 1024
     VIDEO_MAX_DURATION_SECONDS: int = 30
+    MODEL_STATE_PATH: str = "/app/state/active-model.json"
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":

@@ -18,7 +18,9 @@ class AIInferenceUnavailableError(RuntimeError):
 
 
 class AIInferenceRejectedError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class AIInferenceBBoxResponse(BaseModel):
@@ -45,6 +47,7 @@ class AIInferenceVideoTrackResponse(BaseModel):
 
 
 class AIInferenceResponse(BaseModel):
+    model_id: str | None = None
     media_width: int
     media_height: int
     inference_ms: float = Field(ge=0)
@@ -52,6 +55,7 @@ class AIInferenceResponse(BaseModel):
 
 
 class AIInferenceVideoResponse(BaseModel):
+    model_id: str | None = None
     media_width: int
     media_height: int
     duration_ms: int = Field(ge=0)
@@ -93,6 +97,7 @@ class AIInferenceResult:
     media_height: int
     inference_ms: float
     predictions: list[AIInferencePrediction]
+    model_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -105,6 +110,7 @@ class AIInferenceVideoResult:
     inference_ms: float
     tracks: list[AIInferenceVideoTrack]
     rendered_video: bytes | None = None
+    model_id: str | None = None
 
 
 class AIInferenceClient:
@@ -165,6 +171,7 @@ class AIInferenceClient:
             raise AIInferenceUnavailableError("AI inference service returned an invalid response") from exc
 
         return AIInferenceVideoResult(
+            model_id=parsed.model_id,
             media_width=parsed.media_width,
             media_height=parsed.media_height,
             duration_ms=parsed.duration_ms,
@@ -225,6 +232,7 @@ class AIInferenceClient:
             raise AIInferenceUnavailableError("AI inference service returned an invalid response") from exc
 
         return AIInferenceResult(
+            model_id=parsed.model_id,
             media_width=parsed.media_width,
             media_height=parsed.media_height,
             inference_ms=parsed.inference_ms,
@@ -242,6 +250,52 @@ class AIInferenceClient:
                 for prediction in parsed.predictions
             ],
         )
+
+    def get_model_deployment_status(self) -> dict:
+        response = self._request_runtime("GET", "/api/runtime/models/status")
+        return response.json()
+
+    def activate_model(self, *, model_id: str, expected_active_model_id: str | None, request_id: str) -> dict:
+        response = self._request_runtime(
+            "POST",
+            "/api/runtime/models/activate",
+            json={
+                "model_id": model_id,
+                "expected_active_model_id": expected_active_model_id,
+                "request_id": request_id,
+            },
+        )
+        return response.json()
+
+    def rollback_model(self, *, expected_active_model_id: str | None, request_id: str) -> dict:
+        response = self._request_runtime(
+            "POST",
+            "/api/runtime/models/rollback",
+            json={
+                "expected_active_model_id": expected_active_model_id,
+                "request_id": request_id,
+            },
+        )
+        return response.json()
+
+    def _request_runtime(self, method: str, path: str, **kwargs) -> httpx.Response:
+        if not self.base_url or not self.internal_api_key:
+            raise AIInferenceUnavailableError("AI model service is unavailable")
+        try:
+            response = httpx.request(
+                method,
+                f"{self.base_url}{path}",
+                headers={"X-Internal-API-Key": self.internal_api_key},
+                timeout=get_settings().AI_MODEL_SWITCH_TIMEOUT_SECONDS,
+                **kwargs,
+            )
+        except httpx.RequestError as exc:
+            raise AIInferenceUnavailableError("AI model service is unavailable") from exc
+        if response.status_code >= 500:
+            raise AIInferenceUnavailableError("AI model service is unavailable")
+        if response.status_code >= 400:
+            raise AIInferenceRejectedError("AI model service rejected the request", status_code=response.status_code)
+        return response
 
 
 def _content_type_for_path(media_path: Path) -> str:
