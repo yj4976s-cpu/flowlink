@@ -5,6 +5,10 @@ export const DARU_ACTIVE_RUN_STORAGE_KEY = "flowlink:daru-game:active-run";
 export type StoredDaruActiveRun = {
   runId: string;
   difficulty: ApiGameDifficulty;
+  previewCards?: Array<{
+    position: number;
+    cardId: string;
+  }>;
 };
 
 export function loadDaruActiveRun(): StoredDaruActiveRun | null {
@@ -15,7 +19,10 @@ export function loadDaruActiveRun(): StoredDaruActiveRun | null {
     const parsed = JSON.parse(raw) as Partial<StoredDaruActiveRun>;
     if (typeof parsed.runId !== "string" || !parsed.runId) return null;
     if (!parsed.difficulty || !["EASY", "NORMAL", "HARD"].includes(parsed.difficulty)) return null;
-    return { runId: parsed.runId, difficulty: parsed.difficulty } as StoredDaruActiveRun;
+    const previewCards = Array.isArray(parsed.previewCards) && parsed.previewCards.every((card) =>
+      card && Number.isInteger(card.position) && card.position >= 0 && typeof card.cardId === "string" && card.cardId,
+    ) ? parsed.previewCards : undefined;
+    return { runId: parsed.runId, difficulty: parsed.difficulty, ...(previewCards ? { previewCards } : {}) } as StoredDaruActiveRun;
   } catch {
     return null;
   }

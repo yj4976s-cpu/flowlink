@@ -178,7 +178,7 @@
   height: 100%;
   display: block;
   transform-style: preserve-3d;
-  transition: transform .48s cubic-bezier(.2, .72, .2, 1);
+  transition: transform .30s cubic-bezier(.2, .72, .2, 1);
   transition-delay: var(--flip-delay, 0ms);
 }
 
