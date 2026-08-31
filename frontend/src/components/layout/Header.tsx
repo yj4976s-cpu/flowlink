@@ -299,7 +299,7 @@ export function Header() {
               </div>
             </>
           ) : (
-            <Link className="login-link" href="/login">로그인</Link>
+            <><Link className="login-link" href="/login">로그인</Link><Link className="button button-secondary header-register-cta" href="/register">회원가입</Link></>
           ))}
           {authResolved && !isAdmin && <Link className="button button-primary header-cta" href="/lost-reports/new">분실 신고하기</Link>}
           <button
@@ -334,15 +334,15 @@ export function Header() {
                 </Fragment>
               );
             })}
-            {currentUser ? (
+            {authResolved && (currentUser ? (
               <>
                 {isAdmin && <Link href="/admin" onClick={closeMenu}>관리자 정보</Link>}
                 {!isAdmin && <Link href="/notifications" onClick={closeMenu}>알림</Link>}
                 <button className="mobile-auth-button" type="button" onClick={requestLogout}>로그아웃</button>
               </>
             ) : (
-              <Link href="/login" onClick={closeMenu}>로그인</Link>
-            )}
+              <><Link href="/login" onClick={closeMenu}>로그인</Link><Link href="/register" onClick={closeMenu}>회원가입</Link></>
+            ))}
             {!isAdmin && <Link className="button button-primary" href="/lost-reports/new" onClick={closeMenu}>분실 신고하기</Link>}
           </nav>
         </div>
