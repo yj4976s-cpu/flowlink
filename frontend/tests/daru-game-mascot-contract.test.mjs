@@ -32,9 +32,14 @@ test("game-safe active uses constrained autonomous movement while drag stays dis
 
 test("route entry resets inherited roaming before game-safe active movement can start", () => {
   assert.match(stageSource, /const resetGameSafePosition = useCallback\(\(\) => \{\s*setPosition\(\{ x: 0, y: 0 \}\)/);
-  assert.match(stageSource, /nextRoamDelayRef\.current = null;\s*freezeRoaming\(\);[\s\S]*?resetGameSafePosition\(\);\s*\}, \[freezeRoaming, isDaruGame, resetGameSafePosition\]\)/);
+  assert.match(stageSource, /useEffect\(\(\) => \{\s*if \(!isDaruGame\) return;\s*nextRoamDelayRef\.current = null;\s*freezeRoaming\(\);[\s\S]*?resetGameSafePosition\(\);\s*\}, \[freezeRoaming, isDaruGame, resetGameSafePosition\]\)/);
   assert.match(stageSource, /const freezeRoaming = useCallback\(\(\) => \{[\s\S]*window\.clearTimeout\(locomotionTimerRef\.current\)[\s\S]*setRoaming\(false\)[\s\S]*setMovementSpeed\(0\)[\s\S]*setLocomotion\("idle"\)/);
   assert.match(stageSource, /if \(!isDaruGame \|\| mode === "active"\) return;[\s\S]*freezeRoaming\(\);[\s\S]*resetGameSafePosition\(\)/);
+});
+
+test("game-safe destination keeps the current position when no safe candidate exists", () => {
+  assert.match(stageSource, /const chooseGameSafeDestination = useCallback\(\(\) => \{[\s\S]*const currentPosition = positionRef\.current;[\s\S]*for \(const candidate of candidates\) \{[\s\S]*return currentPosition;\s*\}, \[\]\)/);
+  assert.doesNotMatch(stageSource, /const chooseGameSafeDestination = useCallback\(\(\) => \{[\s\S]*return \{ x: 0, y: 0 \};\s*\}, \[\]\)/);
 });
 
 test("game-safe active and quiet have distinct sizes and transform policies", () => {

@@ -262,7 +262,7 @@ export function DaruStage() {
       if (left < margin || left + rect.width > window.innerWidth - margin || top < 76 || top + rect.height > window.innerHeight - margin) continue;
       if (!overlaps(left, top)) return candidate;
     }
-    return { x: 0, y: 0 };
+    return currentPosition;
   }, []);
 
   const freezeRoaming = useCallback(() => {
@@ -283,6 +283,7 @@ export function DaruStage() {
   }, []);
 
   useEffect(() => {
+    if (!isDaruGame) return;
     nextRoamDelayRef.current = null;
     freezeRoaming();
     // Route entry must discard the previous route's translate before the game-safe frame is painted.
