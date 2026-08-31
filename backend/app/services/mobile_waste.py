@@ -194,6 +194,7 @@ def register_mobile_waste_candidate(
             original_media_url=media_key,
             media_width=result.media_width,
             media_height=result.media_height,
+            ai_model_id=result.model_id,
             status="COMPLETED",
             captured_at=now,
             processing_started_at=now,

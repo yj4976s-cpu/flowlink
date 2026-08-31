@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-31T00:00:00+09:00",
+  "evaluation": {
+    "dataset_name": "FlowLink Roboflow test split",
+    "dataset_version": null,
+    "dataset_hash": null,
+    "test_image_count": null,
+    "image_size": 640,
+    "confidence_threshold": null,
+    "iou_threshold": null,
+    "batch": null,
+    "device": null,
+    "ultralytics_version": null,
+    "notes": "동일 테스트셋 평가 결과가 아직 JSON으로 확정되지 않아 Precision, Recall, mAP 값은 측정 전으로 둡니다."
+  },
+  "current_deployed_model_id": "flowlink-4class-hat-v7",
+  "current_deployed_model_status": "신규 HAT 모델 배포 확인",
+  "models": [
+    {
+      "id": "flowlink-3class-v6-7",
+      "display_name": "기존 3클래스 모델",
+      "file_name": "best_v6.7_8n_100_16_AdamW_0005.pt",
+      "architecture": "YOLO 8n",
+      "optimizer": "AdamW",
+      "epochs": 100,
+      "image_size": null,
+      "batch_size": 16,
+      "classes": ["BALL", "FOOTWEAR", "TRASH"],
+      "file_size_bytes": 6256938,
+      "precision": null,
+      "recall": null,
+      "map50": null,
+      "map50_95": null,
+      "class_metrics": [
+        { "code": "BALL", "label": "공", "supported": true, "precision": null, "recall": null, "map50": null, "map50_95": null },
+        { "code": "FOOTWEAR", "label": "신발·슬리퍼류", "supported": true, "precision": null, "recall": null, "map50": null, "map50_95": null },
+        { "code": "TRASH", "label": "폐기물", "supported": true, "precision": null, "recall": null, "map50": null, "map50_95": null },
+        { "code": "HAT", "label": "모자", "supported": false, "precision": null, "recall": null, "map50": null, "map50_95": null }
+      ],
+      "average_inference_ms": null,
+      "fps": null,
+      "example_results": [],
+      "notes": "model.names 확인 결과 ball, shoe, trash를 포함합니다. HAT는 지원하지 않습니다."
+    },
+    {
+      "id": "flowlink-4class-hat-v7",
+      "display_name": "신규 HAT 4클래스 모델",
+      "file_name": "best_v7_8n_100_640_16_SGD_0005.pt",
+      "architecture": "YOLO 8n",
+      "optimizer": "SGD",
+      "epochs": 100,
+      "image_size": 640,
+      "batch_size": 16,
+      "classes": ["BALL", "HAT", "FOOTWEAR", "TRASH"],
+      "file_size_bytes": 6233514,
+      "precision": null,
+      "recall": null,
+      "map50": null,
+      "map50_95": null,
+      "class_metrics": [
+        { "code": "BALL", "label": "공", "supported": true, "precision": null, "recall": null, "map50": null, "map50_95": null },
+        { "code": "FOOTWEAR", "label": "신발·슬리퍼류", "supported": true, "precision": null, "recall": null, "map50": null, "map50_95": null },
+        { "code": "TRASH", "label": "폐기물", "supported": true, "precision": null, "recall": null, "map50": null, "map50_95": null },
+        { "code": "HAT", "label": "모자", "supported": true, "precision": null, "recall": null, "map50": null, "map50_95": null }
+      ],
+      "average_inference_ms": null,
+      "fps": null,
+      "example_results": [],
+      "notes": "model.names 확인 결과 ball, hat, shoe, trash를 포함합니다."
+    }
+  ]
+}

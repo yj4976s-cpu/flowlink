@@ -121,7 +121,7 @@ def register(
     client: TestClient,
     *,
     email: str = "new-user@example.com",
-    password: str = "abcd1234",
+    password: str = "Flowlink123!",
     terms_agreed: bool = True,
     privacy_agreed: bool = True,
 ):
@@ -156,7 +156,7 @@ def test_register_ignores_client_supplied_admin_role(client: TestClient) -> None
         "/api/auth/register",
         json={
             "email": "role-injection@example.com",
-            "password": "abcd1234",
+            "password": "Flowlink123!",
             "nickname": "role-test",
             "terms_agreed": True,
             "privacy_agreed": True,
@@ -236,7 +236,7 @@ def test_registration_without_required_agreement_does_not_set_cookie(client: Tes
     assert settings.AUTH_COOKIE_NAME not in response.headers.get("set-cookie", "")
 
 
-@pytest.mark.parametrize("password", ["abcdefgh", "ABCDEFGH", "12345678", "abc1234", "Abcdefg!"])
+@pytest.mark.parametrize("password", ["flowlink123", "Flowlink123", "flowlink123!", "FLOWLINK123!", "Flowlink!", "Ab1!"])
 def test_register_rejects_invalid_password_policy(client: TestClient, password: str) -> None:
     response = register(client, email=f"{password.encode().hex()}@example.com", password=password)
 
@@ -248,7 +248,7 @@ def test_register_accepts_password_length_boundaries(client: TestClient, length:
     response = register(
         client,
         email=f"register-boundary-{length}@example.com",
-        password="a1" + "x" * (length - 2),
+        password="Aa1!" + "x" * (length - 4),
     )
 
     assert response.status_code == 201
@@ -258,7 +258,7 @@ def test_register_rejects_password_over_max_length(client: TestClient) -> None:
     response = register(
         client,
         email="register-over-limit@example.com",
-        password="a1" + "x" * 127,
+        password="Aa1!" + "x" * 125,
     )
 
     assert response.status_code == 422
@@ -522,7 +522,7 @@ def test_change_password_requires_current_password(client: TestClient, db: Sessi
 
     response = client.patch(
         "/api/auth/me/password",
-        json={"current_password": "incorrect", "new_password": "TestPass1"},
+        json={"current_password": "incorrect", "new_password": "TestPass1!"},
     )
 
     assert response.status_code == 400
@@ -540,7 +540,7 @@ def test_social_only_user_password_change_returns_domain_error(client: TestClien
 
     response = client.patch(
         "/api/auth/me/password",
-        json={"current_password": "not-configured", "new_password": "TestPass1"},
+        json={"current_password": "not-configured", "new_password": "TestPass1!"},
     )
 
     assert response.status_code == 409
@@ -640,20 +640,20 @@ def test_social_account_rejects_unsupported_provider(db: Session) -> None:
 
 
 def test_change_password_replaces_password_hash(client: TestClient, db: Session) -> None:
-    seed_user(db)
-    assert login(client).status_code == 200
+    seed_user(db, password="flowlink123")
+    assert login(client, password="flowlink123").status_code == 200
 
     response = client.patch(
         "/api/auth/me/password",
-        json={"current_password": "password123", "new_password": "TestPass1"},
+        json={"current_password": "flowlink123", "new_password": "TestPass1!"},
     )
 
     assert response.status_code == 200
     assert "password" not in response.json()
     assert "password_hash" not in response.json()
     client.cookies.clear()
-    assert login(client, password="password123").status_code == 401
-    assert login(client, password="TestPass1").status_code == 200
+    assert login(client, password="flowlink123").status_code == 401
+    assert login(client, password="TestPass1!").status_code == 200
 
 
 class FakeOAuthProvider:
@@ -1001,7 +1001,7 @@ def test_complete_social_registration_requires_agreements(
     assert response.status_code == 400
 
 
-@pytest.mark.parametrize("new_password", ["abcdefgh", "12345678", "abc1234"])
+@pytest.mark.parametrize("new_password", ["flowlink123", "Flowlink123", "flowlink123!", "FLOWLINK123!", "Flowlink!", "Ab1!"])
 def test_change_password_rejects_invalid_new_password_policy(
     client: TestClient,
     db: Session,
@@ -1023,7 +1023,7 @@ def test_change_password_rejects_invalid_new_password_policy(
 def test_change_password_accepts_max_length_boundary(client: TestClient, db: Session) -> None:
     seed_user(db, password="legacy-password123!")
     assert login(client, password="legacy-password123!").status_code == 200
-    new_password = "a1" + "x" * 126
+    new_password = "Aa1!" + "x" * 124
 
     response = client.patch(
         "/api/auth/me/password",
@@ -1041,7 +1041,7 @@ def test_change_password_rejects_over_max_length(client: TestClient, db: Session
 
     response = client.patch(
         "/api/auth/me/password",
-        json={"current_password": "legacy-password123!", "new_password": "a1" + "x" * 127},
+        json={"current_password": "legacy-password123!", "new_password": "Aa1!" + "x" * 125},
     )
 
     assert response.status_code == 422

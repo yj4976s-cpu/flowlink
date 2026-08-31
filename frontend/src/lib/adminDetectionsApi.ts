@@ -14,6 +14,7 @@ export type DetectionObject = {
 };
 export type DetectionEvent = {
   id: number; purpose: "OPERATION" | "USER_ANALYSIS"; source_type: string; original_media_url: string; result_media_url: string | null; status: string;
+  ai_model_id: string | null;
   captured_at: string; processing_started_at: string | null; processing_completed_at: string | null;
   error_message: string | null; camera_id: number | null; detected_objects: DetectionObject[];
 };
@@ -40,7 +41,7 @@ export async function createOperationDetection(cameraId: number, file: File) {
   if (!response.ok) { let message = "운영 탐지를 실행하지 못했습니다."; try { const payload = await response.json() as { detail?: string }; if (payload.detail) message = payload.detail; } catch { /* safe fallback */ } throw new AdminDetectionsApiError(message, response.status); }
   return response.json() as Promise<{ message: string }>;
 }
-export async function registerMobileWasteCandidate(cameraId: number, file: File, bbox: { x: number; y: number; width: number; height: number }) {
+export async function registerMobileWasteCandidate(cameraId: number, file: File, bbox: { x: number; y: number; width: number; height: number }, signal?: AbortSignal) {
   const body = new FormData();
   body.append("camera_id", String(cameraId));
   body.append("file", file);
@@ -48,7 +49,7 @@ export async function registerMobileWasteCandidate(cameraId: number, file: File,
   body.append("bbox_y", String(bbox.y));
   body.append("bbox_width", String(bbox.width));
   body.append("bbox_height", String(bbox.height));
-  const response = await fetch(buildApiUrl("/api/admin/detections/mobile-waste"), { method: "POST", credentials: "include", body });
+  const response = await fetch(buildApiUrl("/api/admin/detections/mobile-waste"), { method: "POST", credentials: "include", body, signal });
   if (!response.ok) {
     let message = "모바일 폐기물 등록을 처리하지 못했습니다.";
     try {
@@ -63,7 +64,7 @@ export async function registerMobileWasteCandidate(cameraId: number, file: File,
 }
 export function updateDetectedObject(id: number, update: DetectionObjectUpdate) { return request<{ message: string }>(`/api/admin/detected-objects/${id}`, { method: "PATCH", body: JSON.stringify(update) }); }
 export function createFoundItemFromDetection(id: number) { return request<{ detected_object_id: number; found_item_id: number; source_type: "AI"; follow_up_status: "COMPLETED" }>(`/api/admin/detected-objects/${id}/found-item`, { method: "POST" }); }
-export function completeDetectedWasteCollection(id: number) { return request<{ detected_object_id: number; waste_collection_completed: true; follow_up_status: "COMPLETED" }>(`/api/admin/detected-objects/${id}/collect`, { method: "POST" }); }
+export function completeDetectedWasteCollection(id: number, signal?: AbortSignal) { return request<{ detected_object_id: number; waste_collection_completed: true; follow_up_status: "COMPLETED" }>(`/api/admin/detected-objects/${id}/collect`, { method: "POST", signal }); }
 export function adminDetectionMediaUrl(value?: string | null) {
   return resolveUploadedMediaUrl(value, baseUrl());
 }

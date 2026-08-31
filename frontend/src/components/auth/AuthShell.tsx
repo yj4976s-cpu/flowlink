@@ -9,6 +9,7 @@ import { DaruSettings } from "@/components/mascot";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { AuthApiError, completeSocialRegistration, getCurrentUser, getOAuthStartUrl, login, register, SocialAuthProvider } from "@/lib/authApi";
+import { getPasswordConditions, isValidNewPassword, PASSWORD_CONDITION_LABELS, PASSWORD_MIN_LENGTH, PASSWORD_POLICY_MESSAGE, type PasswordConditions as PasswordConditionState } from "@/lib/passwordPolicy";
 
 type AuthMode = "login" | "register";
 type AuthPortal = "default" | "admin";
@@ -96,17 +97,9 @@ function SocialAuthSection({
 }
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const passwordPattern = /^(?=.*[A-Za-z])(?=.*[0-9]).{8,128}$/;
-const passwordPolicyMessage = "비밀번호는 영문과 숫자를 조합해 8~128자로 입력해주세요.";
-const passwordMismatchMessage = "비밀번호가 일치하지 않습니다.";
-
-function getPasswordConditions(password: string) {
-  return [
-    { label: "8자 이상", met: password.length >= 8 && password.length <= 128 },
-    { label: "영문 포함", met: /[A-Za-z]/.test(password) },
-    { label: "숫자 포함", met: /[0-9]/.test(password) },
-  ];
-}
+const passwordMatchMessage = "비밀번호와 일치해요";
+const passwordMismatchMessage = "비밀번호가 일치하지 않아요";
+const passwordConditionKeys = Object.keys(PASSWORD_CONDITION_LABELS) as (keyof PasswordConditionState)[];
 
 const loginScene = {
   dawn: {
@@ -211,6 +204,7 @@ function PasswordField({
   valid = false,
   shakeKey = 0,
   describedBy,
+  renderErrorMessage = true,
   children,
 }: {
   id: string;
@@ -227,6 +221,7 @@ function PasswordField({
   valid?: boolean;
   shakeKey?: number;
   describedBy?: string;
+  renderErrorMessage?: boolean;
   children?: React.ReactNode;
 }) {
   const [visible, setVisible] = useState(false);
@@ -255,7 +250,7 @@ function PasswordField({
           placeholder={placeholder}
           autoComplete={autoComplete}
           aria-invalid={Boolean(error)}
-          aria-describedby={[describedBy, error ? errorId : undefined].filter(Boolean).join(" ") || undefined}
+          aria-describedby={[describedBy, error && renderErrorMessage ? errorId : undefined].filter(Boolean).join(" ") || undefined}
           minLength={minLength}
           maxLength={maxLength}
           pattern={pattern}
@@ -280,26 +275,26 @@ function PasswordField({
         </button>
       </div>
       {children}
-      {error && <p className="auth-error" id={errorId}>{error}</p>}
+      {error && renderErrorMessage && <p className="auth-error" id={errorId}>{error}</p>}
     </div>
   );
 }
 
-function PasswordConditions({ password }: { password: string }) {
+function PasswordConditions({ password, invalid = false }: { password: string; invalid?: boolean }) {
   const conditions = getPasswordConditions(password);
-  const metCount = conditions.filter((condition) => condition.met).length;
+  const metCount = passwordConditionKeys.filter((key) => conditions[key]).length;
   const hasInput = password.length > 0;
   return (
-    <div className={`auth-password-guide${metCount === conditions.length ? " is-complete" : ""}`} id="password-conditions">
-      <div><span>비밀번호 조건</span><b>{metCount} / {conditions.length}</b></div>
+    <div className={`auth-password-guide${metCount === passwordConditionKeys.length ? " is-complete" : ""}${invalid ? " has-error" : ""}`} id="password-conditions">
+      <div><span>비밀번호 조건</span><b>{metCount} / {passwordConditionKeys.length}</b></div>
       <ul aria-label="비밀번호 조건 충족 상태">
-        {conditions.map((condition) => (
-          <li key={condition.label} className={hasInput && condition.met ? "is-met" : "is-neutral"}>
+        {passwordConditionKeys.map((key) => (
+          <li key={key} className={hasInput && conditions[key] ? "is-met" : invalid ? "is-unmet" : "is-neutral"}>
             <span className="auth-condition-icon" aria-hidden="true">
-              {hasInput && condition.met ? <Icon name="check" size={17} /> : <i />}
+              {hasInput && conditions[key] ? <Icon name="check" size={17} /> : <i />}
             </span>
-            <span>{condition.label}</span>
-            <span className="sr-only">{hasInput && condition.met ? "완료" : "미완료"}</span>
+            <span>{PASSWORD_CONDITION_LABELS[key]}</span>
+            <span className="sr-only">{hasInput && conditions[key] ? "충족" : "미충족"}</span>
           </li>
         ))}
       </ul>
@@ -398,6 +393,10 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
   }, [isAdminPortal, isLogin]);
 
   const isSocialRegistration = !isLogin && socialRegistrationProvider !== null;
+  const passwordConfirmMessage = passwordConfirm
+    ? passwordConfirm === password ? passwordMatchMessage : passwordMismatchMessage
+    : errors["password-confirm"];
+  const passwordConfirmMatches = passwordConfirm.length > 0 && passwordConfirm === password;
 
   useEffect(() => {
     if (!isLogin) return;
@@ -426,7 +425,7 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
     if (!isSocialRegistration) {
       if (!email) nextErrors.email = "이메일을 입력해주세요.";
       else if (!emailPattern.test(email)) nextErrors.email = "올바른 이메일 형식을 입력해주세요.";
-      if (!password) nextErrors.password = isLogin ? "비밀번호를 입력해주세요." : passwordPolicyMessage;
+      if (!password) nextErrors.password = isLogin ? "비밀번호를 입력해주세요." : PASSWORD_POLICY_MESSAGE;
     }
 
     if (!isLogin) {
@@ -435,7 +434,7 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
       if (!nickname) nextErrors.nickname = "닉네임을 입력해주세요.";
       else if (nickname.length < 2) nextErrors.nickname = "닉네임은 2자 이상 입력해주세요.";
       if (!isSocialRegistration) {
-        if (!passwordPattern.test(password)) nextErrors.password = passwordPolicyMessage;
+        if (!isValidNewPassword(password)) nextErrors.password = PASSWORD_POLICY_MESSAGE;
         if (!confirm) nextErrors["password-confirm"] = "비밀번호를 한 번 더 입력해주세요.";
         else if (password !== confirm) nextErrors["password-confirm"] = passwordMismatchMessage;
       }
@@ -456,19 +455,19 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
   const handlePasswordChange = (event: ChangeEvent<HTMLInputElement>) => {
     const nextPassword = event.currentTarget.value;
     setPassword(nextPassword);
-    if (passwordPattern.test(nextPassword)) clearFieldError("password");
-    if (passwordConfirm === nextPassword) clearFieldError("password-confirm");
+    if (isValidNewPassword(nextPassword)) clearFieldError("password");
+    if (passwordConfirm) setErrors((current) => passwordConfirm === nextPassword ? Object.fromEntries(Object.entries(current).filter(([key]) => key !== "password-confirm")) : { ...current, "password-confirm": passwordMismatchMessage });
   };
 
   const handleConfirmChange = (event: ChangeEvent<HTMLInputElement>) => {
     const nextConfirm = event.currentTarget.value;
     setPasswordConfirm(nextConfirm);
-    if (nextConfirm === password) clearFieldError("password-confirm");
+    setErrors((current) => !nextConfirm || nextConfirm === password ? Object.fromEntries(Object.entries(current).filter(([key]) => key !== "password-confirm")) : { ...current, "password-confirm": passwordMismatchMessage });
   };
 
   const handlePasswordBlur = () => {
-    if (password && !passwordPattern.test(password)) {
-      setErrors((current) => ({ ...current, password: passwordPolicyMessage }));
+    if (password && !isValidNewPassword(password)) {
+      setErrors((current) => ({ ...current, password: PASSWORD_POLICY_MESSAGE }));
     }
   };
 
@@ -601,22 +600,20 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
               {!isSocialRegistration && <PasswordField
                 id="password"
                 label="비밀번호"
-                placeholder={isLogin ? "비밀번호를 입력해주세요" : "영문·숫자 조합 8자 이상"}
+                placeholder={isLogin ? "비밀번호를 입력해주세요" : "새 비밀번호를 입력해주세요"}
                 error={errors.password}
                 autoComplete={isLogin ? "current-password" : "new-password"}
-                minLength={isLogin ? undefined : 8}
-                maxLength={isLogin ? undefined : 128}
-                pattern={isLogin ? undefined : "^(?=.*[A-Za-z])(?=.*[0-9]).{8,128}$"}
+                minLength={isLogin ? undefined : PASSWORD_MIN_LENGTH}
                 onChange={isLogin ? undefined : handlePasswordChange}
                 onBlur={isLogin ? undefined : handlePasswordBlur}
                 value={isLogin ? undefined : password}
-                valid={!isLogin && password.length > 0 && passwordPattern.test(password)}
+                valid={!isLogin && password.length > 0 && isValidNewPassword(password)}
                 shakeKey={passwordShakeKey}
                 describedBy={!isLogin ? "password-conditions" : undefined}
               >
-                {!isLogin && <PasswordConditions password={password} />}
+                {!isLogin && <PasswordConditions password={password} invalid={Boolean(errors.password)} />}
               </PasswordField>}
-              {!isLogin && !isSocialRegistration && <PasswordField id="password-confirm" label="비밀번호 확인" placeholder="비밀번호를 한 번 더 입력해주세요" error={errors["password-confirm"]} autoComplete="new-password" maxLength={128} onChange={handleConfirmChange} onBlur={handleConfirmBlur} value={passwordConfirm} valid={passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password} shakeKey={confirmShakeKey} describedBy={passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password ? "password-confirm-success" : undefined}>{passwordConfirm.length > 0 && passwordPattern.test(password) && passwordConfirm === password && <p className="auth-password-success" id="password-confirm-success"><Icon name="check" size={15} />비밀번호와 일치해요</p>}</PasswordField>}
+              {!isLogin && !isSocialRegistration && <PasswordField id="password-confirm" label="비밀번호 확인" placeholder="비밀번호를 한 번 더 입력해주세요" error={errors["password-confirm"]} autoComplete="new-password" onChange={handleConfirmChange} onBlur={handleConfirmBlur} value={passwordConfirm} valid={passwordConfirmMatches} shakeKey={confirmShakeKey} describedBy={passwordConfirmMessage ? "password-confirm-status" : undefined} renderErrorMessage={false}>{passwordConfirmMessage && <p className={passwordConfirmMatches ? "auth-password-success" : "auth-password-mismatch"} id="password-confirm-status" aria-live="polite">{passwordConfirmMatches && <Icon name="check" size={15} />}{passwordConfirmMessage}</p>}</PasswordField>}
             </div>
 
             {!isLogin && (
@@ -632,7 +629,7 @@ export function AuthShell({ mode, portal = "default" }: { mode: AuthMode; portal
               {isCheckingSession ? "로그인 확인 중..." : isSubmitting ? (isLogin ? "로그인 확인 중..." : "가입 중...") : (isAdminPortal ? "운영 허브 로그인" : isLogin ? "로그인" : isSocialRegistration ? "소셜 가입 완료" : "FlowLink 시작하기")}
             </button>
             {submitMessage && <p className={`auth-submit-message${roleMismatch || submitError ? " is-error" : ""}`} role={roleMismatch || submitError ? "alert" : "status"}>{submitMessage}</p>}
-            {isAdminPortal ? <p className="auth-switch"><Link href="/login">일반 로그인으로 돌아가기</Link></p> : <p className="auth-switch">{isLogin ? "계정이 없으신가요?" : "이미 계정이 있으신가요?"} <Link href={isLogin ? "/register" : "/login"}>{isLogin ? "회원가입" : "로그인"}</Link></p>}
+            {isAdminPortal ? <p className="auth-switch"><Link href="/login">일반 로그인으로 돌아가기</Link></p> : isLogin ? <div className="auth-signup-cta"><span>처음 FlowLink를 이용하시나요?</span><Link className="button button-secondary" href="/register">새 계정 만들기</Link></div> : <p className="auth-switch">이미 계정이 있으신가요? <Link href="/login">로그인</Link></p>}
             {roleMismatch && <Link className="auth-role-action" href="/">사용자 서비스로 이동</Link>}
             {isLogin && !isAdminPortal && <p className="auth-portal-link">운영자이신가요? <Link href="/admin/login">운영 허브 로그인</Link></p>}
           </form>

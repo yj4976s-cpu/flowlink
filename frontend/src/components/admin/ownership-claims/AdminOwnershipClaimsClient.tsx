@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "@/components/common/Icon";
+import { chooseOwnershipClaimId, parseOwnershipClaimStatusParam } from "@/components/admin/adminQueryState";
 import {
   AdminOwnershipClaim,
   AdminOwnershipClaimsApiError,
@@ -108,6 +110,8 @@ function StateCard({
 }
 
 export function AdminOwnershipClaimsClient() {
+  const searchParams = useSearchParams();
+  const initialFocusStatusRef = useRef(parseOwnershipClaimStatusParam(searchParams.get("status")));
   const [claims, setClaims] = useState<AdminOwnershipClaim[]>([]);
   const [selectedClaimId, setSelectedClaimId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -122,7 +126,7 @@ export function AdminOwnershipClaimsClient() {
 
   const applyClaims = (data: AdminOwnershipClaim[]) => {
     setClaims(data);
-    setSelectedClaimId((current) => current && data.some((claim) => claim.id === current) ? current : data[0]?.id ?? null);
+    setSelectedClaimId((current) => chooseOwnershipClaimId(data, current, initialFocusStatusRef.current));
   };
 
   const refreshClaims = async () => {

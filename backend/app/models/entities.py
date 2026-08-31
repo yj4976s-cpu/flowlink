@@ -220,6 +220,7 @@ class DetectionEvent(Base):
     source_type: Mapped[str] = mapped_column(String(10), nullable=False)
     original_media_url: Mapped[str] = mapped_column(Text, nullable=False)
     result_media_url: Mapped[str | None] = mapped_column(Text)
+    ai_model_id: Mapped[str | None] = mapped_column(String(100))
     media_width: Mapped[int | None] = mapped_column(Integer)
     media_height: Mapped[int | None] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")
@@ -236,6 +237,30 @@ class DetectionEvent(Base):
     video_job: Mapped[VideoJob | None] = relationship(back_populates="detection_event", uselist=False)
 
 
+class AiModelDeploymentEvent(Base):
+    __tablename__ = "ai_model_deployment_events"
+    __table_args__ = (
+        CheckConstraint("action IN ('ACTIVATE', 'ROLLBACK')", name="ck_ai_model_deployment_events_action"),
+        CheckConstraint("status IN ('REQUESTED', 'SUCCEEDED', 'FAILED')", name="ck_ai_model_deployment_events_status"),
+        UniqueConstraint("request_id", name="uq_ai_model_deployment_events_request_id"),
+        Index("ix_ai_model_deployment_events_requested_at", "requested_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    requested_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    request_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    action: Mapped[str] = mapped_column(String(20), nullable=False)
+    requested_model_id: Mapped[str | None] = mapped_column(String(100))
+    from_model_id: Mapped[str | None] = mapped_column(String(100))
+    to_model_id: Mapped[str | None] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="REQUESTED")
+    failure_code: Mapped[str | None] = mapped_column(String(80))
+    requested_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+    requester: Mapped[User | None] = relationship()
+
+
 class VideoJob(Base):
     __tablename__ = "video_jobs"
 
@@ -245,6 +270,10 @@ class VideoJob(Base):
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")
     processing_progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    processing_stage: Mapped[str] = mapped_column(String(20), nullable=False, default="QUEUED")
+    processed_frames: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_frames: Mapped[int | None] = mapped_column(Integer)
+    failed_stage: Mapped[str | None] = mapped_column(String(20))
     tracking_algorithm: Mapped[str] = mapped_column(String(20), nullable=False, default="BYTE_TRACK")
     video_duration_seconds: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
     processing_started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))

@@ -49,7 +49,7 @@ def make_user(*, role: str = "USER", active: bool = True) -> User:
 def test_register_rejects_false_agreement() -> None:
     request = RegisterRequest(
         email="USER@example.com",
-        password="abcd1234",
+        password="Flowlink123!",
         nickname="tester",
         terms_agreed=False,
         privacy_agreed=True,
@@ -65,14 +65,14 @@ def test_register_nickname_min_length_is_checked_after_strip() -> None:
     with pytest.raises(ValidationError):
         RegisterRequest(
             email="user@example.com",
-            password="abcd1234",
+            password="Flowlink123!",
             nickname=" a ",
             terms_agreed=True,
             privacy_agreed=True,
         )
 
 
-@pytest.mark.parametrize("password", ["abcd1234", "abc123456", "ABC12345", "Abcd1234!", "abc123456789"])
+@pytest.mark.parametrize("password", ["Flowlink123!", "Aa1!xxxx", "Aaaaaaa1!", "가Flowlink123!", "😀Aa1!xxxx"])
 def test_register_accepts_password_policy(password: str) -> None:
     request = RegisterRequest(
         email="user@example.com",
@@ -87,7 +87,7 @@ def test_register_accepts_password_policy(password: str) -> None:
 
 @pytest.mark.parametrize(
     "password",
-    ["abcdefgh", "ABCDEFGH", "12345678", "abc1234", "Abcdefg!", "가나다12345"],
+    ["flowlink123", "Flowlink123", "flowlink123!", "FLOWLINK123!", "Flowlink!", "Ab1!", "aaaaaaa1!", "AAAAAAA1!", "Aaaaaaaa!", "Aaaaaaa1"],
 )
 def test_register_rejects_password_policy(password: str) -> None:
     with pytest.raises(ValidationError):
@@ -102,7 +102,7 @@ def test_register_rejects_password_policy(password: str) -> None:
 
 @pytest.mark.parametrize("length", [8, 128])
 def test_register_accepts_password_length_boundaries(length: int) -> None:
-    password = "a1" + "x" * (length - 2)
+    password = "Aa1!" + "x" * (length - 4)
 
     request = RegisterRequest(
         email="boundary@example.com",
@@ -120,14 +120,14 @@ def test_register_rejects_password_outside_length_boundaries(length: int) -> Non
     with pytest.raises(ValidationError):
         RegisterRequest(
             email="boundary@example.com",
-            password="a1" + "x" * (length - 2),
+            password="Aa1!" + "x" * (length - 4),
             nickname="tester",
             terms_agreed=True,
             privacy_agreed=True,
         )
 
 
-@pytest.mark.parametrize("new_password", ["abcd1234", "ABC12345", "Abcd1234!"])
+@pytest.mark.parametrize("new_password", ["Flowlink123!", "가Flowlink123!", "😀Aa1!xxxx"])
 def test_password_change_accepts_new_password_policy(new_password: str) -> None:
     request = PasswordChangeRequest(current_password="legacy-password123!", new_password=new_password)
 
@@ -135,7 +135,7 @@ def test_password_change_accepts_new_password_policy(new_password: str) -> None:
     assert request.new_password == new_password
 
 
-@pytest.mark.parametrize("new_password", ["abcdefgh", "12345678", "abc1234"])
+@pytest.mark.parametrize("new_password", ["flowlink123", "Flowlink123", "flowlink123!", "FLOWLINK123!", "Flowlink!", "Ab1!"])
 def test_password_change_rejects_new_password_policy(new_password: str) -> None:
     with pytest.raises(ValidationError):
         PasswordChangeRequest(current_password="legacy-password123!", new_password=new_password)
@@ -143,7 +143,7 @@ def test_password_change_rejects_new_password_policy(new_password: str) -> None:
 
 @pytest.mark.parametrize("length", [8, 128])
 def test_password_change_accepts_length_boundaries(length: int) -> None:
-    password = "a1" + "x" * (length - 2)
+    password = "Aa1!" + "x" * (length - 4)
 
     request = PasswordChangeRequest(current_password="legacy-password123!", new_password=password)
 
@@ -155,14 +155,14 @@ def test_password_change_rejects_outside_length_boundaries(length: int) -> None:
     with pytest.raises(ValidationError):
         PasswordChangeRequest(
             current_password="legacy-password123!",
-            new_password="a1" + "x" * (length - 2),
+            new_password="Aa1!" + "x" * (length - 4),
         )
 
 
 def test_login_request_allows_legacy_password_format() -> None:
-    request = LoginRequest(email="user@example.com", password="legacy-password123!")
+    request = LoginRequest(email="user@example.com", password="flowlink123")
 
-    assert request.password == "legacy-password123!"
+    assert request.password == "flowlink123"
 
 
 def test_email_normalization() -> None:

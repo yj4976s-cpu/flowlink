@@ -184,6 +184,8 @@ CREATE TABLE detection_events (
 
     result_media_url TEXT,
 
+    ai_model_id VARCHAR(100),
+
     media_width INTEGER
         CHECK (
             media_width IS NULL
@@ -224,6 +226,45 @@ CREATE TABLE detection_events (
 );
 
 
+CREATE TABLE ai_model_deployment_events (
+    id BIGSERIAL PRIMARY KEY,
+
+    requested_by BIGINT
+        REFERENCES users(id)
+        ON DELETE SET NULL,
+
+    request_id VARCHAR(120) NOT NULL UNIQUE,
+
+    action VARCHAR(20) NOT NULL
+        CHECK (
+            action IN (
+                'ACTIVATE',
+                'ROLLBACK'
+            )
+        ),
+
+    requested_model_id VARCHAR(100),
+    from_model_id VARCHAR(100),
+    to_model_id VARCHAR(100),
+
+    status VARCHAR(20) NOT NULL DEFAULT 'REQUESTED'
+        CHECK (
+            status IN (
+                'REQUESTED',
+                'SUCCEEDED',
+                'FAILED'
+            )
+        ),
+
+    failure_code VARCHAR(80),
+    requested_at TIMESTAMPTZ NOT NULL,
+    completed_at TIMESTAMPTZ
+);
+
+ALTER TABLE public.ai_model_deployment_events
+ENABLE ROW LEVEL SECURITY;
+
+
 -- =========================================================
 -- 5. 영상 추적 작업
 -- VIDEO 탐지 실행의 진행 상태와 추적 설정
@@ -250,6 +291,14 @@ CREATE TABLE video_jobs (
         CHECK (
             processing_progress BETWEEN 0 AND 100
         ),
+
+    processing_stage VARCHAR(20) NOT NULL DEFAULT 'QUEUED'
+        CHECK (processing_stage IN ('QUEUED', 'ANALYZING', 'RENDERING', 'SAVING', 'COMPLETED', 'FAILED')),
+
+    processed_frames INTEGER NOT NULL DEFAULT 0 CHECK (processed_frames >= 0),
+    total_frames INTEGER CHECK (total_frames IS NULL OR total_frames > 0),
+    failed_stage VARCHAR(20)
+        CHECK (failed_stage IS NULL OR failed_stage IN ('QUEUED', 'ANALYZING', 'RENDERING', 'SAVING')),
 
     tracking_algorithm VARCHAR(20) NOT NULL DEFAULT 'BYTE_TRACK'
         CHECK (
@@ -956,6 +1005,9 @@ CREATE INDEX idx_detection_events_user_purpose_created
         created_at DESC
     );
 
+CREATE INDEX ix_ai_model_deployment_events_requested_at
+    ON ai_model_deployment_events (requested_at DESC);
+
 CREATE INDEX idx_detected_objects_event
     ON detected_objects (detection_event_id);
 
@@ -1092,6 +1144,9 @@ CREATE INDEX idx_processing_histories_entity
 
 CREATE INDEX idx_video_jobs_status
     ON video_jobs (status);
+CREATE INDEX idx_video_jobs_queue
+    ON video_jobs (created_at, id)
+    WHERE status = 'PROCESSING' AND processing_stage = 'QUEUED';
 
 CREATE TABLE copilot_conversations (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, public_id VARCHAR(36) NOT NULL UNIQUE, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE, title VARCHAR(120) NOT NULL, context_type VARCHAR(30) NOT NULL DEFAULT 'GENERAL', context_entity_id BIGINT, summary TEXT, summary_updated_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_message_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), deleted_at TIMESTAMPTZ);
 CREATE TABLE copilot_messages (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, conversation_id BIGINT NOT NULL REFERENCES copilot_conversations(id) ON DELETE CASCADE, role VARCHAR(12) NOT NULL CHECK (role IN ('USER','ASSISTANT')), content TEXT NOT NULL, presentation_type VARCHAR(30) NOT NULL DEFAULT 'TEXT', presentation JSONB, client_message_id VARCHAR(64), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(conversation_id,client_message_id));
@@ -1119,6 +1174,7 @@ VALUES
     ('BAG', '가방', 'PERSONAL_ITEM', 11),
     ('UMBRELLA', '우산', 'PERSONAL_ITEM', 12),
     ('FOOTWEAR', '신발·슬리퍼류', 'PERSONAL_ITEM', 13),
+    ('HAT', '모자', 'PERSONAL_ITEM', 14),
     -- AI 모델 클래스가 아닌 관리자 재분류용 서비스 클래스
     ('UNKNOWN', '미확인 부유물', 'UNKNOWN', 99)
 ON CONFLICT (code)

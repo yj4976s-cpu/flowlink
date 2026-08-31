@@ -7,6 +7,7 @@ import sys
 import types
 from zipfile import ZipFile
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -16,6 +17,7 @@ from app.main import app
 from app.schemas.inference import InferenceBBox, InferenceVideoTrack, VideoInferenceResponse
 from app.services.inference import ImageInferenceService, InferenceModelUnavailableError, get_inference_service
 from app.services.yolo_runtime import YoloBBox, YoloPrediction, YoloRuntime, get_yolo_runtime
+from app.services.video_progress import VideoProgressReporter
 
 TEST_INTERNAL_API_KEY = "test-internal-api-key"
 
@@ -50,12 +52,13 @@ class FakeVideoService:
         self.video_paths = []
         self.rendered_paths = []
 
-    def analyze_video_file(self, video_path, *, content_type: str, rendered_video_path=None) -> VideoInferenceResponse:
+    def analyze_video_file(self, video_path, *, content_type: str, rendered_video_path=None, video_job_id=None) -> VideoInferenceResponse:
         self.calls += 1
         self.video_paths.append(video_path)
         self.rendered_paths.append(rendered_video_path)
         assert video_path.exists()
         assert content_type == "video/mp4"
+        assert video_job_id is None or video_job_id > 0
         if rendered_video_path is not None and self.write_rendered:
             rendered_video_path.write_bytes(b"rendered-h264-mp4")
         return VideoInferenceResponse(
@@ -159,6 +162,7 @@ def test_inference_returns_raw_yolo_predictions(client: TestClient) -> None:
     assert response.status_code == 200
     assert fake_runtime.calls == 1
     body = response.json()
+    assert body["model_id"] is None
     assert body["media_width"] == 32
     assert body["media_height"] == 24
     assert body["inference_ms"] >= 0
@@ -217,6 +221,7 @@ def test_video_inference_streams_temp_file_and_returns_tracks(client: TestClient
     assert response.status_code == 200
     assert fake_service.calls == 1
     assert response.json() == {
+        "model_id": None,
         "media_width": 640,
         "media_height": 360,
         "duration_ms": 2000,
@@ -451,6 +456,112 @@ def test_yolo_runtime_uses_midpoint_frame_bbox_but_keeps_max_track_confidence(tm
     assert tracks[0].appearance_count == 3
 
 
+def test_yolo_runtime_reports_actual_processed_frames_from_one_to_total(tmp_path) -> None:
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"fake")
+    runtime = YoloRuntime(model_path="fake.pt", confidence=0.5, imgsz=640)
+    runtime._model = FakeMovingTrackModel()
+    updates = []
+
+    runtime.track_video(
+        video_path,
+        fps=10,
+        media_width=100,
+        media_height=80,
+        total_frames=3,
+        progress_callback=lambda stage, processed, total, force: updates.append((stage, processed, total, force)),
+    )
+
+    assert [(item[1], item[2]) for item in updates] == [(1, 3), (2, 3), (3, 3)]
+
+
+def test_progress_reporter_throttles_updates_and_callback_failure_is_non_fatal(monkeypatch) -> None:
+    calls = []
+    now = [0.0]
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr("app.services.video_progress.httpx.post", lambda *args, **kwargs: calls.append(kwargs["json"]) or Response())
+    reporter = VideoProgressReporter(job_id=7, min_interval_seconds=999, clock=lambda: now[0])
+    reporter.report("ANALYZING", 1, 100, force=True)
+    reporter.report("ANALYZING", 2, 100)
+    reporter.report("ANALYZING", 100, 100, force=True)
+    assert [call["processed_frames"] for call in calls] == [1, 100]
+
+    def fail(*args, **kwargs):
+        import httpx
+        raise httpx.ConnectError("offline")
+
+    monkeypatch.setattr("app.services.video_progress.httpx.post", fail)
+    reporter.report("RENDERING", None, 100, force=True)
+
+
+def test_progress_reporter_backs_off_failure_storm_and_retries_latest_snapshot(monkeypatch) -> None:
+    attempts = []
+    now = [0.0]
+
+    def fail(*args, **kwargs):
+        attempts.append(kwargs["json"])
+        raise httpx.ConnectError("offline")
+
+    monkeypatch.setattr("app.services.video_progress.httpx.post", fail)
+    reporter = VideoProgressReporter(job_id=8, failure_backoff_seconds=2.0, clock=lambda: now[0])
+
+    for processed_frames in range(1, 101):
+        reporter.report("ANALYZING", processed_frames, 100, force=processed_frames == 1)
+        now[0] += 0.01
+
+    assert [attempt["processed_frames"] for attempt in attempts] == [1]
+
+    now[0] = 2.1
+    reporter.report("ANALYZING", 100, 100)
+
+    assert [attempt["processed_frames"] for attempt in attempts] == [1, 100]
+
+
+def test_progress_reporter_recovers_to_normal_throttle_and_uses_short_timeout(monkeypatch) -> None:
+    calls = []
+    outcomes = iter([False, True, True])
+    now = [0.0]
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+    def post(*args, **kwargs):
+        calls.append(kwargs)
+        if not next(outcomes):
+            now[0] = 0.5
+            raise httpx.ConnectError("offline")
+        return Response()
+
+    monkeypatch.setattr("app.services.video_progress.httpx.post", post)
+    reporter = VideoProgressReporter(job_id=9, clock=lambda: now[0])
+    reporter.report("ANALYZING", 1, 100, force=True)
+    assert reporter.last_attempt_at == 0.0
+    assert reporter.next_retry_at == 2.5
+
+    now[0] = 0.6
+    reporter.report("ANALYZING", 10, 100, force=True)
+    now[0] = 0.7
+    reporter.report("RENDERING", None, 100, force=True)
+    assert len(calls) == 1
+
+    now[0] = 2.5
+    reporter.report("ANALYZING", 50, 100)
+    now[0] = 2.6
+    reporter.report("ANALYZING", 60, 100)
+    now[0] = 3.0
+    reporter.report("ANALYZING", 60, 100)
+
+    assert [call["json"]["processed_frames"] for call in calls] == [1, 50, 60]
+    assert all(call["timeout"] == 0.5 for call in calls)
+    assert reporter.last_percent == 60
+    assert reporter.next_retry_at == 0.0
+
+
 def test_yolo_runtime_midpoint_tie_prefers_higher_confidence_frame(tmp_path) -> None:
     video_path = tmp_path / "sample.mp4"
     video_path.write_bytes(b"fake")
@@ -535,7 +646,16 @@ def test_yolo_runtime_transcodes_rendered_video_to_browser_h264(
     monkeypatch.setattr("app.services.yolo_runtime._ffmpeg_executable", lambda: "ffmpeg")
     monkeypatch.setattr("app.services.yolo_runtime.subprocess.run", fake_run)
 
-    tracks = runtime.track_video(video_path, fps=10, media_width=100, media_height=80, rendered_video_path=result_path)
+    progress_updates = []
+    tracks = runtime.track_video(
+        video_path,
+        fps=10,
+        media_width=100,
+        media_height=80,
+        rendered_video_path=result_path,
+        total_frames=300,
+        progress_callback=lambda stage, processed, total, force: progress_updates.append((stage, processed, total, force)),
+    )
 
     assert tracks
     assert captured["intermediate_codec"] == "mp4v"
@@ -546,6 +666,63 @@ def test_yolo_runtime_transcodes_rendered_video_to_browser_h264(
     assert command[command.index("-pix_fmt") + 1] == "yuv420p"
     assert command[command.index("-movflags") + 1] == "+faststart"
     assert captured["kwargs"]["capture_output"] is True
+    assert progress_updates[-2:] == [("ANALYZING", 4, 300, True), ("RENDERING", None, 300, True)]
+    assert progress_updates[-2][1] != progress_updates[-2][2]
+
+
+def test_video_progress_keeps_the_starting_model_snapshot_during_switch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reports: list[tuple[str, int | None, int | None, bool]] = []
+    active_snapshot: dict[str, object] = {}
+
+    class FakeReporter:
+        def __init__(self, *, job_id: int) -> None:
+            assert job_id == 77
+
+        def report(self, stage: str, processed: int | None, total: int | None, *, force: bool = False) -> None:
+            reports.append((stage, processed, total, force))
+
+    class SnapshotRuntime:
+        def __init__(self, model_id: str, *, switch_to=None) -> None:
+            self.model_id = model_id
+            self.switch_to = switch_to
+
+        def track_video(self, _video_path: Path, **options):
+            callback = options["progress_callback"]
+            callback("ANALYZING", 1, options["total_frames"], False)
+            if self.switch_to is not None:
+                active_snapshot["value"] = self.switch_to
+            callback("ANALYZING", 3, options["total_frames"], True)
+            callback("RENDERING", None, options["total_frames"], True)
+            return []
+
+    snapshot_y = types.SimpleNamespace(model_id="model-y", runtime=SnapshotRuntime("model-y"))
+    snapshot_x = types.SimpleNamespace(model_id="model-x", runtime=SnapshotRuntime("model-x", switch_to=snapshot_y))
+    active_snapshot["value"] = snapshot_x
+    monkeypatch.setattr("app.services.inference.VideoProgressReporter", FakeReporter)
+    monkeypatch.setattr("app.services.inference.get_active_yolo_runtime_snapshot", lambda: active_snapshot["value"])
+    service = ImageInferenceService()
+    monkeypatch.setattr(
+        service,
+        "_read_video_metadata",
+        lambda _path: {"frame_count": 3, "fps": 1.0, "media_width": 64, "media_height": 48},
+    )
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"video")
+
+    first = service.analyze_video_file(video_path, content_type="video/mp4", video_job_id=77)
+    second = service.analyze_video_file(video_path, content_type="video/mp4", video_job_id=77)
+
+    assert first.model_id == "model-x"
+    assert second.model_id == "model-y"
+    assert reports[:4] == [
+        ("ANALYZING", 0, 3, True),
+        ("ANALYZING", 1, 3, False),
+        ("ANALYZING", 3, 3, True),
+        ("RENDERING", None, 3, True),
+    ]
 
 
 def test_yolo_runtime_render_failure_cleans_intermediate_video(

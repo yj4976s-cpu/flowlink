@@ -25,6 +25,7 @@ class InferenceVideoTrack(BaseModel):
 
 
 class ImageInferenceResponse(BaseModel):
+    model_id: str | None = None
     media_width: int
     media_height: int
     inference_ms: float = Field(ge=0)
@@ -32,6 +33,7 @@ class ImageInferenceResponse(BaseModel):
 
 
 class VideoInferenceResponse(BaseModel):
+    model_id: str | None = None
     media_width: int
     media_height: int
     duration_ms: int = Field(ge=0)
