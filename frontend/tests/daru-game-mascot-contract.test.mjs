@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const stageSource = readFileSync(new URL("../src/components/mascot/DaruStage.tsx", import.meta.url), "utf8");
+const spriteSource = readFileSync(new URL("../src/components/mascot/DaruSpriteRenderer.tsx", import.meta.url), "utf8");
 const mascotCss = readFileSync(new URL("../src/components/mascot/DaruMascot.module.css", import.meta.url), "utf8");
 const gameSource = readFileSync(new URL("../src/components/daru-game/DaruGame.tsx", import.meta.url), "utf8");
 const gameStatusSource = readFileSync(new URL("../src/components/daru-game/GameStatus.tsx", import.meta.url), "utf8");
@@ -39,7 +40,7 @@ test("game-safe active constrains automatic movement while reusing manual drag",
   assert.match(stageSource, /element\.getClientRects\(\)\.length > 0 && getComputedStyle\(element\)\.visibility !== "hidden"/);
   assert.doesNotMatch(stageSource, /const chooseGameSafeDestination[\s\S]*\[class\*="copilot" i\]/);
   assert.doesNotMatch(stageSource, /const chooseGameSafeDestination[\s\S]*\[aria-label\*="FlowLink AI"\]/);
-  assert.match(stageSource, /const maxTravelX = mobile \? Math\.min\(96, window\.innerWidth \* 0\.22\) : tablet \? Math\.min\(220, window\.innerWidth \* 0\.26\) : Math\.min\(360, window\.innerWidth \* 0\.32\)/);
+  assert.match(stageSource, /const maxTravelX = mobile \? Math\.min\(150, Math\.max\(120, window\.innerWidth \* 0\.38\)\) : tablet \? Math\.min\(220, window\.innerWidth \* 0\.26\) : Math\.min\(360, window\.innerWidth \* 0\.32\)/);
   assert.match(stageSource, /const safeCandidates = candidates\.filter/);
   assert.match(stageSource, /const maximumRightOffset = Math\.max\(0, Math\.min\(maxTravelX \* 0\.45/);
   assert.match(stageSource, /const groundY = gameSafeGroundYRef\.current/);
@@ -47,13 +48,15 @@ test("game-safe active constrains automatic movement while reusing manual drag",
   assert.doesNotMatch(stageSource, /const chooseGameSafeDestination[\s\S]*y: currentPosition\.y/);
   assert.match(stageSource, /const gameMinimumTravel = Math\.min\(minimumTravel, 32\)/);
   assert.match(stageSource, /Math\.abs\(candidate\.x - currentPosition\.x\) >= gameMinimumTravel/);
-  assert.match(stageSource, /const pathOverlaps = blockers\.some/);
-  assert.match(stageSource, /pathLeft < item\.right && pathRight > item\.left && baselineTop < item\.bottom && baselineTop \+ rect\.height > item\.top/);
-  assert.match(stageSource, /!overlaps\(left, baselineTop\) && !pathOverlaps/);
-  assert.match(stageSource, /if \(safeCandidates\.length > 0\) return safeCandidates\[Math\.floor\(Math\.random\(\) \* safeCandidates\.length\)\]/);
+  assert.match(stageSource, /const pathIsClear = \(endLeft: number, endTop: number\) => \{[\s\S]*const steps = 16;[\s\S]*for \(let step = 1; step <= steps; step \+= 1\)[\s\S]*if \(overlaps\(left, top\)\) return false/);
+  assert.match(stageSource, /pathIsClear\(left, baselineTop\)/);
+  assert.match(stageSource, /const preferredCandidates = mobile \? safeCandidates\.filter/);
+  assert.match(stageSource, /DARU_GAME_MOBILE_PREFERRED_MIN_TRAVEL[\s\S]*DARU_GAME_MOBILE_PREFERRED_MAX_TRAVEL/);
+  assert.match(stageSource, /if \(preferredCandidates\.length > 0\) return preferredCandidates\[Math\.floor\(Math\.random\(\) \* preferredCandidates\.length\)\]/);
+  assert.match(stageSource, /safeCandidates\.sort\(\(first, second\) => Math\.abs\(second\.x - currentPosition\.x\) - Math\.abs\(first\.x - currentPosition\.x\)\)\[0\]/);
   assert.doesNotMatch(stageSource, /const chooseGameSafeDestination[\s\S]*maxTravelY/);
-  assert.match(stageSource, /const distance = Math\.abs\(target\.x - currentPosition\.x\)/);
-  assert.doesNotMatch(stageSource, /const distance = gameSafe/);
+  assert.match(stageSource, /const returningToGround = gameSafe && Math\.abs\(currentPosition\.y - gameSafeGroundYRef\.current\) >= 1/);
+  assert.match(stageSource, /const distance = returningToGround[\s\S]*Math\.hypot\(target\.x - currentPosition\.x, target\.y - currentPosition\.y\)[\s\S]*Math\.abs\(target\.x - currentPosition\.x\)/);
   assert.match(stageSource, /const homeSpeed = mobile \? DARU_GROUNDED_ROAMING_CONFIG\.mobileSpeed : DARU_GROUNDED_ROAMING_CONFIG\.desktopSpeed/);
   assert.match(stageSource, /const speed = gameSafe \? homeSpeed \* DARU_GAME_AUTONOMOUS_SPEED_RATIO : homeSpeed/);
   assert.match(stageSource, /const DARU_GAME_AUTONOMOUS_SPEED_RATIO = 0\.88/);
@@ -71,15 +74,13 @@ test("route entry resets inherited roaming before game-safe active movement can 
   assert.doesNotMatch(stageSource, /if \(!isDaruGame \|\| mode === "active"\) return;[\s\S]*resetGameSafePosition\(\)/);
 });
 
-test("airborne game-safe Daru settles without walk locomotion before horizontal roaming", () => {
+test("airborne game-safe Daru walks diagonally to a safe grounded destination", () => {
   assert.match(stageSource, /const gameSafeGroundYRef = useRef\(0\)/);
-  assert.match(stageSource, /if \(gameSafe && Math\.abs\(currentPosition\.y - gameSafeGroundYRef\.current\) >= 1\) \{\s*settleToGameSafeGround\(\);\s*return false/);
-  assert.match(stageSource, /const settleToGameSafeGround = useCallback[\s\S]*setMovementSpeed\(0\)[\s\S]*setLocomotion\("land"\)[\s\S]*setPosition\(\{ x: currentPosition\.x, y: groundY \}\)/);
-  const settleBody = stageSource.match(/const settleToGameSafeGround = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[\]\);/)?.[1] ?? "";
-  assert.doesNotMatch(settleBody, /start_walk|stop_walk|setLocomotion\("walk"\)/);
-  assert.match(stageSource, /data-game-ground-settling=\{gameGroundSettling \|\| undefined\}/);
-  assert.match(mascotCss, /\.stage\[data-game-ground-settling\][\s\S]*transform var\(--daru-ground-settle-duration/);
-  assert.match(stageSource, /nextRoamDelayRef\.current = 0;[\s\S]*setRoamRetry/);
+  assert.doesNotMatch(stageSource, /DARU_GAME_GROUND_SETTLE_MS|settleToGameSafeGround|data-game-ground-settling/);
+  assert.match(stageSource, /setReturningToGameGround\(returningToGround\)[\s\S]*setRoaming\(true\)[\s\S]*setPosition\(target\)/);
+  assert.match(stageSource, /data-game-returning=\{returningToGameGround \|\| undefined\}/);
+  assert.match(stageSource, /setLocomotion\("start_walk"\)[\s\S]*setLocomotion\("walk"\)[\s\S]*setLocomotion\("stop_walk"\)/);
+  assert.match(spriteSource, /stage\.dataset\.gameReturning === "true" \? Math\.hypot\(deltaX, deltaY\) : Math\.abs\(deltaX\)/);
 });
 
 test("quiet preserves manual position and never enables autonomous game roaming", () => {
@@ -96,7 +97,7 @@ test("game speed reduction applies only to autonomous movement", () => {
 });
 
 test("game-safe destination rejects blockers and keeps the current position when no safe candidate exists", () => {
-  assert.match(stageSource, /const chooseGameSafeDestination = useCallback\(\(\) => \{[\s\S]*const currentPosition = positionRef\.current;[\s\S]*const safeCandidates = candidates\.filter[\s\S]*!overlaps\(left, baselineTop\) && !pathOverlaps[\s\S]*return currentPosition;\s*\}, \[\]\)/);
+  assert.match(stageSource, /const chooseGameSafeDestination = useCallback\(\(\) => \{[\s\S]*const currentPosition = positionRef\.current;[\s\S]*const safeCandidates = candidates\.filter[\s\S]*pathIsClear\(left, baselineTop\)[\s\S]*return currentPosition;\s*\}, \[\]\)/);
   assert.doesNotMatch(stageSource, /const chooseGameSafeDestination = useCallback\(\(\) => \{[\s\S]*return \{ x: 0, y: 0 \};\s*\}, \[\]\)/);
 });
 

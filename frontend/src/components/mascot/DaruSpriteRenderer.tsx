@@ -28,27 +28,29 @@ export function preloadDaruWalkFrames(theme: DaruRhythm = "day") {
   return promise;
 }
 
-function translatedX(element: HTMLElement): number {
+function translatedPosition(element: HTMLElement): { x: number; y: number } {
   const computed = getComputedStyle(element);
   const value = computed.translate;
   if (value && value !== "none") {
-    const x = Number.parseFloat(value.split(" ")[0]);
-    if (Number.isFinite(x)) return x;
+    const translated = value.split(" ");
+    const x = Number.parseFloat(translated[0]);
+    const y = Number.parseFloat(translated[1] ?? "0");
+    if (Number.isFinite(x) && Number.isFinite(y)) return { x, y };
   }
 
   const matrix = computed.transform;
-  if (!matrix || matrix === "none") return 0;
+  if (!matrix || matrix === "none") return { x: 0, y: 0 };
   const matrix3d = matrix.match(/^matrix3d\((.+)\)$/);
   if (matrix3d) {
     const values = matrix3d[1].split(",").map((item) => Number.parseFloat(item.trim()));
-    return Number.isFinite(values[12]) ? values[12] : 0;
+    return Number.isFinite(values[12]) && Number.isFinite(values[13]) ? { x: values[12], y: values[13] } : { x: 0, y: 0 };
   }
   const matrix2d = matrix.match(/^matrix\((.+)\)$/);
   if (matrix2d) {
     const values = matrix2d[1].split(",").map((item) => Number.parseFloat(item.trim()));
-    return Number.isFinite(values[4]) ? values[4] : 0;
+    return Number.isFinite(values[4]) && Number.isFinite(values[5]) ? { x: values[4], y: values[5] } : { x: 0, y: 0 };
   }
-  return 0;
+  return { x: 0, y: 0 };
 }
 
 function frameIndexForDistance(travelledPx: number, frameCount: number) {
@@ -60,7 +62,7 @@ export function DaruSpriteRenderer({ state, theme = "day" }: { state: DaruRender
   const rendererRef = useRef<HTMLSpanElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const travelledRef = useRef(0);
-  const lastXRef = useRef<number | null>(null);
+  const lastPositionRef = useRef<{ x: number; y: number } | null>(null);
   const frameRef = useRef(-1);
   const themedFramesRef = useRef<readonly string[]>(DARU_SPRITE_CONFIG[theme].walkFrames);
   const initialFrameSrc = DARU_SPRITE_CONFIG[theme].walkFrames[0];
@@ -88,7 +90,7 @@ export function DaruSpriteRenderer({ state, theme = "day" }: { state: DaruRender
 
   useEffect(() => {
     if (!walking) {
-      lastXRef.current = null;
+      lastPositionRef.current = null;
       travelledRef.current = 0;
       frameRef.current = -1;
       return;
@@ -110,9 +112,13 @@ export function DaruSpriteRenderer({ state, theme = "day" }: { state: DaruRender
         return;
       }
 
-      const x = translatedX(stage);
-      if (lastXRef.current !== null) travelledRef.current += Math.abs(x - lastXRef.current);
-      lastXRef.current = x;
+      const position = translatedPosition(stage);
+      if (lastPositionRef.current !== null) {
+        const deltaX = position.x - lastPositionRef.current.x;
+        const deltaY = position.y - lastPositionRef.current.y;
+        travelledRef.current += stage.dataset.gameReturning === "true" ? Math.hypot(deltaX, deltaY) : Math.abs(deltaX);
+      }
+      lastPositionRef.current = position;
 
       const walkFrames = themedFramesRef.current;
       const nextFrame = frameIndexForDistance(travelledRef.current, walkFrames.length);
