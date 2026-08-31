@@ -36,6 +36,27 @@ export type DetectionEvent = {
   detected_objects: DetectionObject[];
 };
 
+export type VideoDetectionAccepted = {
+  detection_event_id: number;
+  video_job_id: number;
+  status: "PROCESSING";
+  stage: "QUEUED";
+};
+
+export type VideoProcessingStatus = {
+  detection_event_id: number;
+  video_job_id: number;
+  status: "PROCESSING" | "COMPLETED" | "FAILED";
+  stage: "QUEUED" | "ANALYZING" | "RENDERING" | "SAVING" | "COMPLETED" | "FAILED";
+  processed_frames: number;
+  total_frames: number | null;
+  analysis_progress: number | null;
+  processing_started_at: string | null;
+  processing_completed_at: string | null;
+  result_ready: boolean;
+  error_message: string | null;
+};
+
 export type WebcamDetectionObject = {
   label: string;
   class_code: string | null;
@@ -137,7 +158,7 @@ export type DetectionVideoUploadOptions = {
 };
 
 export function uploadDetectionVideo(file: File, options: DetectionVideoUploadOptions = {}) {
-  return new Promise<DetectionEvent>((resolve, reject) => {
+  return new Promise<VideoDetectionAccepted>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     const formData = new FormData();
     const abortRequest = () => xhr.abort();
@@ -156,7 +177,7 @@ export function uploadDetectionVideo(file: File, options: DetectionVideoUploadOp
         return;
       }
       try {
-        resolve(JSON.parse(xhr.responseText) as DetectionEvent);
+        resolve(JSON.parse(xhr.responseText) as VideoDetectionAccepted);
       } catch {
         reject(new DetectionApiError("영상 분석 결과를 확인하지 못했습니다.", xhr.status));
       }
@@ -172,6 +193,10 @@ export function uploadDetectionVideo(file: File, options: DetectionVideoUploadOp
     }
     xhr.send(formData);
   });
+}
+
+export function getVideoProcessingStatus(eventId: number, signal?: AbortSignal) {
+  return requestJson<VideoProcessingStatus>(buildApiUrl(`/api/detections/${eventId}/processing-status`), { signal });
 }
 
 export function detectWebcamFrame(blob: Blob, signal?: AbortSignal) {
