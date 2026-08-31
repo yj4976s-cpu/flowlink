@@ -52,6 +52,7 @@ function numericTranslate(element: HTMLElement) {
 
 export function DaruStage() {
   const pathname = usePathname();
+  const isDaruGame = pathname === "/daru-game";
   const { action, cue, message, mode, occluded, reducedMotion } = useDaru();
   const previousIdle = useRef<DaruIdleAction | null>(null);
   const stageRef = useRef<HTMLElement>(null);
@@ -245,6 +246,7 @@ export function DaruStage() {
   }, [roaming]);
 
   const beginMovementTo = useCallback((target: { x: number; y: number }) => {
+    if (isDaruGame) return false;
     const latest = directGreetingStateRef.current;
     if (latest.movementReduced || latest.mode !== "active" || latest.occluded || latest.guideOpen || latest.dragging || !latest.pageVisible) return false;
     const currentPosition = positionRef.current;
@@ -282,16 +284,16 @@ export function DaruStage() {
       startMovement();
     }
     return true;
-  }, [facing]);
+  }, [facing, isDaruGame]);
 
   const handlePointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
-    if (mode === "hidden") return;
+    if (mode === "hidden" || isDaruGame) return;
     let dragOrigin = { x: position.x, y: position.y };
     const translated = stageRef.current ? numericTranslate(stageRef.current) : null;
     if (translated) dragOrigin = translated;
     event.currentTarget.setPointerCapture(event.pointerId);
     dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, originX: dragOrigin.x, originY: dragOrigin.y, moved: false };
-  }, [mode, position.x, position.y]);
+  }, [isDaruGame, mode, position.x, position.y]);
 
   const handlePointerMove = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
     const drag = dragRef.current;
@@ -355,7 +357,7 @@ export function DaruStage() {
   }, [action, cue, dragging, guideOpen, mode, movementReduced, occluded, pageVisible, pathname, roaming]);
 
   useEffect(() => {
-    if (!pageVisible || movementReduced || userPaused || mode !== "active" || occluded || guideOpen || dragging || roaming || directGreeting || action === "wave") return;
+    if (isDaruGame || !pageVisible || movementReduced || userPaused || mode !== "active" || occluded || guideOpen || dragging || roaming || directGreeting || action === "wave") return;
     const delay = nextRoamDelayRef.current ?? (3000 + Math.random() * 4000);
     nextRoamDelayRef.current = null;
     const timer = window.setTimeout(() => {
@@ -367,7 +369,7 @@ export function DaruStage() {
       }
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [action, beginMovementTo, chooseSafeDestination, directGreeting, dragging, guideOpen, mode, movementReduced, occluded, pageVisible, roamRetry, roaming, userPaused]);
+  }, [action, beginMovementTo, chooseSafeDestination, directGreeting, dragging, guideOpen, isDaruGame, mode, movementReduced, occluded, pageVisible, roamRetry, roaming, userPaused]);
 
   useEffect(() => {
     if (!roaming) return;
@@ -411,7 +413,7 @@ export function DaruStage() {
     if (directGreetingTimerRef.current !== null) window.clearTimeout(directGreetingTimerRef.current);
   }, []);
 
-  if (mode === "hidden" || pathname === "/daru-game") return null;
+  if (mode === "hidden") return null;
   const handleGuideToggle = () => {
     cancelDirectGreeting();
     const rect = stageRef.current?.getBoundingClientRect();
@@ -492,7 +494,7 @@ export function DaruStage() {
   const guidePanel = guideOpen ? <DaruGuidePanel role={guideRole} userPaused={userPaused} reducedMotion={reducedMotion} viewportLayer={mobileViewport} panelRef={guidePanelRef} onClose={closeGuide} onToggleRoaming={toggleUserPaused} /> : null;
 
   return (
-    <aside ref={stageRef} className={styles.stage} data-daru-stage="true" data-dragging={dragging || undefined} data-guide-open={guideOpen || undefined} data-roaming={roaming || undefined} data-panel-side={panelSide} data-panel-vertical={panelVertical} data-occluded={occluded || undefined} style={{ "--daru-x": `${position.x}px`, "--daru-y": `${position.y}px`, "--daru-roam-duration": `${roamDuration}ms` } as React.CSSProperties} aria-label="FlowLink 마스코트 다루">
+    <aside ref={stageRef} className={styles.stage} data-daru-stage="true" data-game-safe={isDaruGame || undefined} data-dragging={dragging || undefined} data-guide-open={guideOpen || undefined} data-roaming={roaming || undefined} data-panel-side={panelSide} data-panel-vertical={panelVertical} data-occluded={occluded || undefined} style={{ "--daru-x": `${position.x}px`, "--daru-y": `${position.y}px`, "--daru-roam-duration": `${roamDuration}ms` } as React.CSSProperties} aria-label="FlowLink 마스코트 다루">
       {guidePanel && (mobileViewport ? createPortal(guidePanel, document.body) : guidePanel)}
       <DaruMascot action={action} mode={mode} message={message} reducedMotion={reducedMotion} dragging={dragging} guideOpen={guideOpen} directGreeting={directGreeting} bubbleSide={bubbleSide} mobileBubbleStyle={mobileBubbleStyle} rendererState={rendererState} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerCancel} onHover={() => { if (!roaming) playOneShot("HOVER", 480); }} onInteract={handleCharacterClick} onGuide={handleGuideToggle} />
     </aside>
