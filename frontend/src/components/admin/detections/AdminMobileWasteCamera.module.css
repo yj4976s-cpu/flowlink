@@ -487,6 +487,11 @@
     grid-template-columns: 1fr 1fr;
   }
 
+  .stepper div {
+    min-height: 58px;
+    padding: 10px;
+  }
+
   .captureMeta {
     grid-template-columns: 1fr 1fr;
   }
@@ -498,6 +503,7 @@
 
   .controls button,
   .actions :global(.button) {
+    min-height: 44px;
     width: 100%;
     justify-content: center;
   }

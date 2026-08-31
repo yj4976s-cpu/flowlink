@@ -16,13 +16,20 @@ import {
   getOverlayPercentageStyle,
   normalizeBBoxForDisplayMedia,
 } from "@/components/detection/detectionOverlayGeometry";
+import {
+  createAdminMobileWasteCameraSnapshot,
+  getAdminMobileWastePermissions,
+  getAdminMobileWasteStatusAfterOffline,
+  shouldScheduleNextWasteDetection,
+  type AdminMobileWasteStatus,
+} from "./adminMobileWasteState";
 import { isMobileWasteCandidate } from "./mobileWasteFilters";
 import styles from "./AdminMobileWasteCamera.module.css";
 
 const FRAME_INTERVAL_MS = 650;
 const JPEG_QUALITY = 0.9;
 
-type CameraStatus = "idle" | "requesting" | "ready" | "running" | "selected" | "registering" | "registered" | "collecting" | "completed";
+type CameraStatus = AdminMobileWasteStatus;
 type FacingMode = "environment" | "user";
 
 type DetectionSnapshot = {
@@ -35,6 +42,10 @@ type FrozenCandidate = {
   frame: WebcamDetectionFrame;
   file: File;
   previewUrl: string;
+  cameraId: number;
+  cameraName: string;
+  cameraAreaName: string;
+  capturedAt: string;
 };
 
 type RegistrationResult = {
@@ -119,6 +130,14 @@ export function AdminMobileWasteCamera() {
   const stageRef = useRef<HTMLDivElement>(null);
   const detectTimerRef = useRef<number | null>(null);
   const detectAbortRef = useRef<AbortController | null>(null);
+  const registerAbortRef = useRef<AbortController | null>(null);
+  const collectAbortRef = useRef<AbortController | null>(null);
+  const registerInFlightRef = useRef(false);
+  const collectInFlightRef = useRef(false);
+  const mountedRef = useRef(false);
+  const onlineRef = useRef(true);
+  const frozenRef = useRef<FrozenCandidate | null>(null);
+  const registeredRef = useRef<RegistrationResult | null>(null);
   const runningRef = useRef(false);
   const analyzeFrameRef = useRef<() => void>(() => undefined);
   const streamRef = useRef<MediaStream | null>(null);
@@ -137,12 +156,20 @@ export function AdminMobileWasteCamera() {
   const [frozen, setFrozen] = useState<FrozenCandidate | null>(null);
   const [frozenNaturalSize, setFrozenNaturalSize] = useState({ width: 0, height: 0 });
   const [registered, setRegistered] = useState<RegistrationResult | null>(null);
+  const [isOnline, setIsOnline] = useState(() => typeof navigator === "undefined" ? true : navigator.onLine);
 
   const wasteObjects = useMemo(() => snapshot?.frame.detected_objects.filter(isMobileWasteCandidate) ?? [], [snapshot]);
   const selectedObjectId = frozen ? `${frozen.object.bbox.x}-${frozen.object.bbox.y}-${frozen.object.bbox.width}-${frozen.object.bbox.height}` : "";
   const cameraActive = status !== "idle" && status !== "requesting";
   const secureHint = typeof window !== "undefined" && !window.isSecureContext && location.hostname !== "localhost" && location.hostname !== "127.0.0.1";
   const selectedCamera = cameras.find((camera) => String(camera.id) === cameraId) ?? null;
+  const permissions = useMemo(() => getAdminMobileWastePermissions({
+    status,
+    hasFrozen: Boolean(frozen),
+    hasRegistered: Boolean(registered),
+    hasCamera: Boolean(frozen?.cameraId ?? cameraId),
+    isOnline,
+  }), [cameraId, frozen, isOnline, registered, status]);
   const currentStepIndex = status === "completed" || registered || status === "collecting"
     ? 3
     : frozen
@@ -151,6 +178,19 @@ export function AdminMobileWasteCamera() {
         ? 1
         : 0;
   const currentStepDescription = FIELD_STEPS[currentStepIndex]?.description ?? FIELD_STEPS[0].description;
+  const cameraLabel = frozen
+    ? `${frozen.cameraName} · ${frozen.cameraAreaName}`
+    : selectedCamera
+      ? `${selectedCamera.name} · ${selectedCamera.area_name}`
+      : "운영 카메라 미선택";
+  const networkLabel = isOnline ? "온라인" : "오프라인 · 탐지 일시정지";
+  const securityLabel = secureHint ? "HTTPS 필요" : "HTTPS 사용 가능";
+  const detectionLabel = isRunning ? "탐지 중" : isOnline ? "탐지 대기" : "탐지 일시정지";
+  const candidateLabel = wasteObjects.length
+    ? `선택 가능한 후보 ${wasteObjects.length}개`
+    : status === "running"
+      ? "후보 찾는 중"
+      : "후보 없음";
 
   const liveMediaRect = useMemo(() => {
     if (!snapshot) return null;
@@ -165,12 +205,31 @@ export function AdminMobileWasteCamera() {
       : { width: 0, height: 0 };
   const frozenMediaRect = frozen ? getContainedMediaRect(stageSize, frozenNaturalSize) : null;
 
-  const clearTimer = () => {
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    onlineRef.current = isOnline;
+  }, [isOnline]);
+
+  useEffect(() => {
+    frozenRef.current = frozen;
+  }, [frozen]);
+
+  useEffect(() => {
+    registeredRef.current = registered;
+  }, [registered]);
+
+  const clearTimer = useCallback(() => {
     if (detectTimerRef.current !== null) {
       window.clearTimeout(detectTimerRef.current);
       detectTimerRef.current = null;
     }
-  };
+  }, []);
 
   const stopDetection = useCallback(() => {
     runningRef.current = false;
@@ -179,7 +238,7 @@ export function AdminMobileWasteCamera() {
     detectAbortRef.current?.abort();
     detectAbortRef.current = null;
     setStatus((current) => current === "running" ? "ready" : current);
-  }, []);
+  }, [clearTimer]);
 
   const stopStream = useCallback(() => {
     stopDetection();
@@ -190,6 +249,35 @@ export function AdminMobileWasteCamera() {
     setVideoSize({ width: 0, height: 0 });
     setStatus("idle");
   }, [stopDetection]);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      onlineRef.current = true;
+      setIsOnline(true);
+      setError((current) => current === "오프라인 상태입니다. 네트워크를 확인한 뒤 관리자가 직접 탐지를 다시 시작해 주세요." ? "" : current);
+    };
+    const handleOffline = () => {
+      onlineRef.current = false;
+      runningRef.current = false;
+      setIsRunning(false);
+      clearTimer();
+      detectAbortRef.current?.abort();
+      detectAbortRef.current = null;
+      registerAbortRef.current?.abort();
+      collectAbortRef.current?.abort();
+      setStatus(getAdminMobileWasteStatusAfterOffline);
+      setIsOnline(false);
+      setError("오프라인 상태입니다. 네트워크를 확인한 뒤 관리자가 직접 탐지를 다시 시작해 주세요.");
+    };
+
+    onlineRef.current = navigator.onLine;
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, [clearTimer]);
 
   const revokeFrozen = useCallback(() => {
     setFrozen((current) => {
@@ -228,7 +316,7 @@ export function AdminMobileWasteCamera() {
   }, []);
 
   const analyzeFrame = useCallback(async () => {
-    if (!runningRef.current) return;
+    if (!runningRef.current || !onlineRef.current || frozenRef.current || registeredRef.current) return;
     const controller = new AbortController();
     detectAbortRef.current = controller;
     try {
@@ -243,14 +331,19 @@ export function AdminMobileWasteCamera() {
       }
     } finally {
       if (detectAbortRef.current === controller) detectAbortRef.current = null;
-      if (runningRef.current) {
+      if (shouldScheduleNextWasteDetection({
+        running: runningRef.current,
+        isOnline: onlineRef.current,
+        hasFrozen: Boolean(frozenRef.current),
+        hasRegistered: Boolean(registeredRef.current),
+      })) {
         clearTimer();
         detectTimerRef.current = window.setTimeout(() => {
           analyzeFrameRef.current();
         }, FRAME_INTERVAL_MS);
       }
     }
-  }, [captureFrame]);
+  }, [captureFrame, clearTimer]);
 
   useEffect(() => {
     analyzeFrameRef.current = () => {
@@ -259,16 +352,24 @@ export function AdminMobileWasteCamera() {
   }, [analyzeFrame]);
 
   const startDetection = useCallback(() => {
-    if (!streamRef.current || runningRef.current) return;
-    revokeFrozen();
+    if (!streamRef.current || runningRef.current || frozenRef.current || registeredRef.current) return;
+    if (!onlineRef.current) {
+      setError("오프라인 상태에서는 탐지를 시작할 수 없습니다. 네트워크 연결 후 다시 시작해 주세요.");
+      return;
+    }
     setError("");
     runningRef.current = true;
     setIsRunning(true);
     setStatus("running");
     void analyzeFrame();
-  }, [analyzeFrame, revokeFrozen]);
+  }, [analyzeFrame]);
 
   const startCamera = useCallback(async (nextDeviceId?: string | null, nextFacingMode: FacingMode = facingMode) => {
+    if (frozenRef.current || registeredRef.current || registerInFlightRef.current || collectInFlightRef.current) return;
+    if (!onlineRef.current) {
+      setError("오프라인 상태에서는 카메라 탐지를 시작할 수 없습니다. 네트워크 연결 후 다시 시작해 주세요.");
+      return;
+    }
     if (!navigator.mediaDevices?.getUserMedia) {
       setError("이 브라우저에서는 카메라를 사용할 수 없습니다.");
       return;
@@ -308,6 +409,7 @@ export function AdminMobileWasteCamera() {
   }, [startCamera, startDetection]);
 
   const switchCamera = async () => {
+    if (!permissions.canSwitchFacing) return;
     const wasRunning = runningRef.current;
     stopDetection();
     if (devices.length > 1) {
@@ -323,43 +425,83 @@ export function AdminMobileWasteCamera() {
   };
 
   const selectObject = (object: WebcamDetectionObject, sourceSnapshot: DetectionSnapshot) => {
+    if (!permissions.canSelectCandidate || !selectedCamera) {
+      setError("운영 카메라를 먼저 선택한 뒤 폐기물 후보를 선택해 주세요.");
+      return;
+    }
     stopDetection();
     revokeFrozen();
     const file = new File([sourceSnapshot.blob], "mobile-waste-frame.jpg", { type: "image/jpeg" });
-    setFrozen({ object, frame: sourceSnapshot.frame, file, previewUrl: URL.createObjectURL(sourceSnapshot.blob) });
+    const cameraSnapshot = createAdminMobileWasteCameraSnapshot(selectedCamera, new Date().toISOString());
+    if (!cameraSnapshot) {
+      setError("운영 카메라를 먼저 선택한 뒤 폐기물 후보를 선택해 주세요.");
+      return;
+    }
+    setFrozen({
+      object,
+      frame: sourceSnapshot.frame,
+      file,
+      previewUrl: URL.createObjectURL(sourceSnapshot.blob),
+      ...cameraSnapshot,
+    });
     setStatus("selected");
   };
 
   const registerSelected = async () => {
-    if (!frozen || !cameraId) return;
+    if (!frozen || !permissions.canRegister || registerInFlightRef.current) return;
+    if (!isOnline) {
+      setError("오프라인 상태에서는 회수 대상으로 등록할 수 없습니다. 네트워크 연결 후 다시 시도해 주세요.");
+      return;
+    }
+    registerInFlightRef.current = true;
+    const controller = new AbortController();
+    registerAbortRef.current = controller;
     setStatus("registering");
     setError("");
     try {
-      const result = await registerMobileWasteCandidate(cameraId ? Number(cameraId) : 0, frozen.file, frozen.object.bbox);
+      const result = await registerMobileWasteCandidate(frozen.cameraId, frozen.file, frozen.object.bbox, controller.signal);
+      if (controller.signal.aborted || !mountedRef.current) return;
       setRegistered({ detectionEventId: result.detection_event_id, detectedObjectId: result.detected_object_id });
       setStatus("registered");
     } catch (reason) {
+      if (isAbortError(reason) || !mountedRef.current) return;
       setStatus("selected");
       setError(reason instanceof Error ? reason.message : "폐기물 후보를 등록하지 못했습니다.");
+    } finally {
+      if (registerAbortRef.current === controller) registerAbortRef.current = null;
+      registerInFlightRef.current = false;
     }
   };
 
   const completeCollection = async () => {
-    if (!registered) return;
+    if (!registered || !permissions.canCollect || collectInFlightRef.current) return;
+    if (!isOnline) {
+      setError("오프라인 상태에서는 수거 완료를 처리할 수 없습니다. 네트워크 연결 후 다시 시도해 주세요.");
+      return;
+    }
     const confirmed = window.confirm("실제 현장에서 폐기물 수거를 완료했나요? 완료 처리하면 운영 이력에 기록됩니다.");
     if (!confirmed) return;
+    collectInFlightRef.current = true;
+    const controller = new AbortController();
+    collectAbortRef.current = controller;
     setStatus("collecting");
     setError("");
     try {
-      await completeDetectedWasteCollection(registered.detectedObjectId);
+      await completeDetectedWasteCollection(registered.detectedObjectId, controller.signal);
+      if (controller.signal.aborted || !mountedRef.current) return;
       setStatus("completed");
     } catch (reason) {
+      if (isAbortError(reason) || !mountedRef.current) return;
       setStatus("registered");
       setError(reason instanceof Error ? reason.message : "폐기물 수거 완료 처리에 실패했습니다.");
+    } finally {
+      if (collectAbortRef.current === controller) collectAbortRef.current = null;
+      collectInFlightRef.current = false;
     }
   };
 
   const resetSelection = () => {
+    if (status === "registering" || status === "collecting" || (registered && status !== "completed")) return;
     revokeFrozen();
     setStatus(streamRef.current ? "ready" : "idle");
   };
@@ -389,6 +531,8 @@ export function AdminMobileWasteCamera() {
   }, []);
 
   useEffect(() => () => {
+    registerAbortRef.current?.abort();
+    collectAbortRef.current?.abort();
     stopStream();
     revokeFrozen();
   }, [revokeFrozen, stopStream]);
@@ -423,9 +567,11 @@ export function AdminMobileWasteCamera() {
         <p>{currentStepDescription}</p>
         <div className={styles.statusChips} aria-label="현재 카메라와 탐지 상태">
           <span>{STATUS_LABELS[status]}</span>
-          <span>{selectedCamera ? `${selectedCamera.name} · ${selectedCamera.area_name}` : "운영 카메라 미선택"}</span>
-          <span>{isRunning ? "서버 연결 · 탐지 요청 중" : "서버 연결 · 대기"}</span>
-          <span>{wasteObjects.length ? `선택 가능 후보 ${wasteObjects.length}개` : status === "running" ? "후보 찾는 중" : "후보 없음"}</span>
+          <span>{cameraLabel}</span>
+          <span>{networkLabel}</span>
+          <span>{securityLabel}</span>
+          <span>{detectionLabel}</span>
+          <span>{candidateLabel}</span>
         </div>
       </section>
 
@@ -434,18 +580,18 @@ export function AdminMobileWasteCamera() {
           <div className={styles.controls}>
             <label>
               <span>운영 카메라</span>
-              <select value={cameraId} onChange={(event) => setCameraId(event.target.value)} disabled={!cameras.length || status === "registering" || status === "collecting"}>
+              <select value={cameraId} onChange={(event) => setCameraId(event.target.value)} disabled={!cameras.length || !permissions.canChangeCamera}>
                 {cameras.length ? cameras.map((camera) => (
                   <option value={camera.id} key={camera.id}>{camera.name} · {camera.area_name}</option>
                 )) : <option value="">활성 카메라 없음</option>}
               </select>
             </label>
             <div>
-              <button type="button" className={cameraActive ? "button button-secondary" : "button button-primary"} onClick={() => void (cameraActive ? startCamera() : startCameraAndDetection())} disabled={status === "requesting"}>
+              <button type="button" className={cameraActive ? "button button-secondary" : "button button-primary"} onClick={() => void (cameraActive ? startCamera() : startCameraAndDetection())} disabled={!permissions.canRestartCamera}>
                 <Icon name="camera" size={17} />{cameraActive ? "카메라 재시작" : "카메라 켜고 탐지 시작"}
               </button>
               {cameraActive && (
-                <button type="button" className="button button-secondary" onClick={() => void switchCamera()} disabled={status === "registering" || status === "collecting"}>
+                <button type="button" className="button button-secondary" onClick={() => void switchCamera()} disabled={!permissions.canSwitchFacing}>
                   <Icon name="refresh" size={17} />전·후면 전환
                 </button>
               )}
@@ -498,8 +644,8 @@ export function AdminMobileWasteCamera() {
             <dl className={styles.captureMeta} aria-label="선택한 폐기물 확인 정보">
               <div><dt>탐지 클래스</dt><dd>{objectLabel(frozen.object)}</dd></div>
               <div><dt>탐지 신뢰도</dt><dd>{Math.round(frozen.object.confidence * 100)}%</dd></div>
-              <div><dt>운영 카메라</dt><dd>{selectedCamera?.name ?? "미선택"}</dd></div>
-              <div><dt>운영 구역</dt><dd>{selectedCamera?.area_name ?? "-"}</dd></div>
+              <div><dt>운영 카메라</dt><dd>{frozen.cameraName}</dd></div>
+              <div><dt>운영 구역</dt><dd>{frozen.cameraAreaName}</dd></div>
               <div><dt>프레임 해상도</dt><dd>{frozen.frame.media_width}×{frozen.frame.media_height}</dd></div>
               <div><dt>저장 안내</dt><dd>선택한 이 프레임만 등록됩니다.</dd></div>
             </dl>
@@ -510,20 +656,20 @@ export function AdminMobileWasteCamera() {
           <div className={styles.actions}>
             {cameraActive && !frozen && (
               isRunning ? (
-                <button type="button" className="button button-secondary" onClick={stopDetection}>탐지 일시정지</button>
+                <button type="button" className="button button-secondary" onClick={stopDetection} disabled={!permissions.canPauseDetection}>탐지 일시정지</button>
               ) : (
-                <button type="button" className="button button-primary" onClick={startDetection} disabled={!cameraId}>폐기물 탐지 시작<Icon name="scanLine" size={18} /></button>
+                <button type="button" className="button button-primary" onClick={startDetection} disabled={!permissions.canStartDetection}>폐기물 탐지 시작<Icon name="scanLine" size={18} /></button>
               )
             )}
             {frozen && status !== "completed" && (
               <>
-                <button type="button" className="button button-secondary" onClick={resetSelection} disabled={status === "registering" || status === "collecting"}>다시 선택</button>
+                {!registered && <button type="button" className="button button-secondary" onClick={resetSelection} disabled={!permissions.canReselect}>다시 선택</button>}
                 {!registered ? (
-                  <button type="button" className="button button-primary" onClick={() => void registerSelected()} disabled={!cameraId || status === "registering"}>
+                  <button type="button" className="button button-primary" onClick={() => void registerSelected()} disabled={!permissions.canRegister}>
                     {status === "registering" ? "등록 중..." : "회수 대상으로 등록"}<Icon name="archive" size={18} />
                   </button>
                 ) : (
-                  <button type="button" className="button button-primary" onClick={() => void completeCollection()} disabled={status === "collecting"}>
+                  <button type="button" className="button button-primary" onClick={() => void completeCollection()} disabled={!permissions.canCollect}>
                     {status === "collecting" ? "처리 중..." : "수거 완료 처리"}<Icon name="packageCheck" size={18} />
                   </button>
                 )}
