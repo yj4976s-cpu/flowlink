@@ -54,8 +54,9 @@
 
 .notice,
 .panel,
-.metric,
-.summaryCard {
+.modelCard,
+.deployCard,
+.metricRow {
   border: 1px solid var(--color-border);
   background: linear-gradient(145deg, color-mix(in srgb, var(--color-primary) 4%, transparent), transparent 44%), var(--color-surface);
   box-shadow: var(--shadow-card);
@@ -329,8 +330,13 @@
   background: linear-gradient(90deg, var(--color-accent), var(--color-primary));
 }
 
-.metricBar[data-empty] i b {
+.metricBar[data-empty] i b,
+.metricBar[data-zero] i b {
   min-width: 0;
+}
+
+.metricBar[data-empty] {
+  opacity: .72;
 }
 
 .metricBar strong {

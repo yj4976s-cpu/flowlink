@@ -7,6 +7,8 @@ import {
   currentModelLabel,
   fileSizeLabel,
   hasMeasuredModelComparison,
+  isMeasuredNumber,
+  metricBarViewState,
   metricDelta,
   metricLabel,
   modelComparisonStatusView,
@@ -15,8 +17,24 @@ import {
 test("model comparison metric labels keep unknown values explicit", () => {
   assert.equal(metricLabel(null, { percent: true }), "측정 전");
   assert.equal(metricLabel(Number.NaN, { suffix: "ms" }), "측정 전");
+  assert.equal(metricLabel(Number.POSITIVE_INFINITY, { suffix: "fps" }), "측정 전");
+  assert.equal(metricLabel(0, { percent: true }), "0.0%");
+  assert.equal(metricLabel(0, { suffix: "ms" }), "0.0ms");
   assert.equal(metricLabel(0.912, { percent: true }), "91.2%");
   assert.equal(fileSizeLabel(null), "측정 전");
+});
+
+test("model comparison metric bar state separates zero from empty values", () => {
+  assert.equal(isMeasuredNumber(null), false);
+  assert.equal(isMeasuredNumber(undefined), false);
+  assert.equal(isMeasuredNumber(Number.NaN), false);
+  assert.equal(isMeasuredNumber(Number.POSITIVE_INFINITY), false);
+  assert.equal(isMeasuredNumber(Number.NEGATIVE_INFINITY), false);
+  assert.equal(isMeasuredNumber(0), true);
+  assert.deepEqual(metricBarViewState(null, 1), { measured: false, zero: false, width: 0 });
+  assert.deepEqual(metricBarViewState(Number.NaN, 1), { measured: false, zero: false, width: 0 });
+  assert.deepEqual(metricBarViewState(0, 1), { measured: true, zero: true, width: 0 });
+  assert.deepEqual(metricBarViewState(0.5, 1), { measured: true, zero: false, width: 50 });
 });
 
 test("model comparison deltas show percent points and lower-is-better timing", () => {
@@ -124,6 +142,32 @@ test("model comparison page is admin guarded and linked from operations analysis
   assert.match(client, /실시간 모델 전환 화면이 아닙니다/);
   assert.match(client, /mAP@50:95/);
   assert.match(client, /metric\.map50_95/);
+});
+
+test("model comparison dashboard keeps zero bars measured and empty bars visually distinct", () => {
+  const client = readFileSync("src/components/admin/model-comparison/AdminModelComparisonClient.tsx", "utf8");
+  const css = readFileSync("src/components/admin/model-comparison/AdminModelComparisonClient.module.css", "utf8");
+
+  assert.match(client, /metricBarViewState\(before, max\)/);
+  assert.match(client, /data-empty=\{!state\.measured \|\| undefined\}/);
+  assert.match(client, /data-zero=\{state\.zero \|\| undefined\}/);
+  assert.doesNotMatch(client, /const measured = width > 0/);
+  assert.match(css, /\.metricBar\[data-zero\] i b/);
+  assert.match(css, /min-width: 0/);
+});
+
+test("class performance uses accessible cards instead of stale table cells", () => {
+  const client = readFileSync("src/components/admin/model-comparison/AdminModelComparisonClient.tsx", "utf8");
+  const css = readFileSync("src/components/admin/model-comparison/AdminModelComparisonClient.module.css", "utf8");
+
+  assert.match(client, /className=\{styles\.classCards\} role="list"/);
+  assert.match(client, /role="listitem"/);
+  assert.doesNotMatch(client, /role="cell"/);
+  assert.doesNotMatch(client, /role="table"/);
+  assert.match(client, /신규 클래스/);
+  assert.match(client, /미지원/);
+  assert.match(css, /\.classCards/);
+  assert.match(css, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
 });
 
 test("AI report reads model comparison status instead of hardcoding missing evaluation copy", () => {

@@ -14,7 +14,9 @@ import {
   classMetricByCode,
   currentModelLabel,
   fileSizeLabel,
+  isMeasuredNumber,
   metricDelta,
+  metricBarViewState,
   metricLabel,
 } from "./modelComparisonViewState";
 import styles from "./AdminModelComparisonClient.module.css";
@@ -52,13 +54,8 @@ function metricValue(model: AdminModelComparisonModel, key: MetricKey) {
   return model[key];
 }
 
-function safeRatio(value: number | null, max: number) {
-  if (value == null || Number.isNaN(value) || max <= 0) return 0;
-  return Math.max(0, Math.min(100, value / max * 100));
-}
-
 function completedMetricCount(model: AdminModelComparisonModel) {
-  return METRICS.filter((metric) => metricValue(model, metric.key) != null).length;
+  return METRICS.filter((metric) => isMeasuredNumber(metricValue(model, metric.key))).length;
 }
 
 function classAccent(code: string) {
@@ -146,7 +143,7 @@ function ModelComparison({ data }: { data: AdminModelComparison }) {
         <h2>클래스별 성능</h2>
         <p>HAT는 기존 모델에 없는 신규 클래스이므로 0점이 아니라 미지원/N/A로 표시합니다.</p>
       </div>
-      <div className={styles.classCards} aria-label="클래스별 모델 성능 비교">
+      <div className={styles.classCards} role="list" aria-label="클래스별 모델 성능 비교">
         {classRows.map(({ code, before, after }) => <ClassCard key={code} code={code} before={before} after={after} />)}
       </div>
     </section>
@@ -222,30 +219,32 @@ function MetricComparisonPanel({ previous, current }: { previous: AdminModelComp
       {METRICS.map((metric) => {
         const before = metricValue(previous, metric.key);
         const after = metricValue(current, metric.key);
-        const max = metric.percentPoint ? 1 : Math.max(before ?? 0, after ?? 0, 1);
+        const measuredValues = [before, after].filter(isMeasuredNumber);
+        const max = metric.percentPoint ? 1 : Math.max(...measuredValues, 1);
         const delta = metricDelta(before, after, {
           lowerIsBetter: metric.lowerIsBetter,
           percentPoint: metric.percentPoint,
         });
+        const beforeState = metricBarViewState(before, max);
+        const afterState = metricBarViewState(after, max);
 
         return <article key={metric.key} className={styles.metricRow}>
           <div className={styles.metricLabel}>
             <strong>{metric.label}</strong>
             <b data-tone={delta.tone}>{delta.label}</b>
           </div>
-          <MetricBar label={previous.display_name} value={metric.format(before)} width={safeRatio(before, max)} />
-          <MetricBar label={current.display_name} value={metric.format(after)} width={safeRatio(after, max)} highlight />
+          <MetricBar label={previous.display_name} value={metric.format(before)} state={beforeState} />
+          <MetricBar label={current.display_name} value={metric.format(after)} state={afterState} highlight />
         </article>;
       })}
     </div>
   </section>;
 }
 
-function MetricBar({ label, value, width, highlight = false }: { label: string; value: string; width: number; highlight?: boolean }) {
-  const measured = width > 0;
-  return <div className={styles.metricBar} data-highlight={highlight || undefined} data-empty={!measured || undefined}>
+function MetricBar({ label, value, state, highlight = false }: { label: string; value: string; state: ReturnType<typeof metricBarViewState>; highlight?: boolean }) {
+  return <div className={styles.metricBar} data-highlight={highlight || undefined} data-empty={!state.measured || undefined} data-zero={state.zero || undefined}>
     <span>{label}</span>
-    <i aria-hidden="true"><b style={{ width: `${measured ? width : 0}%` }} /></i>
+    <i aria-hidden="true"><b style={{ width: `${state.width}%` }} /></i>
     <strong>{value}</strong>
   </div>;
 }
@@ -254,7 +253,7 @@ function ClassCard({ code, before, after }: { code: string; before?: AdminModelC
   const status = classComparisonStatus(before, after);
   const label = after?.label ?? before?.label ?? code;
 
-  return <article className={styles.classCard} data-accent={classAccent(code)}>
+  return <article className={styles.classCard} data-accent={classAccent(code)} role="listitem">
     <header>
       <span><strong>{label}</strong><small>{code}</small></span>
       <b data-tone={status.tone}>{status.label}</b>
@@ -273,9 +272,9 @@ function ClassCard({ code, before, after }: { code: string; before?: AdminModelC
 }
 
 function MetricCell({ metric }: { metric?: AdminModelClassMetric }) {
-  if (!metric?.supported) return <span role="cell" className={styles.unsupported}>미지원</span>;
+  if (!metric?.supported) return <span className={styles.unsupported}>미지원</span>;
 
-  return <span role="cell" className={styles.metricCell}>
+  return <span className={styles.metricCell}>
     <small>Precision {metricLabel(metric.precision, { percent: true })}</small>
     <small>Recall {metricLabel(metric.recall, { percent: true })}</small>
     <strong>mAP@50 {metricLabel(metric.map50, { percent: true })}</strong>
