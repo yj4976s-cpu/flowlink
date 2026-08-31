@@ -7,6 +7,7 @@ import sys
 import types
 from zipfile import ZipFile
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -474,13 +475,14 @@ def test_yolo_runtime_reports_actual_processed_frames_from_one_to_total(tmp_path
 
 def test_progress_reporter_throttles_updates_and_callback_failure_is_non_fatal(monkeypatch) -> None:
     calls = []
+    now = [0.0]
 
     class Response:
         def raise_for_status(self):
             return None
 
     monkeypatch.setattr("app.services.video_progress.httpx.post", lambda *args, **kwargs: calls.append(kwargs["json"]) or Response())
-    reporter = VideoProgressReporter(job_id=7, min_interval_seconds=999)
+    reporter = VideoProgressReporter(job_id=7, min_interval_seconds=999, clock=lambda: now[0])
     reporter.report("ANALYZING", 1, 100, force=True)
     reporter.report("ANALYZING", 2, 100)
     reporter.report("ANALYZING", 100, 100, force=True)
@@ -492,6 +494,62 @@ def test_progress_reporter_throttles_updates_and_callback_failure_is_non_fatal(m
 
     monkeypatch.setattr("app.services.video_progress.httpx.post", fail)
     reporter.report("RENDERING", None, 100, force=True)
+
+
+def test_progress_reporter_backs_off_failure_storm_and_retries_latest_snapshot(monkeypatch) -> None:
+    attempts = []
+    now = [0.0]
+
+    def fail(*args, **kwargs):
+        attempts.append(kwargs["json"])
+        raise httpx.ConnectError("offline")
+
+    monkeypatch.setattr("app.services.video_progress.httpx.post", fail)
+    reporter = VideoProgressReporter(job_id=8, failure_backoff_seconds=2.0, clock=lambda: now[0])
+
+    for processed_frames in range(1, 101):
+        reporter.report("ANALYZING", processed_frames, 100, force=processed_frames == 1)
+        now[0] += 0.01
+
+    assert [attempt["processed_frames"] for attempt in attempts] == [1]
+
+    now[0] = 2.1
+    reporter.report("ANALYZING", 100, 100)
+
+    assert [attempt["processed_frames"] for attempt in attempts] == [1, 100]
+
+
+def test_progress_reporter_recovers_to_normal_throttle_and_uses_short_timeout(monkeypatch) -> None:
+    calls = []
+    outcomes = iter([False, True, True])
+    now = [0.0]
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+    def post(*args, **kwargs):
+        calls.append(kwargs)
+        if not next(outcomes):
+            raise httpx.ConnectError("offline")
+        return Response()
+
+    monkeypatch.setattr("app.services.video_progress.httpx.post", post)
+    reporter = VideoProgressReporter(job_id=9, clock=lambda: now[0])
+    reporter.report("ANALYZING", 1, 100, force=True)
+    now[0] = 0.1
+    reporter.report("ANALYZING", 10, 100, force=True)
+    now[0] = 2.1
+    reporter.report("ANALYZING", 50, 100)
+    now[0] = 2.2
+    reporter.report("ANALYZING", 60, 100)
+    now[0] = 2.7
+    reporter.report("ANALYZING", 60, 100)
+
+    assert [call["json"]["processed_frames"] for call in calls] == [1, 50, 60]
+    assert all(call["timeout"] == 0.5 for call in calls)
+    assert reporter.last_percent == 60
+    assert reporter.next_retry_at == 0.0
 
 
 def test_yolo_runtime_midpoint_tie_prefers_higher_confidence_frame(tmp_path) -> None:
