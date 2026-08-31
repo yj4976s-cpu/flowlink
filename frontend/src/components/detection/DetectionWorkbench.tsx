@@ -187,7 +187,7 @@ function VideoProcessingCard({ state, failedFromStage, uploadProgress, serverSta
       ))}
       {analyzing && serverStatus && serverStatus.total_frames === null && serverStatus.processed_frames > 0 && <p>{serverStatus.processed_frames} 프레임 처리됨</p>}
       <p className={styles.videoProcessingDescription}>{failed ? error : status}</p>
-      {!failed && <small>영상 길이와 서버 상태에 따라 1~2분 정도 소요될 수 있어요.</small>}
+      {!failed && <small>영상 길이와 실행 환경에 따라 수 분이 소요될 수 있어요.</small>}
     </section>
   );
 }
@@ -1570,7 +1570,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
                   <p className={styles.eyebrow}>UPLOAD</p>
                   <h2 id="workbench-title">{tab === "image" ? "이미지 업로드" : "영상 업로드"}</h2>
                 </div>
-                <span>{tab === "image" ? "JPG · PNG · WEBP / 20MB" : "MP4 / 100MB · 최대 30초 안내"}</span>
+                <span>{tab === "image" ? "JPG · PNG · WEBP / 20MB" : "MP4 · 100MB 이하 · 영상 30초 이내"}</span>
               </div>
 
               <form onSubmit={handleSubmit}>

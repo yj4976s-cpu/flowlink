@@ -61,3 +61,10 @@ test("polling has retry bounds plus abort and stale request protection", () => {
   assert.match(workbenchSource, /controller\.signal/);
   assert.match(workbenchSource, /getMyDetection\(accepted\.detection_event_id/);
 });
+
+test("video upload and processing copy states the actual constraints without a fixed ETA", () => {
+  assert.match(workbenchSource, /MP4 · 100MB 이하 · 영상 30초 이내/);
+  assert.match(workbenchSource, /영상 길이와 실행 환경에 따라 수 분이 소요될 수 있어요/);
+  assert.doesNotMatch(workbenchSource, /MP4 \/ 100MB · 최대 30초 안내/);
+  assert.doesNotMatch(workbenchSource, /1~2분 정도 소요될 수 있어요/);
+});
