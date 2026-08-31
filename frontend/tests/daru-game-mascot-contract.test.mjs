@@ -28,6 +28,11 @@ test("game-safe active uses constrained autonomous movement while drag stays dis
   assert.match(stageSource, /<DaruMascot[\s\S]+onInteract=\{handleCharacterClick\}/);
   assert.match(gameSource, /data-daru-game-blocker/);
   assert.match(gameStatusSource, /data-daru-game-blocker/);
+  assert.match(stageSource, /const maxTravelX = mobile \? Math\.min\(96, window\.innerWidth \* 0\.22\) : tablet \? Math\.min\(220, window\.innerWidth \* 0\.26\) : Math\.min\(360, window\.innerWidth \* 0\.32\)/);
+  assert.match(stageSource, /const safeCandidates = candidates\.filter/);
+  assert.match(stageSource, /const maximumRightOffset = Math\.max\(0, Math\.min\(maxTravelX \* 0\.45/);
+  assert.match(stageSource, /!overlaps\(left, top\)/);
+  assert.match(stageSource, /if \(safeCandidates\.length > 0\) return safeCandidates\[Math\.floor\(Math\.random\(\) \* safeCandidates\.length\)\]/);
 });
 
 test("route entry resets inherited roaming before game-safe active movement can start", () => {
@@ -37,8 +42,8 @@ test("route entry resets inherited roaming before game-safe active movement can 
   assert.match(stageSource, /if \(!isDaruGame \|\| mode === "active"\) return;[\s\S]*freezeRoaming\(\);[\s\S]*resetGameSafePosition\(\)/);
 });
 
-test("game-safe destination keeps the current position when no safe candidate exists", () => {
-  assert.match(stageSource, /const chooseGameSafeDestination = useCallback\(\(\) => \{[\s\S]*const currentPosition = positionRef\.current;[\s\S]*for \(const candidate of candidates\) \{[\s\S]*return currentPosition;\s*\}, \[\]\)/);
+test("game-safe destination rejects blockers and keeps the current position when no safe candidate exists", () => {
+  assert.match(stageSource, /const chooseGameSafeDestination = useCallback\(\(\) => \{[\s\S]*const currentPosition = positionRef\.current;[\s\S]*const safeCandidates = candidates\.filter[\s\S]*!overlaps\(left, top\)[\s\S]*return currentPosition;\s*\}, \[\]\)/);
   assert.doesNotMatch(stageSource, /const chooseGameSafeDestination = useCallback\(\(\) => \{[\s\S]*return \{ x: 0, y: 0 \};\s*\}, \[\]\)/);
 });
 
@@ -48,14 +53,17 @@ test("game-safe active and quiet have distinct sizes and transform policies", ()
 
   assert.doesNotMatch(desktopGameSafe, /right:/);
   assert.doesNotMatch(mobileGameSafe, /right:/);
-  assert.match(desktopGameSafe, /width: 112px/);
-  assert.match(mobileGameSafe, /width: 72px/);
+  assert.doesNotMatch(desktopGameSafe, /width:/);
+  assert.doesNotMatch(mobileGameSafe, /width:/);
   assert.match(mascotCss, /\.stage\[data-game-safe\]\[data-mode="active"\][\s\S]*translate3d/);
   assert.match(mascotCss, /\.stage\[data-game-safe\]\[data-mode="quiet"\][\s\S]*transform: none/);
-  assert.match(mascotCss, /\.stage\[data-game-safe\] \.character \{ width: 108px; height: 108px/);
-  assert.match(mascotCss, /\.stage\[data-game-safe\] \.mascot\[data-mode="quiet"\] \.character \{ width: 88px; height: 88px/);
-  assert.match(mascotCss, /@media \(max-width: 600px\)[\s\S]*\.stage\[data-game-safe\] \.character \{ width: 68px; height: 68px/);
-  assert.match(mascotCss, /@media \(max-width: 600px\)[\s\S]*\.stage\[data-game-safe\] \.mascot\[data-mode="quiet"\] \.character \{ width: 56px; height: 56px/);
+  assert.doesNotMatch(mascotCss, /\.stage\[data-game-safe\] \.character \{[^}]*width:/);
+  assert.match(mascotCss, /\.character \{[\s\S]*?width: 148px;[\s\S]*?height: 148px/);
+  assert.match(mascotCss, /@media \(max-width: 1024px\) \{ \.stage \{ right: 91px; width: 122px; \}\.character \{ width: 112px; height: 112px/);
+  assert.match(mascotCss, /@media \(max-width: 600px\) \{ \.stage \{ right: 76px;[\s\S]*?\.character, \.mascot\[data-mode="quiet"\] \.character \{ width: 88px; height: 88px/);
+  assert.match(mascotCss, /\.stage\[data-game-safe\] \.mascot\[data-mode="quiet"\] \.character \{ width: 118px; height: 118px/);
+  assert.match(mascotCss, /@media \(max-width: 1024px\) \{ \.stage\[data-game-safe\] \.mascot\[data-mode="quiet"\] \.character \{ width: 92px; height: 92px/);
+  assert.match(mascotCss, /@media \(max-width: 600px\)[\s\S]*\.stage\[data-game-safe\] \.mascot\[data-mode="quiet"\] \.character \{ width: 72px; height: 72px/);
   assert.match(mascotCss, /\.stage \{[\s\S]*?right: 102px/);
   assert.match(mascotCss, /@media \(max-width: 1024px\) \{ \.stage \{ right: 91px/);
   assert.match(mascotCss, /@media \(max-width: 600px\) \{ \.stage \{ right: 76px/);

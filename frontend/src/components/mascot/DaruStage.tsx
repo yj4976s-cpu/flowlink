@@ -249,19 +249,24 @@ export function DaruStage() {
       .map((element) => element.getBoundingClientRect());
     const margin = 12;
     const overlaps = (left: number, top: number) => blockers.some((item) => left < item.right + margin && left + rect.width > item.left - margin && top < item.bottom + margin && top + rect.height > item.top - margin);
-    const candidates = [
-      { x: 0, y: -36 },
-      { x: -24, y: 0 },
-      { x: -16, y: -52 },
-      { x: 0, y: 0 },
-    ];
-    for (const candidate of candidates) {
-      if (Math.hypot(candidate.x - currentPosition.x, candidate.y - currentPosition.y) < 12) continue;
+    const mobile = window.innerWidth <= 600;
+    const tablet = !mobile && window.innerWidth <= 1024;
+    const maxTravelX = mobile ? Math.min(96, window.innerWidth * 0.22) : tablet ? Math.min(220, window.innerWidth * 0.26) : Math.min(360, window.innerWidth * 0.32);
+    const maxTravelY = mobile ? Math.min(96, window.innerHeight * 0.14) : tablet ? Math.min(160, window.innerHeight * 0.2) : Math.min(240, window.innerHeight * 0.26);
+    const minimumTravel = mobile ? 28 : tablet ? 44 : 64;
+    const columns = mobile ? 3 : 5;
+    const rows = mobile ? 3 : 4;
+    const maximumRightOffset = Math.max(0, Math.min(maxTravelX * 0.45, window.innerWidth - margin - (baseLeft + rect.width)));
+    const candidates = Array.from({ length: columns * rows }, (_, index) => ({
+      x: -maxTravelX + (maxTravelX + maximumRightOffset) * (index % columns) / (columns - 1),
+      y: -maxTravelY * Math.floor(index / columns) / (rows - 1),
+    })).filter((candidate) => Math.hypot(candidate.x - currentPosition.x, candidate.y - currentPosition.y) >= minimumTravel);
+    const safeCandidates = candidates.filter((candidate) => {
       const left = baseLeft + candidate.x;
       const top = baseTop + candidate.y;
-      if (left < margin || left + rect.width > window.innerWidth - margin || top < 76 || top + rect.height > window.innerHeight - margin) continue;
-      if (!overlaps(left, top)) return candidate;
-    }
+      return left >= margin && left + rect.width <= window.innerWidth - margin && top >= 76 && top + rect.height <= window.innerHeight - margin && !overlaps(left, top);
+    });
+    if (safeCandidates.length > 0) return safeCandidates[Math.floor(Math.random() * safeCandidates.length)];
     return currentPosition;
   }, []);
 
