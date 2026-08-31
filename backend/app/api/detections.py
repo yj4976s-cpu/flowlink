@@ -25,6 +25,8 @@ from app.schemas.common import MessageResponse
 from app.schemas.detection import (
     DetectionBBoxResponse,
     DetectionEventResponse,
+    VideoDetectionAcceptedResponse,
+    VideoProcessingStatusResponse,
     WebcamDetectionFrameResponse,
     WebcamDetectionObjectResponse,
 )
@@ -201,13 +203,12 @@ async def detect_image(
     return get_latest_user_event_or_404(db, event_id=event.id, user_id=current_user.id)
 
 
-@router.post("/videos", response_model=DetectionEventResponse, status_code=201, summary="영상 AI 탐지")
+@router.post("/videos", response_model=VideoDetectionAcceptedResponse, status_code=202, summary="영상 AI 탐지")
 async def detect_video(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
-    inference_service: Annotated[DetectionInferenceService, Depends(get_inference_service)],
     file: Annotated[UploadFile, File(description="탐지할 영상")],
-) -> DetectionEventResponse:
+) -> VideoDetectionAcceptedResponse:
     media_path, media_key = await save_upload_file(
         file,
         current_user=current_user,
@@ -219,19 +220,40 @@ async def detect_video(
     except Exception:
         media_path.unlink(missing_ok=True)
         raise
-    try:
-        await run_in_threadpool(
-            process_detection_event,
-            db,
-            event_id=event.id,
-            media_path=media_path,
-            inference_service=inference_service,
-        )
-    except DetectionModelUnavailableError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="AI detection could not be completed") from exc
-    return get_latest_user_event_or_404(db, event_id=event.id, user_id=current_user.id)
+    return VideoDetectionAcceptedResponse(
+        detection_event_id=event.id,
+        video_job_id=event.video_job.id,
+        status=event.video_job.status,
+        stage=event.video_job.processing_stage,
+    )
+
+
+@router.get("/{id}/processing-status", response_model=VideoProcessingStatusResponse)
+def get_video_processing_status(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+    id: Annotated[int, ApiPath(ge=1)],
+) -> VideoProcessingStatusResponse:
+    event = get_user_detection_event(db, event_id=id, user_id=current_user.id)
+    if event is None or event.source_type != "VIDEO" or event.video_job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video job not found")
+    job = event.video_job
+    analysis_progress = None
+    if job.total_frames is not None and job.total_frames > 0:
+        analysis_progress = min(100, max(0, round(job.processed_frames / job.total_frames * 100)))
+    return VideoProcessingStatusResponse(
+        detection_event_id=event.id,
+        video_job_id=job.id,
+        status=job.status,
+        stage=job.processing_stage,
+        processed_frames=job.processed_frames,
+        total_frames=job.total_frames,
+        analysis_progress=analysis_progress,
+        processing_started_at=job.processing_started_at,
+        processing_completed_at=job.processing_completed_at,
+        result_ready=job.status == "COMPLETED",
+        error_message="영상 분석을 완료하지 못했어요. 잠시 후 다시 시도해주세요." if job.status == "FAILED" else None,
+    )
 
 
 @router.post("/webcam/frame", response_model=WebcamDetectionFrameResponse, summary="실시간 웹캠 프레임 AI 탐지")

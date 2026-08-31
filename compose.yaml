@@ -106,6 +106,7 @@ services:
       APP_HOST: 0.0.0.0
       APP_PORT: "8001"
       AI_INTERNAL_API_KEY: ${AI_INTERNAL_API_KEY:?Set AI_INTERNAL_API_KEY}
+      BACKEND_INTERNAL_URL: http://backend:8000
       DETECTION_MODEL: ${DETECTION_MODEL:-/app/models/best.pt}
       DETECTION_CONFIDENCE: ${DETECTION_CONFIDENCE:-0.25}
       DETECTION_IMGSZ: ${DETECTION_IMGSZ:-640}
@@ -127,6 +128,33 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+
+  backend-video-worker:
+    build:
+      context: ./backend
+    command: ["python", "-m", "app.workers.video_detection_worker"]
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY}
+      FRONTEND_URL: ${FRONTEND_URL:?Set FRONTEND_URL}
+      OAUTH_BACKEND_BASE_URL: ${OAUTH_BACKEND_BASE_URL:?Set OAUTH_BACKEND_BASE_URL}
+      UPLOAD_DIR: /app/uploads
+      AI_SERVICE_URL: http://backend-ai:8001
+      AI_INTERNAL_API_KEY: ${AI_INTERNAL_API_KEY:?Set AI_INTERNAL_API_KEY}
+      AI_SERVICE_TIMEOUT_SECONDS: ${AI_SERVICE_TIMEOUT_SECONDS:-30}
+      AI_VIDEO_SERVICE_TIMEOUT_SECONDS: ${AI_VIDEO_SERVICE_TIMEOUT_SECONDS:-120}
+      VIDEO_JOB_POLL_SECONDS: ${VIDEO_JOB_POLL_SECONDS:-1}
+      VIDEO_JOB_STALE_SECONDS: ${VIDEO_JOB_STALE_SECONDS:-300}
+    volumes:
+      - flowlink_uploads:/app/uploads
+    depends_on:
+      backend:
+        condition: service_healthy
+      backend-ai:
+        condition: service_healthy
+    networks:
+      - flowlink
 
 networks:
   flowlink:

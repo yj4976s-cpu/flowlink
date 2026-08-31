@@ -72,8 +72,9 @@ def create_user_detection_event(
                 detection_event_id=event.id,
                 status="PROCESSING",
                 processing_progress=0,
+                processing_stage="QUEUED",
+                processed_frames=0,
                 tracking_algorithm="BYTE_TRACK",
-                processing_started_at=now,
                 created_at=now,
                 updated_at=now,
             ),
@@ -104,6 +105,7 @@ def process_detection_event(
     event_id: int,
     media_path: Path,
     inference_service: DetectionInferenceService,
+    video_job_id: int | None = None,
 ) -> DetectionEvent:
     event = get_detection_event_by_id(db, event_id)
     if event is None:
@@ -111,10 +113,15 @@ def process_detection_event(
 
     try:
         result = (
-            inference_service.analyze_video(media_path)
+            inference_service.analyze_video(media_path, video_job_id=video_job_id)
             if event.source_type == "VIDEO"
             else inference_service.analyze_image(media_path)
         )
+        if event.source_type == "VIDEO" and event.video_job is not None:
+            db.refresh(event.video_job)
+            event.video_job.processing_stage = "SAVING"
+            event.video_job.updated_at = utc_now()
+            db.commit()
         return _complete_with_result(db, event=event, result=result, media_path=media_path)
     except DetectionInferenceUnavailableError as exc:
         failed_event = _mark_failed(db, event=event, message=sanitize_error_message(str(exc)))

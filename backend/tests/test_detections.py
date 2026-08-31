@@ -42,6 +42,8 @@ from app.services.webcam_inference import (
     WebcamInferenceUnavailableError,
     get_webcam_inference_service,
 )
+from app.repositories.detections import claim_next_queued_video_job
+from app.workers.video_detection_worker import fail_stale_jobs, process_one_job
 
 
 @compiles(BigInteger, "sqlite")
@@ -57,8 +59,9 @@ class MockInferenceService(DetectionInferenceService):
         assert media_path.exists()
         return self.result
 
-    def analyze_video(self, media_path: Path) -> DetectionInferenceResult:
+    def analyze_video(self, media_path: Path, *, video_job_id: int | None = None) -> DetectionInferenceResult:
         assert media_path.exists()
+        assert video_job_id is not None
         return self.result
 
 
@@ -369,24 +372,18 @@ def test_default_video_inference_uses_backend_ai_client_and_preserves_tracks(cli
 
     response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
 
-    assert response.status_code == 201
-    assert fake_client.video_file_calls == 1
+    assert response.status_code == 202
+    assert fake_client.video_file_calls == 0
     body = response.json()
-    assert body["status"] == "COMPLETED"
-    assert body["media_width"] == 640
-    assert body["media_height"] == 360
-    assert [item["class_code"] for item in body["detected_objects"]] == ["FOOTWEAR", "BALL", "TRASH"]
-    assert body["detected_objects"][0]["track_id"] == 4
-    assert body["detected_objects"][0]["first_seen_ms"] == 133
-    assert body["detected_objects"][0]["last_seen_ms"] == 2200
-    assert body["detected_objects"][0]["appearance_count"] == 41
+    assert body["status"] == "PROCESSING"
+    assert body["stage"] == "QUEUED"
     event = db.query(DetectionEvent).one()
     job = db.query(VideoJob).one()
-    assert event.status == "COMPLETED"
-    assert event.result_media_url is not None
-    assert event.result_media_url.endswith("-result.mp4")
-    assert job.status == "COMPLETED"
-    assert job.processing_progress == 100
+    assert event.status == "PROCESSING"
+    assert event.result_media_url is None
+    assert job.status == "PROCESSING"
+    assert job.processing_stage == "QUEUED"
+    assert job.processing_progress == 0
 
 
 def test_video_detection_processes_event_through_threadpool(
@@ -407,9 +404,9 @@ def test_video_detection_processes_event_through_threadpool(
 
     response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
 
-    assert response.status_code == 201
-    assert called["value"] is True
-    assert response.json()["status"] == "COMPLETED"
+    assert response.status_code == 202
+    assert called["value"] is False
+    assert response.json()["stage"] == "QUEUED"
 
 
 def test_webcam_inference_uses_backend_ai_client() -> None:
@@ -881,16 +878,87 @@ def test_video_detection_creates_video_job(client: TestClient, db: Session) -> N
 
     response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
 
-    assert response.status_code == 201
-    assert response.json()["status"] == "COMPLETED"
+    assert response.status_code == 202
+    assert response.json()["status"] == "PROCESSING"
     event = db.query(DetectionEvent).one()
-    assert event.status == "COMPLETED"
+    assert event.status == "PROCESSING"
     job = db.query(VideoJob).one()
-    assert job.detection_event_id == response.json()["id"]
-    assert job.status == "COMPLETED"
-    assert job.processing_progress == 100
-    assert job.processing_completed_at is not None
+    assert job.detection_event_id == response.json()["detection_event_id"]
+    assert job.status == "PROCESSING"
+    assert job.processing_stage == "QUEUED"
+    assert job.processing_progress == 0
+    assert job.processing_completed_at is None
     assert job.error_message is None
+
+
+def test_video_worker_completes_queued_job_and_zero_detection_is_success(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
+    assert response.status_code == 202
+
+    service = MockInferenceService(
+        DetectionInferenceResult(media_width=320, media_height=180, detections=[], rendered_video=b"rendered")
+    )
+    assert process_one_job(db, inference_service=service) is True
+
+    event = db.query(DetectionEvent).one()
+    job = db.query(VideoJob).one()
+    assert event.status == "COMPLETED"
+    assert event.detected_objects == []
+    assert job.status == "COMPLETED"
+    assert job.processing_stage == "COMPLETED"
+    assert job.processing_progress == 100
+
+
+def test_video_status_is_owner_scoped_and_internal_progress_requires_key(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = seed_user(db, 1)
+    other = seed_user(db, 2)
+    authenticate(client, owner)
+    accepted = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")}).json()
+    event_id = accepted["detection_event_id"]
+    job_id = accepted["video_job_id"]
+
+    response = client.get(f"/api/detections/{event_id}/processing-status")
+    assert response.status_code == 200
+    assert response.json()["stage"] == "QUEUED"
+    assert response.json()["analysis_progress"] is None
+
+    authenticate(client, other)
+    assert client.get(f"/api/detections/{event_id}/processing-status").status_code == 404
+    client.cookies.clear()
+    assert client.get(f"/api/detections/{event_id}/processing-status").status_code == 401
+
+    key = "flowlink-test-ai-internal-key-32-chars"
+    monkeypatch.setattr(get_settings(), "AI_INTERNAL_API_KEY", key)
+    endpoint = f"/api/internal/video-jobs/{job_id}/progress"
+    assert client.post(endpoint, json={"stage": "ANALYZING", "processed_frames": 3, "total_frames": 10}).status_code == 403
+    assert client.post(endpoint, headers={"X-Internal-API-Key": "wrong"}, json={"stage": "ANALYZING"}).status_code == 403
+    assert client.post(endpoint, headers={"X-Internal-API-Key": key}, json={"stage": "ANALYZING", "processed_frames": 3, "total_frames": 10}).status_code == 204
+    db.expire_all()
+    job = db.get(VideoJob, job_id)
+    assert job.processing_stage == "ANALYZING"
+    assert job.processed_frames == 3
+    assert job.total_frames == 10
+
+
+def test_video_job_claim_is_single_use_and_stale_processing_fails(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
+
+    claimed_at = utc_now() - timedelta(minutes=10)
+    job_id = claim_next_queued_video_job(db, started_at=claimed_at)
+    db.commit()
+    assert job_id is not None
+    assert claim_next_queued_video_job(db, started_at=utc_now()) is None
+    assert fail_stale_jobs(db) == 1
+    db.expire_all()
+    job = db.get(VideoJob, job_id)
+    assert job.status == "FAILED"
+    assert job.processing_stage == "FAILED"
 
 
 def test_video_detection_fails_when_rendered_result_video_is_missing(client: TestClient, db: Session) -> None:
@@ -900,12 +968,12 @@ def test_video_detection_fails_when_rendered_result_video_is_missing(client: Tes
 
     response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
 
-    assert response.status_code == 500
+    assert response.status_code == 202
     event = db.query(DetectionEvent).one()
     job = db.query(VideoJob).one()
-    assert event.status == "FAILED"
+    assert event.status == "PROCESSING"
     assert event.result_media_url is None
-    assert job.status == "FAILED"
+    assert job.status == "PROCESSING"
 
 
 def test_video_detection_removes_rendered_result_video_when_db_save_fails(
@@ -943,8 +1011,8 @@ def test_video_detection_removes_rendered_result_video_when_db_save_fails(
 
     response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
 
-    assert response.status_code == 500
-    assert db.query(DetectionEvent).one().status == "FAILED"
+    assert response.status_code == 202
+    assert db.query(DetectionEvent).one().status == "PROCESSING"
     assert db.query(DetectedObject).count() == 0
     assert not list((tmp_path / "uploads").glob("detections/user/1/*-result.mp4"))
 

@@ -129,15 +129,18 @@ class AIInferenceClient:
             content_type=content_type,
         )
 
-    def infer_video_file(self, media_path: Path) -> AIInferenceVideoResult:
+    def infer_video_file(self, media_path: Path, *, video_job_id: int | None = None) -> AIInferenceVideoResult:
         if not self.base_url or not self.internal_api_key:
             raise AIInferenceUnavailableError("AI inference service is unavailable")
 
         try:
+            headers = {"X-Internal-API-Key": self.internal_api_key}
+            if video_job_id is not None:
+                headers["X-Video-Job-ID"] = str(video_job_id)
             with media_path.open("rb") as payload:
                 response = httpx.post(
                     f"{self.base_url}/api/inference/videos?render=true",
-                    headers={"X-Internal-API-Key": self.internal_api_key},
+                    headers=headers,
                     files={"file": (media_path.name, payload, "video/mp4")},
                     timeout=self.video_timeout_seconds,
                 )

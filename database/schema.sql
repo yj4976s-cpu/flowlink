@@ -251,6 +251,12 @@ CREATE TABLE video_jobs (
             processing_progress BETWEEN 0 AND 100
         ),
 
+    processing_stage VARCHAR(20) NOT NULL DEFAULT 'QUEUED'
+        CHECK (processing_stage IN ('QUEUED', 'ANALYZING', 'RENDERING', 'SAVING', 'COMPLETED', 'FAILED')),
+
+    processed_frames INTEGER NOT NULL DEFAULT 0 CHECK (processed_frames >= 0),
+    total_frames INTEGER CHECK (total_frames IS NULL OR total_frames > 0),
+
     tracking_algorithm VARCHAR(20) NOT NULL DEFAULT 'BYTE_TRACK'
         CHECK (
             tracking_algorithm IN (
@@ -1092,6 +1098,9 @@ CREATE INDEX idx_processing_histories_entity
 
 CREATE INDEX idx_video_jobs_status
     ON video_jobs (status);
+CREATE INDEX idx_video_jobs_queue
+    ON video_jobs (created_at, id)
+    WHERE status = 'PROCESSING' AND processing_stage = 'QUEUED';
 
 CREATE TABLE copilot_conversations (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, public_id VARCHAR(36) NOT NULL UNIQUE, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE, title VARCHAR(120) NOT NULL, context_type VARCHAR(30) NOT NULL DEFAULT 'GENERAL', context_entity_id BIGINT, summary TEXT, summary_updated_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_message_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), deleted_at TIMESTAMPTZ);
 CREATE TABLE copilot_messages (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, conversation_id BIGINT NOT NULL REFERENCES copilot_conversations(id) ON DELETE CASCADE, role VARCHAR(12) NOT NULL CHECK (role IN ('USER','ASSISTANT')), content TEXT NOT NULL, presentation_type VARCHAR(30) NOT NULL DEFAULT 'TEXT', presentation JSONB, client_message_id VARCHAR(64), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(conversation_id,client_message_id));
