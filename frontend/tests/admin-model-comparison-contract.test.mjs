@@ -6,6 +6,7 @@ import {
   classComparisonStatus,
   currentModelLabel,
   fileSizeLabel,
+  getAdminAiReportModelStatusView,
   hasMeasuredModelComparison,
   isMeasuredNumber,
   metricBarViewState,
@@ -14,6 +15,50 @@ import {
   metricLabel,
   modelComparisonStatusView,
 } from "../src/components/admin/model-comparison/modelComparisonViewState.ts";
+
+const comparisonFixture = {
+  current_deployed_model_id: "flowlink-4class-hat-v7",
+  current_deployed_model_status: "신규 HAT 4클래스 모델 배포 확인",
+  models: [
+    {
+      id: "flowlink-3class-v6",
+      display_name: "기존 3클래스 모델",
+      precision: null,
+      recall: null,
+      map50: null,
+      map50_95: null,
+      average_inference_ms: null,
+      fps: null,
+      class_metrics: [],
+    },
+    {
+      id: "flowlink-4class-hat-v7",
+      display_name: "신규 HAT 4클래스 모델",
+      precision: null,
+      recall: null,
+      map50: null,
+      map50_95: null,
+      average_inference_ms: null,
+      fps: null,
+      class_metrics: [],
+    },
+  ],
+};
+
+const runtimeFixture = {
+  active_model_id: "flowlink-4class-hat-v7",
+  previous_model_id: "flowlink-3class-v6",
+  active_display_name: "신규 HAT 4클래스 모델",
+  active_classes: ["BALL", "HAT", "FOOTWEAR", "TRASH"],
+  switched_at: "2026-08-31T12:00:00Z",
+  model_ready: true,
+  switching: false,
+  available_models: [],
+  rollback_available: true,
+  status_source: "runtime",
+  audit_consistency: "MATCHED",
+  audit_warning: null,
+};
 
 test("model comparison metric labels keep unknown values explicit", () => {
   assert.equal(metricLabel(null, { percent: true }), "측정 전");
@@ -137,6 +182,102 @@ test("model comparison status reports measured and error states explicitly", () 
   assert.equal(modelComparisonStatusView(null, { error: true }).title, "모델 비교 정보를 불러오지 못했습니다.");
 });
 
+test("AI report model status uses runtime success over comparison metadata", () => {
+  const status = getAdminAiReportModelStatusView({
+    comparison: comparisonFixture,
+    deployment: runtimeFixture,
+  });
+
+  assert.equal(status.title, "신규 HAT 4클래스 모델 운영 중");
+  assert.match(status.description, /Backend-AI runtime 기준 활성 모델/);
+  assert.match(status.description, /BALL, HAT, FOOTWEAR, TRASH/);
+  assert.equal(status.warning, "");
+  assert.equal(status.tone, "deployed");
+});
+
+test("AI report model status keeps runtime success when comparison fails", () => {
+  const status = getAdminAiReportModelStatusView({
+    comparison: null,
+    deployment: runtimeFixture,
+    comparisonError: true,
+  });
+
+  assert.equal(status.title, "신규 HAT 4클래스 모델 운영 중");
+  assert.match(status.warning, /평가 데이터만 불러오지 못했습니다/);
+  assert.doesNotMatch(status.title, /확인할 수 없습니다/);
+});
+
+test("AI report model status never treats comparison metadata as runtime when runtime fails", () => {
+  const status = getAdminAiReportModelStatusView({
+    comparison: comparisonFixture,
+    deployment: null,
+    deploymentError: true,
+  });
+
+  assert.equal(status.title, "현재 운영 모델을 확인할 수 없습니다.");
+  assert.equal(status.description, "Backend-AI runtime 상태 확인에 실패했습니다. 특정 모델이 현재 운영 중이라고 단정하지 않습니다.");
+  assert.doesNotMatch(status.title, /신규 HAT 4클래스 모델/);
+  assert.doesNotMatch(status.title, /운영 중|서비스에 연결/);
+  assert.equal(status.tone, "error");
+});
+
+test("AI report model status keeps safe copy when both comparison and runtime fail", () => {
+  const status = getAdminAiReportModelStatusView({
+    comparison: null,
+    deployment: null,
+    comparisonError: true,
+    deploymentError: true,
+  });
+
+  assert.equal(status.title, "현재 운영 모델을 확인할 수 없습니다.");
+  assert.match(status.description, /특정 모델이 현재 운영 중이라고 단정하지 않습니다/);
+  assert.doesNotMatch(`${status.title} ${status.description} ${status.warning}`, /backend-ai:8001|API_KEY|secret|C:\\|\/app\/models/);
+});
+
+test("AI report model status does not use comparison metadata while runtime is loading", () => {
+  const status = getAdminAiReportModelStatusView({
+    comparison: comparisonFixture,
+    deployment: null,
+    deploymentLoading: true,
+  });
+
+  assert.equal(status.title, "Backend-AI runtime 상태를 확인하고 있습니다.");
+  assert.doesNotMatch(status.title, /신규 HAT 4클래스 모델/);
+  assert.doesNotMatch(status.title, /운영 중|서비스에 연결/);
+  assert.equal(status.tone, "pending");
+});
+
+test("AI report model status shows runtime model and warns on comparison mismatch", () => {
+  const status = getAdminAiReportModelStatusView({
+    comparison: comparisonFixture,
+    deployment: {
+      ...runtimeFixture,
+      active_model_id: "flowlink-3class-v6",
+      active_display_name: "기존 3클래스 모델",
+      active_classes: ["BALL", "FOOTWEAR", "TRASH"],
+      audit_consistency: "MISMATCH",
+    },
+  });
+
+  assert.equal(status.title, "기존 3클래스 모델 운영 중");
+  assert.match(status.warning, /운영 상태는 Backend-AI runtime을 기준/);
+});
+
+test("AI report model status avoids fallback to comparison model when runtime name is missing", () => {
+  const status = getAdminAiReportModelStatusView({
+    comparison: comparisonFixture,
+    deployment: {
+      ...runtimeFixture,
+      active_display_name: null,
+    },
+  });
+
+  assert.equal(status.title, "현재 운영 모델 확인이 필요합니다.");
+  assert.doesNotMatch(status.title, /신규 HAT 4클래스 모델/);
+  assert.doesNotMatch(status.title, /운영 중|서비스에 연결/);
+  assert.equal(status.tone, "pending");
+});
+
 test("model comparison page is admin guarded and linked from operations analysis menu", () => {
   const page = readFileSync("src/app/admin/model-comparison/page.tsx", "utf8");
   const header = readFileSync("src/components/layout/Header.tsx", "utf8");
@@ -185,7 +326,7 @@ test("AI report reads model comparison status instead of hardcoding missing eval
   assert.doesNotMatch(aiReport, /모델 평가 데이터는 아직 별도로 연결되지 않았어요/);
   assert.match(aiReport, /getAdminModelComparison/);
   assert.match(aiReport, /ModelComparisonStatus/);
-  assert.match(aiReport, /modelComparisonStatusView/);
+  assert.match(aiReport, /getAdminAiReportModelStatusView/);
   assert.match(aiReport, /\/admin\/model-comparison/);
 });
 
@@ -229,11 +370,13 @@ test("activate modal traps focus and only dismisses when safe", () => {
 test("runtime mismatch warnings are shown in model comparison and AI report", () => {
   const comparisonClient = readFileSync("src/components/admin/model-comparison/AdminModelComparisonClient.tsx", "utf8");
   const aiReport = readFileSync("src/components/admin/ai-report/AdminAiReportClient.tsx", "utf8");
+  const viewState = readFileSync("src/components/admin/model-comparison/modelComparisonViewState.ts", "utf8");
 
   assert.match(comparisonClient, /jsonRuntimeMismatch/);
   assert.match(comparisonClient, /audit_warning/);
-  assert.match(aiReport, /jsonRuntimeMismatch/);
-  assert.match(aiReport, /audit_warning/);
+  assert.match(aiReport, /getAdminAiReportModelStatusView/);
+  assert.match(viewState, /jsonRuntimeMismatch/);
+  assert.match(viewState, /audit_warning/);
   assert.match(comparisonClient, /Backend-AI runtime을 기준으로 표시합니다/);
-  assert.match(aiReport, /Backend-AI runtime을 기준으로 표시합니다/);
+  assert.match(viewState, /Backend-AI runtime을 기준으로 표시합니다/);
 });

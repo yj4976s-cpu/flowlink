@@ -1,4 +1,4 @@
-import type { AdminModelClassMetric, AdminModelComparisonModel } from "@/lib/adminModelComparisonApi";
+import type { AdminModelClassMetric, AdminModelComparisonModel, AdminModelDeploymentStatus } from "@/lib/adminModelComparisonApi";
 
 export type DeltaTone = "better" | "worse" | "neutral" | "new" | "missing";
 
@@ -106,6 +106,19 @@ export type ModelComparisonStatusView = {
   tone: "deployed" | "measured" | "pending" | "error";
 };
 
+type AdminAiReportModelStatusInput = {
+  comparison: ModelComparisonStatusInput | null;
+  deployment: AdminModelDeploymentStatus | null;
+  comparisonLoading?: boolean;
+  comparisonError?: boolean;
+  deploymentLoading?: boolean;
+  deploymentError?: boolean;
+};
+
+export type AdminAiReportModelStatusView = ModelComparisonStatusView & {
+  warning: string;
+};
+
 export function hasMeasuredModelComparison(data: ModelComparisonStatusInput | null) {
   return Boolean(data?.models.some((model) => (
     [model.precision, model.recall, model.map50, model.map50_95, model.average_inference_ms, model.fps].some(isMeasuredNumber)
@@ -160,4 +173,67 @@ export function modelComparisonStatusView(
     actionLabel: "모델 비교 현황 보기",
     tone: "pending",
   };
+}
+
+export function getAdminAiReportModelStatusView({
+  comparison,
+  deployment,
+  comparisonLoading = false,
+  comparisonError = false,
+  deploymentLoading = false,
+  deploymentError = false,
+}: AdminAiReportModelStatusInput): AdminAiReportModelStatusView {
+  const comparisonStatus = modelComparisonStatusView(comparison, { loading: comparisonLoading, error: comparisonError });
+  const jsonRuntimeMismatch = Boolean(
+    comparison?.current_deployed_model_id
+    && deployment?.active_model_id
+    && comparison.current_deployed_model_id !== deployment.active_model_id,
+  );
+
+  if (deploymentError) {
+    return {
+      title: "현재 운영 모델을 확인할 수 없습니다.",
+      description: "Backend-AI runtime 상태 확인에 실패했습니다. 특정 모델이 현재 운영 중이라고 단정하지 않습니다.",
+      actionLabel: comparisonStatus.actionLabel,
+      tone: "error",
+      warning: "",
+    };
+  }
+
+  if (deploymentLoading) {
+    return {
+      title: "Backend-AI runtime 상태를 확인하고 있습니다.",
+      description: "실제 활성 모델 확인이 끝나기 전까지 평가 JSON의 배포 메모를 운영 상태로 표시하지 않습니다.",
+      actionLabel: comparisonStatus.actionLabel,
+      tone: "pending",
+      warning: "",
+    };
+  }
+
+  if (deployment) {
+    if (!deployment.active_display_name) {
+      return {
+        title: "현재 운영 모델 확인이 필요합니다.",
+        description: "Backend-AI runtime 응답에 활성 모델 이름이 없어 특정 모델명을 표시하지 않습니다.",
+        actionLabel: comparisonStatus.actionLabel,
+        tone: "pending",
+        warning: deployment.audit_warning ?? "",
+      };
+    }
+
+    return {
+      title: `${deployment.active_display_name} 운영 중`,
+      description: `Backend-AI runtime 기준 활성 모델입니다. 활성 클래스: ${deployment.active_classes.join(", ") || "확인 중"}`,
+      actionLabel: comparisonStatus.actionLabel,
+      tone: "deployed",
+      warning: deployment.audit_warning
+        ?? (jsonRuntimeMismatch
+          ? "실제 운영 모델과 평가 JSON의 배포 메모가 다릅니다. 운영 상태는 Backend-AI runtime을 기준으로 표시합니다."
+          : comparisonError
+            ? "평가 데이터만 불러오지 못했습니다. 현재 운영 모델 상태는 Backend-AI runtime 기준으로 표시합니다."
+            : ""),
+    };
+  }
+
+  return { ...comparisonStatus, warning: "" };
 }

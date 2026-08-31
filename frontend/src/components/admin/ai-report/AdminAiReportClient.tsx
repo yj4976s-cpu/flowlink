@@ -12,7 +12,7 @@ import {
   type AdminOperationsBriefingStatus,
 } from "@/lib/adminAiReportApi";
 import { getAdminModelComparison, getAdminModelDeployment, type AdminModelComparison, type AdminModelDeploymentStatus } from "@/lib/adminModelComparisonApi";
-import { modelComparisonStatusView } from "@/components/admin/model-comparison/modelComparisonViewState";
+import { getAdminAiReportModelStatusView } from "@/components/admin/model-comparison/modelComparisonViewState";
 import { adminOperationsBriefingFallbackTasks, geminiBriefingLabel } from "./adminAiReportViewState";
 import styles from "./AdminAiReportClient.module.css";
 
@@ -183,27 +183,20 @@ function Report({ report, modelComparison, modelDeployment, modelComparisonLoadi
 }
 
 function ModelComparisonStatus({ comparison, deployment, comparisonLoading, comparisonError, deploymentLoading, deploymentError }: { comparison: AdminModelComparison | null; deployment: AdminModelDeploymentStatus | null; comparisonLoading: boolean; comparisonError: boolean; deploymentLoading: boolean; deploymentError: boolean }) {
-  const status = modelComparisonStatusView(comparison, { loading: comparisonLoading, error: comparisonError });
-  const jsonRuntimeMismatch = Boolean(
-    comparison?.current_deployed_model_id
-    && deployment?.active_model_id
-    && comparison.current_deployed_model_id !== deployment.active_model_id,
-  );
-  const runtimeTitle = deploymentLoading
-    ? "Backend-AI runtime 상태를 확인하고 있습니다."
-    : deployment?.active_display_name ? `${deployment.active_display_name} 운영 중` : status.title;
-  const runtimeDescription = deployment
-    ? `Backend-AI runtime 기준 활성 모델입니다. 활성 클래스: ${deployment.active_classes.join(", ") || "확인 중"}`
-    : status.description;
-  const warning = deployment?.audit_warning
-    ?? (jsonRuntimeMismatch ? "실제 운영 모델과 평가 JSON의 배포 메모가 다릅니다. 운영 상태는 Backend-AI runtime을 기준으로 표시합니다." : "");
+  const status = getAdminAiReportModelStatusView({
+    comparison,
+    deployment,
+    comparisonLoading,
+    comparisonError,
+    deploymentLoading,
+    deploymentError,
+  });
   return <section className={`${styles.panel} ${styles.modelEmpty}`} data-tone={status.tone} aria-label="모델 비교 상태">
     <Icon name="layers" size={30} />
     <div>
-      <h2>{runtimeTitle}</h2>
-      <p>{deploymentError ? "Backend-AI runtime 상태 확인에 실패했습니다. 특정 모델이 현재 운영 중이라고 단정하지 않습니다." : runtimeDescription}</p>
-      {comparisonError && deployment && <p>평가 데이터만 불러오지 못했습니다. 현재 운영 모델 상태는 Backend-AI runtime 기준으로 표시합니다.</p>}
-      {warning && <p role="alert">{warning}</p>}
+      <h2>{status.title}</h2>
+      <p>{status.description}</p>
+      {status.warning && <p role="alert">{status.warning}</p>}
       <Link href="/admin/model-comparison">{status.actionLabel}<Icon name="arrow" size={13} /></Link>
     </div>
   </section>;
