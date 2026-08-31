@@ -550,12 +550,13 @@
   .boardStage { padding-inline: 0; }
   .selector { min-height: calc(100dvh - 68px); padding-top: 24px; }
   .lobbyHeader p { max-width: 300px; font-size: 13px; }
-  .previewBoard { height: 250px; margin-top: 14px; border-radius: 22px; }
+  .previewBoard { height: 300px; margin-top: 14px; border-radius: 22px; }
   .previewCard { width: 60px; height: 76px; }
   .previewOne { top: 25px; left: 7%; }.previewTwo { top: 23px; right: 9%; }
   .previewDaru { width: 136px; height: 158px; top: 35px; }
   .previewItem1 { bottom: 42px; left: 7%; }.previewItem2 { top: 109px; right: 3%; }.previewItem3 { display: none; }
-  .previewBubble { left: calc(50% + 48px); top: 35px; min-width: 112px; max-width: 126px; padding: 7px 9px; font-size: 10px; }.previewBubble strong { font-size: 12px; }
+  .previewBubble { left: 50%; top: 198px; min-width: 132px; max-width: 150px; padding: 7px 10px; font-size: 10px; text-align: center; transform: translateX(-50%); }.previewBubble strong { font-size: 12px; }
+  .previewBubble::before { top: -6px; bottom: auto; left: calc(50% - 5px); border-width: 1px 0 0 1px; }
   .lobbyFlow { bottom: 8px; gap: 4px; }.lobbyFlow li { font-size: 9px; }.lobbyFlow b { width: 16px; height: 16px; }
   .scoreGuide { padding-inline: 8px; }.scoreSummary { display: none; }
   .scorePopover { padding: 20px 16px 17px; }.scorePopover header { margin-bottom: 16px; }.scorePopover header strong { font-size: 17px; }.scorePopover header button { top: 11px; right: 11px; }

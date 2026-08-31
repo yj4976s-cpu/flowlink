@@ -132,6 +132,8 @@ class FailingAIInferenceClient:
         ("AQUATIC_PLANT", "AQUATIC_PLANT"),
         ("aquatic_plant", "AQUATIC_PLANT"),
         ("aquatic plant", "AQUATIC_PLANT"),
+        ("HAT", "HAT"),
+        ("hat", "HAT"),
     ],
 )
 def test_flowlink_custom_model_labels_map_directly(model_label: str, expected: str) -> None:

@@ -58,9 +58,10 @@ const adminNavigation: readonly NavigationItem[] = [
   {
     label: "운영 분석",
     href: "/admin/ai-report",
-    activePaths: ["/admin/ai-report", "/admin/users", "/admin/community-posts"],
+    activePaths: ["/admin/ai-report", "/admin/model-comparison", "/admin/users", "/admin/community-posts"],
     children: [
       { label: "AI 리포트", href: "/admin/ai-report" },
+      { label: "모델 비교", href: "/admin/model-comparison" },
       { label: "사용자 관리", href: "/admin/users" },
       { label: "게시글 관리", href: "/admin/community-posts" },
     ],

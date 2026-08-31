@@ -48,10 +48,11 @@ MODEL_LABEL_TO_CLASS_CODE = {
     "footwear": "FOOTWEAR",
     "shoe": "FOOTWEAR",
     "sneaker": "FOOTWEAR",
+    "hat": "HAT",
     "bottle": "TRASH",
     "cup": "TRASH",
 }
-KNOWN_CLASS_CODES = {"TRASH", "BRANCH", "AQUATIC_PLANT", "BALL", "BAG", "UMBRELLA", "FOOTWEAR"}
+KNOWN_CLASS_CODES = {"TRASH", "BRANCH", "AQUATIC_PLANT", "BALL", "BAG", "UMBRELLA", "FOOTWEAR", "HAT"}
 SAME_CLASS_OVERLAP_THRESHOLD = 0.5
 
 
