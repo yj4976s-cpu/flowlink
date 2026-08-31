@@ -52,6 +52,22 @@ function metricValue(model: AdminModelComparisonModel, key: MetricKey) {
   return model[key];
 }
 
+function safeRatio(value: number | null, max: number) {
+  if (value == null || Number.isNaN(value) || max <= 0) return 0;
+  return Math.max(0, Math.min(100, value / max * 100));
+}
+
+function completedMetricCount(model: AdminModelComparisonModel) {
+  return METRICS.filter((metric) => metricValue(model, metric.key) != null).length;
+}
+
+function classAccent(code: string) {
+  if (code === "HAT") return "hat";
+  if (code === "TRASH") return "trash";
+  if (code === "FOOTWEAR") return "footwear";
+  return "ball";
+}
+
 export function AdminModelComparisonClient() {
   const [data, setData] = useState<AdminModelComparison | null>(null);
   const [loading, setLoading] = useState(true);
@@ -90,6 +106,8 @@ function ModelComparison({ data }: { data: AdminModelComparison }) {
     before: classMetricByCode(previous, code),
     after: classMetricByCode(current, code),
   })), [current, previous]);
+  const previousMeasured = completedMetricCount(previous);
+  const currentMeasured = completedMetricCount(current);
 
   return <main className={styles.page}>
     <header className={styles.intro}>
@@ -106,32 +124,21 @@ function ModelComparison({ data }: { data: AdminModelComparison }) {
       <p>이 화면은 사전 평가 결과를 읽는 관리자 전용 화면이며, 실시간 모델 전환 화면이 아닙니다. 웹 요청 중 YOLO 모델을 로딩하지 않습니다. 동일 테스트셋 결과만 직접 비교할 수 있으며, mAP와 매칭 점수는 소유권 확률이 아닙니다.</p>
     </section>
 
-    <section className={styles.summaryGrid} aria-label="모델 비교 요약">
-      <SummaryCard label="기존 모델" value={previous.display_name} note={previous.file_name} />
-      <SummaryCard label="신규 HAT 모델" value={current.display_name} note={current.file_name} tone="hat" />
-      <SummaryCard label="현재 배포 모델" value={currentDeployed} note="배포 모델 환경값은 이 화면에서 변경하지 않습니다" />
-      <SummaryCard label="평가 생성 시각" value={dateTime(data.generated_at)} note={data.evaluation.dataset_name} />
+    <section className={styles.modelHero} aria-label="모델 비교 요약">
+      <ModelCard model={previous} label="기존 3클래스" measured={previousMeasured} />
+      <div className={styles.compareBadge} aria-hidden="true">
+        <span>VS</span>
+        <i />
+      </div>
+      <ModelCard model={current} label="신규 HAT 4클래스" measured={currentMeasured} highlight />
+      <aside className={styles.deployCard}>
+        <span>현재 배포 모델</span>
+        <strong>{currentDeployed}</strong>
+        <small>평가 생성 {dateTime(data.generated_at)} · {data.evaluation.dataset_name}</small>
+      </aside>
     </section>
 
-    <section className={styles.metrics} aria-label="핵심 지표 비교">
-      {METRICS.map((metric) => {
-        const before = metricValue(previous, metric.key);
-        const after = metricValue(current, metric.key);
-        const delta = metricDelta(before, after, {
-          lowerIsBetter: metric.lowerIsBetter,
-          percentPoint: metric.percentPoint,
-        });
-
-        return <article key={metric.key} className={styles.metric}>
-          <span>{metric.label}</span>
-          <div>
-            <p><small>{previous.display_name}</small><strong>{metric.format(before)}</strong></p>
-            <p><small>{current.display_name}</small><strong>{metric.format(after)}</strong></p>
-          </div>
-          <b data-tone={delta.tone}>{delta.label}</b>
-        </article>;
-      })}
-    </section>
+    <MetricComparisonPanel previous={previous} current={current} />
 
     <section className={styles.panel}>
       <div className={styles.panelTitle}>
@@ -139,14 +146,8 @@ function ModelComparison({ data }: { data: AdminModelComparison }) {
         <h2>클래스별 성능</h2>
         <p>HAT는 기존 모델에 없는 신규 클래스이므로 0점이 아니라 미지원/N/A로 표시합니다.</p>
       </div>
-      <div className={styles.classTable} role="table" aria-label="클래스별 모델 성능 비교">
-        <div role="row" className={styles.tableHead}>
-          <span role="columnheader">클래스</span>
-          <span role="columnheader">기존 모델</span>
-          <span role="columnheader">신규 모델</span>
-          <span role="columnheader">변화</span>
-        </div>
-        {classRows.map(({ code, before, after }) => <ClassRow key={code} code={code} before={before} after={after} />)}
+      <div className={styles.classCards} aria-label="클래스별 모델 성능 비교">
+        {classRows.map(({ code, before, after }) => <ClassCard key={code} code={code} before={before} after={after} />)}
       </div>
     </section>
 
@@ -193,20 +194,82 @@ function ModelComparison({ data }: { data: AdminModelComparison }) {
   </main>;
 }
 
-function SummaryCard({ label, value, note, tone }: { label: string; value: string; note: string; tone?: string }) {
-  return <article className={styles.summaryCard} data-tone={tone}><span>{label}</span><strong>{value}</strong><small>{note}</small></article>;
+function ModelCard({ model, label, measured, highlight = false }: { model: AdminModelComparisonModel; label: string; measured: number; highlight?: boolean }) {
+  return <article className={styles.modelCard} data-highlight={highlight || undefined}>
+    <div>
+      <span>{label}</span>
+      <strong>{model.display_name}</strong>
+      <small>{model.file_name}</small>
+    </div>
+    <ul aria-label={`${model.display_name} 클래스`}>
+      {model.classes.map((item) => <li key={item}>{item}</li>)}
+    </ul>
+    <footer>
+      <b>{measured}/{METRICS.length}</b>
+      <span>측정 지표 등록</span>
+    </footer>
+  </article>;
 }
 
-function ClassRow({ code, before, after }: { code: string; before?: AdminModelClassMetric; after?: AdminModelClassMetric }) {
+function MetricComparisonPanel({ previous, current }: { previous: AdminModelComparisonModel; current: AdminModelComparisonModel }) {
+  return <section className={`${styles.panel} ${styles.metricPanel}`} aria-label="핵심 지표 비교 차트">
+    <div className={styles.panelTitle}>
+      <span>METRIC DASHBOARD</span>
+      <h2>핵심 지표 비교</h2>
+      <p>측정값이 없는 지표는 비어 있는 상태로 두어, 실제 평가가 끝난 항목과 아직 대기 중인 항목을 구분합니다.</p>
+    </div>
+    <div className={styles.metricRows}>
+      {METRICS.map((metric) => {
+        const before = metricValue(previous, metric.key);
+        const after = metricValue(current, metric.key);
+        const max = metric.percentPoint ? 1 : Math.max(before ?? 0, after ?? 0, 1);
+        const delta = metricDelta(before, after, {
+          lowerIsBetter: metric.lowerIsBetter,
+          percentPoint: metric.percentPoint,
+        });
+
+        return <article key={metric.key} className={styles.metricRow}>
+          <div className={styles.metricLabel}>
+            <strong>{metric.label}</strong>
+            <b data-tone={delta.tone}>{delta.label}</b>
+          </div>
+          <MetricBar label={previous.display_name} value={metric.format(before)} width={safeRatio(before, max)} />
+          <MetricBar label={current.display_name} value={metric.format(after)} width={safeRatio(after, max)} highlight />
+        </article>;
+      })}
+    </div>
+  </section>;
+}
+
+function MetricBar({ label, value, width, highlight = false }: { label: string; value: string; width: number; highlight?: boolean }) {
+  const measured = width > 0;
+  return <div className={styles.metricBar} data-highlight={highlight || undefined} data-empty={!measured || undefined}>
+    <span>{label}</span>
+    <i aria-hidden="true"><b style={{ width: `${measured ? width : 0}%` }} /></i>
+    <strong>{value}</strong>
+  </div>;
+}
+
+function ClassCard({ code, before, after }: { code: string; before?: AdminModelClassMetric; after?: AdminModelClassMetric }) {
   const status = classComparisonStatus(before, after);
   const label = after?.label ?? before?.label ?? code;
 
-  return <div role="row" className={styles.classRow} data-hat={code === "HAT" || undefined}>
-    <span role="cell"><strong>{label}</strong><small>{code}</small></span>
-    <MetricCell metric={before} />
-    <MetricCell metric={after} />
-    <b role="cell" data-tone={status.tone}>{status.label}</b>
-  </div>;
+  return <article className={styles.classCard} data-accent={classAccent(code)}>
+    <header>
+      <span><strong>{label}</strong><small>{code}</small></span>
+      <b data-tone={status.tone}>{status.label}</b>
+    </header>
+    <div className={styles.classCompare}>
+      <div>
+        <em>기존 모델</em>
+        <MetricCell metric={before} />
+      </div>
+      <div>
+        <em>신규 모델</em>
+        <MetricCell metric={after} />
+      </div>
+    </div>
+  </article>;
 }
 
 function MetricCell({ metric }: { metric?: AdminModelClassMetric }) {
