@@ -7,15 +7,33 @@ export type MetricDeltaResult = {
   tone: DeltaTone;
 };
 
+export type MetricBarViewState = {
+  measured: boolean;
+  zero: boolean;
+  width: number;
+};
+
+export function isMeasuredNumber(value: number | null | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+export function metricBarViewState(value: number | null | undefined, max: number): MetricBarViewState {
+  const measured = isMeasuredNumber(value);
+  const zero = measured && value === 0;
+  const width = measured && max > 0 ? Math.max(0, Math.min(100, value / max * 100)) : 0;
+
+  return { measured, zero, width };
+}
+
 export function metricLabel(value: number | null, options: { percent?: boolean; suffix?: string; digits?: number } = {}) {
-  if (value == null || Number.isNaN(value)) return "측정 전";
+  if (!isMeasuredNumber(value)) return "측정 전";
   const digits = options.digits ?? 1;
   if (options.percent) return `${(value * 100).toFixed(digits)}%`;
   return `${value.toFixed(digits)}${options.suffix ?? ""}`;
 }
 
 export function fileSizeLabel(bytes: number | null) {
-  if (bytes == null) return "측정 전";
+  if (!isMeasuredNumber(bytes)) return "측정 전";
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
 }
@@ -25,7 +43,7 @@ export function metricDelta(
   after: number | null,
   options: { percentPoint?: boolean; lowerIsBetter?: boolean } = {},
 ): MetricDeltaResult {
-  if (before == null || after == null || Number.isNaN(before) || Number.isNaN(after)) {
+  if (!isMeasuredNumber(before) || !isMeasuredNumber(after)) {
     return { label: "비교 전", tone: "missing" };
   }
 
@@ -76,8 +94,8 @@ export type ModelComparisonStatusView = {
 
 export function hasMeasuredModelComparison(data: ModelComparisonStatusInput | null) {
   return Boolean(data?.models.some((model) => (
-    [model.precision, model.recall, model.map50, model.map50_95, model.average_inference_ms, model.fps].some((value) => value != null)
-    || model.class_metrics.some((metric) => [metric.precision, metric.recall, metric.map50, metric.map50_95].some((value) => value != null))
+    [model.precision, model.recall, model.map50, model.map50_95, model.average_inference_ms, model.fps].some(isMeasuredNumber)
+    || model.class_metrics.some((metric) => [metric.precision, metric.recall, metric.map50, metric.map50_95].some(isMeasuredNumber))
   )));
 }
 
