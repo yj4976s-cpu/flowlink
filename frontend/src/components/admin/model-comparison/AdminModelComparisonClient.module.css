@@ -81,97 +81,191 @@
   color: var(--color-primary);
 }
 
-.summaryGrid {
+.modelHero {
+  position: relative;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) 74px minmax(0, 1fr) minmax(240px, .82fr);
   gap: 12px;
+  align-items: stretch;
 }
 
-.summaryCard,
-.metric,
+.modelCard,
+.deployCard,
+.metricRow,
 .panel {
   border-radius: 22px;
 }
 
-.summaryCard {
-  min-height: 126px;
-  padding: 18px;
+.modelCard,
+.deployCard {
+  min-width: 0;
+  min-height: 188px;
+  padding: 20px;
+  border: 1px solid var(--color-border);
+  background:
+    radial-gradient(circle at 92% 10%, color-mix(in srgb, var(--model-tone) 13%, transparent), transparent 33%),
+    linear-gradient(145deg, color-mix(in srgb, var(--model-tone) 7%, transparent), transparent 52%),
+    var(--color-surface);
+  box-shadow: var(--shadow-card);
   display: grid;
   align-content: space-between;
-  gap: 10px;
+  gap: 16px;
 }
 
-.summaryCard[data-tone="hat"] {
-  background: linear-gradient(145deg, color-mix(in srgb, var(--color-accent) 10%, transparent), transparent 46%), var(--color-surface);
+.modelCard {
+  --model-tone: var(--color-primary);
 }
 
-.summaryCard span,
-.summaryCard small,
-.metric span,
-.metric small,
+.modelCard[data-highlight] {
+  --model-tone: var(--color-accent);
+}
+
+.modelCard > div,
+.deployCard {
+  min-width: 0;
+}
+
+.modelCard span,
+.deployCard span,
+.modelCard small,
+.deployCard small,
 .metricCell small,
 .notes,
 .empty {
   color: var(--color-text-muted);
 }
 
-.summaryCard span,
-.metric span {
+.modelCard span,
+.deployCard span {
   font-size: 11px;
   font-weight: 850;
 }
 
-.summaryCard strong {
-  font-size: 18px;
+.modelCard strong,
+.deployCard strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 21px;
   line-height: 1.25;
   word-break: keep-all;
 }
 
-.summaryCard small {
+.modelCard small,
+.deployCard small {
+  display: block;
+  margin-top: 7px;
   font-size: 11px;
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
 
-.metrics {
-  margin-top: 16px;
+.modelCard ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.modelCard li {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--model-tone) 10%, var(--color-surface-soft));
+  color: var(--model-tone);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.modelCard footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--model-tone) 18%, var(--color-border));
+}
+
+.modelCard footer b {
+  color: var(--model-tone);
+  font-size: 20px;
+}
+
+.modelCard footer span {
+  text-align: right;
+  font-size: 10px;
+}
+
+.compareBadge {
+  min-height: 188px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  place-items: center;
+}
+
+.compareBadge span {
+  position: relative;
+  z-index: 1;
+  width: 48px;
+  height: 48px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 24%, var(--color-border));
+  border-radius: 18px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+  color: var(--color-primary);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.compareBadge i {
+  position: absolute;
+  width: 1px;
+  height: 128px;
+  background: linear-gradient(180deg, transparent, var(--color-border), transparent);
+}
+
+.deployCard {
+  --model-tone: var(--color-success);
+}
+
+.metricPanel {
+  overflow: hidden;
+}
+
+.metricRows {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
-.metric {
+.metricRow {
   min-width: 0;
-  padding: 17px;
+  padding: 15px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 12%, var(--color-border));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 4%, transparent), transparent 58%),
+    var(--color-surface-soft);
   display: grid;
-  gap: 14px;
+  gap: 12px;
 }
 
-.metric div {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+.metricLabel,
+.classCard header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
 }
 
-.metric p {
-  min-width: 0;
-  margin: 0;
-  padding: 11px;
-  border-radius: 15px;
-  background: var(--color-surface-soft);
+.metricLabel strong {
+  font-size: 14px;
 }
 
-.metric strong {
-  display: block;
-  margin-top: 5px;
-  color: var(--color-primary);
-  font-size: 20px;
-  line-height: 1;
-}
-
-.metric b,
-.classRow > b {
+.metricLabel b,
+.classCard header > b {
   width: fit-content;
+  flex: none;
   padding: 5px 9px;
   border-radius: 999px;
   background: var(--color-primary-soft);
@@ -179,23 +273,70 @@
   font-size: 10px;
 }
 
-.metric b[data-tone="better"],
-.classRow > b[data-tone="better"],
-.classRow > b[data-tone="new"] {
+.metricLabel b[data-tone="better"],
+.classCard header > b[data-tone="better"],
+.classCard header > b[data-tone="new"] {
   background: color-mix(in srgb, var(--color-success) 13%, var(--color-surface-soft));
   color: var(--color-success);
 }
 
-.metric b[data-tone="worse"],
-.classRow > b[data-tone="worse"] {
+.metricLabel b[data-tone="worse"],
+.classCard header > b[data-tone="worse"] {
   background: color-mix(in srgb, var(--color-accent) 13%, var(--color-surface-soft));
   color: var(--color-accent);
 }
 
-.metric b[data-tone="missing"],
-.classRow > b[data-tone="missing"] {
+.metricLabel b[data-tone="missing"],
+.classCard header > b[data-tone="missing"] {
   background: var(--color-surface-soft);
   color: var(--color-text-muted);
+}
+
+.metricBar {
+  display: grid;
+  grid-template-columns: minmax(92px, .7fr) minmax(110px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.metricBar span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metricBar i {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--color-surface);
+  box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+.metricBar i b {
+  display: block;
+  height: 100%;
+  min-width: 4px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--color-secondary), var(--color-primary));
+}
+
+.metricBar[data-highlight] i b {
+  background: linear-gradient(90deg, var(--color-accent), var(--color-primary));
+}
+
+.metricBar[data-empty] i b {
+  min-width: 0;
+}
+
+.metricBar strong {
+  color: var(--color-text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .panel {
@@ -220,45 +361,73 @@
   line-height: 1.65;
 }
 
-.classTable {
-  min-width: 720px;
-  overflow: hidden;
-  border: 1px solid var(--color-border);
-  border-radius: 18px;
-}
-
-.tableHead,
-.classRow {
+.classCards {
   display: grid;
-  grid-template-columns: minmax(120px, .7fr) minmax(190px, 1fr) minmax(190px, 1fr) minmax(110px, .5fr);
-  gap: 10px;
-  align-items: center;
-  padding: 13px 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 
-.tableHead {
-  background: var(--color-surface-soft);
+.classCard {
+  --class-tone: var(--color-primary);
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--class-tone) 20%, var(--color-border));
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--class-tone) 10%, transparent), transparent 35%),
+    var(--color-surface-soft);
+}
+
+.classCard[data-accent="hat"] {
+  --class-tone: var(--color-accent);
+}
+
+.classCard[data-accent="trash"] {
+  --class-tone: var(--color-success);
+}
+
+.classCard[data-accent="footwear"] {
+  --class-tone: var(--color-secondary);
+}
+
+.classCard header span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.classCard header strong {
+  font-size: 17px;
+}
+
+.classCard header small {
   color: var(--color-text-muted);
   font-size: 10px;
   font-weight: 900;
   letter-spacing: .08em;
 }
 
-.classRow {
-  border-top: 1px solid var(--color-border);
+.classCompare {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
-.classRow[data-hat] {
-  background: linear-gradient(90deg, color-mix(in srgb, var(--color-accent) 8%, transparent), transparent 48%);
+.classCompare > div {
+  min-width: 0;
+  padding: 12px;
+  border-radius: 15px;
+  background: var(--color-surface);
 }
 
-.classRow strong {
+.classCompare em {
   display: block;
-}
-
-.classRow small {
+  margin-bottom: 8px;
   color: var(--color-text-muted);
   font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
 }
 
 .metricCell {
@@ -397,10 +566,14 @@
 }
 
 @media (max-width: 980px) {
-  .summaryGrid,
-  .metrics,
+  .modelHero,
+  .metricRows,
   .split {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .compareBadge {
+    display: none;
   }
 
   .panel {
@@ -419,8 +592,9 @@
     align-items: flex-start;
   }
 
-  .summaryGrid,
-  .metrics,
+  .modelHero,
+  .metricRows,
+  .classCards,
   .split,
   .trainGrid,
   .evalGrid,
@@ -428,12 +602,18 @@
     grid-template-columns: 1fr;
   }
 
-  .metric div {
+  .modelCard,
+  .deployCard {
+    min-height: 154px;
+  }
+
+  .metricBar,
+  .classCompare {
     grid-template-columns: 1fr;
   }
 
-  .classTable {
-    min-width: 640px;
+  .metricBar i {
+    width: 100%;
   }
 }
 
