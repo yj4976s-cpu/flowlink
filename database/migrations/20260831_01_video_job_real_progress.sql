@@ -21,7 +21,8 @@ UPDATE public.video_jobs
 SET processing_stage = CASE
     WHEN status = 'COMPLETED' THEN 'COMPLETED'
     WHEN status = 'FAILED' THEN 'FAILED'
-END;
+END
+WHERE status IN ('COMPLETED', 'FAILED');
 
 ALTER TABLE public.video_jobs
     ALTER COLUMN processing_stage SET DEFAULT 'QUEUED',

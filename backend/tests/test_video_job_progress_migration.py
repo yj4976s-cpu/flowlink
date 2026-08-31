@@ -20,6 +20,7 @@ def test_video_job_progress_migration_fails_before_schema_changes_for_legacy_act
 def test_video_job_progress_migration_backfills_only_terminal_rows() -> None:
     assert "WHEN status = 'COMPLETED' THEN 'COMPLETED'" in MIGRATION
     assert "WHEN status = 'FAILED' THEN 'FAILED'" in MIGRATION
+    assert "WHERE status IN ('COMPLETED', 'FAILED');" in MIGRATION
     assert "ELSE 'QUEUED'" not in MIGRATION
     assert "ALTER COLUMN processing_stage SET DEFAULT 'QUEUED'" in MIGRATION
 
