@@ -23,7 +23,15 @@ test("game-safe mode prevents autonomous roaming and dragging while preserving i
   assert.match(stageSource, /<DaruMascot[\s\S]+onInteract=\{handleCharacterClick\}/);
 });
 
-test("game-safe desktop and mobile sizes stay compact in the viewport corner", () => {
-  assert.match(mascotCss, /\.stage\[data-game-safe\][\s\S]+right: max\(18px, env\(safe-area-inset-right\)\)[\s\S]+width: 112px/);
-  assert.match(mascotCss, /@media \(max-width: 600px\)[\s\S]+\.stage\[data-game-safe\][\s\S]+right: max\(8px, env\(safe-area-inset-right\)\)[\s\S]+width: 72px/);
+test("game-safe sizes stay compact without reusing the Copilot right-bottom slot", () => {
+  const desktopGameSafe = mascotCss.match(/\.stage\[data-game-safe\] \{([^}]*)\}/)?.[1] ?? "";
+  const mobileGameSafe = mascotCss.match(/@media \(max-width: 600px\) \{\s*\.stage\[data-game-safe\] \{([^}]*)\}/)?.[1] ?? "";
+
+  assert.doesNotMatch(desktopGameSafe, /right:/);
+  assert.doesNotMatch(mobileGameSafe, /right:/);
+  assert.match(desktopGameSafe, /width: 112px/);
+  assert.match(mobileGameSafe, /width: 72px/);
+  assert.match(mascotCss, /\.stage \{[\s\S]*?right: 102px/);
+  assert.match(mascotCss, /@media \(max-width: 1024px\) \{ \.stage \{ right: 91px/);
+  assert.match(mascotCss, /@media \(max-width: 600px\) \{ \.stage \{ right: 76px/);
 });
