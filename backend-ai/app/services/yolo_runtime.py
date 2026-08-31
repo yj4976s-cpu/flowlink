@@ -6,6 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from shutil import which
 from threading import Lock
+from collections.abc import Callable
 
 from PIL import Image
 
@@ -51,13 +52,47 @@ class YoloRuntimeUnavailableError(RuntimeError):
 
 
 class YoloRuntime:
-    def __init__(self, *, model_path: str, confidence: float, imgsz: int) -> None:
+    def __init__(
+        self,
+        *,
+        model_path: str,
+        confidence: float,
+        imgsz: int,
+        model_id: str | None = None,
+        display_name: str | None = None,
+        expected_classes: list[str] | None = None,
+    ) -> None:
         self.model_path = model_path
         self.confidence = confidence
         self.imgsz = imgsz
+        self.model_id = model_id
+        self.display_name = display_name
+        self.expected_classes = expected_classes or []
         self._model: object | None = None
         self._model_lock = Lock()
         self._inference_lock = Lock()
+        self._validated_classes: tuple[str, ...] | None = None
+
+    def validate_ready(self, *, expected_classes: list[str] | None = None) -> None:
+        model = self._get_model()
+        classes = expected_classes or self.expected_classes
+        normalized_expected = tuple(sorted(classes))
+        if self._validated_classes == normalized_expected:
+            return
+        if classes:
+            from app.services.model_registry import validate_model_class_names
+
+            names = getattr(model, "names", {})
+            if not validate_model_class_names(names, classes):
+                raise YoloRuntimeUnavailableError("YOLO detection model class names do not match registry")
+        with self._inference_lock:
+            try:
+                results = model.predict(source=Image.new("RGB", (32, 32), color=(255, 255, 255)), conf=self.confidence, imgsz=self.imgsz, verbose=False)
+            except Exception as exc:
+                raise YoloRuntimeUnavailableError("YOLO detection model warm-up failed") from exc
+        if not isinstance(results, (list, tuple)) or not results or not hasattr(results[0], "boxes"):
+            raise YoloRuntimeUnavailableError("YOLO detection model warm-up returned an invalid result")
+        self._validated_classes = normalized_expected
 
     def predict(self, image: Image.Image) -> list[YoloPrediction]:
         model = self._get_model()
@@ -76,12 +111,15 @@ class YoloRuntime:
         media_width: int,
         media_height: int,
         rendered_video_path: Path | None = None,
+        total_frames: int | None = None,
+        progress_callback: Callable[[str, int | None, int | None, bool], None] | None = None,
     ) -> list[YoloTrackPrediction]:
         model = self._get_model()
         observations: dict[tuple[str, int | None], list[YoloTrackObservation]] = {}
         writer = None
         intermediate_video_path: Path | None = None
         frames_written = 0
+        processed_frame_count = 0
         with self._inference_lock:
             tracking_error: Exception | None = None
             try:
@@ -113,6 +151,7 @@ class YoloRuntime:
                     verbose=False,
                 )
                 for frame_index, result in enumerate(results):
+                    processed_frame_count = frame_index + 1
                     if writer is not None:
                         writer.write(result.plot())
                         frames_written += 1
@@ -130,6 +169,8 @@ class YoloRuntime:
                         observations.setdefault(key, []).append(
                             YoloTrackObservation(prediction=prediction, frame_index=frame_index)
                         )
+                    if progress_callback is not None:
+                        progress_callback("ANALYZING", processed_frame_count, total_frames, False)
             except Exception as exc:
                 tracking_error = exc
             finally:
@@ -145,6 +186,9 @@ class YoloRuntime:
                 try:
                     if intermediate_video_path is None or frames_written <= 0:
                         raise RuntimeError("Rendered video contains no frames")
+                    if progress_callback is not None:
+                        progress_callback("ANALYZING", processed_frame_count, total_frames, True)
+                        progress_callback("RENDERING", None, total_frames, True)
                     _transcode_h264_mp4(intermediate_video_path, rendered_video_path)
                 except Exception as exc:
                     raise YoloRuntimeUnavailableError("YOLO video tracking model is unavailable") from exc
@@ -293,6 +337,7 @@ def get_yolo_runtime() -> YoloRuntime:
         model_path=settings.DETECTION_MODEL,
         confidence=settings.DETECTION_CONFIDENCE,
         imgsz=settings.DETECTION_IMGSZ,
+        model_id=Path(settings.DETECTION_MODEL).stem,
     )
 
 

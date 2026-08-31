@@ -3,32 +3,135 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@/components/common/Icon";
-import { getAdminAiReport, type AdminAiReport } from "@/lib/adminAiReportApi";
+import {
+  generateAdminOperationsBriefing,
+  getAdminAiReport,
+  getAdminOperationsBriefingStatus,
+  type AdminAiReport,
+  type AdminOperationsBriefing,
+  type AdminOperationsBriefingStatus,
+} from "@/lib/adminAiReportApi";
+import { getAdminModelComparison, getAdminModelDeployment, type AdminModelComparison, type AdminModelDeploymentStatus } from "@/lib/adminModelComparisonApi";
+import { getAdminAiReportModelStatusView } from "@/components/admin/model-comparison/modelComparisonViewState";
+import { adminOperationsBriefingFallbackTasks, geminiBriefingLabel } from "./adminAiReportViewState";
 import styles from "./AdminAiReportClient.module.css";
 
 function isAbortError(reason: unknown) { return reason instanceof DOMException && reason.name === "AbortError"; }
 function confidenceValue(value: string | null) { return value == null ? null : Number(value); }
 function confidence(value: string | null) { const parsed = confidenceValue(value); return parsed == null || Number.isNaN(parsed) ? "–" : `${(parsed * 100).toFixed(1)}%`; }
 function percent(value: number, max: number) { return `${Math.max(0, Math.min(100, max > 0 ? value / max * 100 : 0))}%`; }
+function dateTime(value: string) { return new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
 
 export function AdminAiReportClient() {
   const [report, setReport] = useState<AdminAiReport | null>(null);
+  const [briefing, setBriefing] = useState<AdminOperationsBriefing | null>(null);
+  const [briefingStatus, setBriefingStatus] = useState<AdminOperationsBriefingStatus | null>(null);
+  const [briefingLoading, setBriefingLoading] = useState(false);
+  const [briefingError, setBriefingError] = useState("");
+  const [modelComparison, setModelComparison] = useState<AdminModelComparison | null>(null);
+  const [modelDeployment, setModelDeployment] = useState<AdminModelDeploymentStatus | null>(null);
+  const [modelComparisonLoading, setModelComparisonLoading] = useState(true);
+  const [modelComparisonError, setModelComparisonError] = useState(false);
+  const [modelDeploymentLoading, setModelDeploymentLoading] = useState(true);
+  const [modelDeploymentError, setModelDeploymentError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const applyRequest = (signal?: AbortSignal) => getAdminAiReport(signal).then(setReport).catch((reason: unknown) => { if (!isAbortError(reason)) setError("AI 운영 분석 데이터를 불러오지 못했습니다."); }).finally(() => { if (!signal?.aborted) setLoading(false); });
   const retry = () => { setLoading(true); setError(""); void applyRequest(); };
   useEffect(() => { const controller = new AbortController(); void applyRequest(controller.signal); return () => controller.abort(); }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    getAdminOperationsBriefingStatus(controller.signal).then(setBriefingStatus).catch((reason: unknown) => {
+      if (!isAbortError(reason)) setBriefingStatus(null);
+    });
+    return () => controller.abort();
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    getAdminModelComparison(controller.signal)
+      .then((comparisonPayload) => {
+        setModelComparison(comparisonPayload);
+        setModelComparisonError(false);
+      })
+      .catch((reason: unknown) => {
+        if (!isAbortError(reason)) setModelComparisonError(true);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setModelComparisonLoading(false);
+      });
+    return () => controller.abort();
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    getAdminModelDeployment(controller.signal)
+      .then((deploymentPayload) => {
+        setModelDeployment(deploymentPayload);
+        setModelDeploymentError(false);
+      })
+      .catch((reason: unknown) => {
+        if (!isAbortError(reason)) setModelDeploymentError(true);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setModelDeploymentLoading(false);
+      });
+    return () => controller.abort();
+  }, []);
+  const requestBriefing = () => {
+    setBriefingLoading(true);
+    setBriefingError("");
+    generateAdminOperationsBriefing()
+      .then((payload) => { setBriefing(payload); setBriefingStatus(payload); })
+      .catch((reason: unknown) => setBriefingError(reason instanceof Error ? reason.message : "운영 AI 브리핑을 생성하지 못했습니다."))
+      .finally(() => setBriefingLoading(false));
+  };
 
   return <main className={styles.page}>
     <header className={styles.intro}>
       <div><p>ADMIN · AI OPERATIONS</p><h1>AI 운영 분석</h1><span>AI 탐지 신뢰도와 관리자 검토 데이터를 기반으로 운영 품질과 취약 클래스를 확인하세요.</span></div>
       <small>전체 운영 탐지 데이터 기준</small>
     </header>
-    {loading ? <ReportState loading /> : error ? <ReportState error={error} retry={retry} /> : !report || report.summary.total === 0 ? <EmptyReport /> : <Report report={report} />}
+    <OperationsBriefing briefing={briefing} status={briefingStatus} loading={briefingLoading} error={briefingError} onGenerate={requestBriefing} />
+    {loading ? <ReportState loading /> : error ? <ReportState error={error} retry={retry} /> : !report || report.summary.total === 0 ? <EmptyReport /> : <Report report={report} modelComparison={modelComparison} modelDeployment={modelDeployment} modelComparisonLoading={modelComparisonLoading} modelComparisonError={modelComparisonError} modelDeploymentLoading={modelDeploymentLoading} modelDeploymentError={modelDeploymentError} />}
   </main>;
 }
 
-function Report({ report }: { report: AdminAiReport }) {
+function OperationsBriefing({ briefing, status, loading, error, onGenerate }: { briefing: AdminOperationsBriefing | null; status: AdminOperationsBriefingStatus | null; loading: boolean; error: string; onGenerate: () => void }) {
+  const metrics = briefing?.metrics;
+  const tasks = briefing?.tasks ?? adminOperationsBriefingFallbackTasks;
+  const geminiLabel = geminiBriefingLabel(status);
+  return <section className={`${styles.panel} ${styles.briefing}`} aria-label="운영 AI 브리핑">
+    <div className={styles.briefingHead}>
+      <div className={styles.panelTitle}>
+        <span>OPERATIONS BRIEFING</span>
+        <h2>운영 AI 브리핑</h2>
+        <p>관리자가 버튼을 누를 때만 요약을 생성합니다. Gemini가 불안정하면 같은 운영 지표로 안전한 규칙 기반 요약을 보여줘요.</p>
+      </div>
+      <div className={styles.briefingActions}>
+        <small data-connected={status?.gemini_connected || undefined}>{geminiLabel}{status?.model ? ` · ${status.model}` : ""}</small>
+        <button type="button" onClick={onGenerate} disabled={loading}>{loading ? "요약 생성 중" : briefing ? "다시 요약하기" : "AI 운영 요약 생성"}</button>
+      </div>
+    </div>
+    {error && <p className={styles.briefingError} role="alert">{error}</p>}
+    {briefing ? <>
+      <p className={styles.briefingSummary}>{briefing.summary}</p>
+      <div className={styles.briefingMetrics}>
+        {tasks.map((task) => <Link key={task.key} href={task.href}><span>{task.label}</span><strong>{task.count}건</strong></Link>)}
+        <article><span>평균 탐지 신뢰도</span><strong>{confidence(metrics?.average_confidence ?? null)}</strong></article>
+      </div>
+      <div className={styles.briefingFoot}>
+        <span>우선 처리 작업: <b>{briefing.priority_task ? `${briefing.priority_task.label} ${briefing.priority_task.count}건` : "대기 작업 없음"}</b></span>
+        <time dateTime={briefing.generated_at}>마지막 요약 시각: {dateTime(briefing.generated_at)}</time>
+      </div>
+      {briefing.fallback_used && <p className={styles.briefingNotice}>Gemini 응답 대신 운영 지표 기반 안전 요약을 표시 중입니다.</p>}
+    </> : <div className={styles.briefingEmpty}>
+      <Icon name="spark" size={24} />
+      <strong>오늘 운영 브리핑을 아직 생성하지 않았어요.</strong>
+      <span>버튼을 누르면 대기 작업과 평균 신뢰도를 기준으로 오늘 우선순위를 정리합니다.</span>
+    </div>}
+  </section>;
+}
+
+function Report({ report, modelComparison, modelDeployment, modelComparisonLoading, modelComparisonError, modelDeploymentLoading, modelDeploymentError }: { report: AdminAiReport; modelComparison: AdminModelComparison | null; modelDeployment: AdminModelDeploymentStatus | null; modelComparisonLoading: boolean; modelComparisonError: boolean; modelDeploymentLoading: boolean; modelDeploymentError: boolean }) {
   const maxClassCount = Math.max(1, ...report.class_metrics.map((item) => item.count));
   const reviewedRate = report.summary.total ? Math.round(report.summary.reviewed / report.summary.total * 100) : 0;
   const correctionRate = report.summary.reviewed ? Math.round(report.summary.corrected / report.summary.reviewed * 100) : 0;
@@ -75,8 +178,28 @@ function Report({ report }: { report: AdminAiReport }) {
       <CorrectionPatterns data={report.correction_patterns} />
     </section>
 
-    <section className={`${styles.panel} ${styles.modelEmpty}`}><Icon name="layers" size={30} /><div><h2>모델 평가 데이터는 아직 별도로 연결되지 않았어요.</h2><p>현재 저장소에는 ground truth 기반 Precision, Recall, F1, mAP 또는 혼동행렬 결과가 없습니다. 실제 평가 결과가 연결되면 운영 데이터와 구분해 보여줄 수 있습니다.</p></div></section>
+    <ModelComparisonStatus comparison={modelComparison} deployment={modelDeployment} comparisonLoading={modelComparisonLoading} comparisonError={modelComparisonError} deploymentLoading={modelDeploymentLoading} deploymentError={modelDeploymentError} />
   </>;
+}
+
+function ModelComparisonStatus({ comparison, deployment, comparisonLoading, comparisonError, deploymentLoading, deploymentError }: { comparison: AdminModelComparison | null; deployment: AdminModelDeploymentStatus | null; comparisonLoading: boolean; comparisonError: boolean; deploymentLoading: boolean; deploymentError: boolean }) {
+  const status = getAdminAiReportModelStatusView({
+    comparison,
+    deployment,
+    comparisonLoading,
+    comparisonError,
+    deploymentLoading,
+    deploymentError,
+  });
+  return <section className={`${styles.panel} ${styles.modelEmpty}`} data-tone={status.tone} aria-label="모델 비교 상태">
+    <Icon name="layers" size={30} />
+    <div>
+      <h2>{status.title}</h2>
+      <p>{status.description}</p>
+      {status.warning && <p role="alert">{status.warning}</p>}
+      <Link href="/admin/model-comparison">{status.actionLabel}<Icon name="arrow" size={13} /></Link>
+    </div>
+  </section>;
 }
 
 function Metric({ label, value, note, tone }: { label: string; value: string; note: string; tone: string }) {

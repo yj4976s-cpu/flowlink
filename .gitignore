@@ -24,6 +24,7 @@ backend/.venv/
 backend/venv/
 backend-ai/.venv/
 backend-ai/venv/
+backend-ai/state/
 backend/__pycache__/
 **/__pycache__/
 *.py[cod]

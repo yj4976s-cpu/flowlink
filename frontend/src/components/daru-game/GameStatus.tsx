@@ -11,7 +11,7 @@ function HintIcon() {
 
 export function GameStatus({ timeRemaining, isPreview = false, attempts, foundPairs, pairCount, combo, daruPoints, hintsRemaining, hintActive, onHint }: { timeRemaining: number; timeLimit: number; isPreview?: boolean; attempts: number; foundPairs: number; pairCount: number; combo: number; daruPoints: number; hintsRemaining: number; hintActive: boolean; onHint: () => void }) {
   const timerState = timeRemaining <= 10 ? "critical" : timeRemaining <= 30 ? "warning" : "normal";
-  return <section className={styles.liveHud} aria-label="실시간 게임 현황" data-timer-state={timerState}>
+  return <section className={styles.liveHud} aria-label="실시간 게임 현황" data-timer-state={timerState} data-daru-game-blocker>
     <span className={styles.hudEyebrow}>LIVE GAME HUD</span>
     <dl className={styles.primaryHud}>
       <div className={styles.timerZone}>

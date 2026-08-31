@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "models": [
+    {
+      "id": "flowlink-3class-v6-7",
+      "display_name": "기존 3클래스 모델",
+      "file_name": "best_v6.7_8n_100_16_AdamW_0005.pt",
+      "expected_classes": ["BALL", "FOOTWEAR", "TRASH"],
+      "architecture": "YOLO 8n",
+      "supports_hat": false,
+      "enabled": true
+    },
+    {
+      "id": "flowlink-4class-hat-v7",
+      "display_name": "신규 HAT 4클래스 모델",
+      "file_name": "best_v7_8n_100_640_16_SGD_0005.pt",
+      "expected_classes": ["BALL", "HAT", "FOOTWEAR", "TRASH"],
+      "architecture": "YOLO 8n",
+      "supports_hat": true,
+      "enabled": true
+    }
+  ]
+}

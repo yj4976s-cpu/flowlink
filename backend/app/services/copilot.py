@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 PROVIDER_FALLBACK_SPEECH_TEXT = "지금은 답변을 불러오기 어렵습니다. 잠시 후 다시 질문해 주세요."
 
-ALLOWED_PATHS = {"/", "/guide", "/login", "/detect", "/found-items", "/map", "/lost-reports/new", "/matches", "/mypage", "/notifications", "/community", "/admin", "/admin/detections", "/admin/ownership-claims", "/admin/found-items", "/admin/map"}
+ALLOWED_PATHS = {"/", "/guide", "/login", "/detect", "/found-items", "/map", "/lost-reports/new", "/matches", "/mypage", "/notifications", "/community", "/admin", "/admin/detections", "/admin/detections/mobile", "/admin/citizen-reports", "/admin/ownership-claims", "/admin/found-items", "/admin/map"}
 
 PAGE_CONTEXT_PATHS = {
     "HOME": "/",
@@ -65,6 +65,11 @@ SPEECH_TEXT_PROMPT = """최종 JSON 객체에는 다음 필드를 함께 출력�
 {"message":"화면에 표시할 전체 답변","speech_text":"음성으로 읽을 짧은 핵심 안내","cards":[],"actions":[],"suggestions":[]}.
 speech_text는 음성 안내 전용으로 1~2개의 짧고 자연스러운 한국어 문장으로 작성한다. message를 그대로 복사하지 말고 핵심 결과, 현재 상태, 다음 행동만 요약한다. URL, Markdown, 버튼 이름 목록, 내부 DB ID나 entity ID, 불필요한 개인정보와 내부 시스템 정보, cards/actions/suggestions 전체, 긴 수치 목록은 포함하지 않는다. PERSONAL은 사용자가 알아야 할 결과와 다음 행동을, OPERATIONS는 운영 핵심 상태와 필요한 조치만 요약한다."""
 
+
+ADMIN_OPERATIONS_PROMPT = """\uad00\ub9ac\uc790 \uc6b4\uc601 \uc9c8\ubb38\uc5d0\uc11c\ub294 \uc81c\uacf5\ub41c \uc6b4\uc601 \ub3c4\uad6c \uacb0\uacfc\uc758 \uc9d1\uacc4\ub9cc \uc0ac\uc6a9\ud55c\ub2e4.
+\ud0d0\uc9c0 confidence\ub294 \ubd84\ub958 \uc2e0\ub8b0\ub3c4\uc774\uace0, \ub9e4\uce6d \uc810\uc218\ub294 \uc870\uac74 \uc720\uc0ac\ub3c4\uc774\ubbc0\ub85c \uc18c\uc720 \ud655\ub960\ucc98\ub7fc \ub9d0\ud558\uc9c0 \uc54a\ub294\ub2e4.
+\uc791\uc5c5\uc774 \uc2e4\uc81c\ub85c \uc2b9\uc778, \uac70\uc808, \uc0ad\uc81c, \uc218\uac70 \uc644\ub8cc\ub410\ub2e4\uace0 \ub2e8\uc815\ud558\uc9c0 \ub9d0\uace0, \ud544\uc694\ud55c \uacbd\uc6b0 \ud574\ub2f9 \uad00\ub9ac\uc790 \ud654\uba74\uc73c\ub85c \uc774\ub3d9\ud558\ub3c4\ub85d \uc548\ub0b4\ud55c\ub2e4.
+\uc0ac\uc6a9\uc790 \uc774\uba54\uc77c, \ube44\uacf5\uac1c \ud2b9\uc9d5, \uc815\ud655\ud55c \ubcf4\uad00 \uc704\uce58, \uad00\ub9ac\uc790 \uba54\ubaa8, \uc6d0\ubcf8 \ubbf8\ub514\uc5b4 URL, API \ud0a4\ub294 \uc751\ub2f5\uc5d0 \ud3ec\ud568\ud558\uc9c0 \uc54a\ub294\ub2e4."""
 
 TEAM_MEMBERS = [
     {
@@ -554,9 +559,10 @@ async def create_copilot_response(db: Session, request: CopilotRequest, current_
             bool(settings.GEMINI_API_KEY),
             settings.GEMINI_MODEL if settings.CHAT_MODEL_PROVIDER.lower() == "gemini" else settings.OPENAI_MODEL,
         )
+        admin_operations_prompt = f"\n{ADMIN_OPERATIONS_PROMPT}" if current_user and current_user.role == "ADMIN" else ""
         result = await provider.generate(
             messages=input_items,
-            instructions=f"{SYSTEM_PROMPT}\n{SPEECH_TEXT_PROMPT}\n현재 context: {context}",
+            instructions=f"{SYSTEM_PROMPT}\n{SPEECH_TEXT_PROMPT}{admin_operations_prompt}\n\ud604\uc7ac context: {context}",
             tools=tool_definitions_for_message(current_user.role if current_user else None, current_text),
             execute=lambda name, arguments: execute_tool(db, current_user, name, arguments),
         )

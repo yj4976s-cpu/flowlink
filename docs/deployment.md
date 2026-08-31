@@ -48,7 +48,7 @@ Docker `expose` only and must not be opened directly to browsers.
   tokens.
 
 Do not commit real `.env` files, certificates, private keys, uploads, logs, or
-model files such as `best.pt`.
+model files such as `best_v7_8n_100_640_16_SGD_0005.pt`.
 
 ## Common runtime rules
 
@@ -59,7 +59,7 @@ model files such as `best.pt`.
 - Backend and backend-ai share `AI_INTERNAL_API_KEY`.
 - Supabase PostgreSQL remains external through `DATABASE_URL`; this stack does
   not start a PostgreSQL container.
-- `models/best.pt` is mounted read-only into backend-ai at `/app/models/best.pt`.
+- `models/best_v7_8n_100_640_16_SGD_0005.pt` is mounted read-only into backend-ai at `/app/models/best_v7_8n_100_640_16_SGD_0005.pt`.
 
 ## Trusted proxy address
 

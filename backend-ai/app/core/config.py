@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     APP_HOST: str = "127.0.0.1"
     APP_PORT: int = 8001
     AI_INTERNAL_API_KEY: str = ""
+    BACKEND_INTERNAL_URL: str = "http://127.0.0.1:8000"
     DETECTION_MODEL: str = DEFAULT_DETECTION_MODEL
     DETECTION_CONFIDENCE: float = 0.25
     DETECTION_IMGSZ: int = 640
@@ -25,6 +26,7 @@ class Settings(BaseSettings):
     IMAGE_MAX_PIXELS: int = 16_000_000
     VIDEO_MAX_BYTES: int = 100 * 1024 * 1024
     VIDEO_MAX_DURATION_SECONDS: int = 30
+    MODEL_STATE_PATH: str = "/app/state/active-model.json"
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":

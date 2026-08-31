@@ -1,4 +1,5 @@
 import { buildApiUrl as buildCommonApiUrl, resolveMediaUrl } from "@/lib/apiBase";
+import { calculateVideoUploadProgress } from "@/lib/videoUploadProgress";
 
 export type DetectionBBox = {
   x: number;
@@ -27,12 +28,35 @@ export type DetectionEvent = {
   purpose: "USER_ANALYSIS" | "OPERATION";
   original_media_url: string;
   result_media_url: string | null;
+  ai_model_id: string | null;
   media_width: number | null;
   media_height: number | null;
   created_at: string;
   processing_started_at: string | null;
   processing_completed_at: string | null;
   detected_objects: DetectionObject[];
+};
+
+export type VideoDetectionAccepted = {
+  detection_event_id: number;
+  video_job_id: number;
+  status: "PROCESSING";
+  stage: "QUEUED";
+};
+
+export type VideoProcessingStatus = {
+  detection_event_id: number;
+  video_job_id: number;
+  status: "PROCESSING" | "COMPLETED" | "FAILED";
+  stage: "QUEUED" | "ANALYZING" | "RENDERING" | "SAVING" | "COMPLETED" | "FAILED";
+  failed_stage: "QUEUED" | "ANALYZING" | "RENDERING" | "SAVING" | null;
+  processed_frames: number;
+  total_frames: number | null;
+  analysis_progress: number | null;
+  processing_started_at: string | null;
+  processing_completed_at: string | null;
+  result_ready: boolean;
+  error_message: string | null;
 };
 
 export type WebcamDetectionObject = {
@@ -89,6 +113,20 @@ async function readErrorMessage(response: Response) {
   return getFallbackMessage(response.status);
 }
 
+function readXhrErrorMessage(xhr: XMLHttpRequest) {
+  try {
+    const body: unknown = JSON.parse(xhr.responseText);
+    if (body && typeof body === "object" && "detail" in body) {
+      const detail = (body as { detail: unknown }).detail;
+      if (detail === "AI detection model is not configured") return getFallbackMessage(503);
+      if (detail === "Webcam detection model is unavailable") return getFallbackMessage(503);
+    }
+  } catch {
+    return getFallbackMessage(xhr.status);
+  }
+  return getFallbackMessage(xhr.status);
+}
+
 async function requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(url, {
     ...init,
@@ -115,8 +153,52 @@ export function uploadDetectionImage(file: File) {
   return uploadDetection("/api/detections/images", file);
 }
 
-export function uploadDetectionVideo(file: File) {
-  return uploadDetection("/api/detections/videos", file);
+export type DetectionVideoUploadOptions = {
+  onUploadProgress?: (progress: number | null) => void;
+  onUploadComplete?: () => void;
+  signal?: AbortSignal;
+};
+
+export function uploadDetectionVideo(file: File, options: DetectionVideoUploadOptions = {}) {
+  return new Promise<VideoDetectionAccepted>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const formData = new FormData();
+    const abortRequest = () => xhr.abort();
+    const cleanup = () => options.signal?.removeEventListener("abort", abortRequest);
+    formData.append("file", file);
+    xhr.open("POST", buildApiUrl("/api/detections/videos"));
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = (event) => options.onUploadProgress?.(
+      calculateVideoUploadProgress(event.loaded, event.total, event.lengthComputable),
+    );
+    xhr.upload.onload = () => options.onUploadComplete?.();
+    xhr.onload = () => {
+      cleanup();
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new DetectionApiError(readXhrErrorMessage(xhr), xhr.status));
+        return;
+      }
+      try {
+        resolve(JSON.parse(xhr.responseText) as VideoDetectionAccepted);
+      } catch {
+        reject(new DetectionApiError("영상 분석 결과를 확인하지 못했습니다.", xhr.status));
+      }
+    };
+    xhr.onerror = () => { cleanup(); reject(new DetectionApiError("영상을 업로드하지 못했어요. 네트워크 연결을 확인한 뒤 다시 시도해주세요.", xhr.status || undefined)); };
+    xhr.onabort = () => { cleanup(); reject(new DOMException("Video upload aborted", "AbortError")); };
+    if (options.signal) {
+      if (options.signal.aborted) {
+        reject(new DOMException("Video upload aborted", "AbortError"));
+        return;
+      }
+      options.signal.addEventListener("abort", abortRequest, { once: true });
+    }
+    xhr.send(formData);
+  });
+}
+
+export function getVideoProcessingStatus(eventId: number, signal?: AbortSignal) {
+  return requestJson<VideoProcessingStatus>(buildApiUrl(`/api/detections/${eventId}/processing-status`), { signal });
 }
 
 export function detectWebcamFrame(blob: Blob, signal?: AbortSignal) {

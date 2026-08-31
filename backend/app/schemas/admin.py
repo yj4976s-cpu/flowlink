@@ -76,6 +76,7 @@ class AdminDetectionEventResponse(BaseModel):
     source_type: str
     original_media_url: str
     result_media_url: str | None
+    ai_model_id: str | None = None
     status: str
     captured_at: datetime
     processing_started_at: datetime | None
@@ -384,3 +385,160 @@ class AdminAiReportResponse(BaseModel):
     class_metrics: list[AdminAiReportClassMetric]
     confidence_distribution: list[AdminAiReportConfidenceBucket]
     correction_patterns: list[AdminAiReportCorrectionPattern]
+
+
+class AdminOperationsBriefingMetrics(BaseModel):
+    operation_detection_pending: int
+    waste_collection_pending: int
+    citizen_review_pending: int
+    ownership_claim_pending: int
+    ownership_return_pending: int
+    average_confidence: Decimal | None = None
+
+
+class AdminOperationsBriefingTask(BaseModel):
+    key: str
+    label: str
+    count: int
+    href: str
+
+
+class AdminOperationsBriefingStatus(BaseModel):
+    provider: str
+    model: str | None = None
+    gemini_configured: bool
+    gemini_connected: bool
+    fallback_used: bool
+    fallback_reason: str | None = None
+
+
+class AdminOperationsBriefingResponse(AdminOperationsBriefingStatus):
+    summary: str
+    generated_at: datetime
+    metrics: AdminOperationsBriefingMetrics
+    priority_task: AdminOperationsBriefingTask | None = None
+    tasks: list[AdminOperationsBriefingTask]
+
+
+class AdminModelComparisonEvaluation(BaseModel):
+    dataset_name: str
+    dataset_version: str | None = None
+    dataset_hash: str | None = None
+    test_image_count: int | None = Field(default=None, ge=0)
+    image_size: int | None = Field(default=None, ge=1)
+    confidence_threshold: float | None = Field(default=None, ge=0, le=1)
+    iou_threshold: float | None = Field(default=None, ge=0, le=1)
+    batch: int | None = Field(default=None, ge=1)
+    device: str | None = None
+    ultralytics_version: str | None = None
+    notes: str | None = None
+
+
+class AdminModelClassMetric(BaseModel):
+    code: str
+    label: str
+    supported: bool
+    precision: float | None = Field(default=None, ge=0, le=1)
+    recall: float | None = Field(default=None, ge=0, le=1)
+    map50: float | None = Field(default=None, ge=0, le=1)
+    map50_95: float | None = Field(default=None, ge=0, le=1)
+
+
+class AdminModelExampleResult(BaseModel):
+    title: str
+    media_url: str
+    description: str | None = None
+
+
+class AdminModelComparisonModel(BaseModel):
+    id: str
+    display_name: str
+    file_name: str
+    architecture: str | None = None
+    optimizer: str | None = None
+    epochs: int | None = Field(default=None, ge=1)
+    image_size: int | None = Field(default=None, ge=1)
+    batch_size: int | None = Field(default=None, ge=1)
+    classes: list[str]
+    file_size_bytes: int | None = Field(default=None, ge=0)
+    precision: float | None = Field(default=None, ge=0, le=1)
+    recall: float | None = Field(default=None, ge=0, le=1)
+    map50: float | None = Field(default=None, ge=0, le=1)
+    map50_95: float | None = Field(default=None, ge=0, le=1)
+    class_metrics: list[AdminModelClassMetric]
+    average_inference_ms: float | None = Field(default=None, ge=0)
+    fps: float | None = Field(default=None, ge=0)
+    example_results: list[AdminModelExampleResult] = Field(default_factory=list)
+    notes: str | None = None
+
+
+class AdminModelComparisonResponse(BaseModel):
+    schema_version: int
+    generated_at: datetime
+    evaluation: AdminModelComparisonEvaluation
+    current_deployed_model_id: str | None = None
+    current_deployed_model_status: str | None = None
+    models: list[AdminModelComparisonModel]
+
+
+class AdminRuntimeModelInfo(BaseModel):
+    id: str
+    display_name: str
+    classes: list[str]
+    supports_hat: bool
+    available: bool
+    active: bool
+
+
+class AdminModelDeploymentStatusResponse(BaseModel):
+    active_model_id: str | None = None
+    previous_model_id: str | None = None
+    active_display_name: str | None = None
+    active_classes: list[str] = Field(default_factory=list)
+    switched_at: datetime | None = None
+    model_ready: bool
+    switching: bool
+    available_models: list[AdminRuntimeModelInfo] = Field(default_factory=list)
+    rollback_available: bool
+    status_source: Literal["runtime"]
+    audit_consistency: Literal["MATCHED", "MISMATCH", "NO_HISTORY"] = "NO_HISTORY"
+    audit_warning: str | None = None
+
+
+class AdminModelDeploymentRequest(BaseModel):
+    model_id: str = Field(min_length=1, max_length=100)
+    expected_active_model_id: str | None = Field(default=None, max_length=100)
+    request_id: str = Field(min_length=8, max_length=120)
+
+
+class AdminModelDeploymentRollbackRequest(BaseModel):
+    expected_active_model_id: str | None = Field(default=None, max_length=100)
+    request_id: str = Field(min_length=8, max_length=120)
+
+
+class AdminModelDeploymentEventResponse(BaseModel):
+    id: int
+    requested_by: int | None
+    requester_email: str | None = None
+    action: Literal["ACTIVATE", "ROLLBACK"]
+    requested_model_id: str | None
+    from_model_id: str | None
+    to_model_id: str | None
+    status: Literal["REQUESTED", "SUCCEEDED", "FAILED"]
+    failure_code: str | None = None
+    requested_at: datetime
+    completed_at: datetime | None = None
+
+
+class AdminModelDeploymentHistoryResponse(BaseModel):
+    events: list[AdminModelDeploymentEventResponse]
+
+
+class AdminModelDeploymentSwitchResponse(BaseModel):
+    changed: bool
+    previous_model_id: str | None = None
+    active_model_id: str
+    active_classes: list[str]
+    switched_at: datetime
+    model_ready: bool
+    audit_event: AdminModelDeploymentEventResponse

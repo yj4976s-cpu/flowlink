@@ -48,7 +48,7 @@ export function MemoryBoard({ cards, difficulty, theme, phase, flippedIds, match
           flipped={phase === "preview" || hintActive || flippedIds.includes(card.id)}
           flipDelayMs={phase === "flipping" ? Math.abs(index - (cards.length - 1) / 2) * 14 : 0}
           matched={matched.has(card.pairId)}
-          locked={locked || hintActive || phase !== "playing"}
+          locked={locked || hintActive || phase !== "playing" || (flippedIds.length >= 2 && !flippedIds.includes(card.id) && !matched.has(card.pairId))}
           onFlip={() => onFlip(card)}
         />
       ))}
