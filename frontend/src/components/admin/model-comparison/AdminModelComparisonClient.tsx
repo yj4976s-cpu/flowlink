@@ -444,7 +444,7 @@ function DeploymentPanel(props: {
         <article><span>활성 클래스</span><strong>{deployment?.active_classes.join(" · ") || "확인 중"}</strong><small>{deployment?.active_classes.includes("HAT") ? "HAT 지원" : "HAT 미지원 또는 확인 전"}</small></article>
       </div>
     )}
-    {jsonRuntimeMismatch && <p className={styles.deploymentError} role="alert">실제 운영 모델과 평가 JSON의 배포 메모가 다릅니다. 운영 상태는 Backend-AI runtime을 기준으로 표시합니다.</p>}
+    {jsonRuntimeMismatch && <p className={styles.deploymentInfo}>평가 메모와 현재 운영 모델이 다릅니다. 현재 운영 상태는 Backend-AI runtime을 기준으로 표시합니다.</p>}
     {deployment?.audit_warning && <p className={styles.deploymentError} role="alert">{deployment.audit_warning}</p>}
     {notice && <p className={styles.deploymentNotice} role="status">{notice}</p>}
     <div className={styles.runtimeModels} role="list" aria-label="전환 가능한 모델">

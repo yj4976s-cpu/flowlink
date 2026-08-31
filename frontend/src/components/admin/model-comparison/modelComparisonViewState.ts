@@ -228,7 +228,7 @@ export function getAdminAiReportModelStatusView({
       tone: "deployed",
       warning: deployment.audit_warning
         ?? (jsonRuntimeMismatch
-          ? "실제 운영 모델과 평가 JSON의 배포 메모가 다릅니다. 운영 상태는 Backend-AI runtime을 기준으로 표시합니다."
+          ? "평가 메모와 현재 운영 모델이 다릅니다. 현재 운영 상태는 Backend-AI runtime을 기준으로 표시합니다."
           : comparisonError
             ? "평가 데이터만 불러오지 못했습니다. 현재 운영 모델 상태는 Backend-AI runtime 기준으로 표시합니다."
             : ""),

@@ -1256,6 +1256,7 @@
 }
 
 .deploymentError,
+.deploymentInfo,
 .deploymentNotice {
   margin: 14px 0 0;
   padding: 12px 14px;
@@ -1268,6 +1269,12 @@
   border: 1px solid color-mix(in srgb, var(--color-danger, #ef4444) 26%, var(--color-border));
   color: var(--color-danger, #ef4444);
   background: color-mix(in srgb, var(--color-danger, #ef4444) 8%, var(--color-surface));
+}
+
+.deploymentInfo {
+  border: 1px solid color-mix(in srgb, var(--color-primary) 18%, var(--color-border));
+  color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-surface));
 }
 
 .deploymentNotice {
