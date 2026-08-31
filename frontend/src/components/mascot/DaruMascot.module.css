@@ -19,10 +19,6 @@
 .stage[data-game-safe][data-mode="active"] {
   transform: translate3d(var(--daru-x, 0px), var(--daru-y, 0px), 0);
 }
-.stage[data-game-safe][data-mode="quiet"] {
-  transform: none;
-  transition: opacity 180ms ease, transform 0s;
-}
 .stage[data-game-safe] .character { cursor: pointer; }
 .stage[data-occluded] { opacity: 0; transform: translate3d(var(--daru-x, 0px), calc(var(--daru-y, 0px) + 10px), 0); visibility: hidden; pointer-events: none; transition: opacity 180ms ease, transform 180ms ease, visibility 0s linear 180ms; }
 .mascot { position: relative; display: grid; justify-items: center; background: transparent; }

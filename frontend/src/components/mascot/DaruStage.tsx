@@ -354,13 +354,13 @@ export function DaruStage() {
   }, [facing, isDaruGame]);
 
   const handlePointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
-    if (mode === "hidden" || isDaruGame) return;
+    if (mode === "hidden") return;
     let dragOrigin = { x: position.x, y: position.y };
     const translated = stageRef.current ? numericTranslate(stageRef.current) : null;
     if (translated) dragOrigin = translated;
     event.currentTarget.setPointerCapture(event.pointerId);
     dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, originX: dragOrigin.x, originY: dragOrigin.y, moved: false };
-  }, [isDaruGame, mode, position.x, position.y]);
+  }, [mode, position.x, position.y]);
 
   const handlePointerMove = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
     const drag = dragRef.current;

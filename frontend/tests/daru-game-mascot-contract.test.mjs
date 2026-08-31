@@ -20,13 +20,17 @@ test("daru-game applies a route-specific game-safe stage", () => {
   assert.match(mascotCss, /\.stage\[data-game-safe\][\s\S]+transform: none/);
 });
 
-test("game-safe active uses constrained autonomous movement while drag stays disabled", () => {
+test("game-safe active constrains automatic movement while reusing manual drag", () => {
   assert.match(stageSource, /const chooseGameSafeDestination = useCallback/);
   assert.match(stageSource, /\[data-daru-game-blocker\]/);
   assert.match(stageSource, /if \(isDaruGame && !gameSafe\) return false/);
   assert.match(stageSource, /isDaruGame \? chooseGameSafeDestination\(\) : chooseSafeDestination\(\)/);
   assert.match(stageSource, /beginMovementTo\(target, isDaruGame\)/);
-  assert.match(stageSource, /mode === "hidden" \|\| isDaruGame/);
+  assert.match(stageSource, /if \(mode === "hidden"\) return;[\s\S]*setPointerCapture/);
+  assert.doesNotMatch(stageSource, /if \(mode === "hidden" \|\| isDaruGame\) return/);
+  assert.match(stageSource, /Math\.hypot\(dx, dy\) > 5[\s\S]*freezeRoaming\(\)[\s\S]*setLocomotion\("drag"\)/);
+  assert.match(stageSource, /setPosition\(clampPosition\(drag\.originX \+ dx, drag\.originY \+ dy\)\)/);
+  assert.match(stageSource, /releasePointerCapture[\s\S]*setLocomotion\("land"\)[\s\S]*setLocomotion\("idle"\)/);
   assert.match(stageSource, /<DaruMascot[\s\S]+onInteract=\{handleCharacterClick\}/);
   assert.match(gameSource, /data-daru-game-blocker/);
   assert.match(gameStatusSource, /data-daru-game-blocker/);
@@ -65,7 +69,7 @@ test("game-safe destination rejects blockers and keeps the current position when
   assert.doesNotMatch(stageSource, /const chooseGameSafeDestination = useCallback\(\(\) => \{[\s\S]*return \{ x: 0, y: 0 \};\s*\}, \[\]\)/);
 });
 
-test("game-safe active and quiet inherit the general route sizes", () => {
+test("game-safe active and quiet inherit general route size and drag transforms", () => {
   const desktopGameSafe = mascotCss.match(/\.stage\[data-game-safe\] \{([^}]*)\}/)?.[1] ?? "";
   const mobileGameSafe = mascotCss.match(/@media \(max-width: 600px\) \{\s*\.stage\[data-game-safe\] \{([^}]*)\}/)?.[1] ?? "";
 
@@ -74,8 +78,7 @@ test("game-safe active and quiet inherit the general route sizes", () => {
   assert.doesNotMatch(desktopGameSafe, /width:/);
   assert.doesNotMatch(mobileGameSafe, /width:/);
   assert.match(mascotCss, /\.stage\[data-game-safe\]\[data-mode="active"\][\s\S]*translate3d/);
-  assert.match(mascotCss, /\.stage\[data-game-safe\]\[data-mode="quiet"\][\s\S]*transform: none/);
-  assert.match(mascotCss, /\.stage\[data-game-safe\]\[data-mode="quiet"\][\s\S]*transition: opacity 180ms ease, transform 0s/);
+  assert.doesNotMatch(mascotCss, /\.stage\[data-game-safe\]\[data-mode="quiet"\][^{]*\{[^}]*transform: none/);
   assert.doesNotMatch(mascotCss, /\.stage\[data-game-safe\] \.character \{[^}]*width:/);
   assert.match(mascotCss, /\.character \{[\s\S]*?width: 148px;[\s\S]*?height: 148px/);
   assert.match(mascotCss, /@media \(max-width: 1024px\) \{ \.stage \{ right: 91px; width: 122px; \}\.character \{ width: 112px; height: 112px/);
