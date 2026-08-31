@@ -114,6 +114,27 @@ test("all authoritative game actions share the compatible action ID helper", () 
   }
 });
 
+test("authoritative card flips are optimistic, bounded to two visuals, and sent in order", () => {
+  assert.match(gameSource, /setVisualFlippedIds\(\[\.\.\.selectedIds, card\.id\]\)/);
+  assert.match(gameSource, /selectedIds\.includes\(card\.id\) \|\| selectedIds\.length >= 2/);
+  assert.match(gameSource, /if \(actionPendingRef\.current\) \{ queuedServerFlipRef\.current = action; return; \}/);
+  assert.match(gameSource, /const response = await flipDaruGameCard\(runId, action\.position\)/);
+  assert.match(gameSource, /if \(response\.matched === null\) \{[\s\S]*action = queuedServerFlipRef\.current;[\s\S]*continue;/);
+  assert.doesNotMatch(gameSource, /actionPendingRef\.current = true; setLocked\(true\);\s*void flipDaruGameCard/);
+});
+
+test("authoritative match, mismatch, and recovery reconcile optimistic visuals", () => {
+  assert.match(gameSource, /setAttempts\(response\.attempts\); setCombo\(response\.current_combo\); setMaxCombo\(response\.max_combo\); setDaruPoints\(response\.earned_daru_points\)/);
+  assert.match(gameSource, /if \(response\.matched\) \{[\s\S]*setMatchedPairIds[\s\S]*setVisualFlippedIds\(\[\]\)/);
+  assert.match(gameSource, /mismatchTimerRef\.current = window\.setTimeout\(\(\) => \{ setVisualFlippedIds\(\[\]\);[\s\S]*MISMATCH_REVEAL_MS\)/);
+  assert.match(gameSource, /catch \{[\s\S]*queuedServerFlipRef\.current = null;[\s\S]*recoverRunState\(runId, nextDifficulty\)/);
+});
+
+test("preview identities remain available for immediate authoritative visual flips", () => {
+  assert.doesNotMatch(gameSource, /beginFlipping[\s\S]{0,300}hiddenServerCards/);
+  assert.match(gameSource, /current\.length === state\.positions\.length \? current : hiddenServerCards\(state\.positions\)/);
+});
+
 test("a failed authoritative READY start recovers instead of remaining in READY", () => {
   assert.match(gameSource, /startDaruGameRun\(runId\)/);
   assert.match(gameSource, /setReadyCue\("GO!"\); setStartedAt\(authoritativeStart \?\? Date\.now\(\)\); setPhase\("playing"\)/);

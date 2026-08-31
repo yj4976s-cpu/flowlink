@@ -29,6 +29,7 @@ const ACTIVE_PHASES: GamePhase[] = ["preview", "flipping", "ready", "playing", "
 const LAST_PAIR_FEEDBACK_MS = 1800;
 const RESULT_PENDING_DELAY_MS = 1500;
 type SaveStatus = "idle" | "saving" | "saved" | "failed";
+type QueuedServerFlip = { cardId: string; position: number };
 
 function hiddenServerCards(positions: number[]): GameCard[] {
   return positions.map((position) => ({ id: `server-${position}`, pairId: `hidden-${position}`, kind: "daru", image: DARU_CARD_BACK_ASSETS.day, label: "숨겨진 카드", themeImages: DARU_CARD_BACK_ASSETS }));
@@ -63,6 +64,9 @@ export function DaruGame() {
   const runIdRef = useRef<string | null>(null);
   const startPendingRef = useRef(false);
   const actionPendingRef = useRef(false);
+  const visualFlippedIdsRef = useRef<string[]>([]);
+  const queuedServerFlipRef = useRef<QueuedServerFlip | null>(null);
+  const gameGenerationRef = useRef(0);
   const lastPairCueShownRef = useRef(false);
   const phaseRef = useRef<GamePhase>("lobby");
   const resumeAttemptedRef = useRef(false);
@@ -70,7 +74,7 @@ export function DaruGame() {
   const [phase, setPhaseState] = useState<GamePhase>("lobby");
   const [difficulty, setDifficulty] = useState<GameDifficulty | null>(null);
   const [cards, setCards] = useState<GameCard[]>([]);
-  const [flippedIds, setFlippedIds] = useState<string[]>([]);
+  const [visualFlippedIds, setVisualFlippedIdsState] = useState<string[]>([]);
   const [matchedPairIds, setMatchedPairIds] = useState<string[]>([]);
   const [attempts, setAttempts] = useState(0);
   const [combo, setCombo] = useState(0);
@@ -106,6 +110,7 @@ export function DaruGame() {
   const [runRecoveryNotice, setRunRecoveryNotice] = useState<string | null>(null);
 
   const setPhase = useCallback((next: GamePhase) => { phaseRef.current = next; setPhaseState(next); }, []);
+  const setVisualFlippedIds = useCallback((next: string[]) => { visualFlippedIdsRef.current = next; setVisualFlippedIdsState(next); }, []);
   useEffect(() => { void getCurrentUser().then(setCurrentUser).catch(() => setCurrentUser(null)).finally(() => setAuthResolved(true)); }, []);
   useEffect(() => {
     const syncAuth = (event: Event) => {
@@ -143,16 +148,16 @@ export function DaruGame() {
   const beginFlipping = useCallback(() => {
     if (phaseRef.current !== "preview") return;
     clearSequenceTimer();
-    if (runIdRef.current) setCards((current) => hiddenServerCards(current.map((_card, position) => position)));
     setPhase("flipping");
   }, [clearSequenceTimer, setPhase]);
   const resetState = useCallback((nextDifficulty?: GameDifficulty) => {
     clearMismatchTimer(); clearFeedbackTimer(); clearSequenceTimer(); clearCompletionTimer(); clearResultPendingTimer(); clearHintTimer();
+    gameGenerationRef.current += 1; actionPendingRef.current = false; queuedServerFlipRef.current = null;
     completionAnnouncedRef.current = false; submitInProgressRef.current = false; lastPairCueShownRef.current = false;
-    authExpiredRef.current = false; setFlippedIds([]); setMatchedPairIds([]); setAttempts(0); setCombo(0); setMaxCombo(0); setDaruPoints(0); setFeedback(null); setMetrics(null); setRank("C"); setNewBest(false); setElapsedSeconds(0); setStartedAt(0); setLocked(false); setPreviewProgress(1); setReadyCue(null); setWithinTimeLimit(true); setLeaderboardRank(null); setPersonalBestPower(null); setPreviousBestPower(null); setRecordStatus("idle"); setShowResultPendingOverlay(false); setAuthExpired(false); setPreviewRetry(null);
+    authExpiredRef.current = false; setVisualFlippedIds([]); setMatchedPairIds([]); setAttempts(0); setCombo(0); setMaxCombo(0); setDaruPoints(0); setFeedback(null); setMetrics(null); setRank("C"); setNewBest(false); setElapsedSeconds(0); setStartedAt(0); setLocked(false); setPreviewProgress(1); setReadyCue(null); setWithinTimeLimit(true); setLeaderboardRank(null); setPersonalBestPower(null); setPreviousBestPower(null); setRecordStatus("idle"); setShowResultPendingOverlay(false); setAuthExpired(false); setPreviewRetry(null);
     if (nextDifficulty) { const config = DIFFICULTY_CONFIG[nextDifficulty]; setTimeRemaining(config.timeLimitSeconds); setHintsRemaining(config.hintCount); }
     else { setTimeRemaining(0); setHintsRemaining(0); }
-  }, [clearCompletionTimer, clearFeedbackTimer, clearHintTimer, clearMismatchTimer, clearResultPendingTimer, clearSequenceTimer]);
+  }, [clearCompletionTimer, clearFeedbackTimer, clearHintTimer, clearMismatchTimer, clearResultPendingTimer, clearSequenceTimer, setVisualFlippedIds]);
   const handleTerminalRunError = useCallback((error: unknown) => {
     const reason = terminalRunRecoveryReason(error);
     if (!reason) return false;
@@ -266,7 +271,7 @@ export function DaruGame() {
 
   const beginHintPresentation = (duration: number) => {
     const deadline = performance.now() + duration * 1000;
-    setFlippedIds([]); setHintActive(true); setHintRemainingSeconds(duration); setHintProgress(1);
+    setVisualFlippedIds([]); setHintActive(true); setHintRemainingSeconds(duration); setHintProgress(1);
     hintIntervalRef.current = window.setInterval(() => { const remainingMs = Math.max(0, deadline - performance.now()); setHintRemainingSeconds(Math.max(1, Math.ceil(remainingMs / 1000))); setHintProgress(remainingMs / (duration * 1000)); }, 100);
     hintTimerRef.current = window.setTimeout(clearHintTimer, duration * 1000);
   };
@@ -276,17 +281,17 @@ export function DaruGame() {
   }, [clearResultPendingTimer, setPhase]);
   const applyRunState = useCallback((state: ServerRunState, nextDifficulty: GameDifficulty) => {
     const visibleByPosition = new Map(state.visible_cards.map((card) => [card.position, card.card_id]));
-    setCards(state.positions.reduce((current, position) => { const cardId = visibleByPosition.get(position); return cardId ? revealServerCard(current, position, cardId) : current; }, hiddenServerCards(state.positions)));
+    setCards((current) => state.positions.reduce((next, position) => { const cardId = visibleByPosition.get(position); return cardId ? revealServerCard(next, position, cardId) : next; }, current.length === state.positions.length ? current : hiddenServerCards(state.positions)));
     setAttempts(state.attempts); setCombo(state.current_combo); setMaxCombo(state.max_combo); setDaruPoints(state.earned_daru_points); setHintsRemaining(DIFFICULTY_CONFIG[nextDifficulty].hintCount - state.hints_used);
     const matchedIds = [...new Set(state.matched_positions.map((position) => visibleByPosition.get(position)).filter((value): value is string => Boolean(value)))];
-    setMatchedPairIds(matchedIds); setFlippedIds(state.first_position === null ? [] : [`server-${state.first_position}`]);
+    setMatchedPairIds(matchedIds); setVisualFlippedIds(state.first_position === null ? [] : [`server-${state.first_position}`]);
     if (state.play_started_at) {
       const elapsedAtResponse = Math.max(0, new Date(state.server_now).getTime() - new Date(state.play_started_at).getTime());
       setStartedAt(Date.now() - elapsedAtResponse);
     }
     if (state.completion_result) applyCompletionResult(state.completion_result, nextDifficulty);
     else if (state.status === "PLAYING") setPhase("playing");
-  }, [applyCompletionResult, setPhase]);
+  }, [applyCompletionResult, setPhase, setVisualFlippedIds]);
   const recoverRunState = useCallback(async (runId: string, nextDifficulty: GameDifficulty) => {
     try {
       const state = await getDaruGameRunState(runId); applyRunState(state, nextDifficulty); return state;
@@ -363,44 +368,69 @@ export function DaruGame() {
     setElapsedSeconds(finalElapsed);
     setPhase("partial");
   };
-  const handleFlip = (card: GameCard) => {
-    if (phase !== "playing" || locked || hintActive || matchedPairIds.includes(card.pairId) || flippedIds.includes(card.id) || flippedIds.length >= 2) return;
-    const runId = runIdRef.current;
-    if (runId) {
-      if (actionPendingRef.current) return;
-      const position = cards.findIndex((candidate) => candidate.id === card.id);
-      if (position < 0) return;
-      let completionReached = false;
-      actionPendingRef.current = true; setLocked(true);
-      void flipDaruGameCard(runId, position).then((response) => {
+  const runServerFlipQueue = async (runId: string, firstAction: QueuedServerFlip, nextDifficulty: GameDifficulty, generation: number) => {
+    let action: QueuedServerFlip | null = firstAction;
+    let keepLocked = false;
+    try {
+      while (action && generation === gameGenerationRef.current && runIdRef.current === runId) {
+        const response = await flipDaruGameCard(runId, action.position);
+        if (generation !== gameGenerationRef.current || runIdRef.current !== runId) return;
         setCards((current) => revealServerCard(current, response.card.position, response.card.card_id));
         setAttempts(response.attempts); setCombo(response.current_combo); setMaxCombo(response.max_combo); setDaruPoints(response.earned_daru_points);
-        if (response.matched === null) { setFlippedIds([card.id]); return; }
-        const firstId = flippedIds[0]; setFlippedIds([firstId, card.id]);
-        if (response.matched) {
-          const remaining = DIFFICULTY_CONFIG[difficulty!].pairCount - response.matched_pairs;
-          completionReached = remaining === 0;
-          setMatchedPairIds((current) => [...current, response.card.card_id]); setFlippedIds([]); clearFeedbackTimer();
-          if (remaining > 0 && (remaining !== 1 || !lastPairCueShownRef.current)) { const isLastPair = remaining === 1; const message: MatchFeedbackData["message"] = isLastPair ? "거의 다 찾았어!" : response.current_combo >= 3 ? "감 잡았네!" : response.current_combo === 2 ? "좋은데!" : "찾았다!"; if (isLastPair) lastPairCueShownRef.current = true; setFeedback({ id: Date.now(), message, combo: response.current_combo, points: response.points_awarded, remainingPairs: remaining }); feedbackTimerRef.current = window.setTimeout(() => { setFeedback(null); feedbackTimerRef.current = null; }, isLastPair ? LAST_PAIR_FEEDBACK_MS : 1100); }
-          return;
+        if (response.matched === null) {
+          action = queuedServerFlipRef.current;
+          queuedServerFlipRef.current = null;
+          continue;
         }
-        mismatchTimerRef.current = window.setTimeout(() => { setFlippedIds([]); mismatchTimerRef.current = null; }, MISMATCH_REVEAL_MS);
-      }).catch(async () => { try { await recoverRunState(runId, difficulty!); } catch { setRecordStatus("failed"); } }).finally(() => { actionPendingRef.current = false; setLocked(authExpiredRef.current || completionReached); });
+        if (response.matched) {
+          const remaining = DIFFICULTY_CONFIG[nextDifficulty].pairCount - response.matched_pairs;
+          keepLocked = remaining === 0;
+          setMatchedPairIds((current) => current.includes(response.card.card_id) ? current : [...current, response.card.card_id]); setVisualFlippedIds([]); clearFeedbackTimer();
+          if (remaining > 0 && (remaining !== 1 || !lastPairCueShownRef.current)) { const isLastPair = remaining === 1; const message: MatchFeedbackData["message"] = isLastPair ? "거의 다 찾았어!" : response.current_combo >= 3 ? "감 잡았네!" : response.current_combo === 2 ? "좋은데!" : "찾았다!"; if (isLastPair) lastPairCueShownRef.current = true; setFeedback({ id: Date.now(), message, combo: response.current_combo, points: response.points_awarded, remainingPairs: remaining }); feedbackTimerRef.current = window.setTimeout(() => { setFeedback(null); feedbackTimerRef.current = null; }, isLastPair ? LAST_PAIR_FEEDBACK_MS : 1100); }
+        } else {
+          keepLocked = true; setLocked(true);
+          mismatchTimerRef.current = window.setTimeout(() => { setVisualFlippedIds([]); setLocked(authExpiredRef.current); mismatchTimerRef.current = null; }, MISMATCH_REVEAL_MS);
+        }
+        action = null;
+      }
+    } catch {
+      queuedServerFlipRef.current = null;
+      try { await recoverRunState(runId, nextDifficulty); } catch { setRecordStatus("failed"); }
+    } finally {
+      if (generation === gameGenerationRef.current) {
+        actionPendingRef.current = false;
+        queuedServerFlipRef.current = null;
+        setLocked(authExpiredRef.current || keepLocked);
+      }
+    }
+  };
+  const handleFlip = (card: GameCard) => {
+    const selectedIds = visualFlippedIdsRef.current;
+    if (phase !== "playing" || locked || hintActive || matchedPairIds.includes(card.pairId) || selectedIds.includes(card.id) || selectedIds.length >= 2) return;
+    const runId = runIdRef.current;
+    if (runId) {
+      const position = cards.findIndex((candidate) => candidate.id === card.id);
+      if (position < 0) return;
+      const action = { cardId: card.id, position };
+      setVisualFlippedIds([...selectedIds, card.id]);
+      if (actionPendingRef.current) { queuedServerFlipRef.current = action; return; }
+      actionPendingRef.current = true;
+      void runServerFlipQueue(runId, action, difficulty!, gameGenerationRef.current);
       return;
     }
-    if (flippedIds.length === 0) { setFlippedIds([card.id]); return; }
-    const firstCard = cards.find((candidate) => candidate.id === flippedIds[0]); if (!firstCard) { setFlippedIds([card.id]); return; }
-    setAttempts((current) => current + 1); setFlippedIds([firstCard.id, card.id]);
+    if (selectedIds.length === 0) { setVisualFlippedIds([card.id]); return; }
+    const firstCard = cards.find((candidate) => candidate.id === selectedIds[0]); if (!firstCard) { setVisualFlippedIds([card.id]); return; }
+    setAttempts((current) => current + 1); setVisualFlippedIds([firstCard.id, card.id]);
     if (firstCard.pairId === card.pairId) {
       const nextCombo = combo + 1; const reward = calculatePairPoints(nextCombo); const remaining = DIFFICULTY_CONFIG[difficulty!].pairCount - matchedPairIds.length - 1;
       setMatchedPairIds((current) => [...current, card.pairId]); setCombo(nextCombo); setMaxCombo((current) => Math.max(current, nextCombo)); setDaruPoints((current) => current + reward.total); clearFeedbackTimer();
       if (remaining > 0 && (remaining !== 1 || !lastPairCueShownRef.current)) { const isLastPair = remaining === 1; const message: MatchFeedbackData["message"] = isLastPair ? "거의 다 찾았어!" : nextCombo >= 3 ? "감 잡았네!" : nextCombo === 2 ? "좋은데!" : "찾았다!"; if (isLastPair) lastPairCueShownRef.current = true; setFeedback({ id: Date.now(), message, combo: nextCombo, points: reward.total, remainingPairs: remaining }); feedbackTimerRef.current = window.setTimeout(() => { setFeedback(null); feedbackTimerRef.current = null; }, isLastPair ? LAST_PAIR_FEEDBACK_MS : 1100); }
-      setFlippedIds([]); return;
+      setVisualFlippedIds([]); return;
     }
-    setCombo(0); setLocked(true); mismatchTimerRef.current = window.setTimeout(() => { setFlippedIds([]); setLocked(false); mismatchTimerRef.current = null; }, MISMATCH_REVEAL_MS);
+    setCombo(0); setLocked(true); mismatchTimerRef.current = window.setTimeout(() => { setVisualFlippedIds([]); setLocked(false); mismatchTimerRef.current = null; }, MISMATCH_REVEAL_MS);
   };
   const viewLeaderboard = () => { if (startPendingRef.current || submitInProgressRef.current) return; chooseDifficulty(); window.setTimeout(() => document.getElementById("daru-leaderboard")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0); };
-  useEffect(() => () => { clearMismatchTimer(); clearFeedbackTimer(); clearSequenceTimer(); clearCompletionTimer(); clearResultPendingTimer(); clearHintTimer(); }, [clearCompletionTimer, clearFeedbackTimer, clearHintTimer, clearMismatchTimer, clearResultPendingTimer, clearSequenceTimer]);
+  useEffect(() => () => { gameGenerationRef.current += 1; actionPendingRef.current = false; queuedServerFlipRef.current = null; clearMismatchTimer(); clearFeedbackTimer(); clearSequenceTimer(); clearCompletionTimer(); clearResultPendingTimer(); clearHintTimer(); }, [clearCompletionTimer, clearFeedbackTimer, clearHintTimer, clearMismatchTimer, clearResultPendingTimer, clearSequenceTimer]);
 
   if (phase === "lobby" || !difficulty) return <>{runRecoveryNotice && <p className={styles.authRecoveryNotice} role="status">{runRecoveryNotice}</p>}{authExpired && <p className={styles.authRecoveryNotice} role="alert">로그인 세션이 만료되었습니다. 게임을 시작하려면 <Link href="/login?next=%2Fdaru-game">다시 로그인</Link>해 주세요.</p>}{previewRetry && !authExpired && <p className={styles.authRecoveryNotice} role="alert">카드 미리보기를 불러오지 못했어요. <button type="button" onClick={() => void retryPreview()} disabled={startPending}>다시 시도</button></p>}<DifficultySelector onSelect={startGame} startDisabled={!authResolved || authExpired || Boolean(previewRetry)} startPending={startPending} />{authResolved && currentUser?.role === "USER" && <DaruLeaderboard refreshKey={leaderboardRefresh} />}</>;
   const hintsUsed = DIFFICULTY_CONFIG[difficulty].hintCount - hintsRemaining;
@@ -419,7 +449,7 @@ export function DaruGame() {
       <div className={styles.hintProgressContent}><span>카드를 잘 기억해둬! <b>{hintRemainingSeconds}초</b></span><progress max="1" value={hintProgress} aria-label={`힌트 공개 ${hintRemainingSeconds}초 남음`} /></div>
     </div>}
     <div className={styles.boardStage} data-complete={phase === "finished" || phase === "partial" || undefined} data-dimmed={phase === "time-over" || undefined}>
-      <MemoryBoard cards={cards} difficulty={difficulty} theme={theme} phase={phase} flippedIds={flippedIds} matchedPairIds={matchedPairIds} locked={locked} hintActive={hintActive} onFlip={handleFlip} />
+      <MemoryBoard cards={cards} difficulty={difficulty} theme={theme} phase={phase} flippedIds={visualFlippedIds} matchedPairIds={matchedPairIds} locked={locked} hintActive={hintActive} onFlip={handleFlip} />
       {feedback && <DaruMatchFeedback feedback={feedback} />}
       {phase === "flipping" && <div className={styles.waveCue} aria-live="polite"><span>그럼, 시작해볼까?</span><i aria-hidden="true" /></div>}
       {readyCue && <div className={styles.readyCue} aria-live="assertive">{readyCue}</div>}
