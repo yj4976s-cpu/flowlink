@@ -452,8 +452,8 @@ export function DaruGame() {
   const hintsUsed = DIFFICULTY_CONFIG[difficulty].hintCount - hintsRemaining;
   const previewSecondsRemaining = Math.max(1, Math.ceil(previewProgress * DIFFICULTY_CONFIG[difficulty].previewSeconds));
   return <section className={styles.game} data-phase={phase} aria-labelledby="active-game-title">
-    <header className={styles.gameHeader}><div><span>{DIFFICULTY_CONFIG[difficulty].label}</span><h1 id="active-game-title">다루 카드 찾기</h1></div><button className={styles.changeButton} type="button" onClick={chooseDifficulty} disabled={currentUser?.role === "USER" && phase === "playing" && matchedPairIds.length === DIFFICULTY_CONFIG[difficulty].pairCount}>나가기</button></header>
-    <div className={styles.memoryGuide} data-preview={phase === "preview" || undefined}>
+    <header className={styles.gameHeader} data-daru-game-blocker><div><span>{DIFFICULTY_CONFIG[difficulty].label}</span><h1 id="active-game-title">다루 카드 찾기</h1></div><button className={styles.changeButton} type="button" onClick={chooseDifficulty} disabled={currentUser?.role === "USER" && phase === "playing" && matchedPairIds.length === DIFFICULTY_CONFIG[difficulty].pairCount}>나가기</button></header>
+    <div className={styles.memoryGuide} data-preview={phase === "preview" || undefined} data-daru-game-blocker>
       <div className={styles.memoryGuideDaru}><Image key={theme} src={DARU_MEMORY_GUIDE_ASSETS[theme]} alt="돋보기로 카드를 살펴보는 다루" fill sizes="(max-width: 720px) 58px, 76px" priority unoptimized /></div>
       <div className={styles.memoryGuideCopy}><span className={styles.guideEyebrow}>DARU MISSION GUIDE</span><strong>{phase === "preview" ? "카드를 잘 기억해둬!" : "좋아, 짝을 찾아볼까?"}</strong><span>{phase === "preview" ? "잠시 후 카드가 뒤집혀요." : "같은 그림의 카드를 찾아보세요."}</span>{phase === "preview" && <small className={styles.previewTip}>카드 위치를 기억해 같은 짝을 찾아보세요.</small>}</div>
       {phase === "preview" ? <div className={styles.memoryGuideActions}><span><small>기억 시간</small><b key={previewSecondsRemaining} className={styles.memoryCountdown} aria-label={`기억 시간 ${previewSecondsRemaining}초 남음`}>{String(previewSecondsRemaining).padStart(2, "0")}초</b></span><button className="button button-primary" type="button" onClick={beginFlipping}>바로 시작</button></div> : <span className={styles.missionLive}>MISSION</span>}
@@ -464,7 +464,7 @@ export function DaruGame() {
       <div className={styles.hintProgressDaru}><Image key={theme} src={DARU_MEMORY_GUIDE_ASSETS[theme]} alt="카드를 기억하도록 응원하는 다루" fill sizes="(max-width: 720px) 38px, 48px" unoptimized /></div>
       <div className={styles.hintProgressContent}><span>카드를 잘 기억해둬! <b>{hintRemainingSeconds}초</b></span><progress max="1" value={hintProgress} aria-label={`힌트 공개 ${hintRemainingSeconds}초 남음`} /></div>
     </div>}
-    <div className={styles.boardStage} data-complete={phase === "finished" || phase === "partial" || undefined} data-dimmed={phase === "time-over" || undefined}>
+    <div className={styles.boardStage} data-complete={phase === "finished" || phase === "partial" || undefined} data-dimmed={phase === "time-over" || undefined} data-daru-game-blocker>
       <MemoryBoard cards={cards} difficulty={difficulty} theme={theme} phase={phase} flippedIds={visualFlippedIds} matchedPairIds={matchedPairIds} locked={locked} hintActive={hintActive} onFlip={handleFlip} />
       {feedback && <DaruMatchFeedback feedback={feedback} />}
       {phase === "flipping" && <div className={styles.waveCue} aria-live="polite"><span>그럼, 시작해볼까?</span><i aria-hidden="true" /></div>}
