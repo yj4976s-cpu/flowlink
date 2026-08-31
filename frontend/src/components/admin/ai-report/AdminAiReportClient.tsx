@@ -11,6 +11,7 @@ import {
   type AdminOperationsBriefing,
   type AdminOperationsBriefingStatus,
 } from "@/lib/adminAiReportApi";
+import { adminOperationsBriefingFallbackTasks, geminiBriefingLabel } from "./adminAiReportViewState";
 import styles from "./AdminAiReportClient.module.css";
 
 function isAbortError(reason: unknown) { return reason instanceof DOMException && reason.name === "AbortError"; }
@@ -58,14 +59,8 @@ export function AdminAiReportClient() {
 
 function OperationsBriefing({ briefing, status, loading, error, onGenerate }: { briefing: AdminOperationsBriefing | null; status: AdminOperationsBriefingStatus | null; loading: boolean; error: string; onGenerate: () => void }) {
   const metrics = briefing?.metrics;
-  const tasks = briefing?.tasks ?? [
-    { key: "operation_detection_pending", label: "탐지 검토 대기", count: 0, href: "/admin/detections?purpose=OPERATION&status=PENDING" },
-    { key: "waste_collection_pending", label: "폐기물 수거 대기", count: 0, href: "/admin/detections?purpose=OPERATION&status=CONFIRMED" },
-    { key: "citizen_review_pending", label: "시민 제보 검토 대기", count: 0, href: "/admin/citizen-reports?status=PENDING" },
-    { key: "ownership_claim_pending", label: "소유권 요청 검토 대기", count: 0, href: "/admin/ownership-claims?status=PENDING" },
-    { key: "ownership_return_pending", label: "승인 후 반환 대기", count: 0, href: "/admin/ownership-claims?status=APPROVED" },
-  ];
-  const geminiLabel = status?.gemini_connected ? "Gemini 연결됨" : status?.gemini_configured ? "Gemini 대기 중" : "규칙 기반 요약";
+  const tasks = briefing?.tasks ?? adminOperationsBriefingFallbackTasks;
+  const geminiLabel = geminiBriefingLabel(status);
   return <section className={`${styles.panel} ${styles.briefing}`} aria-label="운영 AI 브리핑">
     <div className={styles.briefingHead}>
       <div className={styles.panelTitle}>

@@ -22,6 +22,13 @@ USER_TOOL_NAMES = {
 ADMIN_TOOL_NAMES = {"get_operations_summary", "get_operations_queue"}
 COMMUNITY_CATEGORIES = {"FIELD_STORY", "QUESTION", "EXPERIENCE", "OPINION"}
 KST = ZoneInfo("Asia/Seoul")
+OPERATIONS_PENDING_TASKS = (
+    ("operation_detection_pending", "AI 탐지 검토 대기", "/admin/detections"),
+    ("waste_collection_pending", "폐기물 수거 대기", "/admin/detections?followUp=WASTE_PENDING"),
+    ("citizen_review_pending", "시민 제보 검토 대기", "/admin/citizen-reports?status=PENDING"),
+    ("ownership_claim_pending", "소유권 요청 검토 대기", "/admin/ownership-claims?status=PENDING"),
+    ("ownership_return_pending", "승인 후 실제 반환 대기", "/admin/ownership-claims?status=APPROVED"),
+)
 
 
 def tool_definitions(role: str | None) -> list[dict]:
@@ -112,7 +119,7 @@ def tool_definitions(role: str | None) -> list[dict]:
             {
                 "type": "function",
                 "name": "get_operations_summary",
-                "description": "\uad00\ub9ac\uc790\uac00 \uc6b4\uc601 \ud604\ud669, AI \ud0d0\uc9c0 \uc218, \uacf5\uc2dd \ubc1c\uacac\ubb3c, \ub9e4\uce6d, \uc18c\uc720\uad8c \uc694\uccad, \ubc18\ud658 \uc644\ub8cc \ub4f1 \uc548\uc804\ud55c \uc9d1\uacc4\ub9cc \uba85\uc2dc\uc801\uc73c\ub85c \ubb3c\uc744 \ub54c \uc870\ud68c\ud55c\ub2e4.",
+                "description": "\uad00\ub9ac\uc790\uac00 \uc6b4\uc601 \ud604\ud669, AI \ud0d0\uc9c0 \uc218, \uacf5\uc2dd \ubc1c\uacac\ubb3c, \ub9e4\uce6d, \uc18c\uc720\uad8c \uc694\uccad, \ubc18\ud658 \uc644\ub8cc, \ud604\uc7ac \ub0a8\uc740 \uc6b4\uc601 \ub300\uae30 \uc5c5\ubb34 \ub4f1 \uc548\uc804\ud55c \uc9d1\uacc4\ub9cc \uba85\uc2dc\uc801\uc73c\ub85c \ubb3c\uc744 \ub54c \uc870\ud68c\ud55c\ub2e4.",
                 "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
             },
             {
@@ -321,6 +328,15 @@ def search_public_community(
 def _operations_summary_payload(data: dict) -> dict:
     metrics = data.get("metrics") if isinstance(data.get("metrics"), dict) else {}
     average_confidence = data.get("average_confidence")
+    pending_tasks = [
+        {
+            "code": code,
+            "label": label,
+            "pending_count": int(metrics.get(code) or 0),
+            "path": path,
+        }
+        for code, label, path in OPERATIONS_PENDING_TASKS
+    ]
     return {
         "period": data.get("period"),
         "counts": {
@@ -331,6 +347,10 @@ def _operations_summary_payload(data: dict) -> dict:
             "approved": int(metrics.get("approved") or 0),
             "returned": int(metrics.get("returned") or 0),
             "lost_reports": int(metrics.get("lost_reports") or 0),
+        },
+        "current_backlog": {
+            "items": pending_tasks,
+            "notice": "대기 업무는 오늘 생성 건수가 아니라 현재 남아 있는 관리자 처리 backlog이다.",
         },
         "average_detection_confidence": float(average_confidence) if average_confidence is not None else None,
         "class_detection_counts": [
@@ -353,13 +373,6 @@ def _operations_summary_payload(data: dict) -> dict:
 
 def _operations_queue_payload(data: dict) -> dict:
     metrics = data.get("metrics") if isinstance(data.get("metrics"), dict) else {}
-    queue_items = [
-        ("operation_detection_pending", "AI 탐지 검토 대기", "/admin/detections"),
-        ("waste_collection_pending", "폐기물 수거 대기", "/admin/detections/mobile"),
-        ("citizen_review_pending", "시민 제보 검토 대기", "/admin/citizen-reports"),
-        ("ownership_claim_pending", "소유권 요청 검토 대기", "/admin/ownership-claims"),
-        ("ownership_return_pending", "승인 후 실제 반환 대기", "/admin/ownership-claims"),
-    ]
     return {
         "items": [
             {
@@ -368,7 +381,7 @@ def _operations_queue_payload(data: dict) -> dict:
                 "pending_count": int(metrics.get(code) or 0),
                 "path": path,
             }
-            for code, label, path in queue_items
+            for code, label, path in OPERATIONS_PENDING_TASKS
         ],
         "notice": "\uc774 \ub3c4\uad6c\ub294 \ub300\uae30\uc5f4 \uc870\ud68c \uc804\uc6a9\uc774\uba70 \uc2b9\uc778, \uac70\uc808, \uc0ad\uc81c, \uc218\uac70 \uc644\ub8cc \uac19\uc740 \uc0c1\ud0dc \ubcc0\uacbd\uc744 \uc218\ud589\ud558\uc9c0 \uc54a\ub294\ub2e4.",
     }

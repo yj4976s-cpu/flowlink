@@ -150,6 +150,10 @@ def test_admin_operations_summary_uses_dashboard_metrics(monkeypatch: pytest.Mon
             "returned": 1,
             "lost_reports": 9,
             "operation_detection_pending": 7,
+            "waste_collection_pending": 6,
+            "citizen_review_pending": 5,
+            "ownership_claim_pending": 4,
+            "ownership_return_pending": 3,
         },
         "category_counts": [{"code": "BAG", "name": "\uac00\ubc29", "count": 2}],
         "claim_status_counts": [{"status": "PENDING", "count": 3}],
@@ -171,10 +175,22 @@ def test_admin_operations_summary_uses_dashboard_metrics(monkeypatch: pytest.Mon
         "lost_reports": 9,
     }
     assert result["average_detection_confidence"] == 0.842
+    assert result["current_backlog"] == {
+        "items": [
+            {"code": "operation_detection_pending", "label": "AI 탐지 검토 대기", "pending_count": 7, "path": "/admin/detections"},
+            {"code": "waste_collection_pending", "label": "폐기물 수거 대기", "pending_count": 6, "path": "/admin/detections?followUp=WASTE_PENDING"},
+            {"code": "citizen_review_pending", "label": "시민 제보 검토 대기", "pending_count": 5, "path": "/admin/citizen-reports?status=PENDING"},
+            {"code": "ownership_claim_pending", "label": "소유권 요청 검토 대기", "pending_count": 4, "path": "/admin/ownership-claims?status=PENDING"},
+            {"code": "ownership_return_pending", "label": "승인 후 실제 반환 대기", "pending_count": 3, "path": "/admin/ownership-claims?status=APPROVED"},
+        ],
+        "notice": "대기 업무는 오늘 생성 건수가 아니라 현재 남아 있는 관리자 처리 backlog이다.",
+    }
     assert result["class_detection_counts"] == [{"code": "BAG", "name": "\uac00\ubc29", "count": 2}]
     assert result["ownership_claim_status_counts"] == [{"status": "PENDING", "count": 3}]
     assert "recent_items" not in result
     assert "recent_history" not in result
+    assert "/uploads/private.png" not in str(result)
+    assert "internal memo" not in str(result)
 
 
 def test_admin_operations_queue_returns_safe_paths_and_counts(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -201,9 +217,44 @@ def test_admin_operations_queue_returns_safe_paths_and_counts(monkeypatch: pytes
     assert [item["pending_count"] for item in result["items"]] == [1, 2, 3, 4, 5]
     assert [item["path"] for item in result["items"]] == [
         "/admin/detections",
-        "/admin/detections/mobile",
-        "/admin/citizen-reports",
-        "/admin/ownership-claims",
-        "/admin/ownership-claims",
+        "/admin/detections?followUp=WASTE_PENDING",
+        "/admin/citizen-reports?status=PENDING",
+        "/admin/ownership-claims?status=PENDING",
+        "/admin/ownership-claims?status=APPROVED",
     ]
     assert "\uc0c1\ud0dc \ubcc0\uacbd" in result["notice"]
+
+
+def test_admin_representative_operations_question_gets_safe_summary_with_backlog(monkeypatch: pytest.MonkeyPatch) -> None:
+    dashboard = {
+        "period": "today",
+        "metrics": {
+            "ai_detections": 2,
+            "official_found_items": 1,
+            "matched": 0,
+            "claims": 0,
+            "approved": 0,
+            "returned": 0,
+            "lost_reports": 1,
+            "operation_detection_pending": 1,
+            "waste_collection_pending": 2,
+            "citizen_review_pending": 3,
+            "ownership_claim_pending": 4,
+            "ownership_return_pending": 5,
+        },
+        "category_counts": [],
+        "claim_status_counts": [],
+        "average_confidence": 0.91,
+        "recent_items": [{"storage_location": "A-3", "admin_memo": "do not expose"}],
+    }
+    monkeypatch.setattr("app.services.copilot_tools.get_admin_dashboard_data", lambda *_args, **_kwargs: dashboard)
+
+    tools = tool_definitions_for_message("ADMIN", "오늘 운영 현황을 정리해줘")
+    result = execute_tool(Mock(), Mock(role="ADMIN", id=1), tools[0]["name"], {})
+
+    assert [tool["name"] for tool in tools] == ["get_operations_summary"]
+    assert result["counts"]["today_ai_detections"] == 2
+    assert [item["pending_count"] for item in result["current_backlog"]["items"]] == [1, 2, 3, 4, 5]
+    assert "소유 확률" in result["notice"]
+    assert "storage_location" not in str(result)
+    assert "admin_memo" not in str(result)

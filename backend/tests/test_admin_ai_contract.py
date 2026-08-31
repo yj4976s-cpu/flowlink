@@ -21,7 +21,7 @@ from app.models import Camera, DetectedObject, DetectionEvent, FoundItem, LostRe
 from app.services.matching import create_match_candidates_for_found_item, reconcile_match_candidates_for_found_item
 from app.services.geocoding import Coordinates
 from app.services.detection_inference import DetectionBBox, DetectionInferenceResult, DetectionPrediction, get_inference_service
-from app.services.copilot_providers import ProviderResult
+from app.services.copilot_providers import ChatStatus, ProviderResponseError, ProviderResult
 
 
 @pytest.fixture
@@ -294,6 +294,14 @@ def test_admin_operations_briefing_status_does_not_call_provider(client: TestCli
     assert body["model"] == "gemini-test"
 
 
+def test_admin_operations_briefing_requires_admin(client: TestClient, db: Session) -> None:
+    seed_user(db)
+    login_user(client)
+
+    assert client.get("/api/admin/ai-report/operations-briefing/status").status_code == 403
+    assert client.post("/api/admin/ai-report/operations-briefing").status_code == 403
+
+
 def test_admin_operations_briefing_uses_rule_based_fallback_without_gemini(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
     seed_admin(db)
     login(client)
@@ -315,8 +323,11 @@ def test_admin_operations_briefing_uses_rule_based_fallback_without_gemini(clien
     assert body["metrics"]["ownership_return_pending"] == 5
     assert body["metrics"]["average_confidence"] == "0.847"
     assert body["priority_task"]["label"] == "탐지 검토 대기"
+    assert body["tasks"][0]["href"] == "/admin/detections"
+    assert body["tasks"][1]["href"] == "/admin/detections?followUp=WASTE_PENDING"
     assert body["fallback_used"] is True
     assert body["gemini_connected"] is False
+    assert body["fallback_reason"] == "NOT_CONFIGURED"
 
 
 def test_admin_operations_briefing_can_use_gemini_on_manual_request(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -342,6 +353,42 @@ def test_admin_operations_briefing_can_use_gemini_on_manual_request(client: Test
     assert body["model"] == "gemini-test"
     assert body["gemini_connected"] is True
     assert body["fallback_used"] is False
+
+
+@pytest.mark.parametrize("error", [
+    ProviderResponseError("upstream quota exhausted: secret-test-key", status=ChatStatus.RATE_LIMITED, upstream_status=429),
+    RuntimeError("internal stack trace with secret-test-key"),
+])
+def test_admin_operations_briefing_provider_errors_fall_back_without_leaking_details(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+) -> None:
+    class Provider:
+        async def generate(self, **_kwargs):
+            raise error
+
+    seed_admin(db)
+    login(client)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "CHAT_MODEL_PROVIDER", "gemini")
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "secret-test-key")
+    monkeypatch.setattr(settings, "GEMINI_MODEL", "gemini-test")
+    monkeypatch.setattr("app.services.admin_operations_briefing.get_admin_dashboard_data", lambda *_args, **_kwargs: admin_briefing_dashboard())
+    monkeypatch.setattr("app.services.admin_operations_briefing.create_chat_provider", lambda *_: Provider())
+
+    response = client.post("/api/admin/ai-report/operations-briefing")
+
+    assert response.status_code == 200
+    body = response.json()
+    serialized = response.text
+    assert body["fallback_used"] is True
+    assert body["gemini_connected"] is False
+    assert body["fallback_reason"] == "PROVIDER_UNAVAILABLE"
+    assert "secret-test-key" not in serialized
+    assert "quota exhausted" not in serialized
+    assert "internal stack trace" not in serialized
 
 
 def test_admin_found_item_register_supports_full_lifecycle_counts_filters_and_pagination(client: TestClient, db: Session) -> None:

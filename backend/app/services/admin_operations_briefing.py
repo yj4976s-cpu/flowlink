@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 KST = ZoneInfo("Asia/Seoul")
 
 TASKS = (
-    ("operation_detection_pending", "탐지 검토 대기", "/admin/detections?purpose=OPERATION&status=PENDING"),
-    ("waste_collection_pending", "폐기물 수거 대기", "/admin/detections?purpose=OPERATION&status=CONFIRMED"),
+    ("operation_detection_pending", "탐지 검토 대기", "/admin/detections"),
+    ("waste_collection_pending", "폐기물 수거 대기", "/admin/detections?followUp=WASTE_PENDING"),
     ("citizen_review_pending", "시민 제보 검토 대기", "/admin/citizen-reports?status=PENDING"),
     ("ownership_claim_pending", "소유권 요청 검토 대기", "/admin/ownership-claims?status=PENDING"),
     ("ownership_return_pending", "승인 후 반환 대기", "/admin/ownership-claims?status=APPROVED"),
@@ -92,7 +92,7 @@ def get_admin_operations_briefing_status(settings: Settings) -> dict[str, object
         "gemini_configured": status["gemini_configured"],
         "gemini_connected": False,
         "fallback_used": not status["gemini_configured"],
-        "fallback_reason": None if status["gemini_configured"] else "Gemini API key is not configured.",
+        "fallback_reason": None if status["gemini_configured"] else "NOT_CONFIGURED",
     }
 
 
@@ -152,14 +152,14 @@ async def create_admin_operations_briefing(db: Session, settings: Settings) -> d
             )
             gemini_connected = provider == "gemini"
             fallback_used = False
-        except (ProviderNotConfiguredError, ProviderResponseError, json.JSONDecodeError) as exc:
-            fallback_reason = exc.__class__.__name__
+        except (ProviderNotConfiguredError, ProviderResponseError, json.JSONDecodeError):
+            fallback_reason = "PROVIDER_UNAVAILABLE"
             logger.info("admin_operations_briefing_fallback reason=%s", fallback_reason)
-        except Exception as exc:  # pragma: no cover - provider SDK exceptions vary by version.
-            fallback_reason = exc.__class__.__name__
+        except Exception:  # pragma: no cover - provider SDK exceptions vary by version.
+            fallback_reason = "PROVIDER_UNAVAILABLE"
             logger.info("admin_operations_briefing_fallback reason=%s", fallback_reason)
     else:
-        fallback_reason = "Gemini API key is not configured."
+        fallback_reason = "NOT_CONFIGURED"
 
     return {
         "summary": summary,

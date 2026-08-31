@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/common/Icon";
+import { parseCitizenReportStatusParam } from "@/components/admin/adminQueryState";
 import {
   AdminCitizenReportsApiError,
   adminImageUrl,
@@ -71,9 +73,11 @@ function QuietState({ children, icon }: { children: React.ReactNode; icon?: "doc
 }
 
 export function AdminCitizenReportsClient() {
+  const searchParams = useSearchParams();
+  const initialFilter = parseCitizenReportStatusParam(searchParams.get("status"));
   const [reports, setReports] = useState<AdminCitizenReport[]>([]);
   const [selected, setSelected] = useState<AdminCitizenReport | null>(null);
-  const [filter, setFilter] = useState<QueueFilter>("");
+  const [filter, setFilter] = useState<QueueFilter>(initialFilter);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState("");
