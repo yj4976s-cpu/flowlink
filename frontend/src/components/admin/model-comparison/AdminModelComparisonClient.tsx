@@ -216,6 +216,7 @@ function MetricCell({ metric }: { metric?: AdminModelClassMetric }) {
     <small>Precision {metricLabel(metric.precision, { percent: true })}</small>
     <small>Recall {metricLabel(metric.recall, { percent: true })}</small>
     <strong>mAP@50 {metricLabel(metric.map50, { percent: true })}</strong>
+    <small>mAP@50:95 {metricLabel(metric.map50_95, { percent: true })}</small>
   </span>;
 }
 

@@ -63,4 +63,6 @@ test("model comparison page is admin guarded and linked from operations analysis
   assert.match(header, /\/admin\/model-comparison/);
   assert.match(client, /getAdminModelComparison/);
   assert.match(client, /실시간 모델 전환 화면이 아닙니다/);
+  assert.match(client, /mAP@50:95/);
+  assert.match(client, /metric\.map50_95/);
 });
