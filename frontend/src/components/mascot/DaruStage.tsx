@@ -252,19 +252,26 @@ export function DaruStage() {
     const mobile = window.innerWidth <= 600;
     const tablet = !mobile && window.innerWidth <= 1024;
     const maxTravelX = mobile ? Math.min(96, window.innerWidth * 0.22) : tablet ? Math.min(220, window.innerWidth * 0.26) : Math.min(360, window.innerWidth * 0.32);
-    const maxTravelY = mobile ? Math.min(96, window.innerHeight * 0.14) : tablet ? Math.min(160, window.innerHeight * 0.2) : Math.min(240, window.innerHeight * 0.26);
-    const minimumTravel = mobile ? 28 : tablet ? 44 : 64;
-    const columns = mobile ? 3 : 5;
-    const rows = mobile ? 3 : 4;
+    const mobileBounds = resolveMobileRoamBounds({
+      viewportWidth: window.innerWidth,
+      stageWidth: rect.width,
+      margin,
+      configuredMinTravelDistance: DARU_GROUNDED_ROAMING_CONFIG.mobileMinTravelDistance,
+    });
+    const minimumTravel = mobile ? mobileBounds.minTravelDistance : DARU_GROUNDED_ROAMING_CONFIG.desktopMinTravelDistance;
+    const columns = mobile ? 7 : 9;
     const maximumRightOffset = Math.max(0, Math.min(maxTravelX * 0.45, window.innerWidth - margin - (baseLeft + rect.width)));
-    const candidates = Array.from({ length: columns * rows }, (_, index) => ({
+    const candidates = Array.from({ length: columns }, (_, index) => ({
       x: -maxTravelX + (maxTravelX + maximumRightOffset) * (index % columns) / (columns - 1),
-      y: -maxTravelY * Math.floor(index / columns) / (rows - 1),
-    })).filter((candidate) => Math.hypot(candidate.x - currentPosition.x, candidate.y - currentPosition.y) >= minimumTravel);
+      y: currentPosition.y,
+    })).filter((candidate) => Math.abs(candidate.x - currentPosition.x) >= minimumTravel);
     const safeCandidates = candidates.filter((candidate) => {
       const left = baseLeft + candidate.x;
-      const top = baseTop + candidate.y;
-      return left >= margin && left + rect.width <= window.innerWidth - margin && top >= 76 && top + rect.height <= window.innerHeight - margin && !overlaps(left, top);
+      const baselineTop = baseTop + currentPosition.y;
+      const pathLeft = Math.min(rect.left, left);
+      const pathRight = Math.max(rect.right, left + rect.width);
+      const pathOverlaps = blockers.some((item) => pathLeft < item.right && pathRight > item.left && baselineTop < item.bottom && baselineTop + rect.height > item.top);
+      return left >= margin && left + rect.width <= window.innerWidth - margin && !overlaps(left, baselineTop) && !pathOverlaps;
     });
     if (safeCandidates.length > 0) return safeCandidates[Math.floor(Math.random() * safeCandidates.length)];
     return currentPosition;
@@ -314,10 +321,8 @@ export function DaruStage() {
     const rect = stage?.getBoundingClientRect();
     const mobile = window.matchMedia("(max-width: 600px)").matches;
     const speed = mobile ? DARU_GROUNDED_ROAMING_CONFIG.mobileSpeed : DARU_GROUNDED_ROAMING_CONFIG.desktopSpeed;
-    const distance = gameSafe
-      ? Math.hypot(target.x - currentPosition.x, target.y - currentPosition.y)
-      : Math.abs(target.x - currentPosition.x);
-    const minTravelDistance = gameSafe ? 12 : mobile
+    const distance = Math.abs(target.x - currentPosition.x);
+    const minTravelDistance = mobile
       ? resolveMobileRoamBounds({
         viewportWidth: window.innerWidth,
         stageWidth: rect?.width ?? 88,

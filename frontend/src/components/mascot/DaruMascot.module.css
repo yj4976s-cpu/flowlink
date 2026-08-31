@@ -21,6 +21,7 @@
 }
 .stage[data-game-safe][data-mode="quiet"] {
   transform: none;
+  transition: opacity 180ms ease, transform 0s;
 }
 .stage[data-game-safe] .character { cursor: pointer; }
 .stage[data-game-safe] .mascot[data-mode="quiet"] .character { width: 118px; height: 118px; }

@@ -31,8 +31,19 @@ test("game-safe active uses constrained autonomous movement while drag stays dis
   assert.match(stageSource, /const maxTravelX = mobile \? Math\.min\(96, window\.innerWidth \* 0\.22\) : tablet \? Math\.min\(220, window\.innerWidth \* 0\.26\) : Math\.min\(360, window\.innerWidth \* 0\.32\)/);
   assert.match(stageSource, /const safeCandidates = candidates\.filter/);
   assert.match(stageSource, /const maximumRightOffset = Math\.max\(0, Math\.min\(maxTravelX \* 0\.45/);
-  assert.match(stageSource, /!overlaps\(left, top\)/);
+  assert.match(stageSource, /y: currentPosition\.y/);
+  assert.match(stageSource, /Math\.abs\(candidate\.x - currentPosition\.x\) >= minimumTravel/);
+  assert.match(stageSource, /const pathOverlaps = blockers\.some/);
+  assert.match(stageSource, /pathLeft < item\.right && pathRight > item\.left && baselineTop < item\.bottom && baselineTop \+ rect\.height > item\.top/);
+  assert.match(stageSource, /!overlaps\(left, baselineTop\) && !pathOverlaps/);
   assert.match(stageSource, /if \(safeCandidates\.length > 0\) return safeCandidates\[Math\.floor\(Math\.random\(\) \* safeCandidates\.length\)\]/);
+  assert.doesNotMatch(stageSource, /const chooseGameSafeDestination[\s\S]*maxTravelY/);
+  assert.match(stageSource, /const distance = Math\.abs\(target\.x - currentPosition\.x\)/);
+  assert.doesNotMatch(stageSource, /const distance = gameSafe/);
+  assert.match(stageSource, /const speed = mobile \? DARU_GROUNDED_ROAMING_CONFIG\.mobileSpeed : DARU_GROUNDED_ROAMING_CONFIG\.desktopSpeed/);
+  assert.match(stageSource, /distance \/ speed \* 1000/);
+  assert.match(stageSource, /setLocomotion\("start_walk"\)[\s\S]*setLocomotion\("walk"\)/);
+  assert.match(stageSource, /setLocomotion\("stop_walk"\)/);
 });
 
 test("route entry resets inherited roaming before game-safe active movement can start", () => {
@@ -43,7 +54,7 @@ test("route entry resets inherited roaming before game-safe active movement can 
 });
 
 test("game-safe destination rejects blockers and keeps the current position when no safe candidate exists", () => {
-  assert.match(stageSource, /const chooseGameSafeDestination = useCallback\(\(\) => \{[\s\S]*const currentPosition = positionRef\.current;[\s\S]*const safeCandidates = candidates\.filter[\s\S]*!overlaps\(left, top\)[\s\S]*return currentPosition;\s*\}, \[\]\)/);
+  assert.match(stageSource, /const chooseGameSafeDestination = useCallback\(\(\) => \{[\s\S]*const currentPosition = positionRef\.current;[\s\S]*const safeCandidates = candidates\.filter[\s\S]*!overlaps\(left, baselineTop\) && !pathOverlaps[\s\S]*return currentPosition;\s*\}, \[\]\)/);
   assert.doesNotMatch(stageSource, /const chooseGameSafeDestination = useCallback\(\(\) => \{[\s\S]*return \{ x: 0, y: 0 \};\s*\}, \[\]\)/);
 });
 
@@ -57,6 +68,7 @@ test("game-safe active and quiet have distinct sizes and transform policies", ()
   assert.doesNotMatch(mobileGameSafe, /width:/);
   assert.match(mascotCss, /\.stage\[data-game-safe\]\[data-mode="active"\][\s\S]*translate3d/);
   assert.match(mascotCss, /\.stage\[data-game-safe\]\[data-mode="quiet"\][\s\S]*transform: none/);
+  assert.match(mascotCss, /\.stage\[data-game-safe\]\[data-mode="quiet"\][\s\S]*transition: opacity 180ms ease, transform 0s/);
   assert.doesNotMatch(mascotCss, /\.stage\[data-game-safe\] \.character \{[^}]*width:/);
   assert.match(mascotCss, /\.character \{[\s\S]*?width: 148px;[\s\S]*?height: 148px/);
   assert.match(mascotCss, /@media \(max-width: 1024px\) \{ \.stage \{ right: 91px; width: 122px; \}\.character \{ width: 112px; height: 112px/);
