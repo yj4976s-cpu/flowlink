@@ -13,6 +13,7 @@
     "test:auth-password": "node --experimental-strip-types --test tests/auth-password-contract.test.mjs",
     "test:admin-map": "node --experimental-strip-types --test tests/admin-operations-map-contract.test.mjs",
     "test:detection-report-preview": "node --experimental-strip-types --test tests/detection-report-preview.test.mjs",
+    "test:video-progress": "node --experimental-strip-types --test tests/video-analysis-progress-contract.test.mjs",
     "lint": "eslint"
   },
   "dependencies": {
