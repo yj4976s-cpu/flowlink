@@ -76,3 +76,17 @@ test("MyPage shares the new-password policy without applying it to current passw
   assert.match(myPageSource, /비밀번호와 일치해요/);
   assert.match(myPageSource, /비밀번호가 일치하지 않아요/);
 });
+
+test("MyPage password dialog Escape uses the canonical full cleanup", () => {
+  assert.match(myPageSource, /const closePasswordDialog = useCallback\(\(\) => \{\s*setPasswordOpen\(false\); setPasswordError\(""\); setNextPassword\(""\); setConfirmPassword\(""\); setPasswordSubmitted\(false\);/);
+  assert.match(myPageSource, /event\.key === "Escape"[^}]+if \(passwordOpen\) closePasswordDialog\(\)/);
+  assert.match(myPageSource, /onMouseDown=\{\(event\) => event\.target === event\.currentTarget && closePasswordDialog\(\)\}/);
+  assert.match(myPageSource, /onClick=\{closePasswordDialog\} aria-label="비밀번호 변경 닫기"/);
+  assert.match(myPageSource, /className="button button-secondary" onClick=\{closePasswordDialog\}>취소/);
+  assert.match(myPageSource, /await changePassword\(current, nextPassword\); closePasswordDialog\(\)/);
+});
+
+test("MyPage password form delegates required and policy validation to submitPassword", () => {
+  assert.match(myPageSource, /<form noValidate onSubmit=\{submitPassword\}>/);
+  assert.match(myPageSource, /setPasswordSubmitted\(true\);\s*if \(!current\)[\s\S]*if \(!isValidNewPassword\(nextPassword\)\)[\s\S]*if \(nextPassword !== confirmPassword\)[\s\S]*changePassword\(current, nextPassword\)/);
+});

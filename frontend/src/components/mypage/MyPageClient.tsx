@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Icon, type IconName } from "@/components/common/Icon";
 import { AuthApiError, AuthUser, changePassword, deleteAccount, getCurrentUser, updateNickname } from "@/lib/authApi";
 import { getPasswordConditions, isValidNewPassword, PASSWORD_CONDITION_LABELS, PASSWORD_POLICY_MESSAGE, type PasswordConditions as PasswordConditionState } from "@/lib/passwordPolicy";
@@ -235,6 +235,10 @@ export function MyPageClient() {
   const [activityPages, setActivityPages] = useState<Record<ActivityTab, number>>(() => ({ reports: 1, matches: 1, claims: 1, citizen: 1, [initialActivityTab]: readPositivePage(searchParams.get("activityPage")) }));
   const [activitySorts, setActivitySorts] = useState<Record<ActivityTab, ActivitySort>>(() => ({ reports: "newest", matches: "newest", claims: "newest", citizen: "newest", [initialActivityTab]: initialActivitySort }));
   const [flowNav, setFlowNav] = useState<FlowNav>("overview");
+
+  const closePasswordDialog = useCallback(() => {
+    setPasswordOpen(false); setPasswordError(""); setNextPassword(""); setConfirmPassword(""); setPasswordSubmitted(false);
+  }, []);
   const [flowMenuOpen, setFlowMenuOpen] = useState(false);
   const [reportFilter, setReportFilter] = useState<ReportFilter>("all");
   const [reportSort, setReportSort] = useState<ReportSort>("newest");
@@ -306,11 +310,11 @@ export function MyPageClient() {
   useEffect(() => {
     if (!accountOpen && !passwordOpen && !deleteOpen) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { setAccountOpen(false); setPasswordOpen(false); setDeleteOpen(false); }
+      if (event.key === "Escape") { setAccountOpen(false); if (passwordOpen) closePasswordDialog(); setDeleteOpen(false); }
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [accountOpen, deleteOpen, passwordOpen]);
+  }, [accountOpen, closePasswordDialog, deleteOpen, passwordOpen]);
 
   useEffect(() => {
     if (!flowMenuOpen) return;
@@ -405,10 +409,6 @@ export function MyPageClient() {
     const user = await updateNickname(nickname);
     setData((value) => value ? { ...value, user } : value);
     setEditingNickname(false);
-  };
-
-  const closePasswordDialog = () => {
-    setPasswordOpen(false); setPasswordError(""); setNextPassword(""); setConfirmPassword(""); setPasswordSubmitted(false);
   };
 
   const submitPassword = async (event: FormEvent<HTMLFormElement>) => {
@@ -516,7 +516,7 @@ export function MyPageClient() {
       <div className={styles.danger}><div><strong>회원 탈퇴</strong><span>계정을 삭제하면 다시 복구할 수 없습니다.</span></div><button onClick={() => { setAccountOpen(false); setDeleteOpen(true); }}>회원 탈퇴</button></div>
     </section></div>}
 
-    {passwordOpen && <div className={styles.modalBackdrop} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && closePasswordDialog()}><section className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="password-title"><button className={styles.modalClose} onClick={closePasswordDialog} aria-label="비밀번호 변경 닫기"><Icon name="close" size={20} /></button><h2 id="password-title">비밀번호 변경</h2><form onSubmit={submitPassword}><PasswordInput name="current" label="현재 비밀번호" /><PasswordInput name="next" label="새 비밀번호" value={nextPassword} onChange={(value) => { setNextPassword(value); setPasswordError(""); }}><PasswordPolicyGuide password={nextPassword} invalid={passwordSubmitted && !isValidNewPassword(nextPassword)} /></PasswordInput><PasswordInput name="confirm" label="새 비밀번호 확인" value={confirmPassword} onChange={(value) => { setConfirmPassword(value); setPasswordError(""); }}>{confirmPassword && <span className={confirmPassword === nextPassword ? styles.passwordMatch : styles.passwordMismatch} aria-live="polite">{confirmPassword === nextPassword ? "✓ 비밀번호와 일치해요" : "! 비밀번호가 일치하지 않아요"}</span>}</PasswordInput>{passwordError && <p className={styles.formError}>{passwordError}</p>}<div className={styles.modalActions}><button type="button" className="button button-secondary" onClick={closePasswordDialog}>취소</button><button className="button button-primary">비밀번호 변경</button></div></form></section></div>}
+    {passwordOpen && <div className={styles.modalBackdrop} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && closePasswordDialog()}><section className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="password-title"><button className={styles.modalClose} onClick={closePasswordDialog} aria-label="비밀번호 변경 닫기"><Icon name="close" size={20} /></button><h2 id="password-title">비밀번호 변경</h2><form noValidate onSubmit={submitPassword}><PasswordInput name="current" label="현재 비밀번호" /><PasswordInput name="next" label="새 비밀번호" value={nextPassword} onChange={(value) => { setNextPassword(value); setPasswordError(""); }}><PasswordPolicyGuide password={nextPassword} invalid={passwordSubmitted && !isValidNewPassword(nextPassword)} /></PasswordInput><PasswordInput name="confirm" label="새 비밀번호 확인" value={confirmPassword} onChange={(value) => { setConfirmPassword(value); setPasswordError(""); }}>{confirmPassword && <span className={confirmPassword === nextPassword ? styles.passwordMatch : styles.passwordMismatch} aria-live="polite">{confirmPassword === nextPassword ? "✓ 비밀번호와 일치해요" : "! 비밀번호가 일치하지 않아요"}</span>}</PasswordInput>{passwordError && <p className={styles.formError}>{passwordError}</p>}<div className={styles.modalActions}><button type="button" className="button button-secondary" onClick={closePasswordDialog}>취소</button><button className="button button-primary">비밀번호 변경</button></div></form></section></div>}
     {deleteOpen && <div className={styles.modalBackdrop} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setDeleteOpen(false)}><section className={styles.modal} role="alertdialog" aria-modal="true" aria-labelledby="delete-title"><h2 id="delete-title">정말 탈퇴하시겠어요?</h2><p>계정과 서비스 이용 권한이 비활성화되며 되돌릴 수 없습니다.</p><div className={styles.modalActions}><button className="button button-secondary" onClick={() => setDeleteOpen(false)}>취소</button><button className={styles.deleteButton} onClick={removeAccount}>탈퇴하기</button></div></section></div>}
   </main>;
 }
