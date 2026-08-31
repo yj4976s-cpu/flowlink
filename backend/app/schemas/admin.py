@@ -501,6 +501,8 @@ class AdminModelDeploymentStatusResponse(BaseModel):
     available_models: list[AdminRuntimeModelInfo] = Field(default_factory=list)
     rollback_available: bool
     status_source: Literal["runtime"]
+    audit_consistency: Literal["MATCHED", "MISMATCH", "NO_HISTORY"] = "NO_HISTORY"
+    audit_warning: str | None = None
 
 
 class AdminModelDeploymentRequest(BaseModel):

@@ -47,6 +47,8 @@ class RegisteredModel(BaseModel):
         if any(item is None for item in normalized):
             raise ValueError("expected classes contain an unknown class")
         self.expected_classes = [item for item in normalized if item is not None]
+        if len(self.expected_classes) != len(set(self.expected_classes)):
+            raise ValueError("expected classes contain duplicates")
         return self
 
 
@@ -75,6 +77,32 @@ def normalize_model_label(label: str) -> str | None:
     if direct in {"BALL", "FOOTWEAR", "TRASH", "HAT"}:
         return direct
     return LABEL_ALIASES.get(normalized)
+
+
+def validate_model_class_names(model_names: dict[int, str] | list[str] | tuple[str, ...], expected_classes: list[str]) -> bool:
+    values = list(model_names.values()) if isinstance(model_names, dict) else list(model_names)
+    if not values:
+        return False
+
+    normalized_actual: list[str] = []
+    for label in values:
+        normalized = normalize_model_label(str(label))
+        if normalized is None:
+            return False
+        normalized_actual.append(normalized)
+
+    normalized_expected: list[str] = []
+    for label in expected_classes:
+        normalized = normalize_model_label(str(label))
+        if normalized is None:
+            return False
+        normalized_expected.append(normalized)
+
+    return (
+        len(normalized_actual) == len(set(normalized_actual))
+        and len(normalized_expected) == len(set(normalized_expected))
+        and set(normalized_actual) == set(normalized_expected)
+    )
 
 
 def load_model_registry(path: Path = MODEL_REGISTRY_PATH) -> ModelRegistryDocument:

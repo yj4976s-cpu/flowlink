@@ -81,6 +81,8 @@ export type AdminModelDeploymentStatus = {
   available_models: AdminRuntimeModelInfo[];
   rollback_available: boolean;
   status_source: "runtime";
+  audit_consistency: "MATCHED" | "MISMATCH" | "NO_HISTORY";
+  audit_warning: string | null;
 };
 
 export type AdminModelDeploymentEvent = {

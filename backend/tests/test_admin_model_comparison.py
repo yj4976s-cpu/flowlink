@@ -255,6 +255,78 @@ def test_admin_model_deployment_status_hides_internal_errors(client: TestClient,
     assert "secret" not in response.text.lower()
 
 
+def test_admin_model_deployment_status_reports_no_audit_history(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_user(db, user_id=1, role="ADMIN")
+    login(client, "ADMIN")
+    monkeypatch.setattr(admin_api, "get_ai_inference_client", lambda: FakeDeploymentClient())
+
+    response = client.get("/api/admin/model-deployment")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["active_model_id"] == "flowlink-3class-v6-7"
+    assert body["audit_consistency"] == "NO_HISTORY"
+    assert body["audit_warning"] is None
+
+
+def test_admin_model_deployment_status_reports_matched_audit(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_user(db, user_id=1, role="ADMIN")
+    login(client, "ADMIN")
+    now = datetime(2026, 8, 31, tzinfo=UTC)
+    db.add(
+        AiModelDeploymentEvent(
+            requested_by=1,
+            request_id="matched-audit",
+            action="ACTIVATE",
+            requested_model_id="flowlink-3class-v6-7",
+            from_model_id="flowlink-4class-hat-v7",
+            to_model_id="flowlink-3class-v6-7",
+            status="SUCCEEDED",
+            requested_at=now,
+            completed_at=now,
+        )
+    )
+    db.commit()
+    monkeypatch.setattr(admin_api, "get_ai_inference_client", lambda: FakeDeploymentClient())
+
+    response = client.get("/api/admin/model-deployment")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["audit_consistency"] == "MATCHED"
+    assert body["audit_warning"] is None
+
+
+def test_admin_model_deployment_status_reports_safe_audit_mismatch(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    seed_user(db, user_id=1, role="ADMIN")
+    login(client, "ADMIN")
+    now = datetime(2026, 8, 31, tzinfo=UTC)
+    db.add(
+        AiModelDeploymentEvent(
+            requested_by=1,
+            request_id="mismatched-audit",
+            action="ACTIVATE",
+            requested_model_id="flowlink-4class-hat-v7",
+            from_model_id="flowlink-3class-v6-7",
+            to_model_id="flowlink-4class-hat-v7",
+            status="SUCCEEDED",
+            requested_at=now,
+            completed_at=now,
+        )
+    )
+    db.commit()
+    monkeypatch.setattr(admin_api, "get_ai_inference_client", lambda: FakeDeploymentClient())
+
+    response = client.get("/api/admin/model-deployment")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["active_model_id"] == "flowlink-3class-v6-7"
+    assert body["audit_consistency"] == "MISMATCH"
+    assert "Backend-AI runtime" in body["audit_warning"]
+    assert "secret" not in response.text.lower()
+
+
 def test_admin_model_activate_records_success_history(client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch) -> None:
     seed_user(db, user_id=1, role="ADMIN")
     login(client, "ADMIN")

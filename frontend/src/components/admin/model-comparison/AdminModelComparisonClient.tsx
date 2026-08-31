@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent, MouseEvent } from "react";
 import { Icon } from "@/components/common/Icon";
 import {
   activateAdminModel,
@@ -15,6 +16,7 @@ import {
   type AdminModelDeploymentEvent,
   type AdminModelDeploymentStatus,
 } from "@/lib/adminModelComparisonApi";
+import { createRequestId } from "@/lib/requestId";
 import {
   classComparisonStatus,
   classMetricByCode,
@@ -87,9 +89,13 @@ export function AdminModelComparisonClient() {
   const [error, setError] = useState("");
   const [deploymentLoading, setDeploymentLoading] = useState(true);
   const [deploymentError, setDeploymentError] = useState("");
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState("");
   const [pendingModelId, setPendingModelId] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<"ACTIVATE" | "ROLLBACK" | null>(null);
   const [notice, setNotice] = useState("");
+  const deploymentRequestRef = useRef(0);
+  const activationTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -108,22 +114,42 @@ export function AdminModelComparisonClient() {
   }, []);
 
   const loadDeployment = (signal?: AbortSignal) => {
+    const requestIndex = ++deploymentRequestRef.current;
     setDeploymentLoading(true);
     setDeploymentError("");
-    return Promise.all([getAdminModelDeployment(signal), getAdminModelDeploymentHistory(signal)])
-      .then(([status, historyPayload]) => {
+    setHistoryLoading(true);
+    setHistoryError("");
+
+    const runtimeRequest = getAdminModelDeployment(signal)
+      .then((status) => {
+        if (requestIndex !== deploymentRequestRef.current || signal?.aborted) return;
         setDeployment(status);
-        setHistory(historyPayload.events);
       })
       .catch((reason: unknown) => {
-        if (!isAbortError(reason)) {
+        if (!isAbortError(reason) && requestIndex === deploymentRequestRef.current) {
           setDeployment(null);
           setDeploymentError(reason instanceof Error ? reason.message : "실시간 모델 상태를 확인하지 못했습니다.");
         }
       })
       .finally(() => {
-        if (!signal?.aborted) setDeploymentLoading(false);
+        if (requestIndex === deploymentRequestRef.current && !signal?.aborted) setDeploymentLoading(false);
       });
+
+    const historyRequest = getAdminModelDeploymentHistory(signal)
+      .then((historyPayload) => {
+        if (requestIndex !== deploymentRequestRef.current || signal?.aborted) return;
+        setHistory(historyPayload.events);
+      })
+      .catch((reason: unknown) => {
+        if (!isAbortError(reason) && requestIndex === deploymentRequestRef.current) {
+          setHistoryError(reason instanceof Error ? reason.message : "모델 전환 이력을 불러오지 못했습니다.");
+        }
+      })
+      .finally(() => {
+        if (requestIndex === deploymentRequestRef.current && !signal?.aborted) setHistoryLoading(false);
+      });
+
+    return Promise.allSettled([runtimeRequest, historyRequest]);
   };
 
   useEffect(() => {
@@ -134,23 +160,40 @@ export function AdminModelComparisonClient() {
 
   const activate = (modelId: string) => {
     if (busyAction || !deployment || deployment.active_model_id === modelId) return;
+    let requestId: string;
+    try {
+      requestId = createRequestId();
+    } catch {
+      setNotice("보안 요청 ID를 만들 수 없어 모델 전환을 시작하지 않았습니다. 브라우저 보안 설정을 확인해 주세요.");
+      return;
+    }
     setBusyAction("ACTIVATE");
     setNotice("");
-    activateAdminModel(modelId, deployment.active_model_id, crypto.randomUUID())
+    activateAdminModel(modelId, deployment.active_model_id, requestId)
       .then(() => {
         setPendingModelId(null);
         setNotice("모델 전환이 완료되었습니다. 이후 새 분석부터 활성 모델이 적용됩니다.");
         return loadDeployment();
       })
       .catch((reason: unknown) => setNotice(reason instanceof Error ? reason.message : "모델 전환에 실패했습니다. 기존 모델은 유지됩니다."))
-      .finally(() => setBusyAction(null));
+      .finally(() => {
+        setBusyAction(null);
+        window.setTimeout(() => activationTriggerRef.current?.focus(), 0);
+      });
   };
 
   const rollback = () => {
     if (busyAction || !deployment?.rollback_available) return;
+    let requestId: string;
+    try {
+      requestId = createRequestId();
+    } catch {
+      setNotice("보안 요청 ID를 만들 수 없어 롤백을 시작하지 않았습니다. 브라우저 보안 설정을 확인해 주세요.");
+      return;
+    }
     setBusyAction("ROLLBACK");
     setNotice("");
-    rollbackAdminModel(deployment.active_model_id, crypto.randomUUID())
+    rollbackAdminModel(deployment.active_model_id, requestId)
       .then(() => {
         setNotice("직전 모델로 롤백했습니다.");
         return loadDeployment();
@@ -170,13 +213,21 @@ export function AdminModelComparisonClient() {
     deployment={deployment}
     deploymentLoading={deploymentLoading}
     deploymentError={deploymentError}
+    historyLoading={historyLoading}
+    historyError={historyError}
     history={history}
     pendingModelId={pendingModelId}
     busyAction={busyAction}
     notice={notice}
     onRefreshDeployment={() => void loadDeployment()}
-    onRequestActivate={setPendingModelId}
-    onCancelActivate={() => setPendingModelId(null)}
+    onRequestActivate={(modelId, trigger) => {
+      activationTriggerRef.current = trigger;
+      setPendingModelId(modelId);
+    }}
+    onCancelActivate={() => {
+      setPendingModelId(null);
+      window.setTimeout(() => activationTriggerRef.current?.focus(), 0);
+    }}
     onConfirmActivate={activate}
     onRollback={rollback}
   />;
@@ -187,20 +238,27 @@ function ModelComparison(props: {
   deployment: AdminModelDeploymentStatus | null;
   deploymentLoading: boolean;
   deploymentError: string;
+  historyLoading: boolean;
+  historyError: string;
   history: AdminModelDeploymentEvent[];
   pendingModelId: string | null;
   busyAction: "ACTIVATE" | "ROLLBACK" | null;
   notice: string;
   onRefreshDeployment: () => void;
-  onRequestActivate: (modelId: string) => void;
+  onRequestActivate: (modelId: string, trigger: HTMLButtonElement) => void;
   onCancelActivate: () => void;
   onConfirmActivate: (modelId: string) => void;
   onRollback: () => void;
 }) {
-  const { data, deployment, deploymentLoading, deploymentError, history, pendingModelId, busyAction, notice, onRefreshDeployment, onRequestActivate, onCancelActivate, onConfirmActivate, onRollback } = props;
+  const { data, deployment, deploymentLoading, deploymentError, historyLoading, historyError, history, pendingModelId, busyAction, notice, onRefreshDeployment, onRequestActivate, onCancelActivate, onConfirmActivate, onRollback } = props;
   const [previous, current] = data.models;
   const jsonDeployed = currentModelLabel(data.models, data.current_deployed_model_id, data.current_deployed_model_status);
   const runtimeModel = modelById(data.models, deployment?.active_model_id ?? null);
+  const jsonRuntimeMismatch = Boolean(
+    data.current_deployed_model_id
+    && deployment?.active_model_id
+    && data.current_deployed_model_id !== deployment.active_model_id,
+  );
   const pendingModel = modelById(data.models, pendingModelId);
   const classRows = useMemo(() => CLASS_ORDER.map((code) => ({
     code,
@@ -224,6 +282,7 @@ function ModelComparison(props: {
       deploymentLoading={deploymentLoading}
       deploymentError={deploymentError}
       runtimeModel={runtimeModel}
+      jsonRuntimeMismatch={jsonRuntimeMismatch}
       notice={notice}
       busyAction={busyAction}
       onRefresh={onRefreshDeployment}
@@ -289,7 +348,7 @@ function ModelComparison(props: {
       ) : <p className={styles.empty}>등록된 예시 결과가 없습니다.</p>}
     </section>
 
-    <DeploymentHistory history={history} />
+    <DeploymentHistory history={history} loading={historyLoading} error={historyError} />
 
     {pendingModel && (
       <ConfirmActivateModal
@@ -309,13 +368,14 @@ function DeploymentPanel(props: {
   deploymentLoading: boolean;
   deploymentError: string;
   runtimeModel: AdminModelComparisonModel | null;
+  jsonRuntimeMismatch: boolean;
   notice: string;
   busyAction: "ACTIVATE" | "ROLLBACK" | null;
   onRefresh: () => void;
-  onRequestActivate: (modelId: string) => void;
+  onRequestActivate: (modelId: string, trigger: HTMLButtonElement) => void;
   onRollback: () => void;
 }) {
-  const { models, deployment, deploymentLoading, deploymentError, runtimeModel, notice, busyAction, onRefresh, onRequestActivate, onRollback } = props;
+  const { models, deployment, deploymentLoading, deploymentError, runtimeModel, jsonRuntimeMismatch, notice, busyAction, onRefresh, onRequestActivate, onRollback } = props;
   return <section className={`${styles.panel} ${styles.deploymentPanel}`} aria-label="실제 운영 모델 제어">
     <div className={styles.deploymentHead}>
       <div className={styles.panelTitle}><span>RUNTIME CONTROL</span><h2>실제 운영 모델</h2><p>Backend-AI가 현재 사용 중인 모델을 조회하고, 등록된 후보 모델로만 안전하게 전환합니다.</p></div>
@@ -331,6 +391,8 @@ function DeploymentPanel(props: {
         <article><span>활성 클래스</span><strong>{deployment?.active_classes.join(" · ") || "확인 중"}</strong><small>{deployment?.active_classes.includes("HAT") ? "HAT 지원" : "HAT 미지원 또는 확인 전"}</small></article>
       </div>
     )}
+    {jsonRuntimeMismatch && <p className={styles.deploymentError} role="alert">실제 운영 모델과 평가 JSON의 배포 메모가 다릅니다. 운영 상태는 Backend-AI runtime을 기준으로 표시합니다.</p>}
+    {deployment?.audit_warning && <p className={styles.deploymentError} role="alert">{deployment.audit_warning}</p>}
     {notice && <p className={styles.deploymentNotice} role="status">{notice}</p>}
     <div className={styles.runtimeModels} role="list" aria-label="전환 가능한 모델">
       {models.map((model) => {
@@ -342,7 +404,7 @@ function DeploymentPanel(props: {
           <strong>{model.display_name}</strong>
           <small>{model.classes.join(" · ")}</small>
           {hasMissingMetrics(model) && <em>동일 테스트셋 성능 평가 미등록</em>}
-          <button type="button" disabled={!deployment || !available || active || Boolean(busyAction)} onClick={() => onRequestActivate(model.id)}>
+          <button type="button" disabled={!deployment || !available || active || Boolean(busyAction)} onClick={(event) => onRequestActivate(model.id, event.currentTarget)}>
             {active ? "운영 중" : available ? "이 모델로 전환" : "모델 파일 없음"}
           </button>
         </article>;
@@ -352,22 +414,62 @@ function DeploymentPanel(props: {
 }
 
 function ConfirmActivateModal({ current, target, busy, onCancel, onConfirm }: { current: AdminModelComparisonModel | null; target: AdminModelComparisonModel; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
+  const titleId = useId();
+  const descriptionId = useId();
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const cancelRef = useRef<HTMLButtonElement | null>(null);
   const added = target.classes.filter((item) => !current?.classes.includes(item));
   const removed = current ? current.classes.filter((item) => !target.classes.includes(item)) : [];
-  return <div className={styles.modalBackdrop} role="presentation" onClick={onCancel}>
-    <section className={styles.confirmModal} role="dialog" aria-modal="true" aria-label="모델 전환 확인" onClick={(event) => event.stopPropagation()}>
-      <div className={styles.panelTitle}><span>CONFIRM SWITCH</span><h2>운영 모델을 전환할까요?</h2><p>진행 중인 분석은 시작 당시 모델로 완료되고, 전환 이후 새 분석부터 선택한 모델이 적용됩니다.</p></div>
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.requestAnimationFrame(() => cancelRef.current?.focus());
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
+  const closeIfAllowed = () => {
+    if (!busy) onCancel();
+  };
+  const handleBackdropClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (event.target === event.currentTarget) closeIfAllowed();
+  };
+  const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeIfAllowed();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])") ?? []);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
+  return <div className={styles.modalBackdrop} role="presentation" onClick={handleBackdropClick}>
+    <section ref={dialogRef} className={styles.confirmModal} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId} onKeyDown={handleKeyDown}>
+      <div className={styles.panelTitle}><span>CONFIRM SWITCH</span><h2 id={titleId}>운영 모델을 전환할까요?</h2><p id={descriptionId}>진행 중인 분석은 시작 당시 모델로 완료되고, 전환 이후 새 분석부터 선택한 모델이 적용됩니다.</p></div>
       <dl><Info label="현재 모델" value={current?.display_name ?? "확인 중"} /><Info label="전환 대상" value={target.display_name} /><Info label="추가 클래스" value={added.length ? added.join(" · ") : "없음"} /><Info label="제거 클래스" value={removed.length ? removed.join(" · ") : "없음"} /></dl>
       {hasMissingMetrics(target) && <p role="note">이 모델은 동일 테스트셋 성능 평가값이 아직 비어 있습니다. 기술 검증을 통과한 등록 모델만 전환할 수 있지만, 성능 비교는 별도 확인이 필요합니다.</p>}
-      <footer><button type="button" onClick={onCancel} disabled={busy}>취소</button><button type="button" onClick={onConfirm} disabled={busy}>{busy ? "전환 중" : "확인 후 전환"}</button></footer>
+      <footer><button ref={cancelRef} type="button" onClick={closeIfAllowed} disabled={busy}>취소</button><button type="button" onClick={onConfirm} disabled={busy}>{busy ? "전환 중" : "확인 후 전환"}</button></footer>
     </section>
   </div>;
 }
 
-function DeploymentHistory({ history }: { history: AdminModelDeploymentEvent[] }) {
+function DeploymentHistory({ history, loading, error }: { history: AdminModelDeploymentEvent[]; loading: boolean; error: string }) {
   return <section className={styles.panel}>
     <div className={styles.panelTitle}><span>AUDIT LOG</span><h2>최근 모델 전환 이력</h2><p>관리자 요청 시각, 작업, 이전/대상 모델, 성공 여부를 확인합니다.</p></div>
-    {history.length ? <div className={styles.historyList}>
+    {error ? <p className={styles.deploymentError} role="alert">모델 전환 이력 확인 실패 · {error}</p> : loading ? <p className={styles.empty}>모델 전환 이력을 불러오는 중입니다.</p> : history.length ? <div className={styles.historyList}>
       {history.map((event) => <article key={event.id}>
         <span>{event.action}</span>
         <strong>{event.from_model_id ?? "없음"} → {event.to_model_id ?? event.requested_model_id ?? "확인 필요"}</strong>

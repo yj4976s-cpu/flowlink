@@ -179,3 +179,51 @@ test("AI report reads model comparison status instead of hardcoding missing eval
   assert.match(aiReport, /modelComparisonStatusView/);
   assert.match(aiReport, /\/admin\/model-comparison/);
 });
+
+test("model deployment actions use secure request ids without blocking busy state", () => {
+  const client = readFileSync("src/components/admin/model-comparison/AdminModelComparisonClient.tsx", "utf8");
+
+  assert.match(client, /createRequestId/);
+  assert.doesNotMatch(client, /crypto\.randomUUID\(\)/);
+  assert.match(client, /setBusyAction\("ACTIVATE"\)/);
+  assert.match(client, /setBusyAction\("ROLLBACK"\)/);
+  assert.match(client, /보안 요청 ID를 만들 수 없어/);
+  assert.match(client, /requestId = createRequestId\(\)/);
+});
+
+test("model deployment status and history load independently", () => {
+  const client = readFileSync("src/components/admin/model-comparison/AdminModelComparisonClient.tsx", "utf8");
+
+  assert.match(client, /historyLoading/);
+  assert.match(client, /historyError/);
+  assert.match(client, /getAdminModelDeployment\(signal\)/);
+  assert.match(client, /getAdminModelDeploymentHistory\(signal\)/);
+  assert.match(client, /Promise\.allSettled/);
+  assert.doesNotMatch(client, /Promise\.all\(\[getAdminModelDeployment\(signal\), getAdminModelDeploymentHistory\(signal\)\]\)/);
+});
+
+test("activate modal traps focus and only dismisses when safe", () => {
+  const client = readFileSync("src/components/admin/model-comparison/AdminModelComparisonClient.tsx", "utf8");
+
+  assert.match(client, /aria-labelledby=\{titleId\}/);
+  assert.match(client, /aria-describedby=\{descriptionId\}/);
+  assert.match(client, /document\.body\.style\.overflow = "hidden"/);
+  assert.match(client, /event\.key === "Escape"/);
+  assert.match(client, /event\.key !== "Tab"/);
+  assert.match(client, /event\.target === event\.currentTarget/);
+  assert.match(client, /cancelRef\.current\?\.focus\(\)/);
+  assert.match(client, /activationTriggerRef\.current\?\.focus\(\)/);
+  assert.match(client, /disabled=\{busy\}/);
+});
+
+test("runtime mismatch warnings are shown in model comparison and AI report", () => {
+  const comparisonClient = readFileSync("src/components/admin/model-comparison/AdminModelComparisonClient.tsx", "utf8");
+  const aiReport = readFileSync("src/components/admin/ai-report/AdminAiReportClient.tsx", "utf8");
+
+  assert.match(comparisonClient, /jsonRuntimeMismatch/);
+  assert.match(comparisonClient, /audit_warning/);
+  assert.match(aiReport, /jsonRuntimeMismatch/);
+  assert.match(aiReport, /audit_warning/);
+  assert.match(comparisonClient, /Backend-AI runtime을 기준으로 표시합니다/);
+  assert.match(aiReport, /Backend-AI runtime을 기준으로 표시합니다/);
+});

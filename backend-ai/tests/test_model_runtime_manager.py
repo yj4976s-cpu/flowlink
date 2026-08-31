@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from app.services.model_registry import ModelRegistryDocument, RegisteredModel, load_model_registry, normalize_model_label
+from app.services.model_registry import ModelRegistryDocument, ModelRegistryError, RegisteredModel, load_model_registry, normalize_model_label
 from app.services.model_runtime_manager import (
     ActiveModelState,
     ModelRuntimeConflictError,
@@ -93,6 +93,20 @@ def test_registry_rejects_path_traversal() -> None:
 def test_validate_model_classes_uses_names_not_class_order() -> None:
     assert validate_model_classes({0: "trash", 1: "hat", 2: "shoe", 3: "ball"}, ["BALL", "HAT", "FOOTWEAR", "TRASH"])
     assert not validate_model_classes({0: "ball", 1: "shoe", 2: "trash"}, ["BALL", "HAT", "FOOTWEAR", "TRASH"])
+    assert not validate_model_classes({0: "ball", 1: "shoe", 2: "trash", 3: "bottle"}, ["BALL", "FOOTWEAR", "TRASH"])
+    assert not validate_model_classes({0: "ball", 1: "shoe", 2: "trash", 3: "hat"}, ["BALL", "FOOTWEAR", "TRASH"])
+    assert not validate_model_classes({0: "ball", 1: "shoe", 2: "footwear", 3: "trash"}, ["BALL", "FOOTWEAR", "TRASH"])
+    assert not validate_model_classes({}, ["BALL", "FOOTWEAR", "TRASH"])
+
+
+def test_registered_model_rejects_duplicate_expected_aliases() -> None:
+    with pytest.raises(ValidationError):
+        RegisteredModel(
+            id="duplicate",
+            display_name="duplicate",
+            file_name="duplicate.pt",
+            expected_classes=["BALL", "shoe", "FOOTWEAR"],
+        )
 
 
 def test_activate_switches_after_validation_and_persists_state(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -152,6 +166,54 @@ def test_validation_failure_keeps_current_model(tmp_path, monkeypatch: pytest.Mo
     assert manager.status().active_model_id == "flowlink-3class-v6-7"
 
 
+def test_status_is_not_ready_until_runtime_validation_runs(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    model_files(tmp_path, monkeypatch)
+    runtime = FakeRuntime(model_id="flowlink-3class-v6-7")
+    monkeypatch.setattr("app.services.model_runtime_manager.ModelRuntimeManager._runtime_for", lambda self, model: runtime)
+    manager = ModelRuntimeManager(state_path=tmp_path / "active-model.json", registry=registry())
+
+    assert manager.status().model_ready is False
+    assert manager.status(verify_ready=True).model_ready is True
+    assert runtime.validations == 1
+
+
+def test_malformed_registry_returns_safe_unready_status(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_registry():
+        raise ModelRegistryError("contains /secret/model.pt")
+
+    monkeypatch.setattr("app.services.model_runtime_manager.load_model_registry", fail_registry)
+    manager = ModelRuntimeManager(state_path=tmp_path / "active-model.json")
+
+    status = manager.status()
+    assert status.active_model_id is None
+    assert status.available_models == []
+    assert status.model_ready is False
+    with pytest.raises(Exception) as raised:
+        manager.get_snapshot()
+    assert "secret" not in str(raised.value)
+
+
+def test_state_write_failure_preserves_previous_snapshot_and_state(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    model_files(tmp_path, monkeypatch)
+    monkeypatch.setattr("app.services.model_runtime_manager.ModelRuntimeManager._runtime_for", lambda self, model: FakeRuntime(model_id=model.id))
+    state_path = tmp_path / "active-model.json"
+    manager = ModelRuntimeManager(state_path=state_path, registry=registry())
+    before = state_path.read_text(encoding="utf-8") if state_path.exists() else None
+
+    def fail_write(self, state):
+        raise OSError("disk path /secret failed")
+
+    monkeypatch.setattr("app.services.model_runtime_manager.ModelRuntimeManager._write_state", fail_write)
+    with pytest.raises(Exception):
+        manager.activate(model_id="flowlink-4class-hat-v7", expected_active_model_id="flowlink-3class-v6-7", request_id="request-write-fail")
+
+    assert manager.status().active_model_id == "flowlink-3class-v6-7"
+    if before is None:
+        assert not state_path.exists()
+    else:
+        assert state_path.read_text(encoding="utf-8") == before
+
+
 def test_corrupt_state_file_fails_readiness(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     model_files(tmp_path, monkeypatch)
     state_path = tmp_path / "active-model.json"
@@ -160,3 +222,38 @@ def test_corrupt_state_file_fails_readiness(tmp_path, monkeypatch: pytest.Monkey
     manager = ModelRuntimeManager(state_path=state_path, registry=registry())
 
     assert manager.status().model_ready is False
+
+
+def test_yolo_runtime_rejects_invalid_warmup_result(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    from app.services.yolo_runtime import YoloRuntime, YoloRuntimeUnavailableError
+
+    class FakeModel:
+        names = {0: "ball", 1: "shoe", 2: "trash"}
+
+        def predict(self, **kwargs):
+            return []
+
+    runtime = YoloRuntime(model_path=str(tmp_path / "model.pt"), confidence=0.25, imgsz=640, expected_classes=["BALL", "FOOTWEAR", "TRASH"])
+    monkeypatch.setattr(runtime, "_get_model", lambda: FakeModel())
+
+    with pytest.raises(YoloRuntimeUnavailableError):
+        runtime.validate_ready()
+
+
+def test_yolo_runtime_rejects_unexpected_model_classes(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    from app.services.yolo_runtime import YoloRuntime, YoloRuntimeUnavailableError
+
+    class FakeResult:
+        boxes = []
+
+    class FakeModel:
+        names = {0: "ball", 1: "shoe", 2: "trash", 3: "bottle"}
+
+        def predict(self, **kwargs):
+            return [FakeResult()]
+
+    runtime = YoloRuntime(model_path=str(tmp_path / "model.pt"), confidence=0.25, imgsz=640, expected_classes=["BALL", "FOOTWEAR", "TRASH"])
+    monkeypatch.setattr(runtime, "_get_model", lambda: FakeModel())
+
+    with pytest.raises(YoloRuntimeUnavailableError):
+        runtime.validate_ready()

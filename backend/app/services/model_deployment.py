@@ -21,19 +21,31 @@ SAFE_SWITCH_UNAVAILABLE = "모델 서비스에 연결할 수 없습니다."
 SAFE_SWITCH_VALIDATION = "후보 모델 검증에 실패했습니다."
 SAFE_SWITCH_CONFLICT = "화면의 활성 모델 상태가 변경되었습니다. 새로고침 후 다시 시도해 주세요."
 SAFE_MODEL_NOT_FOUND = "등록되지 않은 모델입니다."
+SAFE_AUDIT_MISMATCH = "최근 성공 이력과 실제 운영 모델 상태가 다릅니다. Backend-AI runtime 상태를 기준으로 확인해 주세요."
 
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-def get_model_deployment_status(ai_client: AIInferenceClient) -> AdminModelDeploymentStatusResponse:
+def get_model_deployment_status(db: Session, ai_client: AIInferenceClient) -> AdminModelDeploymentStatusResponse:
     try:
         payload = ai_client.get_model_deployment_status()
         payload["status_source"] = "runtime"
-        return AdminModelDeploymentStatusResponse.model_validate(payload)
+        response = AdminModelDeploymentStatusResponse.model_validate(payload)
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=SAFE_RUNTIME_ERROR) from exc
+    latest_success = db.scalar(
+        select(AiModelDeploymentEvent)
+        .where(AiModelDeploymentEvent.status == "SUCCEEDED", AiModelDeploymentEvent.to_model_id.is_not(None))
+        .order_by(AiModelDeploymentEvent.completed_at.desc(), AiModelDeploymentEvent.id.desc())
+        .limit(1)
+    )
+    if latest_success is None:
+        return response.model_copy(update={"audit_consistency": "NO_HISTORY", "audit_warning": None})
+    if latest_success.to_model_id == response.active_model_id:
+        return response.model_copy(update={"audit_consistency": "MATCHED", "audit_warning": None})
+    return response.model_copy(update={"audit_consistency": "MISMATCH", "audit_warning": SAFE_AUDIT_MISMATCH})
 
 
 def list_model_deployment_history(db: Session, *, limit: int = 20) -> list[AdminModelDeploymentEventResponse]:

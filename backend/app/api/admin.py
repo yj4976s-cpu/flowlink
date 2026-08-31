@@ -97,9 +97,10 @@ def get_admin_model_comparison(
 @router.get("/model-deployment", response_model=AdminModelDeploymentStatusResponse, summary="관리자 모델 런타임 상태 조회")
 def get_admin_model_deployment(
     current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
 ) -> AdminModelDeploymentStatusResponse:
     del current_admin
-    return get_model_deployment_status(get_ai_inference_client())
+    return get_model_deployment_status(db, get_ai_inference_client())
 
 
 @router.get("/model-deployment/history", response_model=AdminModelDeploymentHistoryResponse, summary="관리자 모델 전환 이력 조회")

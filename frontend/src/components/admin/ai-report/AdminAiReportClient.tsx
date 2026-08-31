@@ -168,15 +168,23 @@ function Report({ report, modelComparison, modelDeployment, modelComparisonLoadi
 
 function ModelComparisonStatus({ comparison, deployment, loading, error }: { comparison: AdminModelComparison | null; deployment: AdminModelDeploymentStatus | null; loading: boolean; error: boolean }) {
   const status = modelComparisonStatusView(comparison, { loading, error });
+  const jsonRuntimeMismatch = Boolean(
+    comparison?.current_deployed_model_id
+    && deployment?.active_model_id
+    && comparison.current_deployed_model_id !== deployment.active_model_id,
+  );
   const runtimeTitle = deployment?.active_display_name ? `${deployment.active_display_name} 운영 중` : status.title;
   const runtimeDescription = deployment
     ? `Backend-AI runtime 기준 활성 모델입니다. 활성 클래스: ${deployment.active_classes.join(", ") || "확인 중"}`
     : status.description;
+  const warning = deployment?.audit_warning
+    ?? (jsonRuntimeMismatch ? "실제 운영 모델과 평가 JSON의 배포 메모가 다릅니다. 운영 상태는 Backend-AI runtime을 기준으로 표시합니다." : "");
   return <section className={`${styles.panel} ${styles.modelEmpty}`} data-tone={status.tone} aria-label="모델 비교 상태">
     <Icon name="layers" size={30} />
     <div>
       <h2>{runtimeTitle}</h2>
       <p>{error ? "모델 서비스 상태 확인에 실패했습니다. 특정 모델이 운영 중이라고 단정하지 않습니다." : runtimeDescription}</p>
+      {warning && <p role="alert">{warning}</p>}
       <Link href="/admin/model-comparison">{status.actionLabel}<Icon name="arrow" size={13} /></Link>
     </div>
   </section>;

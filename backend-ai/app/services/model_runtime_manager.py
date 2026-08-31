@@ -21,8 +21,8 @@ from app.services.model_registry import (
     find_model_by_file_name,
     find_model_by_id,
     load_model_registry,
-    normalize_model_label,
     registered_model_path,
+    validate_model_class_names,
 )
 from app.services.yolo_runtime import YoloRuntime, YoloRuntimeUnavailableError
 
@@ -67,10 +67,16 @@ class ModelRuntimeManager:
     def __init__(self, *, state_path: Path | None = None, registry: ModelRegistryDocument | None = None) -> None:
         self._settings = get_settings()
         self._state_path = state_path or Path(self._settings.MODEL_STATE_PATH)
-        self._registry = registry or load_model_registry()
+        self._registry_error = False
+        try:
+            self._registry = registry or load_model_registry()
+        except ModelRegistryError:
+            self._registry = ModelRegistryDocument.model_construct(schema_version=1, models=[])
+            self._registry_error = True
         self._lock = Lock()
         self._switching = False
         self._snapshot: RuntimeSnapshot | None = None
+        self._snapshot_ready = False
         self._state_error = False
         self._previous_model_id: str | None = None
         self._request_cache: dict[str, RuntimeModelSwitchResponse] = {}
@@ -80,14 +86,14 @@ class ModelRuntimeManager:
         if verify_ready:
             self.get_snapshot()
         active_id = self._snapshot.model_id if self._snapshot is not None else None
-        statuses = available_model_statuses(self._registry)
+        statuses = [] if self._registry_error else available_model_statuses(self._registry)
         return RuntimeModelStatusResponse(
             active_model_id=active_id,
             previous_model_id=self._previous_model_id,
             active_display_name=self._snapshot.display_name if self._snapshot else None,
             active_classes=list(self._snapshot.classes) if self._snapshot else [],
             switched_at=self._snapshot.switched_at if self._snapshot else None,
-            model_ready=self._snapshot is not None and not self._state_error,
+            model_ready=self._snapshot is not None and not self._state_error and not self._registry_error and self._snapshot_ready,
             switching=self._switching,
             available_models=[
                 RuntimeModelInfo(
@@ -104,9 +110,10 @@ class ModelRuntimeManager:
         )
 
     def get_snapshot(self) -> RuntimeSnapshot:
-        if self._state_error or self._snapshot is None:
+        if self._registry_error or self._state_error or self._snapshot is None:
             raise ModelRuntimeError("Model service is not ready")
         self._snapshot.runtime.validate_ready(expected_classes=self._snapshot.classes)
+        self._snapshot_ready = True
         return self._snapshot
 
     def activate(
@@ -169,6 +176,7 @@ class ModelRuntimeManager:
             with self._lock:
                 self._snapshot = snapshot
                 self._previous_model_id = previous_id
+                self._snapshot_ready = True
                 self._state_error = False
                 response = self._response(changed=True, previous_model_id=previous_id, snapshot=snapshot)
                 self._remember_request(request_id, response)
@@ -184,6 +192,7 @@ class ModelRuntimeManager:
                 bootstrap = find_model_by_file_name(Path(self._settings.DETECTION_MODEL).name, registry=self._registry)
                 if bootstrap is None:
                     self._state_error = True
+                    self._snapshot_ready = False
                     return
                 state = ActiveModelState(
                     schema_version=1,
@@ -201,8 +210,10 @@ class ModelRuntimeManager:
                 runtime=runtime,
             )
             self._previous_model_id = state.previous_model_id
+            self._snapshot_ready = False
             self._state_error = False
         except ModelRuntimeError:
+            self._snapshot_ready = False
             self._state_error = True
 
     def _read_state(self) -> ActiveModelState | None:
@@ -280,6 +291,4 @@ def get_active_yolo_runtime_snapshot() -> RuntimeSnapshot:
 
 
 def validate_model_classes(model_names: dict[int, str] | list[str] | tuple[str, ...], expected_classes: list[str]) -> bool:
-    values = model_names.values() if isinstance(model_names, dict) else model_names
-    actual = {normalized for label in values if (normalized := normalize_model_label(str(label))) is not None}
-    return actual == set(expected_classes)
+    return validate_model_class_names(model_names, expected_classes)

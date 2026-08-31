@@ -79,18 +79,18 @@ class YoloRuntime:
         if self._validated_classes == normalized_expected:
             return
         if classes:
-            from app.services.model_registry import normalize_model_label
+            from app.services.model_registry import validate_model_class_names
 
             names = getattr(model, "names", {})
-            values = names.values() if isinstance(names, dict) else names
-            actual = {normalized for label in values if (normalized := normalize_model_label(str(label))) is not None}
-            if actual != set(classes):
+            if not validate_model_class_names(names, classes):
                 raise YoloRuntimeUnavailableError("YOLO detection model class names do not match registry")
         with self._inference_lock:
             try:
-                model.predict(source=Image.new("RGB", (32, 32), color=(255, 255, 255)), conf=self.confidence, imgsz=self.imgsz, verbose=False)
+                results = model.predict(source=Image.new("RGB", (32, 32), color=(255, 255, 255)), conf=self.confidence, imgsz=self.imgsz, verbose=False)
             except Exception as exc:
                 raise YoloRuntimeUnavailableError("YOLO detection model warm-up failed") from exc
+        if not isinstance(results, (list, tuple)) or not results or not hasattr(results[0], "boxes"):
+            raise YoloRuntimeUnavailableError("YOLO detection model warm-up returned an invalid result")
         self._validated_classes = normalized_expected
 
     def predict(self, image: Image.Image) -> list[YoloPrediction]:
