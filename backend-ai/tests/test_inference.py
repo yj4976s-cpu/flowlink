@@ -531,19 +531,27 @@ def test_progress_reporter_recovers_to_normal_throttle_and_uses_short_timeout(mo
     def post(*args, **kwargs):
         calls.append(kwargs)
         if not next(outcomes):
+            now[0] = 0.5
             raise httpx.ConnectError("offline")
         return Response()
 
     monkeypatch.setattr("app.services.video_progress.httpx.post", post)
     reporter = VideoProgressReporter(job_id=9, clock=lambda: now[0])
     reporter.report("ANALYZING", 1, 100, force=True)
-    now[0] = 0.1
+    assert reporter.last_attempt_at == 0.0
+    assert reporter.next_retry_at == 2.5
+
+    now[0] = 0.6
     reporter.report("ANALYZING", 10, 100, force=True)
-    now[0] = 2.1
+    now[0] = 0.7
+    reporter.report("RENDERING", None, 100, force=True)
+    assert len(calls) == 1
+
+    now[0] = 2.5
     reporter.report("ANALYZING", 50, 100)
-    now[0] = 2.2
+    now[0] = 2.6
     reporter.report("ANALYZING", 60, 100)
-    now[0] = 2.7
+    now[0] = 3.0
     reporter.report("ANALYZING", 60, 100)
 
     assert [call["json"]["processed_frames"] for call in calls] == [1, 50, 60]

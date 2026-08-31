@@ -57,7 +57,8 @@ class VideoProgressReporter:
             )
             response.raise_for_status()
         except (httpx.RequestError, httpx.HTTPStatusError):
-            self.next_retry_at = now + self.failure_backoff_seconds
+            failure_completed_at = self.clock()
+            self.next_retry_at = failure_completed_at + self.failure_backoff_seconds
             logger.warning("video progress callback failed job_id=%s stage=%s", self.job_id, stage)
             return
         self.last_success_at = now
