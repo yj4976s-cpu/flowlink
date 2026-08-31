@@ -75,6 +75,7 @@ export function DaruStage() {
   const [movementSpeed, setMovementSpeed] = useState(0);
   const [facing, setFacing] = useState<DaruFacing>("left");
   const [roaming, setRoaming] = useState(false);
+  const roamingRef = useRef(roaming);
   const [roamDuration, setRoamDuration] = useState(2200);
   const [userPaused, setUserPaused] = useState(false);
   const [roamRetry, setRoamRetry] = useState(0);
@@ -90,6 +91,10 @@ export function DaruStage() {
   useEffect(() => {
     positionRef.current = position;
   }, [position]);
+
+  useEffect(() => {
+    roamingRef.current = roaming;
+  }, [roaming]);
 
   useEffect(() => {
     directGreetingStateRef.current = { mode, guideOpen, occluded, dragging, pageVisible, movementReduced };
@@ -232,27 +237,70 @@ export function DaruStage() {
     return currentPosition;
   }, []);
 
+  const chooseGameSafeDestination = useCallback(() => {
+    const stage = stageRef.current;
+    const currentPosition = positionRef.current;
+    if (!stage) return currentPosition;
+    const rect = stage.getBoundingClientRect();
+    const baseLeft = rect.left - currentPosition.x;
+    const baseTop = rect.top - currentPosition.y;
+    const blockers = Array.from(document.querySelectorAll<HTMLElement>('[data-daru-game-blocker], [class*="copilot" i], [aria-label*="FlowLink AI"]'))
+      .filter((element) => !stage.contains(element) && element.offsetParent !== null)
+      .map((element) => element.getBoundingClientRect());
+    const margin = 12;
+    const overlaps = (left: number, top: number) => blockers.some((item) => left < item.right + margin && left + rect.width > item.left - margin && top < item.bottom + margin && top + rect.height > item.top - margin);
+    const candidates = [
+      { x: 0, y: -36 },
+      { x: -24, y: 0 },
+      { x: -16, y: -52 },
+      { x: 0, y: 0 },
+    ];
+    for (const candidate of candidates) {
+      if (Math.hypot(candidate.x - currentPosition.x, candidate.y - currentPosition.y) < 12) continue;
+      const left = baseLeft + candidate.x;
+      const top = baseTop + candidate.y;
+      if (left < margin || left + rect.width > window.innerWidth - margin || top < 76 || top + rect.height > window.innerHeight - margin) continue;
+      if (!overlaps(left, top)) return candidate;
+    }
+    return { x: 0, y: 0 };
+  }, []);
+
   const freezeRoaming = useCallback(() => {
     if (locomotionTimerRef.current !== null) {
       window.clearTimeout(locomotionTimerRef.current);
       locomotionTimerRef.current = null;
     }
     const stage = stageRef.current;
-    const translated = stage && roaming ? numericTranslate(stage) : null;
+    const translated = stage && roamingRef.current ? numericTranslate(stage) : null;
     if (translated) setPosition(translated);
     setRoaming(false);
     setMovementSpeed(0);
     setLocomotion("idle");
-  }, [roaming]);
+  }, []);
+
+  const resetGameSafePosition = useCallback(() => {
+    setPosition({ x: 0, y: 0 });
+  }, []);
 
   useEffect(() => {
-    if (!isDaruGame) return;
     nextRoamDelayRef.current = null;
     freezeRoaming();
-  }, [freezeRoaming, isDaruGame]);
+    // Route entry must discard the previous route's translate before the game-safe frame is painted.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    resetGameSafePosition();
+  }, [freezeRoaming, isDaruGame, resetGameSafePosition]);
 
-  const beginMovementTo = useCallback((target: { x: number; y: number }) => {
-    if (isDaruGame) return false;
+  useEffect(() => {
+    if (!isDaruGame || mode === "active") return;
+    nextRoamDelayRef.current = null;
+    freezeRoaming();
+    // Quiet/hidden mode must snap back to the game-safe base without a trailing walking frame.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    resetGameSafePosition();
+  }, [freezeRoaming, isDaruGame, mode, resetGameSafePosition]);
+
+  const beginMovementTo = useCallback((target: { x: number; y: number }, gameSafe = false) => {
+    if (isDaruGame && !gameSafe) return false;
     const latest = directGreetingStateRef.current;
     if (latest.movementReduced || latest.mode !== "active" || latest.occluded || latest.guideOpen || latest.dragging || !latest.pageVisible) return false;
     const currentPosition = positionRef.current;
@@ -260,8 +308,10 @@ export function DaruStage() {
     const rect = stage?.getBoundingClientRect();
     const mobile = window.matchMedia("(max-width: 600px)").matches;
     const speed = mobile ? DARU_GROUNDED_ROAMING_CONFIG.mobileSpeed : DARU_GROUNDED_ROAMING_CONFIG.desktopSpeed;
-    const distance = Math.abs(target.x - currentPosition.x);
-    const minTravelDistance = mobile
+    const distance = gameSafe
+      ? Math.hypot(target.x - currentPosition.x, target.y - currentPosition.y)
+      : Math.abs(target.x - currentPosition.x);
+    const minTravelDistance = gameSafe ? 12 : mobile
       ? resolveMobileRoamBounds({
         viewportWidth: window.innerWidth,
         stageWidth: rect?.width ?? 88,
@@ -363,19 +413,19 @@ export function DaruStage() {
   }, [action, cue, dragging, guideOpen, mode, movementReduced, occluded, pageVisible, pathname, roaming]);
 
   useEffect(() => {
-    if (isDaruGame || !pageVisible || movementReduced || userPaused || mode !== "active" || occluded || guideOpen || dragging || roaming || directGreeting || action === "wave") return;
+    if (!pageVisible || movementReduced || userPaused || mode !== "active" || occluded || guideOpen || dragging || roaming || directGreeting || action === "wave") return;
     const delay = nextRoamDelayRef.current ?? (3000 + Math.random() * 4000);
     nextRoamDelayRef.current = null;
     const timer = window.setTimeout(() => {
-      const target = chooseSafeDestination();
+      const target = isDaruGame ? chooseGameSafeDestination() : chooseSafeDestination();
       const mobile = window.matchMedia("(max-width: 600px)").matches;
-      if (!beginMovementTo(target)) {
+      if (!beginMovementTo(target, isDaruGame)) {
         nextRoamDelayRef.current = mobile ? 900 : null;
         setRoamRetry((current) => current + 1);
       }
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [action, beginMovementTo, chooseSafeDestination, directGreeting, dragging, guideOpen, isDaruGame, mode, movementReduced, occluded, pageVisible, roamRetry, roaming, userPaused]);
+  }, [action, beginMovementTo, chooseGameSafeDestination, chooseSafeDestination, directGreeting, dragging, guideOpen, isDaruGame, mode, movementReduced, occluded, pageVisible, roamRetry, roaming, userPaused]);
 
   useEffect(() => {
     if (!roaming) return;
@@ -466,8 +516,9 @@ export function DaruStage() {
       directGreetingTimerRef.current = null;
       const latest = directGreetingStateRef.current;
       if (!canCompleteDirectGreetingMove(latest)) return;
-      const target = chooseSafeDestination();
-      beginMovementTo(target);
+      if (isDaruGame && latest.mode !== "active") return;
+      const target = isDaruGame ? chooseGameSafeDestination() : chooseSafeDestination();
+      beginMovementTo(target, isDaruGame);
     }, DARU_DIRECT_GREETING_MS);
   };
 
@@ -500,7 +551,7 @@ export function DaruStage() {
   const guidePanel = guideOpen ? <DaruGuidePanel role={guideRole} userPaused={userPaused} reducedMotion={reducedMotion} viewportLayer={mobileViewport} panelRef={guidePanelRef} onClose={closeGuide} onToggleRoaming={toggleUserPaused} /> : null;
 
   return (
-    <aside ref={stageRef} className={styles.stage} data-daru-stage="true" data-game-safe={isDaruGame || undefined} data-dragging={dragging || undefined} data-guide-open={guideOpen || undefined} data-roaming={roaming || undefined} data-panel-side={panelSide} data-panel-vertical={panelVertical} data-occluded={occluded || undefined} style={{ "--daru-x": `${position.x}px`, "--daru-y": `${position.y}px`, "--daru-roam-duration": `${roamDuration}ms` } as React.CSSProperties} aria-label="FlowLink 마스코트 다루">
+    <aside ref={stageRef} className={styles.stage} data-daru-stage="true" data-game-safe={isDaruGame || undefined} data-mode={mode} data-dragging={dragging || undefined} data-guide-open={guideOpen || undefined} data-roaming={roaming || undefined} data-panel-side={panelSide} data-panel-vertical={panelVertical} data-occluded={occluded || undefined} style={{ "--daru-x": `${position.x}px`, "--daru-y": `${position.y}px`, "--daru-roam-duration": `${roamDuration}ms` } as React.CSSProperties} aria-label="FlowLink 마스코트 다루">
       {guidePanel && (mobileViewport ? createPortal(guidePanel, document.body) : guidePanel)}
       <DaruMascot action={action} mode={mode} message={message} reducedMotion={reducedMotion} dragging={dragging} guideOpen={guideOpen} directGreeting={directGreeting} bubbleSide={bubbleSide} mobileBubbleStyle={mobileBubbleStyle} rendererState={rendererState} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerCancel} onHover={() => { if (!roaming) playOneShot("HOVER", 480); }} onInteract={handleCharacterClick} onGuide={handleGuideToggle} />
     </aside>
