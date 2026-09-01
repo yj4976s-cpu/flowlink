@@ -15,6 +15,7 @@ from app.schemas.citizen_report import (
     CitizenReportUpdateRequest, CitizenSightingResponse, LinkedFoundItemSummary,
     ResolveCitizenReportRequest,
 )
+from app.services.admin_notifications import sync_citizen_report_notification
 from app.services.image_uploads import remove_public_image
 from app.services.matching import create_match_candidates_for_found_item
 
@@ -97,7 +98,7 @@ def create_report(db: Session, *, user: User, object_class: ObjectClass, color: 
     report = CitizenReport(user_id=user.id, object_class_id=object_class.id, color=_clean(color),
         description=description.strip(), image_url=image_url, area_name=area_name.strip(), found_at=found_at,
         status="PENDING", created_at=now, updated_at=now)
-    db.add(report); db.commit(); db.refresh(report)
+    db.add(report); db.flush(); sync_citizen_report_notification(db, report); db.commit(); db.refresh(report)
     return visible_response(db, report.id, user)
 
 
@@ -121,7 +122,7 @@ def cancel_report(db: Session, *, user: User, report_id: int, upload_root: Path)
     if report.status not in {"PENDING", "UNDER_REVIEW"}:
         raise HTTPException(status_code=409, detail="Report cannot be cancelled")
     image_url = report.image_url
-    report.status = "CANCELLED"; report.image_url = None; report.updated_at = utc_now()
+    report.status = "CANCELLED"; report.image_url = None; report.updated_at = utc_now(); sync_citizen_report_notification(db, report)
     try:
         db.commit()
     except Exception:
@@ -155,6 +156,7 @@ def review_report(db: Session, *, admin: User, report_id: int, request: AdminCit
     report.rejection_reason = _clean(request.rejection_reason); report.admin_memo = _clean(request.admin_memo); report.updated_at = now
     db.add(ProcessingHistory(actor_user_id=admin.id, entity_type="CITIZEN_REPORT", entity_id=report.id,
         action_type="CITIZEN_REPORT_REVIEWED", previous_status=previous, new_status=report.status, note=report.admin_memo, created_at=now))
+    sync_citizen_report_notification(db, report)
     db.add(Notification(user_id=report.user_id, notification_type="CITIZEN_REPORT_STATUS", title="시민 제보 상태가 변경되었습니다",
         message="등록한 발견 제보의 검토 상태를 확인해주세요.", related_type="CITIZEN_REPORT", related_id=report.id, created_at=now))
     db.commit(); return _response(get_report(db, report.id), private=True, admin=True)
@@ -182,6 +184,7 @@ def resolve_report(db: Session, *, admin: User, report_id: int, request: Resolve
         report.reviewed_by = admin.id; report.reviewed_at = now; report.updated_at = now
         db.add(ProcessingHistory(actor_user_id=admin.id, entity_type="CITIZEN_REPORT", entity_id=report.id,
             action_type="CITIZEN_REPORT_LINKED", previous_status=previous, new_status="LINKED", note=None, created_at=now))
+        sync_citizen_report_notification(db, report)
         db.add(Notification(user_id=report.user_id, notification_type="CITIZEN_REPORT_STATUS", title="시민 제보가 공식 발견물로 연결되었습니다",
             message="등록한 제보가 공식 발견물로 확인되었습니다.", related_type="CITIZEN_REPORT", related_id=report.id, created_at=now))
         db.commit()

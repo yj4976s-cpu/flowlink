@@ -467,6 +467,31 @@ class AdminOperationsBriefingResponse(AdminOperationsBriefingStatus):
     tasks: list[AdminOperationsBriefingTask]
 
 
+class AdminNotificationItem(BaseModel):
+    id: int
+    notification_type: str
+    title: str
+    message: str
+    related_type: str
+    related_id: int
+    read_at: datetime | None
+    resolved_at: datetime | None
+    created_at: datetime
+    is_read: bool
+    is_actionable: bool
+
+
+class AdminNotificationListResponse(BaseModel):
+    items: list[AdminNotificationItem]
+    total: int
+    unread_count: int
+    actionable_count: int
+
+
+class AdminNotificationReadAllResponse(BaseModel):
+    marked_read_count: int
+
+
 class AdminModelComparisonEvaluation(BaseModel):
     dataset_name: str
     dataset_version: str | None = None

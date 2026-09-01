@@ -1,0 +1,44 @@
+.root { position: relative; }
+.trigger { position: relative; width: 40px; height: 40px; padding: 0; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface-soft); color: var(--color-text-muted); display: grid; place-items: center; cursor: pointer; transition: color .18s ease, border-color .18s ease, background-color .18s ease; }
+.trigger:hover, .trigger[aria-expanded="true"] { border-color: color-mix(in srgb, var(--color-primary) 42%, var(--color-border)); background: var(--color-primary-soft); color: var(--color-primary); }
+.trigger:focus-visible, .filters button:focus-visible, .panelFooter button:focus-visible, .item:focus-visible, .toast button:focus-visible { outline: 3px solid color-mix(in srgb, var(--color-secondary) 56%, transparent); outline-offset: 2px; }
+.badge { position: absolute; top: -5px; right: -6px; min-width: 18px; height: 18px; padding: 0 4px; border: 2px solid var(--color-background); border-radius: 999px; background: color-mix(in srgb, var(--color-secondary) 82%, var(--color-primary)); color: var(--color-background); display: grid; place-items: center; font-size: 9px; font-weight: 900; line-height: 1; font-variant-numeric: tabular-nums; }
+.panel { position: absolute; z-index: 76; top: calc(100% + 10px); right: 0; width: min(420px, calc(100vw - 28px)); overflow: hidden; border: 1px solid var(--color-border); border-radius: 20px; background: var(--color-surface-elevated); color: var(--color-text); box-shadow: var(--shadow-floating); animation: panel-in 180ms ease-out both; }
+.heading { min-height: 58px; padding: 0 16px; border-bottom: 1px solid var(--color-border); display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.heading div { display: grid; gap: 3px; }
+.heading strong { font-size: 14px; font-weight: 900; }
+.heading span { color: var(--color-text-muted); font-size: 11px; font-weight: 800; }
+.heading a { color: var(--color-primary); font-size: 12px; font-weight: 900; }
+.filters { padding: 10px; border-bottom: 1px solid var(--color-border); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.filters button, .panelFooter button { min-height: 34px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface-soft); color: var(--color-text-muted); font: inherit; font-size: 11px; font-weight: 900; cursor: pointer; }
+.filters button[aria-pressed="true"], .panelFooter button:hover { background: var(--color-primary); color: var(--color-on-primary); border-color: transparent; }
+.list { max-height: min(430px, calc(100dvh - 210px)); overflow-y: auto; padding: 8px; }
+.item { width: 100%; min-height: 88px; padding: 12px 10px; border: 0; border-radius: 14px; background: transparent; color: var(--color-text); display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; text-align: left; cursor: pointer; }
+.item:hover, .item:focus-visible { background: var(--color-surface-soft); }
+.item[data-status="unread"] { background: color-mix(in srgb, var(--color-primary-soft) 62%, transparent); }
+.item[data-status="resolved"] { opacity: .78; }
+.itemIcon { width: 34px; height: 34px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); color: var(--color-primary); display: grid; place-items: center; }
+.content { min-width: 0; display: grid; gap: 5px; }
+.content > span { min-width: 0; display: flex; justify-content: space-between; gap: 8px; align-items: start; }
+.content strong, .content small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.content strong { font-size: 13px; font-weight: 900; }
+.content em { flex: 0 0 auto; border-radius: 999px; padding: 3px 7px; background: color-mix(in srgb, var(--color-secondary) 13%, var(--color-surface)); color: var(--color-primary); font-size: 10px; font-style: normal; font-weight: 900; }
+.content small, .content time { color: var(--color-text-muted); font-size: 11px; }
+.panelFooter { min-height: 48px; padding: 9px 12px; border-top: 1px solid var(--color-border); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.panelFooter button { padding: 0 12px; }
+.panelFooter button:disabled { opacity: .5; cursor: not-allowed; }
+.panelFooter span { min-width: 0; color: var(--color-text-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.state, .retry { min-height: 118px; margin: 0; padding: 18px; color: var(--color-text-muted); display: grid; place-items: center; text-align: center; font-size: 12px; }
+.retry { width: 100%; border: 0; border-radius: 12px; background: transparent; font: inherit; cursor: pointer; }
+.toastHost { position: fixed; z-index: 90; right: max(18px, env(safe-area-inset-right)); bottom: max(18px, env(safe-area-inset-bottom)); width: min(380px, calc(100vw - 32px)); display: grid; gap: 10px; pointer-events: none; }
+.toast { pointer-events: auto; padding: 14px; border: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--color-border)); border-radius: 18px; background: var(--color-surface-elevated); color: var(--color-text); box-shadow: var(--shadow-floating); display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 10px; animation: panel-in 180ms ease-out both; }
+.toastIcon { width: 34px; height: 34px; border-radius: 12px; background: var(--color-primary-soft); color: var(--color-primary); display: grid; place-items: center; }
+.toast small { color: var(--color-primary); font-size: 10px; font-weight: 900; letter-spacing: .08em; }
+.toast strong { display: block; margin-top: 2px; font-size: 13px; }
+.toast p { margin: 4px 0 8px; color: var(--color-text-muted); font-size: 12px; line-height: 1.5; }
+.toast button { border: 0; background: transparent; color: var(--color-primary); font: inherit; font-size: 12px; font-weight: 900; cursor: pointer; }
+.toastClose { width: 28px; height: 28px; border-radius: 999px; color: var(--color-text-muted); display: grid; place-items: center; }
+@keyframes panel-in { from { opacity: 0; transform: translateY(-5px) scale(.98); } }
+@media (max-width: 768px) { .root { display: none; } }
+@media (max-width: 420px) { .toastHost { left: 16px; right: 16px; width: auto; } .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (prefers-reduced-motion: reduce) { .panel, .toast { animation: none; } }
