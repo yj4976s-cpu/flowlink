@@ -27,7 +27,9 @@ export type DetectionEvent = {
   status: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED";
   purpose: "USER_ANALYSIS" | "OPERATION";
   original_media_url: string;
+  original_media_bytes: number | null;
   result_media_url: string | null;
+  result_media_bytes: number | null;
   ai_model_id: string | null;
   media_width: number | null;
   media_height: number | null;
@@ -35,6 +37,46 @@ export type DetectionEvent = {
   processing_started_at: string | null;
   processing_completed_at: string | null;
   detected_objects: DetectionObject[];
+};
+
+export type DetectionUploadPolicy = {
+  image: {
+    allowed_content_types: string[];
+    source_max_bytes: number;
+    source_max_pixels: number;
+    normalized_max_edge: number;
+    normalized_target_bytes: number;
+    normalized_hard_max_bytes: number;
+  };
+  video: {
+    allowed_content_types: string[];
+    max_bytes: number;
+    max_duration_seconds: number;
+    max_source_edge: number;
+    normalized_max_width: number;
+    normalized_max_height: number;
+    normalized_max_fps: number;
+  };
+  quota: {
+    image_count_last_24h: number;
+    video_count_last_24h: number;
+    media_storage_bytes: number;
+    active_video_jobs: number;
+  };
+};
+
+export type DetectionStorageUsage = {
+  used_bytes: number;
+  limit_bytes: number;
+  usage_ratio: number;
+  remaining_bytes: number;
+  image_count_last_24h: number;
+  image_limit_last_24h: number;
+  video_count_last_24h: number;
+  video_limit_last_24h: number;
+  active_video_jobs: number;
+  active_video_job_limit: number;
+  has_unknown_legacy_usage: boolean;
 };
 
 export type VideoDetectionAccepted = {
@@ -48,8 +90,8 @@ export type VideoProcessingStatus = {
   detection_event_id: number;
   video_job_id: number;
   status: "PROCESSING" | "COMPLETED" | "FAILED";
-  stage: "QUEUED" | "ANALYZING" | "RENDERING" | "SAVING" | "COMPLETED" | "FAILED";
-  failed_stage: "QUEUED" | "ANALYZING" | "RENDERING" | "SAVING" | null;
+  stage: "QUEUED" | "NORMALIZING" | "ANALYZING" | "RENDERING" | "SAVING" | "COMPLETED" | "FAILED";
+  failed_stage: "QUEUED" | "NORMALIZING" | "ANALYZING" | "RENDERING" | "SAVING" | null;
   processed_frames: number;
   total_frames: number | null;
   analysis_progress: number | null;
@@ -91,40 +133,78 @@ export function resolveDetectionMediaUrl(value: string | null | undefined) {
   return resolveMediaUrl(value) ?? "";
 }
 
-function getFallbackMessage(status: number) {
+async function readErrorMessage(response: Response): Promise<string> {
+  return readSafeDetectionErrorMessage(response);
+}
+
+function readXhrErrorMessage(xhr: XMLHttpRequest): string {
+  return readSafeXhrDetectionErrorMessage(xhr);
+}
+
+const MODEL_UNAVAILABLE_DETAILS = new Set([
+  "AI detection model is not configured",
+  "Webcam detection model is unavailable",
+]);
+
+const SAFE_UPLOAD_ERROR_DETAILS = new Set([
+  "사용자 탐지 저장 공간 한도를 초과했습니다. 기존 분석 기록을 정리한 뒤 다시 시도해 주세요.",
+  "최근 24시간 이미지 분석 가능 횟수를 초과했습니다.",
+  "최근 24시간 영상 분석 가능 횟수를 초과했습니다.",
+  "이미 처리 중인 영상 분석이 있습니다. 완료 후 다시 업로드해 주세요.",
+  "Uploaded file is empty",
+  "Uploaded file is too large",
+  "Image must be 5MB or smaller",
+  "Image dimensions are too large",
+  "Image cannot be optimized under 2MB",
+  "Image cannot be optimized under the server storage limit.",
+  "Uploaded file is not a valid image",
+  "HEIC/HEIF images are not supported. Please upload JPG, PNG, or WebP.",
+  "Only JPEG, PNG, and WebP images are allowed",
+  "Only JPG, PNG, and WebP images are supported.",
+  "Animated WebP images are not supported.",
+  "Only MP4 videos are supported.",
+  "Video is larger than the upload limit.",
+  "Uploaded file is not a valid MP4 video",
+  "Uploaded file does not contain a video stream",
+  "Invalid video metadata",
+  "Video must be 30 seconds or shorter.",
+  "Video dimensions are too large.",
+  "Video processing timed out",
+]);
+
+function safeFallbackMessage(status: number) {
   if (status === 401) return "로그인이 필요하거나 로그인 세션이 만료되었습니다.";
-  if (status === 413) return "파일 크기가 너무 큽니다. 안내된 최대 용량을 확인해주세요.";
-  if (status === 415 || status === 422) return "지원하지 않는 파일 형식입니다.";
-  if (status === 503) return "AI 모델 연결을 준비하고 있습니다. 모델 파일이 연결되면 다시 시도해주세요.";
-  return "AI 탐지를 처리하지 못했습니다. 잠시 후 다시 시도해주세요.";
+  if (status === 409) return "이미 처리 중인 영상 분석이 있습니다. 완료 후 다시 업로드해 주세요.";
+  if (status === 413) return "파일 크기나 해상도가 너무 큽니다. 안내된 최대 용량을 확인해 주세요.";
+  if (status === 415 || status === 422) return "지원하지 않는 파일 형식이거나 파일 내용을 확인할 수 없습니다.";
+  if (status === 503) return "AI 모델 연결이 준비되지 않았습니다. 모델 파일이 연결되면 다시 시도해 주세요.";
+  if (status === 504) return "영상 처리 시간이 초과되었습니다. 더 짧은 영상으로 다시 시도해 주세요.";
+  return "AI 분석을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.";
 }
 
-async function readErrorMessage(response: Response) {
-  try {
-    const body: unknown = await response.json();
-    if (body && typeof body === "object" && "detail" in body) {
-      const detail = (body as { detail: unknown }).detail;
-      if (detail === "AI detection model is not configured") return getFallbackMessage(503);
-      if (detail === "Webcam detection model is unavailable") return getFallbackMessage(503);
-    }
-  } catch {
-    return getFallbackMessage(response.status);
-  }
-  return getFallbackMessage(response.status);
+function safeErrorMessageFromBody(body: unknown, status: number) {
+  if (!body || typeof body !== "object" || !("detail" in body)) return safeFallbackMessage(status);
+  const detail = (body as { detail: unknown }).detail;
+  if (typeof detail !== "string") return safeFallbackMessage(status);
+  if (MODEL_UNAVAILABLE_DETAILS.has(detail)) return safeFallbackMessage(503);
+  if (SAFE_UPLOAD_ERROR_DETAILS.has(detail)) return detail;
+  return safeFallbackMessage(status);
 }
 
-function readXhrErrorMessage(xhr: XMLHttpRequest) {
+export async function readSafeDetectionErrorMessage(response: Response) {
   try {
-    const body: unknown = JSON.parse(xhr.responseText);
-    if (body && typeof body === "object" && "detail" in body) {
-      const detail = (body as { detail: unknown }).detail;
-      if (detail === "AI detection model is not configured") return getFallbackMessage(503);
-      if (detail === "Webcam detection model is unavailable") return getFallbackMessage(503);
-    }
+    return safeErrorMessageFromBody(await response.json(), response.status);
   } catch {
-    return getFallbackMessage(xhr.status);
+    return safeFallbackMessage(response.status);
   }
-  return getFallbackMessage(xhr.status);
+}
+
+export function readSafeXhrDetectionErrorMessage(xhr: Pick<XMLHttpRequest, "responseText" | "status">) {
+  try {
+    return safeErrorMessageFromBody(JSON.parse(xhr.responseText), xhr.status);
+  } catch {
+    return safeFallbackMessage(xhr.status);
+  }
 }
 
 async function requestJson<T>(url: string, init: RequestInit = {}): Promise<T> {
@@ -151,6 +231,14 @@ function uploadDetection(path: string, file: File) {
 
 export function uploadDetectionImage(file: File) {
   return uploadDetection("/api/detections/images", file);
+}
+
+export function getDetectionUploadPolicy(signal?: AbortSignal) {
+  return requestJson<DetectionUploadPolicy>(buildApiUrl("/api/detections/upload-policy"), { signal });
+}
+
+export function getDetectionStorageUsage(signal?: AbortSignal) {
+  return requestJson<DetectionStorageUsage>(buildApiUrl("/api/detections/me/storage-usage"), { signal });
 }
 
 export type DetectionVideoUploadOptions = {

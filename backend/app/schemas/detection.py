@@ -33,7 +33,9 @@ class DetectionEventResponse(BaseModel):
     status: str
     purpose: str
     original_media_url: str
+    original_media_bytes: int | None = None
     result_media_url: str | None
+    result_media_bytes: int | None = None
     ai_model_id: str | None = None
     media_width: int | None
     media_height: int | None
@@ -47,6 +49,52 @@ class DetectionEventListResponse(DetectionEventResponse):
     pass
 
 
+class DetectionImagePolicyResponse(BaseModel):
+    allowed_content_types: list[str]
+    source_max_bytes: int = Field(ge=0)
+    source_max_pixels: int = Field(ge=0)
+    normalized_max_edge: int = Field(ge=0)
+    normalized_target_bytes: int = Field(ge=0)
+    normalized_hard_max_bytes: int = Field(ge=0)
+
+
+class DetectionVideoPolicyResponse(BaseModel):
+    allowed_content_types: list[str]
+    max_bytes: int = Field(ge=0)
+    max_duration_seconds: int = Field(ge=0)
+    max_source_edge: int = Field(ge=0)
+    normalized_max_width: int = Field(ge=0)
+    normalized_max_height: int = Field(ge=0)
+    normalized_max_fps: int = Field(ge=0)
+
+
+class DetectionQuotaPolicyResponse(BaseModel):
+    image_count_last_24h: int = Field(ge=0)
+    video_count_last_24h: int = Field(ge=0)
+    media_storage_bytes: int = Field(ge=0)
+    active_video_jobs: int = Field(ge=0)
+
+
+class DetectionUploadPolicyResponse(BaseModel):
+    image: DetectionImagePolicyResponse
+    video: DetectionVideoPolicyResponse
+    quota: DetectionQuotaPolicyResponse
+
+
+class DetectionStorageUsageResponse(BaseModel):
+    used_bytes: int
+    limit_bytes: int
+    usage_ratio: float
+    remaining_bytes: int
+    image_count_last_24h: int
+    image_limit_last_24h: int
+    video_count_last_24h: int
+    video_limit_last_24h: int
+    active_video_jobs: int
+    active_video_job_limit: int
+    has_unknown_legacy_usage: bool
+
+
 class VideoDetectionAcceptedResponse(BaseModel):
     detection_event_id: int
     video_job_id: int
@@ -58,8 +106,8 @@ class VideoProcessingStatusResponse(BaseModel):
     detection_event_id: int
     video_job_id: int
     status: str
-    stage: str
-    failed_stage: str | None = None
+    stage: str = Field(pattern="^(QUEUED|NORMALIZING|ANALYZING|RENDERING|SAVING|COMPLETED|FAILED)$")
+    failed_stage: str | None = Field(default=None, pattern="^(QUEUED|NORMALIZING|ANALYZING|RENDERING|SAVING)$")
     processed_frames: int
     total_frames: int | None
     analysis_progress: int | None

@@ -10,10 +10,14 @@ import {
   DetectionBBox,
   DetectionEvent,
   DetectionObject,
+  DetectionStorageUsage,
+  DetectionUploadPolicy,
   VideoProcessingStatus,
   WebcamDetectionFrame,
   deleteAllMyDetections,
   deleteMyDetection,
+  getDetectionStorageUsage,
+  getDetectionUploadPolicy,
   getMyDetection,
   getVideoProcessingStatus,
   listMyDetections,
@@ -31,7 +35,7 @@ import styles from "./DetectionWorkbench.module.css";
 
 type DetectionTab = "image" | "video" | "webcam";
 type SubmitState = "idle" | "selected" | "analyzing" | "success" | "error";
-type VideoProcessingState = "idle" | "uploading" | "queued" | "analyzing" | "rendering" | "saving" | "completed" | "failed";
+type VideoProcessingState = "idle" | "uploading" | "queued" | "normalizing" | "analyzing" | "rendering" | "saving" | "completed" | "failed";
 type VideoActiveStage = Exclude<VideoProcessingState, "idle" | "completed" | "failed">;
 type VideoStepKey = "upload" | "analysis" | "render" | "save";
 type VideoStepState = "pending" | "active" | "complete" | "failed";
@@ -72,6 +76,31 @@ const RESULT_PAGE_SIZE = 4;
 const CTA_PAGE_SIZE = 4;
 const imageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 const videoTypes = new Set(["video/mp4"]);
+const fallbackUploadPolicy: DetectionUploadPolicy = {
+  image: {
+    allowed_content_types: ["image/jpeg", "image/png", "image/webp"],
+    source_max_bytes: IMAGE_MAX_BYTES,
+    source_max_pixels: 50_000_000,
+    normalized_max_edge: 2560,
+    normalized_target_bytes: 4 * 1024 * 1024,
+    normalized_hard_max_bytes: 5 * 1024 * 1024,
+  },
+  video: {
+    allowed_content_types: ["video/mp4"],
+    max_bytes: VIDEO_MAX_BYTES,
+    max_duration_seconds: VIDEO_MAX_SECONDS,
+    max_source_edge: 4096,
+    normalized_max_width: 1920,
+    normalized_max_height: 1080,
+    normalized_max_fps: 30,
+  },
+  quota: {
+    image_count_last_24h: 50,
+    video_count_last_24h: 5,
+    media_storage_bytes: 1024 * 1024 * 1024,
+    active_video_jobs: 1,
+  },
+};
 
 const dateFormatter = new Intl.DateTimeFormat("ko-KR", {
   dateStyle: "medium",
@@ -114,6 +143,7 @@ function waitForVideoPoll(signal: AbortSignal) {
 
 function processingStateForStage(stage: VideoProcessingStatus["stage"]): VideoProcessingState {
   if (stage === "QUEUED") return "queued";
+  if (stage === "NORMALIZING") return "normalizing";
   if (stage === "ANALYZING") return "analyzing";
   if (stage === "RENDERING") return "rendering";
   if (stage === "SAVING") return "saving";
@@ -123,6 +153,7 @@ function processingStateForStage(stage: VideoProcessingStatus["stage"]): VideoPr
 
 function activeStageForServerStatus(status: VideoProcessingStatus): VideoActiveStage {
   const stage = status.status === "FAILED" ? status.failed_stage : status.stage;
+  if (stage === "NORMALIZING") return "normalizing";
   if (stage === "RENDERING") return "rendering";
   if (stage === "SAVING") return "saving";
   if (stage === "ANALYZING") return "analyzing";
@@ -131,7 +162,7 @@ function activeStageForServerStatus(status: VideoProcessingStatus): VideoActiveS
 
 function getVideoStepState(step: VideoStepKey, stage: VideoActiveStage, failed: boolean): VideoStepState {
   const stepOrder: VideoStepKey[] = ["upload", "analysis", "render", "save"];
-  const activeStep: VideoStepKey = stage === "uploading" ? "upload" : stage === "queued" || stage === "analyzing" ? "analysis" : stage === "rendering" ? "render" : "save";
+  const activeStep: VideoStepKey = stage === "uploading" ? "upload" : stage === "queued" || stage === "normalizing" || stage === "analyzing" ? "analysis" : stage === "rendering" ? "render" : "save";
   const stepIndex = stepOrder.indexOf(step);
   const activeIndex = stepOrder.indexOf(activeStep);
   if (failed && stepIndex === activeIndex) return "failed";
@@ -143,14 +174,17 @@ function getVideoStepState(step: VideoStepKey, stage: VideoActiveStage, failed: 
 function VideoProcessingCard({ state, failedFromStage, uploadProgress, serverStatus, elapsedSeconds, error }: { state: Exclude<VideoProcessingState, "idle" | "completed">; failedFromStage: VideoActiveStage | null; uploadProgress: number | null; serverStatus: VideoProcessingStatus | null; elapsedSeconds: number; error: string }) {
   const uploading = state === "uploading";
   const failed = state === "failed";
+  const normalizing = state === "normalizing";
   const analyzing = state === "analyzing";
   const displayedStage = failed ? failedFromStage ?? "uploading" : state;
   const actualProgress = analyzing ? serverStatus?.analysis_progress ?? null : null;
+  const stageStatus = normalizing ? "영상 최적화 중" : null;
   const failureStatus = displayedStage === "uploading" ? "영상을 업로드하지 못했어요."
     : displayedStage === "queued" ? "영상 분석을 시작하지 못했어요."
-      : displayedStage === "analyzing" ? "영상 분석을 완료하지 못했어요."
-        : displayedStage === "rendering" ? "결과 영상을 준비하지 못했어요."
-          : "분석 결과를 저장하지 못했어요.";
+      : displayedStage === "normalizing" ? "영상을 최적화하지 못했어요."
+        : displayedStage === "analyzing" ? "영상 분석을 완료하지 못했어요."
+          : displayedStage === "rendering" ? "결과 영상을 준비하지 못했어요."
+            : "분석 결과를 저장하지 못했어요.";
   const status = failed ? failureStatus
     : uploading ? "영상을 업로드하고 있어요"
       : state === "queued" ? "분석을 준비하고 있어요"
@@ -169,7 +203,7 @@ function VideoProcessingCard({ state, failedFromStage, uploadProgress, serverSta
         <div><p className={styles.eyebrow}>PROCESSING</p><h3 id="video-processing-title">AI 영상 분석</h3></div>
         <span>경과 시간 <b>{formatElapsedTime(elapsedSeconds)}</b></span>
       </div>
-      <p className={styles.videoProcessingStatus} role={failed ? "alert" : "status"} aria-live="polite">{status}</p>
+      <p className={styles.videoProcessingStatus} role={failed ? "alert" : "status"} aria-live="polite">{stageStatus ?? status}</p>
       <ol className={styles.videoProcessingSteps}>
         {steps.map(([key, label]) => {
           const stepState = getVideoStepState(key, displayedStage, failed);
@@ -186,7 +220,7 @@ function VideoProcessingCard({ state, failedFromStage, uploadProgress, serverSta
         !failed && <div className={`${styles.videoProgressRail} ${styles.videoProgressIndeterminate}`} role="progressbar" aria-label={`${status} 진행 중`}><span /></div>
       ))}
       {analyzing && serverStatus && serverStatus.total_frames === null && serverStatus.processed_frames > 0 && <p>{serverStatus.processed_frames} 프레임 처리됨</p>}
-      <p className={styles.videoProcessingDescription}>{failed ? error : status}</p>
+      <p className={styles.videoProcessingDescription}>{failed ? error : stageStatus ?? status}</p>
       {!failed && <small>영상 길이와 실행 환경에 따라 수 분이 소요될 수 있어요.</small>}
     </section>
   );
@@ -453,9 +487,15 @@ function localDatetimeToIso(value: string) {
   return Number.isNaN(date.getTime()) ? "" : date.toISOString();
 }
 
-function validateFile(file: File, tab: DetectionTab) {
+function validateFile(file: File, tab: DetectionTab, policy: DetectionUploadPolicy = fallbackUploadPolicy) {
   if (tab === "webcam") return "";
+  if (tab === "image" && !new Set(policy.image.allowed_content_types).has(file.type)) return "JPG, PNG, WebP 이미지만 업로드할 수 있습니다.";
+  if (tab === "image" && file.size > policy.image.source_max_bytes) return `이미지는 원본 기준 최대 ${formatBytes(policy.image.source_max_bytes)}까지 업로드할 수 있습니다.`;
+  if (tab === "video" && !new Set(policy.video.allowed_content_types).has(file.type)) return "MP4 영상만 업로드할 수 있습니다.";
+  if (tab === "video" && file.size > policy.video.max_bytes) return `영상은 최대 ${formatBytes(policy.video.max_bytes)}까지 업로드할 수 있습니다.`;
   if (tab === "image") {
+    if (!new Set(policy.image.allowed_content_types).has(file.type)) return "JPG, PNG, WebP 이미지만 업로드할 수 있습니다.";
+    if (file.size > policy.image.source_max_bytes) return `이미지는 원본 기준 최대 ${formatBytes(policy.image.source_max_bytes)}까지 업로드할 수 있습니다.`;
     if (!imageTypes.has(file.type)) return "JPG, PNG, WEBP 이미지만 업로드할 수 있습니다.";
     if (file.size > IMAGE_MAX_BYTES) return "이미지는 최대 20MB까지 업로드할 수 있습니다.";
     return "";
@@ -883,6 +923,9 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
   const [history, setHistory] = useState<DetectionEvent[]>([]);
   const [historyError, setHistoryError] = useState("");
   const [historyLoading, setHistoryLoading] = useState(true);
+  const [uploadPolicy, setUploadPolicy] = useState<DetectionUploadPolicy>(fallbackUploadPolicy);
+  const [storageUsage, setStorageUsage] = useState<DetectionStorageUsage | null>(null);
+  const [storageUsageError, setStorageUsageError] = useState("");
   const [deletingHistoryIds, setDeletingHistoryIds] = useState<Set<number>>(() => new Set());
   const [deletingAllHistory, setDeletingAllHistory] = useState(false);
   const [historyPage, setHistoryPage] = useState(1);
@@ -902,7 +945,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
   const videoAbortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (!["uploading", "queued", "analyzing", "rendering", "saving"].includes(videoProcessingState) || videoProcessingStartedAt === null) return;
+    if (!["uploading", "queued", "normalizing", "analyzing", "rendering", "saving"].includes(videoProcessingState) || videoProcessingStartedAt === null) return;
     const updateElapsed = () => setVideoElapsedSeconds(Math.floor((Date.now() - videoProcessingStartedAt) / 1000));
     updateElapsed();
     const interval = window.setInterval(updateElapsed, 1000);
@@ -967,6 +1010,17 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
     }
   }, []);
 
+  const refreshStorageUsage = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const data = await getDetectionStorageUsage(signal);
+      setStorageUsage(data);
+      setStorageUsageError("");
+    } catch (caught) {
+      if (caught instanceof DOMException && caught.name === "AbortError") return;
+      setStorageUsageError(caught instanceof DetectionApiError ? caught.message : "저장 공간 사용량을 불러오지 못했습니다.");
+    }
+  }, []);
+
   const revokeReportPreviewUrl = useCallback(() => {
     if (reportPreviewUrlRef.current) {
       URL.revokeObjectURL(reportPreviewUrlRef.current);
@@ -979,6 +1033,17 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
     queueMicrotask(() => void refreshHistory(controller.signal));
     return () => controller.abort();
   }, [refreshHistory]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    queueMicrotask(() => {
+      void getDetectionUploadPolicy(controller.signal)
+        .then(setUploadPolicy)
+        .catch(() => setUploadPolicy(fallbackUploadPolicy));
+      void refreshStorageUsage(controller.signal);
+    });
+    return () => controller.abort();
+  }, [refreshStorageUsage]);
 
   useEffect(() => {
     return () => {
@@ -1128,7 +1193,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
     pendingHistoryDetailIdRef.current = null;
     historyDetailLoadingRef.current = false;
     setHistoryDetailLoading(false);
-    const validationMessage = validateFile(nextFile, tab);
+    const validationMessage = validateFile(nextFile, tab, uploadPolicy);
     setCurrentEvent(null);
     setVideoDuration(null);
     setVideoThumbnailUrl("");
@@ -1164,13 +1229,18 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (tab === "webcam" || !file || submitState === "analyzing") return;
-    const validationMessage = validateFile(file, tab);
+    const validationMessage = validateFile(file, tab, uploadPolicy);
     if (validationMessage) {
       setError(validationMessage);
       setSubmitState("error");
       return;
     }
-    if (tab === "video" && videoDuration !== null && videoDuration > VIDEO_MAX_SECONDS) {
+    if (storageFull) {
+      setError("저장 공간 한도를 초과했습니다. 기존 분석 기록을 정리한 뒤 다시 시도해 주세요.");
+      setSubmitState("error");
+      return;
+    }
+    if (tab === "video" && videoDuration !== null && videoDuration > uploadPolicy.video.max_duration_seconds) {
       setError("영상은 30초 이내로 업로드해주세요.");
       setSubmitState("error");
       return;
@@ -1246,6 +1316,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
       setHistoryLoading(true);
       setHistoryError("");
       await refreshHistory();
+      await refreshStorageUsage();
     } catch (caught) {
       if (requestGeneration !== videoRequestGenerationRef.current || (caught instanceof DOMException && caught.name === "AbortError")) return;
       const message = caught instanceof Error ? caught.message : "물건 확인을 처리하지 못했습니다.";
@@ -1327,6 +1398,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
         setCurrentEvent(null);
         setSubmitState(file ? "selected" : "idle");
       }
+      await refreshStorageUsage();
     } catch (caught) {
       const message = caught instanceof DetectionApiError ? caught.message : "확인 기록을 삭제하지 못했습니다.";
       setHistoryError(message);
@@ -1357,6 +1429,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
       setHistoryPage(1);
       setCurrentEvent(null);
       setSubmitState(file ? "selected" : "idle");
+      await refreshStorageUsage();
     } catch (caught) {
       const message = caught instanceof DetectionApiError ? caught.message : "확인 기록을 모두 삭제하지 못했습니다.";
       setHistoryError(message);
@@ -1542,6 +1615,11 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
     : currentEvent?.detected_objects.length ?? 0;
   const displayedSourceType = tab === "webcam" ? "WEBCAM" : currentEvent?.source_type ?? (tab === "image" ? "IMAGE" : "VIDEO");
   const displayedSourceTypeLabel = sourceTypeLabels[displayedSourceType] ?? displayedSourceType;
+  const storageRatio = storageUsage?.usage_ratio ?? 0;
+  const storagePercent = Math.round(storageRatio * 100);
+  const storageFull = Boolean(storageUsage && storageRatio >= 1);
+  const storageWarning = Boolean(storageUsage && storageRatio >= 0.8 && storageRatio < 1);
+  const uploadDisabled = !file || submitState === "analyzing" || storageFull;
   const resultVideoUrl = currentEvent?.source_type === "VIDEO" && currentEvent.result_media_url
     ? resolveDetectionMediaUrl(currentEvent.result_media_url)
     : "";
@@ -1587,6 +1665,43 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
                 </div>
                 <span>{tab === "image" ? "JPG · PNG · WEBP / 20MB" : "MP4 · 100MB 이하 · 영상 30초 이내"}</span>
               </div>
+
+              <section className={styles.policyCard} aria-label="사용자 업로드 정책과 저장 공간">
+                <div className={styles.policyHeader}>
+                  <div>
+                    <strong>업로드 정책</strong>
+                    <span>
+                      {tab === "image"
+                        ? `JPG · PNG · WebP 원본 ${formatBytes(uploadPolicy.image.source_max_bytes)} / 저장본 최대 ${formatBytes(uploadPolicy.image.normalized_hard_max_bytes)}`
+                        : `MP4 ${formatBytes(uploadPolicy.video.max_bytes)} · ${uploadPolicy.video.max_duration_seconds}초 · 최대 1080p 저장`}
+                    </span>
+                  </div>
+                  {storageUsage && (
+                    <strong className={storageFull ? styles.policyDanger : storageWarning ? styles.policyWarn : styles.policyOk}>
+                      {storagePercent}%
+                    </strong>
+                  )}
+                </div>
+                {storageUsage ? (
+                  <>
+                    <div className={styles.policyMeter} role="progressbar" aria-label="사용자 탐지 저장 공간 사용률" aria-valuemin={0} aria-valuemax={100} aria-valuenow={storagePercent}>
+                      <span style={{ width: `${Math.min(100, storagePercent)}%` }} />
+                    </div>
+                    <div className={styles.policyStats}>
+                      <span>사용 {formatBytes(storageUsage.used_bytes)} / {formatBytes(storageUsage.limit_bytes)}</span>
+                      <span>남은 공간 {formatBytes(storageUsage.remaining_bytes)}</span>
+                      <span>24시간 이미지 {storageUsage.image_count_last_24h}/{storageUsage.image_limit_last_24h}</span>
+                      <span>24시간 영상 {storageUsage.video_count_last_24h}/{storageUsage.video_limit_last_24h}</span>
+                      <span>처리 중 영상 {storageUsage.active_video_jobs}/{storageUsage.active_video_job_limit}</span>
+                    </div>
+                    {storageUsage.has_unknown_legacy_usage && <p className={styles.policyNote}>이전 기록 중 크기를 알 수 없는 파일이 있어 실제 사용량과 차이가 날 수 있습니다.</p>}
+                    {storageWarning && <p className={styles.policyNote}>저장 공간이 80% 이상 사용되었습니다. 오래된 분석 기록 정리를 권장합니다.</p>}
+                    {storageFull && <p className={styles.policyNote}>저장 공간이 가득 찼습니다. 아래 기록 삭제로 공간을 확보해 주세요.</p>}
+                  </>
+                ) : (
+                  <p className={styles.policyNote}>{storageUsageError || "저장 공간 사용량을 확인하는 중입니다."}</p>
+                )}
+              </section>
 
               <form onSubmit={handleSubmit}>
                 <label
@@ -1655,7 +1770,7 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
                 {error && !(tab === "video" && videoProcessingState === "failed") && <p className={styles.error} role="alert">{error}</p>}
 
                 <div className={styles.actions}>
-                  <button className="button button-primary" type="submit" disabled={!file || submitState === "analyzing"}>
+                  <button className="button button-primary" type="submit" disabled={uploadDisabled}>
                     {submitState === "analyzing" ? videoProcessingState === "uploading" ? "영상 업로드 중" : tab === "video" ? "분석 진행 중" : "물건 확인 중..." : "물건 확인 시작"}
                     <Icon name="arrow" size={18} />
                   </button>

@@ -4,8 +4,10 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import Settings, get_settings
 from app.models import Camera, DetectedObject, DetectionEvent, User, VideoJob
 from app.repositories.detections import (
     OPERATION_PURPOSE,
@@ -24,6 +26,7 @@ from app.services.detection_inference import (
     DetectionInferenceUnavailableError,
 )
 from app.services.color_estimation import estimate_standard_color
+from app.services.user_media_policy import ensure_user_analysis_quota, get_user_storage_usage
 
 SAFE_MODEL_UNAVAILABLE_MESSAGE = "AI detection model is not configured"
 SAFE_VIDEO_TIMEOUT_MESSAGE = "영상 분석 시간이 예상보다 길어 중단되었어요. 잠시 후 다시 시도해주세요."
@@ -48,12 +51,13 @@ def sanitize_error_message(message: str) -> str:
     return "AI detection could not be completed"
 
 
-def create_user_detection_event(
+def _add_user_detection_event(
     db: Session,
     *,
     current_user: User,
     source_type: str,
     media_key: str,
+    original_media_bytes: int | None,
 ) -> DetectionEvent:
     now = utc_now()
     event = DetectionEvent(
@@ -61,6 +65,7 @@ def create_user_detection_event(
         purpose=USER_ANALYSIS_PURPOSE,
         source_type=source_type,
         original_media_url=media_key,
+        original_media_bytes=original_media_bytes,
         status="PROCESSING",
         captured_at=now,
         processing_started_at=now,
@@ -82,18 +87,71 @@ def create_user_detection_event(
                 updated_at=now,
             ),
         )
+    return event
+
+
+def create_user_detection_event(
+    db: Session,
+    *,
+    current_user: User,
+    source_type: str,
+    media_key: str,
+    original_media_bytes: int | None = None,
+) -> DetectionEvent:
+    event = _add_user_detection_event(
+        db,
+        current_user=current_user,
+        source_type=source_type,
+        media_key=media_key,
+        original_media_bytes=original_media_bytes,
+    )
+    db.commit()
+    db.refresh(event)
+    return event
+
+
+def create_user_detection_event_after_quota(
+    db: Session,
+    *,
+    current_user: User,
+    source_type: str,
+    media_key: str,
+    original_media_bytes: int,
+    settings: Settings,
+) -> DetectionEvent:
+    db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
+    ensure_user_analysis_quota(
+        db,
+        user_id=current_user.id,
+        source_type=source_type,
+        incoming_bytes=original_media_bytes,
+        settings=settings,
+    )
+    event = _add_user_detection_event(
+        db,
+        current_user=current_user,
+        source_type=source_type,
+        media_key=media_key,
+        original_media_bytes=original_media_bytes,
+    )
     db.commit()
     db.refresh(event)
     return event
 
 
 def create_operation_detection_event(
-    db: Session, *, current_admin: User, camera: Camera, source_type: str, media_key: str
+    db: Session,
+    *,
+    current_admin: User,
+    camera: Camera,
+    source_type: str,
+    media_key: str,
+    original_media_bytes: int | None = None,
 ) -> DetectionEvent:
     now = utc_now()
     event = DetectionEvent(
         user_id=current_admin.id, camera_id=camera.id, purpose=OPERATION_PURPOSE,
-        source_type=source_type, original_media_url=media_key, status="PROCESSING",
+        source_type=source_type, original_media_url=media_key, original_media_bytes=original_media_bytes, status="PROCESSING",
         captured_at=now, processing_started_at=now, created_at=now, updated_at=now,
     )
     add_detection_event(db, event)
@@ -155,6 +213,14 @@ def _complete_with_result(
             rendered_media_path = media_path.with_name(f"{media_path.stem}-result.mp4")
             rendered_media_path.write_bytes(result.rendered_video)
             event.result_media_url = rendered_media_path.relative_to(media_path.parents[3]).as_posix()
+            event.result_media_bytes = rendered_media_path.stat().st_size
+        if event.original_media_bytes is None and media_path.exists():
+            event.original_media_bytes = media_path.stat().st_size
+        if event.purpose == USER_ANALYSIS_PURPOSE and event.user_id is not None:
+            db.flush()
+            usage = get_user_storage_usage(db, user_id=event.user_id, settings=get_settings())
+            if int(usage["used_bytes"]) > int(usage["limit_bytes"]):
+                raise DetectionProcessingError("User media storage limit exceeded")
         event.ai_model_id = result.model_id
         for prediction in result.detections:
             class_code = prediction.class_code.strip().upper()
@@ -199,6 +265,9 @@ def _complete_with_result(
         db.rollback()
         if rendered_media_path is not None:
             rendered_media_path.unlink(missing_ok=True)
+        event.original_media_bytes = 0
+        event.result_media_url = None
+        event.result_media_bytes = 0
         _mark_failed(db, event=event, message="AI detection results could not be saved")
         raise
 
