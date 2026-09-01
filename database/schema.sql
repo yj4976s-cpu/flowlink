@@ -763,6 +763,53 @@ WHERE related_type = 'DETECTION_EVENT'
   AND notification_type IN ('DETECTION_COMPLETED', 'DETECTION_FAILED');
 
 
+CREATE TABLE admin_notifications (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    notification_type VARCHAR(60) NOT NULL CHECK (
+        notification_type IN (
+            'OPERATION_DETECTION_REVIEW_REQUIRED',
+            'FOUND_ITEM_REGISTRATION_REQUIRED',
+            'WASTE_COLLECTION_REQUIRED',
+            'CITIZEN_REPORT_REVIEW_REQUIRED',
+            'OWNERSHIP_CLAIM_REVIEW_REQUIRED',
+            'OWNERSHIP_RETURN_REQUIRED'
+        )
+    ),
+    title VARCHAR(150) NOT NULL CHECK (BTRIM(title) <> ''),
+    message TEXT NOT NULL CHECK (BTRIM(message) <> ''),
+    related_type VARCHAR(50) NOT NULL CHECK (BTRIM(related_type) <> ''),
+    related_id BIGINT NOT NULL CHECK (related_id > 0),
+    resolved_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX uq_admin_notifications_business_event
+ON admin_notifications (notification_type, related_type, related_id);
+
+CREATE INDEX ix_admin_notifications_created_at
+ON admin_notifications (created_at DESC);
+
+CREATE INDEX ix_admin_notifications_resolved_at
+ON admin_notifications (resolved_at);
+
+CREATE TABLE admin_notification_reads (
+    admin_notification_id BIGINT NOT NULL
+        REFERENCES admin_notifications(id)
+        ON DELETE CASCADE,
+    admin_user_id BIGINT NOT NULL
+        REFERENCES users(id)
+        ON DELETE CASCADE,
+    read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (admin_notification_id, admin_user_id)
+);
+
+CREATE UNIQUE INDEX uq_admin_notification_reads_notification_admin
+ON admin_notification_reads (admin_notification_id, admin_user_id);
+
+CREATE INDEX ix_admin_notification_reads_admin_user
+ON admin_notification_reads (admin_user_id, read_at DESC);
+
+
 -- =========================================================
 -- DARU MEMORY 통계 및 난이도별 랭킹
 -- =========================================================

@@ -35,6 +35,10 @@ class User(Base):
         back_populates="reviewer", foreign_keys="OwnershipClaim.reviewed_by"
     )
     notifications: Mapped[list[Notification]] = relationship(back_populates="user")
+    admin_notification_reads: Mapped[list[AdminNotificationRead]] = relationship(
+        back_populates="admin_user",
+        passive_deletes=True,
+    )
     detection_events: Mapped[list[DetectionEvent]] = relationship(back_populates="user")
     citizen_reports: Mapped[list[CitizenReport]] = relationship(back_populates="user", foreign_keys="CitizenReport.user_id")
     citizen_sightings: Mapped[list[CitizenSighting]] = relationship(back_populates="user")
@@ -504,6 +508,61 @@ class Notification(Base):
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
 
     user: Mapped[User] = relationship(back_populates="notifications")
+
+
+class AdminNotification(Base):
+    __tablename__ = "admin_notifications"
+    __table_args__ = (
+        CheckConstraint(
+            "notification_type IN ('OPERATION_DETECTION_REVIEW_REQUIRED', 'FOUND_ITEM_REGISTRATION_REQUIRED', 'WASTE_COLLECTION_REQUIRED', 'CITIZEN_REPORT_REVIEW_REQUIRED', 'OWNERSHIP_CLAIM_REVIEW_REQUIRED', 'OWNERSHIP_RETURN_REQUIRED')",
+            name="ck_admin_notifications_type",
+        ),
+        CheckConstraint("related_id > 0", name="ck_admin_notifications_related_id"),
+        UniqueConstraint(
+            "notification_type",
+            "related_type",
+            "related_id",
+            name="uq_admin_notifications_business_event",
+        ),
+        Index("ix_admin_notifications_created_at", "created_at"),
+        Index("ix_admin_notifications_resolved_at", "resolved_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    notification_type: Mapped[str] = mapped_column(String(60), nullable=False)
+    title: Mapped[str] = mapped_column(String(150), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    related_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    related_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+    reads: Mapped[list[AdminNotificationRead]] = relationship(
+        back_populates="notification",
+        passive_deletes=True,
+    )
+
+
+class AdminNotificationRead(Base):
+    __tablename__ = "admin_notification_reads"
+    __table_args__ = (
+        UniqueConstraint(
+            "admin_notification_id",
+            "admin_user_id",
+            name="uq_admin_notification_reads_notification_admin",
+        ),
+        Index("ix_admin_notification_reads_admin_user", "admin_user_id", "read_at"),
+    )
+
+    admin_notification_id: Mapped[int] = mapped_column(
+        ForeignKey("admin_notifications.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    admin_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    read_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+    notification: Mapped[AdminNotification] = relationship(back_populates="reads")
+    admin_user: Mapped[User] = relationship(back_populates="admin_notification_reads")
 
 
 class CommunityPost(Base):

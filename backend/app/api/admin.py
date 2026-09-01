@@ -28,7 +28,7 @@ from app.repositories.user_flow import (
     list_ownership_claims,
     waste_collection_completed_ids,
 )
-from app.schemas.admin import AdminAiReportResponse, AdminCameraResponse, AdminCommunityPostListResponse, AdminDashboardResponse, AdminDetectedObjectCollectionResponse, AdminDetectedObjectFoundItemResponse, AdminDetectionEventResponse, AdminFoundItemListResponse, AdminMobileWasteRegistrationResponse, AdminModelComparisonResponse, AdminModelDeploymentHistoryResponse, AdminModelDeploymentRequest, AdminModelDeploymentRollbackRequest, AdminModelDeploymentStatusResponse, AdminModelDeploymentSwitchResponse, AdminOperationsBriefingResponse, AdminOperationsBriefingStatus, AdminOwnershipClaimResponse, AdminUserListResponse, DetectedObjectUpdateRequest
+from app.schemas.admin import AdminAiReportResponse, AdminCameraResponse, AdminCommunityPostListResponse, AdminDashboardResponse, AdminDetectedObjectCollectionResponse, AdminDetectedObjectFoundItemResponse, AdminDetectionEventResponse, AdminFoundItemListResponse, AdminMobileWasteRegistrationResponse, AdminModelComparisonResponse, AdminModelDeploymentHistoryResponse, AdminModelDeploymentRequest, AdminModelDeploymentRollbackRequest, AdminModelDeploymentStatusResponse, AdminModelDeploymentSwitchResponse, AdminNotificationItem, AdminNotificationListResponse, AdminNotificationReadAllResponse, AdminOperationsBriefingResponse, AdminOperationsBriefingStatus, AdminOwnershipClaimResponse, AdminUserListResponse, DetectedObjectUpdateRequest
 from app.schemas.citizen_report import AdminCitizenReportResponse, AdminCitizenReportUpdateRequest, ResolveCitizenReportRequest
 from app.schemas.common import MessageResponse
 from app.schemas.found_item import FoundItemUpdateRequest
@@ -48,11 +48,18 @@ from app.services.model_comparison import ModelComparisonDataError, load_model_c
 from app.services.ai_inference_client import get_ai_inference_client
 from app.services.model_deployment import activate_model, get_model_deployment_status, list_model_deployment_history, rollback_model
 from app.services.admin_operations_briefing import create_admin_operations_briefing, get_admin_operations_briefing_status
+from app.services.admin_notifications import (
+    mark_admin_notification_read,
+    mark_all_admin_notifications_read,
+    list_admin_notifications,
+    sync_detected_object_follow_up_notifications,
+)
 from app.api.detections import WEBCAM_FRAME_MAX_BYTES
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 KST = ZoneInfo("Asia/Seoul")
 FOUND_ITEM_STATUSES = {"DETECTED", "RECOVERED", "AVAILABLE", "CLAIM_PENDING", "RETURNED", "DISPOSED", "ARCHIVED"}
+ADMIN_NOTIFICATION_FILTERS = {"all", "unread", "actionable", "resolved"}
 ADMIN_IMAGE_CONTENT_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
 ADMIN_IMAGE_MAX_BYTES = 20 * 1024 * 1024
 UPLOAD_CHUNK_BYTES = 1024 * 1024
@@ -105,6 +112,49 @@ def get_admin_ai_report(
     if days not in (7, 30, 90):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported report period")
     return AdminAiReportResponse.model_validate(get_admin_ai_report_data(db, days=days))
+
+
+@router.get("/notifications", response_model=AdminNotificationListResponse, summary="관리자 알림 목록 조회")
+def list_admin_notification_center(
+    current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    filter: Annotated[str, Query(pattern="^(all|unread|actionable|resolved)$")] = "all",
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> AdminNotificationListResponse:
+    if filter not in ADMIN_NOTIFICATION_FILTERS:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid admin notification filter")
+    return AdminNotificationListResponse.model_validate(
+        list_admin_notifications(
+            db,
+            admin_user_id=current_admin.id,
+            notification_filter=filter,  # type: ignore[arg-type]
+            skip=skip,
+            limit=limit,
+        )
+    )
+
+
+@router.patch("/notifications/{id}/read", response_model=AdminNotificationItem, summary="관리자 알림 개별 읽음")
+def mark_admin_notification_as_read(
+    id: Annotated[int, Path(ge=1)],
+    current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+) -> AdminNotificationItem:
+    item = mark_admin_notification_read(db, notification_id=id, admin_user_id=current_admin.id)
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Admin notification not found")
+    return AdminNotificationItem.model_validate(item)
+
+
+@router.post("/notifications/read-all", response_model=AdminNotificationReadAllResponse, summary="관리자 알림 전체 읽음")
+def mark_all_admin_notifications_as_read(
+    current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+) -> AdminNotificationReadAllResponse:
+    return AdminNotificationReadAllResponse(
+        marked_read_count=mark_all_admin_notifications_read(db, admin_user_id=current_admin.id)
+    )
 
 
 @router.get("/ai-report/operations-briefing/status", response_model=AdminOperationsBriefingStatus, summary="운영 AI 브리핑 연결 상태")
@@ -574,6 +624,7 @@ def update_detected_object(
             linked_found_item.updated_at = utc_now()
             reconcile_match_candidates_for_found_item(db, linked_found_item)
     db.add(ProcessingHistory(actor_user_id=current_admin.id, entity_type="DETECTED_OBJECT", entity_id=item.id, action_type="DETECTED_OBJECT_REVIEWED", previous_status=previous_status, new_status=item.processing_status, note=item.admin_memo, created_at=utc_now()))
+    sync_detected_object_follow_up_notifications(db, item)
     db.commit()
     return MessageResponse(message="Detected object updated")
 

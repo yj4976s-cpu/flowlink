@@ -31,6 +31,7 @@ from app.services.detection_notifications import (
     VIDEO_TIMEOUT_ERROR_CODE,
     ensure_detection_terminal_notification,
 )
+from app.services.admin_notifications import sync_detection_review_notification
 from app.services.user_media_policy import ensure_user_analysis_quota, get_user_storage_usage
 
 SAFE_MODEL_UNAVAILABLE_MESSAGE = "AI detection model is not configured"
@@ -264,6 +265,7 @@ def _complete_with_result(
             media_height=result.media_height,
             completed_at=now,
         )
+        sync_detection_review_notification(db, event)
         ensure_detection_terminal_notification(db, event=event)
         db.commit()
     except Exception:

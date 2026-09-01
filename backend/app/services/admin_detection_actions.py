@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.security import utc_now
 from app.models import DetectedObject, FoundItem, ProcessingHistory, User
 from app.repositories.user_flow import get_detected_object_by_id, waste_collection_completed_ids
+from app.services.admin_notifications import sync_detected_object_follow_up_notifications
 from app.services.matching import create_match_candidates_for_found_item
 
 PERSONAL_ITEM_GROUP = "PERSONAL_ITEM"
@@ -67,6 +68,7 @@ def create_ai_found_item(db: Session, *, admin: User, detected_object_id: int) -
             created_at=now,
         ))
         create_match_candidates_for_found_item(db, found_item)
+        sync_detected_object_follow_up_notifications(db, item)
         db.commit()
     except IntegrityError as exc:
         db.rollback()
@@ -100,5 +102,6 @@ def complete_waste_collection(db: Session, *, admin: User, detected_object_id: i
         note=None,
         created_at=utc_now(),
     ))
+    sync_detected_object_follow_up_notifications(db, item)
     db.commit()
     return item

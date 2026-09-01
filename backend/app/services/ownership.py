@@ -22,6 +22,7 @@ from app.repositories.user_flow import (
     list_representative_ownership_claims_for_user_reports,
 )
 from app.schemas.ownership_claim import OwnershipClaimCreateRequest, OwnershipClaimResponse, OwnershipClaimUpdateRequest
+from app.services.admin_notifications import sync_ownership_claim_notifications
 from app.services.mappers import ownership_claim_response
 from app.services.matching import reconcile_match_candidates_for_found_item
 
@@ -164,6 +165,7 @@ def create_claim_for_user(
                     created_at=now,
                 ),
             )
+        sync_ownership_claim_notifications(db, claim)
         db.commit()
     except IntegrityError as exc:
         db.rollback()
@@ -286,6 +288,7 @@ def review_ownership_claim(
             created_at=now,
         ),
     )
+    sync_ownership_claim_notifications(db, claim)
 
     try:
         db.commit()
