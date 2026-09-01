@@ -25,6 +25,8 @@ from app.schemas.common import MessageResponse
 from app.schemas.detection import (
     DetectionBBoxResponse,
     DetectionEventResponse,
+    DetectionStorageUsageResponse,
+    DetectionUploadPolicyResponse,
     VideoDetectionAcceptedResponse,
     VideoProcessingStatusResponse,
     WebcamDetectionFrameResponse,
@@ -38,6 +40,8 @@ from app.services.detections import (
     create_user_detection_event,
     process_detection_event,
 )
+from app.services.user_media_policy import ensure_user_analysis_quota, get_upload_policy, get_user_storage_usage
+from app.services.user_media_uploads import save_normalized_user_image, save_normalized_user_video
 from app.services.webcam_inference import (
     WebcamDetectionFrame,
     WebcamInferenceService,
@@ -129,6 +133,19 @@ def get_latest_user_event_or_404(db: Session, *, event_id: int, user_id: int) ->
     return detection_event_response(event)
 
 
+@router.get("/upload-policy", response_model=DetectionUploadPolicyResponse)
+def get_detection_upload_policy() -> DetectionUploadPolicyResponse:
+    return DetectionUploadPolicyResponse(**get_upload_policy(get_settings()))
+
+
+@router.get("/me/storage-usage", response_model=DetectionStorageUsageResponse)
+def get_my_detection_storage_usage(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> DetectionStorageUsageResponse:
+    return DetectionStorageUsageResponse(**get_user_storage_usage(db, user_id=current_user.id, settings=get_settings()))
+
+
 async def read_webcam_frame(file: UploadFile) -> Image.Image:
     if file.content_type != "image/jpeg":
         raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Unsupported media type")
@@ -185,22 +202,37 @@ async def detect_image(
     inference_service: Annotated[DetectionInferenceService, Depends(get_inference_service)],
     file: Annotated[UploadFile, File(description="탐지할 이미지")],
 ) -> DetectionEventResponse:
-    media_path, media_key = await save_upload_file(
+    settings = get_settings()
+    upload_root = resolve_upload_root()
+    media_path, media_key, media_bytes = await save_normalized_user_image(
         file,
         current_user=current_user,
-        allowed_types=IMAGE_CONTENT_TYPES,
-        max_bytes=IMAGE_MAX_BYTES,
+        upload_root=upload_root,
+        settings=settings,
     )
     try:
-        event = create_user_detection_event(db, current_user=current_user, source_type="IMAGE", media_key=media_key)
+        ensure_user_analysis_quota(db, user_id=current_user.id, source_type="IMAGE", incoming_bytes=media_bytes, settings=settings)
+    except Exception:
+        media_path.unlink(missing_ok=True)
+        raise
+    try:
+        event = create_user_detection_event(
+            db,
+            current_user=current_user,
+            source_type="IMAGE",
+            media_key=media_key,
+            original_media_bytes=media_bytes,
+        )
     except Exception:
         media_path.unlink(missing_ok=True)
         raise
     try:
         process_detection_event(db, event_id=event.id, media_path=media_path, inference_service=inference_service)
     except DetectionModelUnavailableError as exc:
+        media_path.unlink(missing_ok=True)
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     except Exception as exc:
+        media_path.unlink(missing_ok=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="AI detection could not be completed") from exc
     return get_latest_user_event_or_404(db, event_id=event.id, user_id=current_user.id)
 
@@ -211,14 +243,28 @@ async def detect_video(
     db: Annotated[Session, Depends(get_db)],
     file: Annotated[UploadFile, File(description="탐지할 영상")],
 ) -> VideoDetectionAcceptedResponse:
-    media_path, media_key = await save_upload_file(
+    settings = get_settings()
+    ensure_user_analysis_quota(db, user_id=current_user.id, source_type="VIDEO", incoming_bytes=0, settings=settings)
+    upload_root = resolve_upload_root()
+    media_path, media_key, media_bytes = await save_normalized_user_video(
         file,
         current_user=current_user,
-        allowed_types=VIDEO_CONTENT_TYPES,
-        max_bytes=VIDEO_MAX_BYTES,
+        upload_root=upload_root,
+        settings=settings,
     )
     try:
-        event = create_user_detection_event(db, current_user=current_user, source_type="VIDEO", media_key=media_key)
+        ensure_user_analysis_quota(db, user_id=current_user.id, source_type="VIDEO", incoming_bytes=media_bytes, settings=settings)
+    except Exception:
+        media_path.unlink(missing_ok=True)
+        raise
+    try:
+        event = create_user_detection_event(
+            db,
+            current_user=current_user,
+            source_type="VIDEO",
+            media_key=media_key,
+            original_media_bytes=media_bytes,
+        )
     except Exception:
         media_path.unlink(missing_ok=True)
         raise

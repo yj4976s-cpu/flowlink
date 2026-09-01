@@ -182,7 +182,19 @@ CREATE TABLE detection_events (
     original_media_url TEXT NOT NULL
         CHECK (BTRIM(original_media_url) <> ''),
 
+    original_media_bytes BIGINT
+        CHECK (
+            original_media_bytes IS NULL
+            OR original_media_bytes >= 0
+        ),
+
     result_media_url TEXT,
+
+    result_media_bytes BIGINT
+        CHECK (
+            result_media_bytes IS NULL
+            OR result_media_bytes >= 0
+        ),
 
     ai_model_id VARCHAR(100),
 

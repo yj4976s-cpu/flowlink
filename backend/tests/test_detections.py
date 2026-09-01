@@ -5,8 +5,10 @@ from datetime import timedelta
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from PIL import Image
 from sqlalchemy import BigInteger, create_engine
@@ -42,6 +44,7 @@ from app.services.webcam_inference import (
     WebcamInferenceUnavailableError,
     get_webcam_inference_service,
 )
+from app.services.user_media_uploads import validate_video_probe
 from app.repositories.detections import claim_next_queued_video_job, fail_detection_event
 from app.workers.video_detection_worker import fail_stale_jobs, process_one_job
 
@@ -168,6 +171,17 @@ def client(db: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iter
 
     settings = get_settings()
     monkeypatch.setattr(settings, "UPLOAD_DIR", str(tmp_path / "uploads"))
+
+    async def fake_save_normalized_user_video(upload, *, current_user, upload_root, settings):
+        suffix = ".mp4"
+        relative_key = Path("detections") / "user" / str(current_user.id) / f"{uuid4().hex}{suffix}"
+        destination = upload_root / relative_key
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        payload = await upload.read()
+        destination.write_bytes(payload or b"normalized-video")
+        return destination, relative_key.as_posix(), destination.stat().st_size
+
+    monkeypatch.setattr("app.api.detections.save_normalized_user_video", fake_save_normalized_user_video)
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as test_client:
         yield test_client
@@ -223,8 +237,8 @@ def override_webcam_inference(result: WebcamDetectionFrame | Exception) -> None:
     app.dependency_overrides[get_webcam_inference_service] = lambda: MockWebcamInferenceService(result)
 
 
-def image_file(content: bytes = b"image-bytes") -> dict[str, tuple[str, BytesIO, str]]:
-    return {"file": ("sample.jpg", BytesIO(content), "image/jpeg")}
+def image_file(content: bytes | None = None) -> dict[str, tuple[str, BytesIO, str]]:
+    return {"file": ("sample.jpg", BytesIO(jpeg_payload() if content is None else content), "image/jpeg")}
 
 
 def jpeg_payload(*, width: int = 64, height: int = 48) -> bytes:
@@ -602,6 +616,9 @@ def test_image_inference_deduplicates_overlapping_same_class_predictions(
 def test_invalid_image_inference_marks_event_failed(client: TestClient, db: Session) -> None:
     user = seed_user(db, 1)
     authenticate(client, user)
+    app.dependency_overrides[get_inference_service] = lambda: DetectionInferenceService(
+        ai_client=FailingAIInferenceClient(RuntimeError("broken inference"))
+    )
 
     response = client.post("/api/detections/images", files=image_file())
 
@@ -848,6 +865,200 @@ def test_upload_validation_rejects_empty_unsupported_and_oversized_files(client:
     assert empty_response.status_code == 400
     assert unsupported_response.status_code == 415
     assert oversized_response.status_code == 413
+
+
+def test_upload_policy_returns_safe_public_limits(client: TestClient) -> None:
+    response = client.get("/api/detections/upload-policy")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["image"]["source_max_bytes"] == 20 * 1024 * 1024
+    assert body["image"]["normalized_hard_max_bytes"] == 5 * 1024 * 1024
+    assert body["video"]["max_bytes"] == 100 * 1024 * 1024
+    assert body["video"]["max_duration_seconds"] == 30
+    assert body["quota"]["media_storage_bytes"] == 1024 * 1024 * 1024
+
+
+def test_storage_usage_counts_only_user_analysis_media(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    other = seed_user(db, 2)
+    authenticate(client, user)
+    now = utc_now()
+    db.add_all(
+        [
+            DetectionEvent(
+                user_id=user.id,
+                purpose="USER_ANALYSIS",
+                source_type="IMAGE",
+                original_media_url="detections/user/1/a.jpg",
+                original_media_bytes=100,
+                result_media_bytes=None,
+                status="COMPLETED",
+                captured_at=now,
+                processing_started_at=now,
+                processing_completed_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+            DetectionEvent(
+                user_id=user.id,
+                purpose="USER_ANALYSIS",
+                source_type="VIDEO",
+                original_media_url="detections/user/1/b.mp4",
+                original_media_bytes=200,
+                result_media_url="detections/user/1/b-result.mp4",
+                result_media_bytes=300,
+                status="COMPLETED",
+                captured_at=now,
+                processing_started_at=now,
+                processing_completed_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+            DetectionEvent(
+                user_id=user.id,
+                purpose="OPERATION",
+                source_type="IMAGE",
+                original_media_url="detections/admin/c.jpg",
+                original_media_bytes=999,
+                status="COMPLETED",
+                captured_at=now,
+                processing_started_at=now,
+                processing_completed_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+            DetectionEvent(
+                user_id=other.id,
+                purpose="USER_ANALYSIS",
+                source_type="IMAGE",
+                original_media_url="detections/user/2/d.jpg",
+                original_media_bytes=999,
+                status="COMPLETED",
+                captured_at=now,
+                processing_started_at=now,
+                processing_completed_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+        ]
+    )
+    db.commit()
+
+    response = client.get("/api/detections/me/storage-usage")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["used_bytes"] == 600
+    assert body["image_count_last_24h"] == 1
+    assert body["video_count_last_24h"] == 1
+    assert body["active_video_jobs"] == 0
+    assert body["has_unknown_legacy_usage"] is False
+
+
+def test_image_detection_records_normalized_file_size(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    seed_object_class(db, 1, "BAG")
+    authenticate(client, user)
+    override_inference(DetectionInferenceResult(media_width=64, media_height=48, detections=[]))
+
+    response = client.post("/api/detections/images", files=image_file(jpeg_payload(width=64, height=48)))
+
+    assert response.status_code == 201
+    event = db.query(DetectionEvent).one()
+    stored = Path(get_settings().UPLOAD_DIR) / event.original_media_url
+    assert stored.exists()
+    assert event.original_media_bytes == stored.stat().st_size
+    assert response.json()["original_media_bytes"] == stored.stat().st_size
+
+
+def test_image_quota_rejects_recent_limit_without_persisting_media(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "USER_IMAGE_ROLLING_24H_LIMIT", 1)
+    now = utc_now()
+    db.add(
+        DetectionEvent(
+            user_id=user.id,
+            purpose="USER_ANALYSIS",
+            source_type="IMAGE",
+            original_media_url="detections/user/1/existing.jpg",
+            original_media_bytes=10,
+            status="COMPLETED",
+            captured_at=now,
+            processing_started_at=now,
+            processing_completed_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db.commit()
+
+    response = client.post("/api/detections/images", files=image_file(jpeg_payload()))
+
+    assert response.status_code == 429
+    assert db.query(DetectionEvent).count() == 1
+    upload_root = Path(get_settings().UPLOAD_DIR)
+    assert not list((upload_root / "detections" / "user" / str(user.id)).glob("*.jpg"))
+
+
+def test_video_active_job_quota_rejects_second_upload(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    now = utc_now()
+    event = DetectionEvent(
+        user_id=user.id,
+        purpose="USER_ANALYSIS",
+        source_type="VIDEO",
+        original_media_url="detections/user/1/active.mp4",
+        original_media_bytes=100,
+        status="PROCESSING",
+        captured_at=now,
+        processing_started_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(event)
+    db.flush()
+    db.add(
+        VideoJob(
+            detection_event_id=event.id,
+            status="PROCESSING",
+            processing_stage="ANALYZING",
+            processing_progress=30,
+            processed_frames=10,
+            tracking_algorithm="BYTE_TRACK",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db.commit()
+
+    response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
+
+    assert response.status_code == 409
+    assert db.query(DetectionEvent).count() == 1
+
+
+def test_video_probe_validation_rejects_bad_duration_and_source_dimensions() -> None:
+    settings = get_settings()
+
+    validate_video_probe({"format_name": "mov,mp4,m4a,3gp,3g2,mj2", "width": 1920, "height": 1080, "duration": 30, "fps": 30}, settings=settings)
+    with pytest.raises(HTTPException) as long_video:
+        validate_video_probe({"format_name": "mov,mp4,m4a,3gp,3g2,mj2", "width": 1920, "height": 1080, "duration": 31, "fps": 30}, settings=settings)
+    with pytest.raises(HTTPException) as huge_video:
+        validate_video_probe({"format_name": "mov,mp4,m4a,3gp,3g2,mj2", "width": 5000, "height": 1080, "duration": 10, "fps": 30}, settings=settings)
+    with pytest.raises(HTTPException) as invalid_format:
+        validate_video_probe({"format_name": "matroska,webm", "width": 1920, "height": 1080, "duration": 10, "fps": 30}, settings=settings)
+
+    assert long_video.value.status_code == 413
+    assert huge_video.value.status_code == 413
+    assert invalid_format.value.status_code == 415
 
 
 @pytest.mark.parametrize("role", ["USER", "ADMIN"])

@@ -9,6 +9,8 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from app.core.config import get_settings
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
+NORMALIZED_MAX_EDGE = 2048
+NORMALIZED_TARGET_BYTES = 2 * 1024 * 1024
 ALLOWED_IMAGE_FORMATS = {"JPEG": (".jpg", "JPEG"), "PNG": (".png", "PNG"), "WEBP": (".webp", "WEBP")}
 SUPABASE_UPLOAD_TIMEOUT_SECONDS = 20.0
 
@@ -57,7 +59,7 @@ async def save_public_image(file: UploadFile | None, upload_root: Path, folder: 
         return None
     payload = await file.read(MAX_IMAGE_BYTES + 1)
     if len(payload) > MAX_IMAGE_BYTES:
-        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Image must be 5MB or smaller")
+        raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Image must be 5MB or smaller")
     try:
         with Image.open(BytesIO(payload)) as probe:
             image_format = probe.format
@@ -75,22 +77,49 @@ async def save_public_image(file: UploadFile | None, upload_root: Path, folder: 
                     clean = normalized.convert("RGBA")
                 else:
                     clean = normalized.copy()
+                if clean.width > NORMALIZED_MAX_EDGE or clean.height > NORMALIZED_MAX_EDGE:
+                    resized = clean.copy()
+                    resized.thumbnail((NORMALIZED_MAX_EDGE, NORMALIZED_MAX_EDGE), Image.Resampling.LANCZOS)
+                    clean.close()
+                    clean = resized
             finally:
                 if normalized is not source:
                     normalized.close()
             try:
+                output = BytesIO()
+                save_kwargs = {"exif": b""}
+                if save_format == "JPEG":
+                    save_kwargs.update({"quality": 86, "optimize": True})
+                elif save_format == "WEBP":
+                    save_kwargs.update({"quality": 86, "method": 4})
+                clean.save(output, format=save_format, **save_kwargs)
+                payload_to_store = output.getvalue()
+                content_type = f"image/{'jpeg' if save_format == 'JPEG' else save_format.lower()}"
+                if len(payload_to_store) > NORMALIZED_TARGET_BYTES:
+                    rgb = clean.convert("RGB")
+                    try:
+                        for quality in (82, 76, 70, 64, 58):
+                            output = BytesIO()
+                            rgb.save(output, format="JPEG", quality=quality, optimize=True, exif=b"")
+                            payload_to_store = output.getvalue()
+                            if len(payload_to_store) <= NORMALIZED_TARGET_BYTES:
+                                break
+                        suffix = ".jpg"
+                        save_format = "JPEG"
+                        content_type = "image/jpeg"
+                    finally:
+                        rgb.close()
+                if len(payload_to_store) > NORMALIZED_TARGET_BYTES:
+                    raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Image cannot be optimized under 2MB")
                 filename = f"{uuid4().hex}{suffix}"
                 if _supabase_configured():
-                    output = BytesIO()
-                    clean.save(output, format=save_format, exif=b"")
                     object_key = f"{folder.strip('/')}/{filename}"
-                    content_type = f"image/{'jpeg' if save_format == 'JPEG' else save_format.lower()}"
-                    return await _upload_to_supabase(object_key, output.getvalue(), content_type)
+                    return await _upload_to_supabase(object_key, payload_to_store, content_type)
                 else:
                     target_dir = upload_root / folder
                     target_dir.mkdir(parents=True, exist_ok=True)
                     target = target_dir / filename
-                    clean.save(target, format=save_format, exif=b"")
+                    target.write_bytes(payload_to_store)
                     return f"/uploads/{folder}/{filename}"
             finally:
                 clean.close()

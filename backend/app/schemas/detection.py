@@ -33,7 +33,9 @@ class DetectionEventResponse(BaseModel):
     status: str
     purpose: str
     original_media_url: str
+    original_media_bytes: int | None = None
     result_media_url: str | None
+    result_media_bytes: int | None = None
     ai_model_id: str | None = None
     media_width: int | None
     media_height: int | None
@@ -45,6 +47,26 @@ class DetectionEventResponse(BaseModel):
 
 class DetectionEventListResponse(DetectionEventResponse):
     pass
+
+
+class DetectionUploadPolicyResponse(BaseModel):
+    image: dict[str, object]
+    video: dict[str, object]
+    quota: dict[str, object]
+
+
+class DetectionStorageUsageResponse(BaseModel):
+    used_bytes: int
+    limit_bytes: int
+    usage_ratio: float
+    remaining_bytes: int
+    image_count_last_24h: int
+    image_limit_last_24h: int
+    video_count_last_24h: int
+    video_limit_last_24h: int
+    active_video_jobs: int
+    active_video_job_limit: int
+    has_unknown_legacy_usage: bool
 
 
 class VideoDetectionAcceptedResponse(BaseModel):

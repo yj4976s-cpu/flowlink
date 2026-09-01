@@ -27,7 +27,9 @@ export type DetectionEvent = {
   status: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED";
   purpose: "USER_ANALYSIS" | "OPERATION";
   original_media_url: string;
+  original_media_bytes: number | null;
   result_media_url: string | null;
+  result_media_bytes: number | null;
   ai_model_id: string | null;
   media_width: number | null;
   media_height: number | null;
@@ -35,6 +37,46 @@ export type DetectionEvent = {
   processing_started_at: string | null;
   processing_completed_at: string | null;
   detected_objects: DetectionObject[];
+};
+
+export type DetectionUploadPolicy = {
+  image: {
+    allowed_content_types: string[];
+    source_max_bytes: number;
+    source_max_pixels: number;
+    normalized_max_edge: number;
+    normalized_target_bytes: number;
+    normalized_hard_max_bytes: number;
+  };
+  video: {
+    allowed_content_types: string[];
+    max_bytes: number;
+    max_duration_seconds: number;
+    max_source_edge: number;
+    normalized_max_width: number;
+    normalized_max_height: number;
+    normalized_max_fps: number;
+  };
+  quota: {
+    image_count_last_24h: number;
+    video_count_last_24h: number;
+    media_storage_bytes: number;
+    active_video_jobs: number;
+  };
+};
+
+export type DetectionStorageUsage = {
+  used_bytes: number;
+  limit_bytes: number;
+  usage_ratio: number;
+  remaining_bytes: number;
+  image_count_last_24h: number;
+  image_limit_last_24h: number;
+  video_count_last_24h: number;
+  video_limit_last_24h: number;
+  active_video_jobs: number;
+  active_video_job_limit: number;
+  has_unknown_legacy_usage: boolean;
 };
 
 export type VideoDetectionAccepted = {
@@ -104,6 +146,7 @@ async function readErrorMessage(response: Response) {
     const body: unknown = await response.json();
     if (body && typeof body === "object" && "detail" in body) {
       const detail = (body as { detail: unknown }).detail;
+      if (typeof detail === "string") return detail;
       if (detail === "AI detection model is not configured") return getFallbackMessage(503);
       if (detail === "Webcam detection model is unavailable") return getFallbackMessage(503);
     }
@@ -118,6 +161,7 @@ function readXhrErrorMessage(xhr: XMLHttpRequest) {
     const body: unknown = JSON.parse(xhr.responseText);
     if (body && typeof body === "object" && "detail" in body) {
       const detail = (body as { detail: unknown }).detail;
+      if (typeof detail === "string") return detail;
       if (detail === "AI detection model is not configured") return getFallbackMessage(503);
       if (detail === "Webcam detection model is unavailable") return getFallbackMessage(503);
     }
@@ -151,6 +195,14 @@ function uploadDetection(path: string, file: File) {
 
 export function uploadDetectionImage(file: File) {
   return uploadDetection("/api/detections/images", file);
+}
+
+export function getDetectionUploadPolicy(signal?: AbortSignal) {
+  return requestJson<DetectionUploadPolicy>(buildApiUrl("/api/detections/upload-policy"), { signal });
+}
+
+export function getDetectionStorageUsage(signal?: AbortSignal) {
+  return requestJson<DetectionStorageUsage>(buildApiUrl("/api/detections/me/storage-usage"), { signal });
 }
 
 export type DetectionVideoUploadOptions = {

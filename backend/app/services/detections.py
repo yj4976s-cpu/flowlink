@@ -54,6 +54,7 @@ def create_user_detection_event(
     current_user: User,
     source_type: str,
     media_key: str,
+    original_media_bytes: int | None = None,
 ) -> DetectionEvent:
     now = utc_now()
     event = DetectionEvent(
@@ -61,6 +62,7 @@ def create_user_detection_event(
         purpose=USER_ANALYSIS_PURPOSE,
         source_type=source_type,
         original_media_url=media_key,
+        original_media_bytes=original_media_bytes,
         status="PROCESSING",
         captured_at=now,
         processing_started_at=now,
@@ -88,12 +90,18 @@ def create_user_detection_event(
 
 
 def create_operation_detection_event(
-    db: Session, *, current_admin: User, camera: Camera, source_type: str, media_key: str
+    db: Session,
+    *,
+    current_admin: User,
+    camera: Camera,
+    source_type: str,
+    media_key: str,
+    original_media_bytes: int | None = None,
 ) -> DetectionEvent:
     now = utc_now()
     event = DetectionEvent(
         user_id=current_admin.id, camera_id=camera.id, purpose=OPERATION_PURPOSE,
-        source_type=source_type, original_media_url=media_key, status="PROCESSING",
+        source_type=source_type, original_media_url=media_key, original_media_bytes=original_media_bytes, status="PROCESSING",
         captured_at=now, processing_started_at=now, created_at=now, updated_at=now,
     )
     add_detection_event(db, event)
@@ -155,6 +163,9 @@ def _complete_with_result(
             rendered_media_path = media_path.with_name(f"{media_path.stem}-result.mp4")
             rendered_media_path.write_bytes(result.rendered_video)
             event.result_media_url = rendered_media_path.relative_to(media_path.parents[3]).as_posix()
+            event.result_media_bytes = rendered_media_path.stat().st_size
+        if event.original_media_bytes is None and media_path.exists():
+            event.original_media_bytes = media_path.stat().st_size
         event.ai_model_id = result.model_id
         for prediction in result.detections:
             class_code = prediction.class_code.strip().upper()
