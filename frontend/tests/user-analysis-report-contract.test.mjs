@@ -136,13 +136,19 @@ test("class donut chart uses real class ratios instead of fixed segments", () =>
 test("analysis report page keeps route guard, print, stale request protection, and safe video fallback", () => {
   const page = source("frontend/src/app/mypage/analysis-report/page.tsx");
   const client = source("frontend/src/components/mypage/analysis-report/AnalysisReportClient.tsx");
+  const css = source("frontend/src/components/mypage/analysis-report/AnalysisReportClient.module.css");
 
   assert.match(page, /UserRouteGuard/);
   assert.match(client, /window\.print\(\)/);
+  assert.match(client, /data-print-report="analysis-report"/);
   assert.match(client, /AbortController/);
   assert.match(client, /requestSeq/);
   assert.match(client, /result_media_url \?/);
   assert.doesNotMatch(client, /result_media_url \|\| currentEvent\.original_media_url/);
+  assert.match(css, /@page \{ size: A4; margin: 10mm; \}/);
+  assert.match(css, /data-daru-stage/);
+  assert.match(css, /data-flow-copilot-root/);
+  assert.match(css, /print-color-adjust: exact/);
 });
 
 test("notifications, detect result, and mypage link to private analysis reports", () => {

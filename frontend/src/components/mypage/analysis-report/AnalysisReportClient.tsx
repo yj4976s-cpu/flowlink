@@ -255,7 +255,7 @@ export function AnalysisReportClient() {
     ["영상 분석", `${summary.video_count}건`, "저장형 영상", "muted" as const],
   ] : [], [summary]);
 
-  return <main className={styles.page}>
+  return <main className={styles.page} data-print-report="analysis-report">
     <header className={styles.hero}>
       <div>
         <p>AI ANALYSIS REPORT</p>
