@@ -1515,6 +1515,89 @@ def test_video_active_job_quota_rejects_second_upload(client: TestClient, db: Se
     assert db.query(DetectionEvent).count() == 1
 
 
+def test_video_duration_migration_matches_nullable_schema_and_constraints() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    migration = (repo_root / "database/migrations/20260901_04_add_video_job_duration.sql").read_text(encoding="utf-8")
+    schema = (repo_root / "database/schema.sql").read_text(encoding="utf-8")
+    column = VideoJob.__table__.c.video_duration_seconds
+
+    assert "ADD COLUMN IF NOT EXISTS video_duration_seconds NUMERIC(6, 2)" in migration
+    assert "video_duration_seconds NUMERIC(6, 2)" in schema
+    assert "video_duration_seconds IS NULL" in migration
+    assert "video_duration_seconds > 0" in migration
+    assert "video_duration_seconds <= 30" in migration
+    assert "video_jobs_video_duration_seconds_check" in migration
+    assert column.nullable is True
+    assert str(column.type) == "NUMERIC(6, 2)"
+
+
+def test_video_upload_stores_probe_duration_and_detail_exposes_it(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+
+    def probe_with_duration(media_path: Path, *, settings):
+        assert media_path.exists()
+        return {"duration": 12.345, "width": 640, "height": 360, "fps": 30}
+
+    monkeypatch.setattr("app.api.detections.validate_saved_user_video", probe_with_duration)
+
+    response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
+
+    assert response.status_code == 202
+    event = db.query(DetectionEvent).one()
+    job = db.query(VideoJob).one()
+    assert job.video_duration_seconds == Decimal("12.35")
+
+    detail_response = client.get(f"/api/detections/{event.id}")
+
+    assert detail_response.status_code == 200
+    assert detail_response.json()["video_duration_seconds"] == 12.35
+
+
+def test_video_detail_allows_existing_rows_without_duration(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    now = utc_now()
+    event = DetectionEvent(
+        user_id=user.id,
+        purpose="USER_ANALYSIS",
+        source_type="VIDEO",
+        original_media_url="detections/user/1/legacy.mp4",
+        original_media_bytes=100,
+        status="COMPLETED",
+        captured_at=now,
+        processing_started_at=now,
+        processing_completed_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(event)
+    db.flush()
+    db.add(
+        VideoJob(
+            detection_event_id=event.id,
+            status="COMPLETED",
+            processing_stage="COMPLETED",
+            processing_progress=100,
+            processed_frames=10,
+            tracking_algorithm="BYTE_TRACK",
+            video_duration_seconds=None,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db.commit()
+
+    response = client.get(f"/api/detections/{event.id}")
+
+    assert response.status_code == 200
+    assert response.json()["video_duration_seconds"] is None
+
+
 def test_video_probe_failure_cleans_staged_upload_without_event(
     client: TestClient,
     db: Session,
