@@ -7,6 +7,7 @@ import { Icon, type IconName } from "@/components/common/Icon";
 import { AuthApiError, AuthUser, changePassword, deleteAccount, getCurrentUser, updateNickname } from "@/lib/authApi";
 import { getPasswordConditions, isValidNewPassword, PASSWORD_CONDITION_LABELS, PASSWORD_POLICY_MESSAGE, type PasswordConditions as PasswordConditionState } from "@/lib/passwordPolicy";
 import { listMyLostReports, LostReportResponse } from "@/lib/lostReportsApi";
+import { getMyDetectionSummary, type DetectionAnalysisSummary } from "@/lib/detectionApi";
 import { listMyProgressMatches, MatchCandidate, resolveMatchImageUrl } from "@/lib/matchesApi";
 import { listNotifications, NotificationResponse } from "@/lib/notificationsApi";
 import { CitizenReportsApiError, deleteCitizenReport, listMyCitizenReports } from "@/lib/citizenReportsApi";
@@ -16,7 +17,7 @@ import { getItemTypeMeta } from "@/lib/itemTypeMeta";
 import { deriveLostReportProgress, LostReportProgress, type LostReportProgressModel } from "./LostReportProgress";
 import styles from "./MyPageClient.module.css";
 
-type LoadState = { user: AuthUser; reports: LostReportResponse[]; matches: MatchCandidate[]; progressClaims: OwnershipClaimResponse[]; claimActivity: OwnershipClaimResponse[]; notifications: NotificationResponse[]; citizenReports: CitizenReport[] };
+type LoadState = { user: AuthUser; reports: LostReportResponse[]; matches: MatchCandidate[]; progressClaims: OwnershipClaimResponse[]; claimActivity: OwnershipClaimResponse[]; notifications: NotificationResponse[]; citizenReports: CitizenReport[]; analysisSummary: DetectionAnalysisSummary | null };
 type ActivityTab = "reports" | "matches" | "claims" | "citizen";
 type ActivitySort = "newest" | "oldest";
 type FlowNav = "overview" | ActivityTab;
@@ -259,8 +260,8 @@ export function MyPageClient() {
   useEffect(() => {
     const controller = new AbortController();
     getCurrentUser().then(async (user) => {
-      const [reportsResult, notificationsResult, citizenResult] = await Promise.allSettled([
-        listMyLostReports(controller.signal), listNotifications("all", controller.signal), listMyCitizenReports(controller.signal),
+      const [reportsResult, notificationsResult, citizenResult, analysisSummaryResult] = await Promise.allSettled([
+        listMyLostReports(controller.signal), listNotifications("all", controller.signal), listMyCitizenReports(controller.signal), getMyDetectionSummary(30, controller.signal),
       ]);
       if (controller.signal.aborted) return;
       const visibleReportIds = reportsResult.status === "fulfilled" ? reportsResult.value.map((report) => report.id) : [];
@@ -282,6 +283,7 @@ export function MyPageClient() {
       if (claimActivityResult.status === "rejected") failed.push("claimActivity");
       if (notificationsResult.status === "rejected") failed.push("notifications");
       if (citizenResult.status === "rejected") failed.push("citizen");
+      if (analysisSummaryResult.status === "rejected") failed.push("analysisSummary");
       const loadedReports = reportsResult.status === "fulfilled" ? reportsResult.value : [];
       if (requestedReportId !== null) {
         const requestedIndex = [...loadedReports]
@@ -298,6 +300,7 @@ export function MyPageClient() {
         claimActivity: claimActivityResult.status === "fulfilled" ? claimActivityResult.value : [],
         notifications: notificationsResult.status === "fulfilled" ? notificationsResult.value : [],
         citizenReports: citizenResult.status === "fulfilled" ? citizenResult.value : [],
+        analysisSummary: analysisSummaryResult.status === "fulfilled" ? analysisSummaryResult.value : null,
       });
     }).catch((reason: unknown) => {
         if (controller.signal.aborted) return;
@@ -329,6 +332,7 @@ export function MyPageClient() {
     { label: "매칭 결과", value: data.matches.length, href: "/matches", description: data.matches.length ? "유사 후보 확인" : "확인할 후보 없음", icon: "match" as const, tone: "accent" },
     { label: "소유권 확인 요청", value: data.claimActivity.length, href: "#my-activity", description: "요청 진행 상태", icon: "check" as const, tone: "support" },
     { label: "내 발견 제보", value: data.citizenReports.length, href: "/found-items#citizen", description: data.citizenReports.length ? "등록한 제보 확인" : "등록된 제보 없음", icon: "location" as const, tone: "secondary" },
+    { label: "AI 분석 요약", value: data.analysisSummary?.total_analyses ?? 0, href: "/mypage/analysis-report", description: data.analysisSummary ? `최근 30일 · 객체 ${data.analysisSummary.total_detected_objects}개` : "차트 보고서 보기", icon: "scan" as const, tone: "primary" },
   ] : [], [data]);
   const reportCards = useMemo(() => data ? buildLostReportCardModels(data.reports, data.matches, data.progressClaims) : [], [data]);
   const filteredReportCards = useMemo(() => {

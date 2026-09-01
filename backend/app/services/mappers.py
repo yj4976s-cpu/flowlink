@@ -196,6 +196,7 @@ def detection_event_response(event: DetectionEvent) -> DetectionEventResponse:
         ai_model_id=event.ai_model_id,
         media_width=event.media_width,
         media_height=event.media_height,
+        video_duration_seconds=float(event.video_job.video_duration_seconds) if event.video_job and event.video_job.video_duration_seconds is not None else None,
         created_at=event.created_at,
         processing_started_at=event.processing_started_at,
         processing_completed_at=event.processing_completed_at,

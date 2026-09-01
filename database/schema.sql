@@ -736,6 +736,7 @@ CREATE TABLE notifications (
         CHECK (
             notification_type IN (
                 'DETECTION_COMPLETED',
+                'DETECTION_FAILED',
                 'MATCH_FOUND',
                 'STATUS_CHANGED',
                 'CITIZEN_REPORT_STATUS'
@@ -755,6 +756,11 @@ CREATE TABLE notifications (
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE UNIQUE INDEX uq_notifications_detection_terminal_once
+ON notifications (user_id, notification_type, related_type, related_id)
+WHERE related_type = 'DETECTION_EVENT'
+  AND notification_type IN ('DETECTION_COMPLETED', 'DETECTION_FAILED');
 
 
 -- =========================================================

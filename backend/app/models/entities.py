@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -476,6 +476,22 @@ class OwnershipClaim(Base):
 
 class Notification(Base):
     __tablename__ = "notifications"
+    __table_args__ = (
+        Index(
+            "uq_notifications_detection_terminal_once",
+            "user_id",
+            "notification_type",
+            "related_type",
+            "related_id",
+            unique=True,
+            postgresql_where=text(
+                "related_type = 'DETECTION_EVENT' AND notification_type IN ('DETECTION_COMPLETED', 'DETECTION_FAILED')"
+            ),
+            sqlite_where=text(
+                "related_type = 'DETECTION_EVENT' AND notification_type IN ('DETECTION_COMPLETED', 'DETECTION_FAILED')"
+            ),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)

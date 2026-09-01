@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from typing import Annotated
@@ -10,7 +11,7 @@ from PIL import Image, UnidentifiedImageError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, require_user
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.models import User
@@ -24,6 +25,7 @@ from app.schemas.common import MessageResponse
 from app.schemas.detection import (
     DetectionBBoxResponse,
     DetectionEventResponse,
+    DetectionAnalysisSummaryResponse,
     DetectionStorageUsageResponse,
     DetectionUploadPolicyResponse,
     VideoDetectionAcceptedResponse,
@@ -39,8 +41,10 @@ from app.services.detections import (
     create_user_detection_event_after_quota,
     process_detection_event,
 )
+from app.services.detection_notifications import is_video_timeout_error
 from app.services.user_media_policy import ensure_user_analysis_quota, get_upload_policy, get_user_storage_usage
 from app.services.user_media_uploads import save_normalized_user_image, save_user_video_upload, validate_saved_user_video
+from app.services.user_analysis_reports import ALLOWED_SUMMARY_DAYS, build_user_analysis_summary
 from app.services.webcam_inference import (
     WebcamDetectionFrame,
     WebcamInferenceService,
@@ -97,6 +101,17 @@ def get_my_detection_storage_usage(
     db: Annotated[Session, Depends(get_db)],
 ) -> DetectionStorageUsageResponse:
     return DetectionStorageUsageResponse(**get_user_storage_usage(db, user_id=current_user.id, settings=get_settings()))
+
+
+@router.get("/me/summary", response_model=DetectionAnalysisSummaryResponse, summary="내 AI 분석 요약 보고서")
+def get_my_detection_summary(
+    current_user: Annotated[User, Depends(require_user)],
+    db: Annotated[Session, Depends(get_db)],
+    days: Annotated[int, Query()] = 30,
+) -> DetectionAnalysisSummaryResponse:
+    if days not in ALLOWED_SUMMARY_DAYS:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported summary period")
+    return build_user_analysis_summary(db, user_id=current_user.id, days=days)
 
 
 async def read_webcam_frame(file: UploadFile) -> Image.Image:
@@ -204,7 +219,7 @@ async def detect_video(
         settings=settings,
     )
     try:
-        await run_in_threadpool(validate_saved_user_video, media_path, settings=settings)
+        video_probe = await run_in_threadpool(validate_saved_user_video, media_path, settings=settings) or {}
     except Exception:
         media_path.unlink(missing_ok=True)
         raise
@@ -220,6 +235,12 @@ async def detect_video(
     except Exception:
         media_path.unlink(missing_ok=True)
         raise
+    duration = video_probe.get("duration")
+    if event.video_job is not None and isinstance(duration, (int, float)) and duration > 0:
+        event.video_job.video_duration_seconds = Decimal(str(round(duration, 2)))
+        db.add(event.video_job)
+        db.commit()
+        db.refresh(event)
     return VideoDetectionAcceptedResponse(
         detection_event_id=event.id,
         video_job_id=event.video_job.id,
@@ -255,7 +276,7 @@ def get_video_processing_status(
         result_ready=job.status == "COMPLETED",
         error_message=(
             SAFE_VIDEO_TIMEOUT_MESSAGE
-            if job.status == "FAILED" and job.error_message == SAFE_VIDEO_TIMEOUT_MESSAGE
+            if job.status == "FAILED" and is_video_timeout_error(job.error_message)
             else SAFE_VIDEO_FAILURE_MESSAGE if job.status == "FAILED" else None
         ),
     )

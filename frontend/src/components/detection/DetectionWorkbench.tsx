@@ -1806,6 +1806,16 @@ export function DetectionWorkbench({ initialTab = "image" }: DetectionWorkbenchP
 
             <p className={styles.notice}>자동 확인 결과는 참고용이며 동일한 물건이나 소유권을 확정하지 않습니다.</p>
 
+            {currentEvent && currentEvent.status !== "PROCESSING" && currentEvent.status !== "PENDING" && (
+              <div className={styles.ctaBox}>
+                <strong>{currentEvent.status === "FAILED" ? "실패 내용을 확인할 수 있어요" : "AI 요약보고서로 자세히 볼까요?"}</strong>
+                <p>{currentEvent.status === "FAILED" ? "분석이 완료되지 않은 기록도 안전한 안내 상태로 확인할 수 있습니다." : "분석 상태, 객체 수, 신뢰도, bbox와 영상 Track 정보를 보고서 화면에서 확인할 수 있습니다."}</p>
+                <Link className="button button-secondary" href={`/mypage/analysis-report?eventId=${currentEvent.id}`}>
+                  {currentEvent.status === "FAILED" ? "실패 내용 확인" : "AI 요약보고서 보기"}
+                </Link>
+              </div>
+            )}
+
             {personalItemObjects.length > 0 && tab !== "webcam" && (
               <div className={styles.ctaBox}>
                 <strong>확인된 물건을 어떻게 처리할까요?</strong>

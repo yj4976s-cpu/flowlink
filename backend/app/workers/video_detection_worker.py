@@ -13,6 +13,7 @@ from app.core.security import utc_now
 from app.db.session import SessionLocal
 from app.models import DetectionEvent, VideoJob
 from app.repositories.detections import claim_next_queued_video_job, fail_detection_event
+from app.services.detection_notifications import VIDEO_TIMEOUT_ERROR_CODE, ensure_detection_terminal_notification
 from app.services.detection_inference import DetectionInferenceService
 from app.services.detections import process_detection_event
 from app.services.user_media_uploads import normalize_user_video_in_place
@@ -71,6 +72,7 @@ def mark_video_failed_and_cleanup(db: Session, *, event: DetectionEvent, message
     cleanup_video_event_files(event)
     clear_video_event_media_state(event)
     fail_detection_event(db, event=event, message=message, completed_at=utc_now())
+    ensure_detection_terminal_notification(db, event=event)
 
 
 def fail_stale_jobs(db: Session) -> int:
@@ -85,7 +87,7 @@ def fail_stale_jobs(db: Session) -> int:
         mark_video_failed_and_cleanup(
             db,
             event=job.detection_event,
-            message="Video processing exceeded the safe execution window",
+            message=VIDEO_TIMEOUT_ERROR_CODE,
         )
     if jobs:
         db.commit()
@@ -135,6 +137,7 @@ def process_one_job(db: Session, *, inference_service: DetectionInferenceService
                     message="Video processing failed",
                     completed_at=utc_now(),
                 )
+                ensure_detection_terminal_notification(db, event=event)
             db.commit()
         logger.error("video job failed job_id=%s event_id=%s category=processing", job.id, job.detection_event_id)
     return True
