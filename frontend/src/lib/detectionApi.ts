@@ -39,6 +39,60 @@ export type DetectionEvent = {
   detected_objects: DetectionObject[];
 };
 
+export type DetectionSummaryPeriod = 7 | 30 | 90;
+
+export type DetectionClassDistributionItem = {
+  class_code: string;
+  class_name_ko: string;
+  count: number;
+  ratio: number;
+};
+
+export type DetectionConfidenceDistributionItem = {
+  code: "GE_90" | "GE_70" | "GE_50" | "LT_50";
+  label: string;
+  count: number;
+  ratio: number;
+};
+
+export type DetectionDailyTrendItem = {
+  date: string;
+  analysis_count: number;
+  object_count: number;
+};
+
+export type DetectionRecentEventSummary = {
+  id: number;
+  source_type: "IMAGE" | "VIDEO";
+  status: DetectionEvent["status"];
+  created_at: string;
+  processing_completed_at: string | null;
+  object_count: number;
+  primary_class_code: string | null;
+  primary_class_name_ko: string | null;
+  average_confidence: number | null;
+};
+
+export type DetectionAnalysisSummary = {
+  period_days: DetectionSummaryPeriod;
+  period_start: string;
+  period_end: string;
+  generated_at: string;
+  total_analyses: number;
+  completed_count: number;
+  failed_count: number;
+  in_progress_count: number;
+  completion_rate: number;
+  image_count: number;
+  video_count: number;
+  total_detected_objects: number;
+  average_confidence: number | null;
+  class_distribution: DetectionClassDistributionItem[];
+  confidence_distribution: DetectionConfidenceDistributionItem[];
+  daily_trend: DetectionDailyTrendItem[];
+  recent_events: DetectionRecentEventSummary[];
+};
+
 export type DetectionUploadPolicy = {
   image: {
     allowed_content_types: string[];
@@ -239,6 +293,10 @@ export function getDetectionUploadPolicy(signal?: AbortSignal) {
 
 export function getDetectionStorageUsage(signal?: AbortSignal) {
   return requestJson<DetectionStorageUsage>(buildApiUrl("/api/detections/me/storage-usage"), { signal });
+}
+
+export function getMyDetectionSummary(days: DetectionSummaryPeriod = 30, signal?: AbortSignal) {
+  return requestJson<DetectionAnalysisSummary>(buildApiUrl("/api/detections/me/summary", { days }), { signal });
 }
 
 export type DetectionVideoUploadOptions = {

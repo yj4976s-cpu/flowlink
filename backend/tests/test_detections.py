@@ -22,7 +22,7 @@ from app.core.config import get_settings
 from app.core.security import create_access_token, utc_now
 from app.db.session import Base, get_db
 from app.main import app
-from app.models import Camera, DetectedObject, DetectionEvent, ObjectClass, User, VideoJob
+from app.models import Camera, DetectedObject, DetectionEvent, Notification, ObjectClass, User, VideoJob
 from app.services.ai_inference_client import (
     AIInferenceBBox,
     AIInferencePrediction,
@@ -38,6 +38,7 @@ from app.services.detection_inference import (
     DetectionPrediction,
     model_label_to_class_code,
 )
+from app.services.detection_notifications import ensure_detection_terminal_notification
 from app.services.webcam_inference import (
     WebcamDetectionFrame,
     WebcamDetectionObject,
@@ -692,6 +693,274 @@ def test_user_can_only_list_own_user_analysis_events(client: TestClient, db: Ses
     assert own_detail.status_code == 200
     assert other_detail.status_code == 404
     assert operation_detail.status_code == 404
+
+
+def test_user_analysis_summary_requires_user_role_and_supported_period(client: TestClient, db: Session) -> None:
+    admin = seed_user(db, 1, role="ADMIN")
+    user = seed_user(db, 2)
+
+    assert client.get("/api/detections/me/summary").status_code == 401
+
+    authenticate(client, admin)
+    assert client.get("/api/detections/me/summary").status_code == 403
+
+    authenticate(client, user)
+    assert client.get("/api/detections/me/summary?days=14").status_code == 422
+
+
+def test_user_analysis_summary_scopes_private_completed_object_stats(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    other = seed_user(db, 2)
+    seed_object_class(db, 1, "BALL")
+    seed_object_class(db, 2, "FOOTWEAR")
+    seed_object_class(db, 3, "TRASH", group_code="WASTE")
+    seed_object_class(db, 4, "HAT")
+    now = utc_now()
+
+    db.add_all(
+        [
+            DetectionEvent(
+                id=101,
+                user_id=user.id,
+                purpose="USER_ANALYSIS",
+                source_type="IMAGE",
+                original_media_url="detections/user/1/private-image.jpg",
+                ai_model_id="safe-model-id",
+                media_width=100,
+                media_height=80,
+                status="COMPLETED",
+                captured_at=now - timedelta(days=1),
+                processing_completed_at=now - timedelta(days=1),
+                created_at=now - timedelta(days=1),
+                updated_at=now - timedelta(days=1),
+            ),
+            DetectionEvent(
+                id=102,
+                user_id=user.id,
+                purpose="USER_ANALYSIS",
+                source_type="VIDEO",
+                original_media_url="detections/user/1/failed-video.mp4",
+                status="FAILED",
+                error_message="secret stacktrace /srv/private/model.pt",
+                captured_at=now - timedelta(days=2),
+                processing_completed_at=now - timedelta(days=2),
+                created_at=now - timedelta(days=2),
+                updated_at=now - timedelta(days=2),
+            ),
+            DetectionEvent(
+                id=103,
+                user_id=user.id,
+                purpose="USER_ANALYSIS",
+                source_type="VIDEO",
+                original_media_url="detections/user/1/processing-video.mp4",
+                status="PROCESSING",
+                captured_at=now,
+                processing_started_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+            DetectionEvent(
+                id=104,
+                user_id=user.id,
+                purpose="OPERATION",
+                source_type="IMAGE",
+                original_media_url="detections/operation/excluded.jpg",
+                status="COMPLETED",
+                captured_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+            DetectionEvent(
+                id=105,
+                user_id=other.id,
+                purpose="USER_ANALYSIS",
+                source_type="IMAGE",
+                original_media_url="detections/user/2/excluded.jpg",
+                status="COMPLETED",
+                captured_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+        ]
+    )
+    db.add_all(
+        [
+            DetectedObject(
+                id=201,
+                detection_event_id=101,
+                object_class_id=1,
+                processing_status="PENDING",
+                confidence=Decimal("0.9500"),
+                bbox_x=Decimal("1"),
+                bbox_y=Decimal("2"),
+                bbox_width=Decimal("30"),
+                bbox_height=Decimal("40"),
+                appearance_count=1,
+                detected_at=now,
+                created_at=now,
+            ),
+            DetectedObject(
+                id=202,
+                detection_event_id=101,
+                object_class_id=4,
+                processing_status="PENDING",
+                confidence=Decimal("0.4900"),
+                bbox_x=Decimal("5"),
+                bbox_y=Decimal("6"),
+                bbox_width=Decimal("10"),
+                bbox_height=Decimal("11"),
+                appearance_count=1,
+                detected_at=now,
+                created_at=now,
+            ),
+            DetectedObject(
+                id=203,
+                detection_event_id=102,
+                object_class_id=3,
+                processing_status="PENDING",
+                confidence=Decimal("0.9900"),
+                bbox_x=Decimal("1"),
+                bbox_y=Decimal("1"),
+                bbox_width=Decimal("5"),
+                bbox_height=Decimal("5"),
+                appearance_count=1,
+                detected_at=now,
+                created_at=now,
+            ),
+            DetectedObject(
+                id=204,
+                detection_event_id=104,
+                object_class_id=3,
+                processing_status="PENDING",
+                confidence=Decimal("0.9900"),
+                bbox_x=Decimal("1"),
+                bbox_y=Decimal("1"),
+                bbox_width=Decimal("5"),
+                bbox_height=Decimal("5"),
+                appearance_count=1,
+                detected_at=now,
+                created_at=now,
+            ),
+            DetectedObject(
+                id=205,
+                detection_event_id=105,
+                object_class_id=1,
+                processing_status="PENDING",
+                confidence=Decimal("0.9900"),
+                bbox_x=Decimal("1"),
+                bbox_y=Decimal("1"),
+                bbox_width=Decimal("5"),
+                bbox_height=Decimal("5"),
+                appearance_count=1,
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+    )
+    db.commit()
+    authenticate(client, user)
+
+    response = client.get("/api/detections/me/summary?days=30")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_analyses"] == 3
+    assert body["completed_count"] == 1
+    assert body["failed_count"] == 1
+    assert body["in_progress_count"] == 1
+    assert body["image_count"] == 1
+    assert body["video_count"] == 2
+    assert body["total_detected_objects"] == 2
+    assert body["average_confidence"] == 0.72
+    assert [item["class_code"] for item in body["class_distribution"]] == ["BALL", "FOOTWEAR", "TRASH", "HAT"]
+    assert {item["class_code"]: item["count"] for item in body["class_distribution"]} == {
+        "BALL": 1,
+        "FOOTWEAR": 0,
+        "TRASH": 0,
+        "HAT": 1,
+    }
+    assert {item["code"]: item["count"] for item in body["confidence_distribution"]} == {
+        "GE_90": 1,
+        "GE_70": 0,
+        "GE_50": 0,
+        "LT_50": 1,
+    }
+    assert [event["id"] for event in body["recent_events"]] == [103, 101, 102]
+    assert "original_media_url" not in response.text
+    assert "secret stacktrace" not in response.text
+    assert "/srv/private" not in response.text
+
+
+def test_video_terminal_notifications_are_safe_and_idempotent(db: Session) -> None:
+    user = seed_user(db, 1)
+    now = utc_now()
+    completed_event = DetectionEvent(
+        id=301,
+        user_id=user.id,
+        purpose="USER_ANALYSIS",
+        source_type="VIDEO",
+        original_media_url="detections/user/1/video.mp4",
+        status="COMPLETED",
+        captured_at=now,
+        processing_completed_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    failed_event = DetectionEvent(
+        id=302,
+        user_id=user.id,
+        purpose="USER_ANALYSIS",
+        source_type="VIDEO",
+        original_media_url="detections/user/1/failed.mp4",
+        status="FAILED",
+        error_message="stacktrace with /app/models/secret.pt",
+        captured_at=now,
+        processing_completed_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    image_event = DetectionEvent(
+        id=303,
+        user_id=user.id,
+        purpose="USER_ANALYSIS",
+        source_type="IMAGE",
+        original_media_url="detections/user/1/image.jpg",
+        status="COMPLETED",
+        captured_at=now,
+        processing_completed_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    operation_event = DetectionEvent(
+        id=304,
+        user_id=user.id,
+        purpose="OPERATION",
+        source_type="VIDEO",
+        original_media_url="detections/operation/video.mp4",
+        status="COMPLETED",
+        captured_at=now,
+        processing_completed_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add_all([completed_event, failed_event, image_event, operation_event])
+    db.commit()
+
+    assert ensure_detection_terminal_notification(db, event=completed_event) is not None
+    assert ensure_detection_terminal_notification(db, event=completed_event) is None
+    assert ensure_detection_terminal_notification(db, event=failed_event) is not None
+    assert ensure_detection_terminal_notification(db, event=image_event) is None
+    assert ensure_detection_terminal_notification(db, event=operation_event) is None
+    db.commit()
+
+    notifications = db.query(Notification).order_by(Notification.related_id, Notification.notification_type).all()
+    assert [(item.notification_type, item.related_type, item.related_id) for item in notifications] == [
+        ("DETECTION_COMPLETED", "DETECTION_EVENT", 301),
+        ("DETECTION_FAILED", "DETECTION_EVENT", 302),
+    ]
+    assert "analysis-report?eventId" not in " ".join(item.message for item in notifications)
+    assert "secret.pt" not in " ".join(item.message for item in notifications)
+    assert "/app/models" not in " ".join(item.message for item in notifications)
 
 
 def test_user_can_delete_own_detection_history_event(client: TestClient, db: Session, tmp_path: Path) -> None:

@@ -10,7 +10,7 @@ from PIL import Image, UnidentifiedImageError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, require_user
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.models import User
@@ -24,6 +24,7 @@ from app.schemas.common import MessageResponse
 from app.schemas.detection import (
     DetectionBBoxResponse,
     DetectionEventResponse,
+    DetectionAnalysisSummaryResponse,
     DetectionStorageUsageResponse,
     DetectionUploadPolicyResponse,
     VideoDetectionAcceptedResponse,
@@ -41,6 +42,7 @@ from app.services.detections import (
 )
 from app.services.user_media_policy import ensure_user_analysis_quota, get_upload_policy, get_user_storage_usage
 from app.services.user_media_uploads import save_normalized_user_image, save_user_video_upload, validate_saved_user_video
+from app.services.user_analysis_reports import ALLOWED_SUMMARY_DAYS, build_user_analysis_summary
 from app.services.webcam_inference import (
     WebcamDetectionFrame,
     WebcamInferenceService,
@@ -97,6 +99,17 @@ def get_my_detection_storage_usage(
     db: Annotated[Session, Depends(get_db)],
 ) -> DetectionStorageUsageResponse:
     return DetectionStorageUsageResponse(**get_user_storage_usage(db, user_id=current_user.id, settings=get_settings()))
+
+
+@router.get("/me/summary", response_model=DetectionAnalysisSummaryResponse, summary="내 AI 분석 요약 보고서")
+def get_my_detection_summary(
+    current_user: Annotated[User, Depends(require_user)],
+    db: Annotated[Session, Depends(get_db)],
+    days: Annotated[int, Query()] = 30,
+) -> DetectionAnalysisSummaryResponse:
+    if days not in ALLOWED_SUMMARY_DAYS:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported summary period")
+    return build_user_analysis_summary(db, user_id=current_user.id, days=days)
 
 
 async def read_webcam_frame(file: UploadFile) -> Image.Image:

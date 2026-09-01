@@ -26,6 +26,7 @@ from app.services.detection_inference import (
     DetectionInferenceUnavailableError,
 )
 from app.services.color_estimation import estimate_standard_color
+from app.services.detection_notifications import ensure_detection_terminal_notification
 from app.services.user_media_policy import ensure_user_analysis_quota, get_user_storage_usage
 
 SAFE_MODEL_UNAVAILABLE_MESSAGE = "AI detection model is not configured"
@@ -260,6 +261,7 @@ def _complete_with_result(
             media_height=result.media_height,
             completed_at=now,
         )
+        ensure_detection_terminal_notification(db, event=event)
         db.commit()
     except Exception:
         db.rollback()
@@ -278,6 +280,7 @@ def _complete_with_result(
 def _mark_failed(db: Session, *, event: DetectionEvent, message: str) -> DetectionEvent:
     now = utc_now()
     fail_detection_event(db, event=event, message=message, completed_at=now)
+    ensure_detection_terminal_notification(db, event=event)
     db.commit()
     db.refresh(event)
     return event
