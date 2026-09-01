@@ -41,6 +41,7 @@ class DetectionEventResponse(BaseModel):
     ai_model_id: str | None = None
     media_width: int | None
     media_height: int | None
+    video_duration_seconds: float | None = None
     created_at: datetime
     processing_started_at: datetime | None
     processing_completed_at: datetime | None

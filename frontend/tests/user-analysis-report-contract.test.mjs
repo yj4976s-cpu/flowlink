@@ -6,12 +6,18 @@ import test from "node:test";
 import {
   buildClassDonutGradient,
   formatCompletionRate,
+  formatMilliseconds,
   formatPercentValue,
   getDetectionReportState,
   getPrimaryClass,
+  getProcessingFrameProgress,
   getReportHref,
+  getTrackTimelineView,
+  getVideoDurationMs,
   parseAnalysisPeriod,
+  parseReportEventQuery,
   parseReportEventId,
+  shouldPollVideoProcessing,
   summarizeEventObjects,
 } from "../src/components/mypage/analysis-report/analysisReportViewState.ts";
 
@@ -59,6 +65,7 @@ const completedEvent = {
   ai_model_id: "model-a",
   media_width: 100,
   media_height: 80,
+  video_duration_seconds: null,
   created_at: "2026-09-01T00:00:00Z",
   processing_started_at: "2026-09-01T00:00:00Z",
   processing_completed_at: "2026-09-01T00:00:03Z",
@@ -98,6 +105,13 @@ test("analysis report query parsing and hrefs are safe", () => {
   assert.equal(parseReportEventId("12"), 12);
   assert.equal(parseReportEventId("0"), null);
   assert.equal(parseReportEventId("abc"), null);
+  assert.deepEqual(parseReportEventQuery(new URLSearchParams("")), { kind: "summary", eventId: null });
+  assert.deepEqual(parseReportEventQuery(new URLSearchParams("eventId=12")), { kind: "detail", eventId: 12 });
+  assert.deepEqual(parseReportEventQuery(new URLSearchParams("eventId=abc")), { kind: "invalid", eventId: null });
+  assert.deepEqual(parseReportEventQuery(new URLSearchParams("eventId=0")), { kind: "invalid", eventId: null });
+  assert.deepEqual(parseReportEventQuery(new URLSearchParams("eventId=-1")), { kind: "invalid", eventId: null });
+  assert.deepEqual(parseReportEventQuery(new URLSearchParams("eventId=1.5")), { kind: "invalid", eventId: null });
+  assert.deepEqual(parseReportEventQuery(new URLSearchParams("eventId=1&eventId=2")), { kind: "invalid", eventId: null });
   assert.equal(getReportHref(12), "/mypage/analysis-report?eventId=12");
 });
 
@@ -107,6 +121,7 @@ test("analysis report state uses real event status", () => {
   assert.equal(getDetectionReportState({ ...completedEvent, status: "PROCESSING" }, 12), "processing");
   assert.equal(getDetectionReportState({ ...completedEvent, status: "FAILED" }, 12), "failed");
   assert.equal(getDetectionReportState(completedEvent, 12), "completed");
+  assert.equal(getDetectionReportState(null, null, true), "not-found");
 });
 
 test("analysis report object summary and percentage formatting are deterministic", () => {
@@ -133,6 +148,31 @@ test("class donut chart uses real class ratios instead of fixed segments", () =>
   assert.equal(buildClassDonutGradient({ ...summary, total_detected_objects: 0 }), "");
 });
 
+test("video report timeline and processing progress use measured values only", () => {
+  assert.equal(getVideoDurationMs({ video_duration_seconds: null }), null);
+  assert.equal(getVideoDurationMs({ video_duration_seconds: 4.5 }), 4500);
+  assert.deepEqual(getTrackTimelineView({ first_seen_ms: 1000, last_seen_ms: 3000, appearance_count: 12 }, 5000), {
+    left: 20,
+    width: 40,
+    appearanceCount: 12,
+  });
+  assert.deepEqual(getTrackTimelineView({ first_seen_ms: -500, last_seen_ms: 6000, appearance_count: 2 }, 5000), {
+    left: 0,
+    width: 100,
+    appearanceCount: 2,
+  });
+  assert.equal(getTrackTimelineView({ first_seen_ms: null, last_seen_ms: 1000, appearance_count: 1 }, 5000), null);
+  assert.equal(formatMilliseconds(null), "기록 없음");
+  assert.equal(formatMilliseconds(850), "850ms");
+  assert.equal(formatMilliseconds(2100), "2.1초");
+  assert.equal(getProcessingFrameProgress(null), null);
+  assert.equal(getProcessingFrameProgress({ processed_frames: 45, total_frames: 90 }), 50);
+  assert.equal(getProcessingFrameProgress({ processed_frames: 120, total_frames: 90 }), 100);
+  assert.equal(shouldPollVideoProcessing({ ...completedEvent, source_type: "VIDEO", status: "PROCESSING" }, 12), true);
+  assert.equal(shouldPollVideoProcessing({ ...completedEvent, source_type: "VIDEO", status: "COMPLETED" }, 12), false);
+  assert.equal(shouldPollVideoProcessing({ ...completedEvent, source_type: "VIDEO", status: "PROCESSING" }, 12, true), false);
+});
+
 test("analysis report page keeps route guard, print, stale request protection, and safe video fallback", () => {
   const page = source("frontend/src/app/mypage/analysis-report/page.tsx");
   const client = source("frontend/src/components/mypage/analysis-report/AnalysisReportClient.tsx");
@@ -146,9 +186,12 @@ test("analysis report page keeps route guard, print, stale request protection, a
   assert.match(client, /result_media_url \?/);
   assert.doesNotMatch(client, /result_media_url \|\| currentEvent\.original_media_url/);
   assert.match(css, /@page \{ size: A4; margin: 10mm; \}/);
-  assert.match(css, /data-daru-stage/);
-  assert.match(css, /data-flow-copilot-root/);
+  assert.match(css, /data-daru-stage="true"/);
+  assert.match(css, /data-flow-copilot-root="true"/);
+  assert.match(css, /data-notification-toast="true"/);
   assert.match(css, /print-color-adjust: exact/);
+  assert.match(css, /chartGrid \{ grid-template-columns: repeat\(2/);
+  assert.doesNotMatch(css, /@media print[\s\S]*\\.chartPanel\\s*\\{[^}]*display:\\s*none/);
 });
 
 test("notifications, detect result, and mypage link to private analysis reports", () => {

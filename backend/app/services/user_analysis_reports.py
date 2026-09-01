@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections import Counter, defaultdict
-from datetime import UTC, datetime, timedelta
+from collections import Counter
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -62,6 +62,17 @@ def _event_date_kst(event: DetectionEvent) -> str:
     return _as_utc(event.created_at).astimezone(KST).date().isoformat()
 
 
+def analysis_period_window(days: int, *, now: datetime | None = None) -> tuple[datetime, datetime, list[str]]:
+    if days not in ALLOWED_SUMMARY_DAYS:
+        raise ValueError("Unsupported summary period")
+    generated_at = _as_utc(now or utc_now())
+    kst_today = generated_at.astimezone(KST).date()
+    first_kst_day = kst_today - timedelta(days=days - 1)
+    period_start = datetime.combine(first_kst_day, time.min, tzinfo=KST).astimezone(UTC)
+    trend_dates = [(first_kst_day + timedelta(days=offset)).isoformat() for offset in range(days)]
+    return period_start, generated_at, trend_dates
+
+
 def _ordered_class_map(db: Session) -> dict[str, str]:
     rows = db.execute(select(ObjectClass.code, ObjectClass.name_ko).where(ObjectClass.code.in_(CLASS_ORDER))).all()
     names = {code: name for code, name in rows}
@@ -100,9 +111,7 @@ def build_user_analysis_summary(
     if days not in ALLOWED_SUMMARY_DAYS:
         raise ValueError("Unsupported summary period")
 
-    generated_at = _as_utc(now or utc_now())
-    period_end = generated_at
-    period_start = generated_at - timedelta(days=days)
+    period_start, period_end, trend_dates = analysis_period_window(days, now=now)
     events = list_user_analysis_events_for_summary(
         db,
         user_id=user_id,
@@ -128,11 +137,9 @@ def build_user_analysis_summary(
     confidence_counts = Counter(_confidence_bucket(detected_object.confidence) for detected_object in detected_objects)
     confidence_sum = sum((detected_object.confidence for detected_object in detected_objects), Decimal("0"))
 
-    kst_today = generated_at.astimezone(KST).date()
-    first_kst_day = kst_today - timedelta(days=days - 1)
     trend: dict[str, dict[str, int]] = {
-        (first_kst_day + timedelta(days=offset)).isoformat(): {"analysis_count": 0, "object_count": 0}
-        for offset in range(days)
+        date: {"analysis_count": 0, "object_count": 0}
+        for date in trend_dates
     }
     for event in events:
         date_key = _event_date_kst(event)
@@ -168,7 +175,7 @@ def build_user_analysis_summary(
         period_days=days,  # type: ignore[arg-type]
         period_start=period_start,
         period_end=period_end,
-        generated_at=generated_at,
+        generated_at=period_end,
         total_analyses=total,
         completed_count=len(completed_events),
         failed_count=failed_count,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import subprocess
 from collections.abc import Iterator
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
@@ -38,7 +38,13 @@ from app.services.detection_inference import (
     DetectionPrediction,
     model_label_to_class_code,
 )
-from app.services.detection_notifications import ensure_detection_terminal_notification
+from app.services.detection_notifications import (
+    SAFE_VIDEO_TIMEOUT_MESSAGE,
+    VIDEO_TIMEOUT_ERROR_CODE,
+    ensure_detection_terminal_notification,
+    is_video_timeout_error,
+)
+from app.services.user_analysis_reports import KST, analysis_period_window, build_user_analysis_summary
 from app.services.webcam_inference import (
     WebcamDetectionFrame,
     WebcamDetectionObject,
@@ -436,6 +442,13 @@ def test_default_video_inference_uses_backend_ai_client_and_preserves_tracks(cli
     assert job.status == "COMPLETED"
     assert job.processing_stage == "COMPLETED"
     assert job.processing_progress == 100
+    notification = db.query(Notification).one()
+    assert notification.notification_type == "DETECTION_COMPLETED"
+    assert notification.related_type == "DETECTION_EVENT"
+    assert notification.related_id == event.id
+    assert "3" in notification.message
+    assert "secret" not in notification.message
+    assert ".pt" not in notification.message
 
 
 def test_video_detection_validates_saved_video_through_threadpool(
@@ -891,6 +904,78 @@ def test_user_analysis_summary_scopes_private_completed_object_stats(client: Tes
     assert "/srv/private" not in response.text
 
 
+@pytest.mark.parametrize(
+    ("days", "expected_start_date"),
+    [(7, "2026-08-26"), (30, "2026-08-03"), (90, "2026-06-04")],
+)
+def test_user_analysis_summary_uses_kst_calendar_period_start(days: int, expected_start_date: str) -> None:
+    period_start, period_end, trend_dates = analysis_period_window(
+        days,
+        now=datetime(2026, 9, 1, 14, 30, tzinfo=UTC),
+    )
+
+    assert period_start.astimezone(KST).isoformat() == f"{expected_start_date}T00:00:00+09:00"
+    assert period_end.isoformat() == "2026-09-01T14:30:00+00:00"
+    assert trend_dates[0] == expected_start_date
+    assert trend_dates[-1] == "2026-09-01"
+    assert len(trend_dates) == days
+
+
+def test_user_analysis_summary_kst_boundary_matches_daily_trend(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    seed_object_class(db, 1, "BALL")
+    generated_at = datetime(2026, 9, 1, 15, 30, tzinfo=UTC)  # 2026-09-02 00:30 KST
+    included_start = datetime(2026, 8, 26, 15, 0, tzinfo=UTC)  # 2026-08-27 00:00 KST
+    excluded_before_start = included_start - timedelta(microseconds=1)
+    included_before_now = generated_at - timedelta(minutes=1)
+    excluded_after_now = generated_at + timedelta(seconds=1)
+
+    db.add_all(
+        [
+            DetectionEvent(id=401, user_id=user.id, purpose="USER_ANALYSIS", source_type="IMAGE", original_media_url="a.jpg", status="COMPLETED", captured_at=included_start, processing_completed_at=included_start, created_at=included_start, updated_at=included_start),
+            DetectionEvent(id=402, user_id=user.id, purpose="USER_ANALYSIS", source_type="VIDEO", original_media_url="b.mp4", status="COMPLETED", captured_at=included_before_now, processing_completed_at=included_before_now, created_at=included_before_now, updated_at=included_before_now),
+            DetectionEvent(id=403, user_id=user.id, purpose="USER_ANALYSIS", source_type="IMAGE", original_media_url="old.jpg", status="COMPLETED", captured_at=excluded_before_start, processing_completed_at=excluded_before_start, created_at=excluded_before_start, updated_at=excluded_before_start),
+            DetectionEvent(id=404, user_id=user.id, purpose="USER_ANALYSIS", source_type="IMAGE", original_media_url="future.jpg", status="COMPLETED", captured_at=excluded_after_now, processing_completed_at=excluded_after_now, created_at=excluded_after_now, updated_at=excluded_after_now),
+        ]
+    )
+    db.add_all(
+        [
+            DetectedObject(id=501, detection_event_id=401, object_class_id=1, processing_status="PENDING", confidence=Decimal("0.8000"), bbox_x=Decimal("1"), bbox_y=Decimal("1"), bbox_width=Decimal("5"), bbox_height=Decimal("5"), appearance_count=1, detected_at=included_start, created_at=included_start),
+            DetectedObject(id=502, detection_event_id=402, object_class_id=1, processing_status="PENDING", confidence=Decimal("0.9000"), bbox_x=Decimal("1"), bbox_y=Decimal("1"), bbox_width=Decimal("5"), bbox_height=Decimal("5"), appearance_count=1, detected_at=included_before_now, created_at=included_before_now),
+            DetectedObject(id=503, detection_event_id=403, object_class_id=1, processing_status="PENDING", confidence=Decimal("0.9900"), bbox_x=Decimal("1"), bbox_y=Decimal("1"), bbox_width=Decimal("5"), bbox_height=Decimal("5"), appearance_count=1, detected_at=excluded_before_start, created_at=excluded_before_start),
+            DetectedObject(id=504, detection_event_id=404, object_class_id=1, processing_status="PENDING", confidence=Decimal("0.9900"), bbox_x=Decimal("1"), bbox_y=Decimal("1"), bbox_width=Decimal("5"), bbox_height=Decimal("5"), appearance_count=1, detected_at=excluded_after_now, created_at=excluded_after_now),
+        ]
+    )
+    db.commit()
+
+    body = build_user_analysis_summary(db, user_id=user.id, days=7, now=generated_at).model_dump()
+
+    assert body["period_start"] == included_start
+    assert body["period_end"] == generated_at
+    assert body["total_analyses"] == 2
+    assert body["total_detected_objects"] == 2
+    assert sum(item["analysis_count"] for item in body["daily_trend"]) == body["total_analyses"]
+    assert sum(item["object_count"] for item in body["daily_trend"]) == body["total_detected_objects"]
+    assert body["daily_trend"][0] == {"date": "2026-08-27", "analysis_count": 1, "object_count": 1}
+    assert body["daily_trend"][-1] == {"date": "2026-09-02", "analysis_count": 1, "object_count": 1}
+
+
+def test_user_analysis_summary_empty_period_has_consistent_zero_totals(db: Session) -> None:
+    user = seed_user(db, 1)
+
+    body = build_user_analysis_summary(
+        db,
+        user_id=user.id,
+        days=30,
+        now=datetime(2026, 9, 1, 4, 0, tzinfo=UTC),
+    ).model_dump()
+
+    assert body["total_analyses"] == 0
+    assert body["total_detected_objects"] == 0
+    assert sum(item["analysis_count"] for item in body["daily_trend"]) == 0
+    assert len(body["daily_trend"]) == 30
+
+
 def test_video_terminal_notifications_are_safe_and_idempotent(db: Session) -> None:
     user = seed_user(db, 1)
     now = utc_now()
@@ -961,6 +1046,81 @@ def test_video_terminal_notifications_are_safe_and_idempotent(db: Session) -> No
     assert "analysis-report?eventId" not in " ".join(item.message for item in notifications)
     assert "secret.pt" not in " ".join(item.message for item in notifications)
     assert "/app/models" not in " ".join(item.message for item in notifications)
+
+
+def test_video_notification_unique_conflict_preserves_completed_event(
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = seed_user(db, 1)
+    seed_object_class(db, 1, "BALL")
+    now = utc_now()
+    event = DetectionEvent(
+        id=351,
+        user_id=user.id,
+        purpose="USER_ANALYSIS",
+        source_type="VIDEO",
+        original_media_url="detections/user/1/video.mp4",
+        result_media_url="detections/user/1/video-result.mp4",
+        result_media_bytes=128,
+        status="COMPLETED",
+        captured_at=now,
+        processing_completed_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(event)
+    db.add(
+        DetectedObject(
+            id=451,
+            detection_event_id=351,
+            object_class_id=1,
+            processing_status="PENDING",
+            confidence=Decimal("0.9100"),
+            bbox_x=Decimal("1"),
+            bbox_y=Decimal("1"),
+            bbox_width=Decimal("5"),
+            bbox_height=Decimal("5"),
+            appearance_count=2,
+            detected_at=now,
+            created_at=now,
+        )
+    )
+    db.commit()
+
+    real_scalar = db.scalar
+    inserted_racing_notification = False
+
+    def racing_scalar(statement, *args, **kwargs):
+        nonlocal inserted_racing_notification
+        if not inserted_racing_notification and "notifications" in str(statement):
+            inserted_racing_notification = True
+            db.add(
+                Notification(
+                    user_id=user.id,
+                    notification_type="DETECTION_COMPLETED",
+                    title="이미 생성된 알림",
+                    message="경쟁 트랜잭션이 먼저 만든 알림",
+                    related_type="DETECTION_EVENT",
+                    related_id=event.id,
+                    created_at=now,
+                )
+            )
+            db.flush()
+            return None
+        return real_scalar(statement, *args, **kwargs)
+
+    monkeypatch.setattr(db, "scalar", racing_scalar)
+
+    assert ensure_detection_terminal_notification(db, event=event) is None
+    db.commit()
+    db.expire_all()
+
+    stored = db.get(DetectionEvent, event.id)
+    assert stored.status == "COMPLETED"
+    assert stored.result_media_url == "detections/user/1/video-result.mp4"
+    assert db.query(DetectedObject).filter(DetectedObject.detection_event_id == event.id).count() == 1
+    assert db.query(Notification).filter(Notification.related_id == event.id).count() == 1
 
 
 def test_user_can_delete_own_detection_history_event(client: TestClient, db: Session, tmp_path: Path) -> None:
@@ -1591,8 +1751,14 @@ def test_video_worker_records_safe_timeout_message(client: TestClient, db: Sessi
     assert event.status == "FAILED"
     assert job.status == "FAILED"
     assert job.failed_stage == "ANALYZING"
-    assert event.error_message == "영상 분석 시간이 예상보다 길어 중단되었어요. 잠시 후 다시 시도해주세요."
+    assert event.error_message == VIDEO_TIMEOUT_ERROR_CODE
     assert "model is not configured" not in event.error_message
+    notification = db.query(Notification).one()
+    assert notification.notification_type == "DETECTION_FAILED"
+    assert notification.message == "영상 분석 시간이 예상보다 길어 중단되었습니다. 다시 시도해주세요."
+    authenticate(client, user)
+    status_response = client.get(f"/api/detections/{event.id}/processing-status")
+    assert status_response.json()["error_message"] == SAFE_VIDEO_TIMEOUT_MESSAGE
 
 
 def test_video_status_is_owner_scoped_and_internal_progress_requires_key(
@@ -1654,6 +1820,9 @@ def test_video_job_claim_is_single_use_and_stale_processing_fails(client: TestCl
     assert job.status == "FAILED"
     assert job.processing_stage == "FAILED"
     assert job.failed_stage == "NORMALIZING"
+    notification = db.query(Notification).one()
+    assert notification.notification_type == "DETECTION_FAILED"
+    assert notification.message == "영상 분석 시간이 예상보다 길어 중단되었습니다. 다시 시도해주세요."
 
 
 @pytest.mark.parametrize("failed_stage", ["QUEUED", "NORMALIZING", "ANALYZING", "RENDERING", "SAVING"])
@@ -1704,6 +1873,8 @@ def test_video_status_exposes_only_whitelisted_failure_messages(
     response = client.get(f"/api/detections/{event.id}/processing-status")
 
     assert response.status_code == 200
+    if is_video_timeout_error(stored_message):
+        expected_message = SAFE_VIDEO_TIMEOUT_MESSAGE
     assert response.json()["error_message"] == expected_message
     assert "secret-key" not in response.text
     assert "C:/private" not in response.text

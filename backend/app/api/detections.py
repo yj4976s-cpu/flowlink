@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from typing import Annotated
@@ -40,6 +41,7 @@ from app.services.detections import (
     create_user_detection_event_after_quota,
     process_detection_event,
 )
+from app.services.detection_notifications import is_video_timeout_error
 from app.services.user_media_policy import ensure_user_analysis_quota, get_upload_policy, get_user_storage_usage
 from app.services.user_media_uploads import save_normalized_user_image, save_user_video_upload, validate_saved_user_video
 from app.services.user_analysis_reports import ALLOWED_SUMMARY_DAYS, build_user_analysis_summary
@@ -217,7 +219,7 @@ async def detect_video(
         settings=settings,
     )
     try:
-        await run_in_threadpool(validate_saved_user_video, media_path, settings=settings)
+        video_probe = await run_in_threadpool(validate_saved_user_video, media_path, settings=settings) or {}
     except Exception:
         media_path.unlink(missing_ok=True)
         raise
@@ -233,6 +235,12 @@ async def detect_video(
     except Exception:
         media_path.unlink(missing_ok=True)
         raise
+    duration = video_probe.get("duration")
+    if event.video_job is not None and isinstance(duration, (int, float)) and duration > 0:
+        event.video_job.video_duration_seconds = Decimal(str(round(duration, 2)))
+        db.add(event.video_job)
+        db.commit()
+        db.refresh(event)
     return VideoDetectionAcceptedResponse(
         detection_event_id=event.id,
         video_job_id=event.video_job.id,
@@ -268,7 +276,7 @@ def get_video_processing_status(
         result_ready=job.status == "COMPLETED",
         error_message=(
             SAFE_VIDEO_TIMEOUT_MESSAGE
-            if job.status == "FAILED" and job.error_message == SAFE_VIDEO_TIMEOUT_MESSAGE
+            if job.status == "FAILED" and is_video_timeout_error(job.error_message)
             else SAFE_VIDEO_FAILURE_MESSAGE if job.status == "FAILED" else None
         ),
     )

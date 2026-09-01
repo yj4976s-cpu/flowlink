@@ -18,8 +18,8 @@
 .metricCard[data-tone="success"] { --metric-tone: var(--color-success); }
 .metricCard[data-tone="muted"] { --metric-tone: var(--color-text); }
 .chartGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.chartPanel, .detailPanel, .recentPanel, .statePanel, .notice { border: 1px solid var(--color-border); border-radius: 24px; background: color-mix(in srgb, var(--color-surface) 94%, transparent); box-shadow: var(--shadow-card); }
-.chartPanel, .detailPanel, .recentPanel { padding: 24px; }
+.chartPanel, .detailPanel, .recentPanel, .statePanel, .notice, .processingPanel { border: 1px solid var(--color-border); border-radius: 24px; background: color-mix(in srgb, var(--color-surface) 94%, transparent); box-shadow: var(--shadow-card); }
+.chartPanel, .detailPanel, .recentPanel, .processingPanel { padding: 24px; }
 .panelTitle { margin-bottom: 18px; }
 .panelTitle h2 { margin: 0; font-size: 24px; letter-spacing: -.035em; }
 .panelTitle span { display: block; margin-top: 8px; color: var(--color-text-muted); font-size: 13px; line-height: 1.65; }
@@ -63,6 +63,21 @@
 .trackList article { padding: 14px; border: 1px solid var(--color-border); border-radius: 16px; background: var(--color-surface-soft); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px 14px; }
 .trackList strong { font-size: 15px; }
 .trackList span, .trackList small { color: var(--color-text-muted); }
+.timelinePanel { margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--color-border); }
+.timelineList { display: grid; gap: 12px; }
+.timelineList article { padding: 14px; border: 1px solid var(--color-border); border-radius: 17px; background: color-mix(in srgb, var(--color-primary-soft) 28%, var(--color-surface)); display: grid; grid-template-columns: 180px minmax(0, 1fr) 120px; gap: 13px; align-items: center; }
+.timelineList article > div:first-child { min-width: 0; display: grid; gap: 4px; }.timelineList strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }.timelineList span, .timelineList small { color: var(--color-text-muted); font-size: 12px; font-weight: 750; }.timelineList small { text-align: right; }
+.timelineBar { position: relative; height: 16px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--color-border) 54%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-text) 5%, transparent); }
+.timelineBar i { position: absolute; top: 3px; bottom: 3px; border-radius: inherit; background: linear-gradient(90deg, var(--color-secondary), var(--color-primary)); box-shadow: 0 6px 18px color-mix(in srgb, var(--color-primary) 24%, transparent); }
+.processingPanel { margin-top: 18px; }
+.processingSteps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.processingSteps span { min-height: 36px; padding: 0 8px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface-soft); color: var(--color-text-muted); display: grid; place-items: center; font-size: 10px; font-weight: 900; text-align: center; }
+.processingSteps span[data-active] { border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border)); background: var(--color-primary-soft); color: var(--color-primary); }
+.processingProgress { margin-top: 16px; padding: 16px; border: 1px solid var(--color-border); border-radius: 18px; background: var(--color-surface-soft); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 14px; align-items: center; }
+.processingProgress span, .processingProgress small { color: var(--color-text-muted); font-size: 12px; font-weight: 750; }.processingProgress strong { color: var(--color-primary); font-size: 18px; }
+.processingProgress div { grid-column: 1 / -1; height: 13px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--color-border) 58%, transparent); }
+.processingProgress i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--color-secondary), var(--color-primary)); }
+.processingProgress small { grid-column: 1 / -1; }.processingError { margin: 0 0 12px; padding: 11px 13px; border-radius: 13px; background: color-mix(in srgb, var(--color-error) 9%, var(--color-surface)); color: var(--color-error); font-size: 12px; font-weight: 800; }
 .statePanel { min-height: 210px; padding: 34px; display: grid; place-items: center; text-align: center; gap: 10px; }
 .statePanel strong { font-size: 22px; }
 .statePanel p { max-width: 520px; margin: 0; color: var(--color-text-muted); line-height: 1.7; }
@@ -83,7 +98,7 @@
 
 @media (max-width: 600px) {
   .page { width: calc(100% - 32px); padding-block: 48px 72px; }
-  .hero, .chartPanel, .detailPanel, .recentPanel { padding: 20px; border-radius: 22px; }
+  .hero, .chartPanel, .detailPanel, .recentPanel, .processingPanel { padding: 20px; border-radius: 22px; }
   .heroActions, .periods { width: 100%; }
   .heroActions .button { width: 100%; }
   .periods { display: grid; grid-template-columns: repeat(3, 1fr); }
@@ -93,6 +108,9 @@
   .mediaSplit div { grid-template-columns: 1fr; }
   .recentList a { grid-template-columns: 1fr; gap: 7px; }
   .recentList b { text-align: left; }
+  .timelineList article { grid-template-columns: 1fr; gap: 8px; }
+  .timelineList small { text-align: left; }
+  .processingSteps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -103,15 +121,15 @@
   @page { size: A4; margin: 10mm; }
   :global(html), :global(body) { width: auto !important; min-width: 0 !important; background: #fff !important; }
   :global(*) { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  :global(.site-header), :global(.site-footer), :global([data-daru-stage]), :global([data-flow-copilot-root]) { display: none !important; }
+  :global(.site-header), :global(.site-footer), :global([data-daru-stage="true"]), :global([data-flow-copilot-root="true"]), :global([data-notification-toast="true"]) { display: none !important; }
   :global(.site-shell) { display: block !important; min-height: 0 !important; background: #fff !important; }
   .page { width: 100%; max-width: none; margin: 0; padding: 0; color: #111827; font-size: 10px; }
-  .hero, .chartPanel, .detailPanel, .recentPanel, .notice, .metricCard, .statePanel {
+  .hero, .chartPanel, .detailPanel, .recentPanel, .notice, .metricCard, .statePanel, .processingPanel {
     box-shadow: none !important;
     background: #fff !important;
     border-color: #d7dde8 !important;
   }
-  .hero, .chartPanel, .detailPanel, .recentPanel, .statePanel { break-inside: avoid-page; page-break-inside: avoid; }
+  .hero, .chartPanel, .detailPanel, .recentPanel, .statePanel, .processingPanel, .timelineList article { break-inside: avoid-page; page-break-inside: avoid; }
   .hero { margin-bottom: 8px; padding: 12px 14px; border-radius: 16px; grid-template-columns: 1fr; gap: 7px; }
   .hero p, .panelTitle p { margin-bottom: 4px; font-size: 7px; letter-spacing: .13em; }
   .hero h1 { font-size: 24px; line-height: 1.18; }
@@ -123,7 +141,7 @@
   .metricCard span, .metricCard small { font-size: 8px; line-height: 1.35; }
   .metricCard strong { font-size: 17px; }
   .chartGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-  .chartPanel, .detailPanel, .recentPanel { padding: 12px; border-radius: 15px; margin-top: 0; }
+  .chartPanel, .detailPanel, .recentPanel, .processingPanel { padding: 12px; border-radius: 15px; margin-top: 0; }
   .panelTitle { margin-bottom: 8px; }
   .panelTitle h2 { font-size: 15px; }
   .panelTitle span { margin-top: 4px; font-size: 8px; line-height: 1.45; }
@@ -150,6 +168,18 @@
   .trackGrid { margin-top: 8px; gap: 7px; }
   .trackList { margin-top: 8px; gap: 6px; }
   .trackList article { padding: 8px; border-radius: 10px; font-size: 8px; }
+  .timelinePanel { margin-top: 10px; padding-top: 10px; }
+  .timelineList { gap: 6px; }
+  .timelineList article { padding: 8px; border-radius: 10px; grid-template-columns: 86px minmax(0, 1fr) 58px; gap: 6px; }
+  .timelineList strong, .timelineList span, .timelineList small { font-size: 8px; }
+  .timelineBar { height: 9px; }
+  .timelineBar i { top: 2px; bottom: 2px; }
+  .processingSteps { gap: 4px; }
+  .processingSteps span { min-height: 24px; font-size: 6px; }
+  .processingProgress { margin-top: 8px; padding: 8px; border-radius: 10px; gap: 4px; }
+  .processingProgress span, .processingProgress small, .processingError { font-size: 8px; }
+  .processingProgress strong { font-size: 12px; }
+  .processingProgress div { height: 8px; }
   .recentPanel { margin-top: 8px; }
   .recentList { gap: 6px; }
   .recentList a { padding: 8px; border-radius: 10px; color: #111827; text-decoration: none; grid-template-columns: 44px 45px minmax(0, 1fr) minmax(0, 1fr); gap: 6px; font-size: 8px; }

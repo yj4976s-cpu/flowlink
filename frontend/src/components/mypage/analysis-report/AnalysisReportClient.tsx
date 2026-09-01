@@ -10,22 +10,29 @@ import {
   DetectionApiError,
   DetectionEvent,
   DetectionSummaryPeriod,
+  VideoProcessingStatus,
   getMyDetection,
   getMyDetectionSummary,
+  getVideoProcessingStatus,
   resolveDetectionMediaUrl,
 } from "@/lib/detectionApi";
 import {
   ANALYSIS_PERIODS,
   buildClassDonutGradient,
   formatCompletionRate,
+  formatMilliseconds,
   formatPercentValue,
   getCountRatioPercent,
   getDetectionReportState,
   getPrimaryClass,
+  getProcessingFrameProgress,
   getRatioPercent,
+  getTrackTimelineView,
+  getVideoDurationMs,
   hasSummaryChartData,
   parseAnalysisPeriod,
-  parseReportEventId,
+  parseReportEventQuery,
+  shouldPollVideoProcessing,
   summarizeEventObjects,
 } from "./analysisReportViewState";
 import styles from "./AnalysisReportClient.module.css";
@@ -155,9 +162,29 @@ function ImageReport({ event }: { event: DetectionEvent }) {
   </section>;
 }
 
+function VideoProcessingPanel({ status, error }: { status: VideoProcessingStatus | null; error: string }) {
+  const progress = getProcessingFrameProgress(status);
+  return <section className={styles.processingPanel} aria-labelledby="video-processing-title">
+    <div className={styles.panelTitle}><p>PROCESSING</p><h2 id="video-processing-title">영상 처리 진행 상황</h2><span>분석 중인 영상은 저장된 작업 상태를 기준으로 표시합니다.</span></div>
+    {error && <p className={styles.processingError} role="alert">{error}</p>}
+    <div className={styles.processingSteps} aria-label="영상 처리 단계">
+      {["QUEUED", "NORMALIZING", "ANALYZING", "RENDERING", "SAVING"].map((stage) => <span key={stage} data-active={status?.stage === stage || undefined}>{stage}</span>)}
+    </div>
+    <div className={styles.processingProgress}>
+      <span>프레임 진행률</span>
+      <strong>{progress === null ? "프레임 수 확인 중" : `${Math.round(progress)}%`}</strong>
+      <div role="progressbar" aria-label="영상 프레임 분석 진행률" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress ?? undefined}>
+        {progress !== null && <i style={{ width: `${progress}%` }} />}
+      </div>
+      <small>{status?.total_frames ? `${status.processed_frames} / ${status.total_frames} 프레임` : "전체 프레임 수가 확인되면 퍼센트를 표시합니다."}</small>
+    </div>
+  </section>;
+}
+
 function VideoReport({ event }: { event: DetectionEvent }) {
   const resultUrl = event.result_media_url ? resolveDetectionMediaUrl(event.result_media_url) : "";
   const summary = summarizeEventObjects(event);
+  const durationMs = getVideoDurationMs(event);
   return <section className={styles.detailPanel} aria-labelledby="video-report-title">
     <div className={styles.panelTitle}><p>VIDEO REPORT</p><h2 id="video-report-title">영상 분석 상세</h2><span>동일 객체는 ByteTrack 기준의 추적 객체로 집계합니다.</span></div>
     {resultUrl ? <video className={styles.resultVideo} src={resultUrl} controls playsInline preload="metadata" /> : <EmptyChart message="결과 영상이 아직 없거나 생성되지 않았습니다. 원본 영상을 탐지 결과처럼 표시하지 않습니다." />}
@@ -173,17 +200,35 @@ function VideoReport({ event }: { event: DetectionEvent }) {
         <small>{object.first_seen_ms ?? "-"}ms ~ {object.last_seen_ms ?? "-"}ms · {object.appearance_count}프레임</small>
       </article>)}
     </div> : <EmptyChart message="영상에서 추적된 객체가 없습니다." />}
+    {event.detected_objects.length ? <div className={styles.timelinePanel} aria-labelledby="track-timeline-title">
+      <div className={styles.panelTitle}><p>BYTE TRACK</p><h2 id="track-timeline-title">객체 등장 타임라인</h2><span>Track ID가 같은 항목은 영상 안에서 같은 객체로 이어진 추적 결과입니다.</span></div>
+      {durationMs ? <div className={styles.timelineList}>
+        {event.detected_objects.map((object) => {
+          const timeline = getTrackTimelineView(object, durationMs);
+          return <article key={`timeline-${object.id}`}>
+            <div><strong>{object.track_id === null ? "Track 미지정" : `Track #${object.track_id}`}</strong><span>{object.class_name_ko} · {object.appearance_count}프레임</span></div>
+            <div className={styles.timelineBar} role="meter" aria-label={`${object.class_name_ko} ${formatMilliseconds(object.first_seen_ms)}부터 ${formatMilliseconds(object.last_seen_ms)}까지 등장`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={timeline ? Math.round(timeline.left) : 0}>
+              {timeline && <i style={{ left: `${timeline.left}%`, width: `${timeline.width}%` }} />}
+            </div>
+            <small>{formatMilliseconds(object.first_seen_ms)} → {formatMilliseconds(object.last_seen_ms)}</small>
+          </article>;
+        })}
+      </div> : <EmptyChart message="영상 전체 길이가 없어 타임라인 막대는 계산하지 않고 Track 텍스트 정보만 표시합니다." />}
+    </div> : null}
   </section>;
 }
 
-function EventDetail({ event, requestedId }: { event: DetectionEvent | null; requestedId: number | null }) {
-  const state = getDetectionReportState(event, requestedId);
+function EventDetail({ event, requestedId, invalidEventId, processingStatus, processingError }: { event: DetectionEvent | null; requestedId: number | null; invalidEventId: boolean; processingStatus: VideoProcessingStatus | null; processingError: string }) {
+  const state = getDetectionReportState(event, requestedId, invalidEventId);
   const objectSummary = summarizeEventObjects(event);
   const primary = getPrimaryClass(event);
   if (state === "not-found") return <section className={styles.statePanel} role="alert"><Icon name="fileSearch" size={26} /><strong>보고서를 찾을 수 없습니다.</strong><p>존재하지 않거나 본인 소유가 아닌 분석 기록입니다.</p></section>;
   if (!event) return null;
   if (state === "failed") return <section className={styles.statePanel} role="alert"><Icon name="info" size={26} /><strong>분석을 완료하지 못했습니다.</strong><p>내부 오류나 모델 경로는 표시하지 않습니다. 파일 조건을 확인한 뒤 다시 분석해 주세요.</p><Link className="button button-secondary" href="/detect">다시 분석하기</Link></section>;
-  if (state === "processing") return <section className={styles.statePanel} role="status"><Icon name="clock" size={26} /><strong>아직 분석 중입니다.</strong><p>처리 단계가 끝나면 완료 통계와 결과 미디어가 표시됩니다.</p></section>;
+  if (state === "processing") return <>
+    <section className={styles.statePanel} role="status"><Icon name="clock" size={26} /><strong>아직 분석 중입니다.</strong><p>처리 단계가 끝나면 완료 통계와 결과 미디어가 표시됩니다.</p></section>
+    {event.source_type === "VIDEO" && <VideoProcessingPanel status={processingStatus} error={processingError} />}
+  </>;
   return <>
     <section className={styles.detailSummary} aria-label="개별 분석 핵심 지표">
       <MetricCard label="분석 상태" value={statusLabel[event.status] ?? event.status} hint={formatDateTime(event.processing_completed_at)} />
@@ -198,16 +243,34 @@ function EventDetail({ event, requestedId }: { event: DetectionEvent | null; req
 export function AnalysisReportClient() {
   const searchParams = useSearchParams();
   const [period, setPeriod] = useState<DetectionSummaryPeriod>(() => parseAnalysisPeriod(searchParams.get("days")));
-  const eventId = parseReportEventId(searchParams.get("eventId"));
+  const eventQuery = parseReportEventQuery(searchParams);
+  const eventId = eventQuery.kind === "detail" ? eventQuery.eventId : null;
+  const invalidEventId = eventQuery.kind === "invalid";
   const [summary, setSummary] = useState<DetectionAnalysisSummary | null>(null);
   const [event, setEvent] = useState<DetectionEvent | null>(null);
+  const [processingStatus, setProcessingStatus] = useState<VideoProcessingStatus | null>(null);
+  const [processingError, setProcessingError] = useState("");
   const [loading, setLoading] = useState(true);
   const [periodLoading, setPeriodLoading] = useState(false);
   const [error, setError] = useState("");
   const requestSeq = useRef(0);
+  const processingSeq = useRef(0);
   const hasLoadedSummaryRef = useRef(false);
 
   useEffect(() => {
+    if (invalidEventId) {
+      const seq = ++requestSeq.current;
+      void Promise.resolve().then(() => {
+        if (seq !== requestSeq.current) return;
+        hasLoadedSummaryRef.current = false;
+        setSummary(null);
+        setEvent(null);
+        setError("");
+        setLoading(false);
+        setPeriodLoading(false);
+      });
+      return;
+    }
     const controller = new AbortController();
     const seq = ++requestSeq.current;
 
@@ -244,7 +307,54 @@ export function AnalysisReportClient() {
 
     void loadReport();
     return () => controller.abort();
-  }, [eventId, period]);
+  }, [eventId, invalidEventId, period]);
+
+  useEffect(() => {
+    if (!shouldPollVideoProcessing(event, eventId, invalidEventId)) {
+      const seq = ++processingSeq.current;
+      void Promise.resolve().then(() => {
+        if (seq !== processingSeq.current) return;
+        setProcessingStatus(null);
+        setProcessingError("");
+      });
+      return;
+    }
+    if (eventId === null) return;
+    const pollingEventId = eventId;
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let activeController: AbortController | null = null;
+    let stopped = false;
+    const seq = ++processingSeq.current;
+
+    async function poll() {
+      activeController = new AbortController();
+      try {
+        const nextStatus = await getVideoProcessingStatus(pollingEventId, activeController.signal);
+        if (stopped || seq !== processingSeq.current) return;
+        setProcessingStatus(nextStatus);
+        setProcessingError("");
+        if (nextStatus.status === "COMPLETED" || nextStatus.status === "FAILED") {
+          const nextEvent = await getMyDetection(pollingEventId, activeController.signal);
+          if (stopped || seq !== processingSeq.current) return;
+          setEvent(nextEvent);
+          return;
+        }
+        timer = setTimeout(() => void poll(), 3000);
+      } catch (caught: unknown) {
+        if (stopped || seq !== processingSeq.current || (caught instanceof DOMException && caught.name === "AbortError")) return;
+        setProcessingError("영상 처리 상태를 잠시 확인하지 못했습니다. 자동으로 다시 확인합니다.");
+        timer = setTimeout(() => void poll(), 5000);
+      }
+    }
+
+    void poll();
+    return () => {
+      stopped = true;
+      activeController?.abort();
+      if (timer) clearTimeout(timer);
+    };
+  }, [event, eventId, invalidEventId]);
 
   const metrics = useMemo<Array<[string, string, string, MetricCardTone]>>(() => summary ? [
     ["전체 분석", `${summary.total_analyses}건`, `${summary.period_days}일 기준`, "primary" as const],
@@ -268,7 +378,7 @@ export function AnalysisReportClient() {
         </div>
         <button type="button" className="button button-secondary" onClick={() => window.print()}>PDF로 저장</button>
         <Link className="button button-secondary" href="/detect">내 확인 기록으로 돌아가기</Link>
-        {eventId !== null && <Link className="button button-secondary" href="/mypage/analysis-report">전체 요약 보기</Link>}
+        {(eventId !== null || invalidEventId) && <Link className="button button-secondary" href="/mypage/analysis-report">전체 요약 보기</Link>}
       </div>
       {summary && <small>마지막 집계 시각 {formatDateTime(summary.generated_at)}</small>}
       <p className={styles.printHelp}>인쇄 창에서 “PDF로 저장”을 선택할 수 있습니다.</p>
@@ -276,6 +386,7 @@ export function AnalysisReportClient() {
 
     {loading && <section className={styles.statePanel} role="status"><Icon name="scan" size={26} /><strong>보고서를 불러오는 중입니다.</strong><p>분석 기록과 차트 데이터를 안전하게 집계하고 있어요.</p></section>}
     {error && <section className={styles.statePanel} role="alert"><Icon name="info" size={26} /><strong>{error}</strong><p>잠시 후 다시 시도해 주세요.</p></section>}
+    {!loading && invalidEventId && <EventDetail event={null} requestedId={null} invalidEventId processingStatus={null} processingError="" />}
     {summary && <>
       {periodLoading && <p className={styles.inlineLoading} role="status">기간 변경 내용을 불러오는 중입니다.</p>}
       <section className={styles.metrics} aria-label="AI 분석 요약 지표">
@@ -289,7 +400,7 @@ export function AnalysisReportClient() {
         <MediaRatioChart summary={summary} />
       </section>
       <section className={styles.notice}><Icon name="info" size={18} /><p>탐지 신뢰도는 AI가 해당 객체를 특정 클래스로 판단한 정도이며, 실제 소유권·위치 정확률이나 모델 전체 정확도를 의미하지 않습니다.</p></section>
-      <EventDetail event={event} requestedId={eventId} />
+      <EventDetail event={event} requestedId={eventId} invalidEventId={invalidEventId} processingStatus={processingStatus} processingError={processingError} />
       <section className={styles.recentPanel} aria-labelledby="recent-analysis-title">
         <div className={styles.panelTitle}><p>RECENT</p><h2 id="recent-analysis-title">최근 분석 기록</h2><span>최신 10건까지 표시합니다.</span></div>
         {summary.recent_events.length ? <div className={styles.recentList}>

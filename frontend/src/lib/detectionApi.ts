@@ -33,6 +33,7 @@ export type DetectionEvent = {
   ai_model_id: string | null;
   media_width: number | null;
   media_height: number | null;
+  video_duration_seconds: number | null;
   created_at: string;
   processing_started_at: string | null;
   processing_completed_at: string | null;
