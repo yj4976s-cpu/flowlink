@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Iterator
 from datetime import timedelta
 from decimal import Decimal
@@ -44,7 +45,7 @@ from app.services.webcam_inference import (
     WebcamInferenceUnavailableError,
     get_webcam_inference_service,
 )
-from app.services.user_media_uploads import validate_video_probe
+from app.services.user_media_uploads import _run_command, validate_video_probe
 from app.repositories.detections import claim_next_queued_video_job, fail_detection_event
 from app.workers.video_detection_worker import fail_stale_jobs, process_one_job
 
@@ -172,16 +173,25 @@ def client(db: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iter
     settings = get_settings()
     monkeypatch.setattr(settings, "UPLOAD_DIR", str(tmp_path / "uploads"))
 
-    async def fake_save_normalized_user_video(upload, *, current_user, upload_root, settings):
+    async def fake_save_user_video_upload(upload, *, current_user, upload_root, settings):
         suffix = ".mp4"
         relative_key = Path("detections") / "user" / str(current_user.id) / f"{uuid4().hex}{suffix}"
         destination = upload_root / relative_key
         destination.parent.mkdir(parents=True, exist_ok=True)
         payload = await upload.read()
-        destination.write_bytes(payload or b"normalized-video")
+        destination.write_bytes(payload or b"raw-video")
         return destination, relative_key.as_posix(), destination.stat().st_size
 
-    monkeypatch.setattr("app.api.detections.save_normalized_user_video", fake_save_normalized_user_video)
+    def fake_validate_saved_user_video(media_path: Path, *, settings):
+        return None
+
+    def fake_normalize_user_video_in_place(media_path: Path, *, settings):
+        media_path.write_bytes(b"normalized-video")
+        return media_path.stat().st_size
+
+    monkeypatch.setattr("app.api.detections.save_user_video_upload", fake_save_user_video_upload)
+    monkeypatch.setattr("app.api.detections.validate_saved_user_video", fake_validate_saved_user_video)
+    monkeypatch.setattr("app.workers.video_detection_worker.normalize_user_video_in_place", fake_normalize_user_video_in_place)
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as test_client:
         yield test_client
@@ -427,7 +437,7 @@ def test_default_video_inference_uses_backend_ai_client_and_preserves_tracks(cli
     assert job.processing_progress == 100
 
 
-def test_video_detection_processes_event_through_threadpool(
+def test_video_detection_validates_saved_video_through_threadpool(
     client: TestClient,
     db: Session,
     monkeypatch: pytest.MonkeyPatch,
@@ -446,7 +456,7 @@ def test_video_detection_processes_event_through_threadpool(
     response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
 
     assert response.status_code == 202
-    assert called["value"] is False
+    assert called["value"] is True
     assert response.json()["stage"] == "QUEUED"
 
 
@@ -956,6 +966,37 @@ def test_storage_usage_counts_only_user_analysis_media(client: TestClient, db: S
     assert body["has_unknown_legacy_usage"] is False
 
 
+def test_storage_usage_flags_legacy_media_with_unknown_bytes(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    now = utc_now()
+    db.add(
+        DetectionEvent(
+            user_id=user.id,
+            purpose="USER_ANALYSIS",
+            source_type="VIDEO",
+            original_media_url="detections/user/1/legacy.mp4",
+            original_media_bytes=None,
+            result_media_url="detections/user/1/legacy-result.mp4",
+            result_media_bytes=None,
+            status="COMPLETED",
+            captured_at=now,
+            processing_started_at=now,
+            processing_completed_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db.commit()
+
+    response = client.get("/api/detections/me/storage-usage")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["used_bytes"] == 0
+    assert body["has_unknown_legacy_usage"] is True
+
+
 def test_image_detection_records_normalized_file_size(client: TestClient, db: Session) -> None:
     user = seed_user(db, 1)
     seed_object_class(db, 1, "BAG")
@@ -1045,6 +1086,26 @@ def test_video_active_job_quota_rejects_second_upload(client: TestClient, db: Se
     assert db.query(DetectionEvent).count() == 1
 
 
+def test_video_probe_failure_cleans_staged_upload_without_event(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+
+    def reject_probe(media_path: Path, *, settings):
+        raise HTTPException(status_code=415, detail="Uploaded file is not a valid MP4 video")
+
+    monkeypatch.setattr("app.api.detections.validate_saved_user_video", reject_probe)
+
+    response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
+
+    assert response.status_code == 415
+    assert db.query(DetectionEvent).count() == 0
+    assert not list((Path(get_settings().UPLOAD_DIR) / "detections" / "user" / str(user.id)).glob("*.mp4"))
+
+
 def test_video_probe_validation_rejects_bad_duration_and_source_dimensions() -> None:
     settings = get_settings()
 
@@ -1059,6 +1120,19 @@ def test_video_probe_validation_rejects_bad_duration_and_source_dimensions() -> 
     assert long_video.value.status_code == 413
     assert huge_video.value.status_code == 413
     assert invalid_format.value.status_code == 415
+
+
+def test_video_command_timeout_is_reported_as_safe_gateway_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=["ffprobe"], timeout=1)
+
+    monkeypatch.setattr(subprocess, "run", raise_timeout)
+
+    with pytest.raises(HTTPException) as exc:
+        _run_command(["ffprobe"], timeout=1)
+
+    assert exc.value.status_code == 504
+    assert exc.value.detail == "Video processing timed out"
 
 
 @pytest.mark.parametrize("role", ["USER", "ADMIN"])
@@ -1172,6 +1246,63 @@ def test_video_worker_completes_queued_job_and_zero_detection_is_success(client:
     assert job.processing_progress == 100
 
 
+def test_video_worker_normalizes_user_video_before_inference(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class AssertingInferenceService:
+        def analyze_video(self, media_path: Path, *, video_job_id: int | None = None) -> DetectionInferenceResult:
+            assert media_path.read_bytes() == b"worker-normalized"
+            return DetectionInferenceResult(media_width=320, media_height=180, detections=[], rendered_video=b"rendered")
+
+    def fake_normalize(media_path: Path, *, settings):
+        assert media_path.read_bytes() == b"mp4"
+        media_path.write_bytes(b"worker-normalized")
+        return media_path.stat().st_size
+
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    monkeypatch.setattr("app.workers.video_detection_worker.normalize_user_video_in_place", fake_normalize)
+
+    response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
+
+    assert response.status_code == 202
+    assert process_one_job(db, inference_service=AssertingInferenceService()) is True
+    event = db.query(DetectionEvent).one()
+    assert event.status == "COMPLETED"
+    assert event.original_media_bytes == len(b"worker-normalized")
+
+
+def test_video_worker_cleans_original_and_result_when_result_exceeds_storage_quota(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
+    assert response.status_code == 202
+    event = db.get(DetectionEvent, response.json()["detection_event_id"])
+    media_path = Path(get_settings().UPLOAD_DIR) / event.original_media_url
+    assert media_path.exists()
+    rendered = b"result-video-too-large"
+    monkeypatch.setattr(get_settings(), "USER_MEDIA_STORAGE_LIMIT_BYTES", len(b"normalized-video") + len(rendered) - 1)
+
+    service = MockInferenceService(
+        DetectionInferenceResult(media_width=320, media_height=180, detections=[], rendered_video=rendered)
+    )
+
+    assert process_one_job(db, inference_service=service) is True
+    db.expire_all()
+    failed_event = db.get(DetectionEvent, event.id)
+    assert failed_event.status == "FAILED"
+    assert failed_event.original_media_bytes == 0
+    assert failed_event.result_media_url is None
+    assert failed_event.result_media_bytes == 0
+    assert not list(media_path.parent.glob(f"{media_path.stem}*"))
+
+
 def test_video_worker_records_safe_timeout_message(client: TestClient, db: Session) -> None:
     from app.services.detection_inference import DetectionInferenceTimeoutError
 
@@ -1253,10 +1384,10 @@ def test_video_job_claim_is_single_use_and_stale_processing_fails(client: TestCl
     job = db.get(VideoJob, job_id)
     assert job.status == "FAILED"
     assert job.processing_stage == "FAILED"
-    assert job.failed_stage == "ANALYZING"
+    assert job.failed_stage == "NORMALIZING"
 
 
-@pytest.mark.parametrize("failed_stage", ["QUEUED", "ANALYZING", "RENDERING", "SAVING"])
+@pytest.mark.parametrize("failed_stage", ["QUEUED", "NORMALIZING", "ANALYZING", "RENDERING", "SAVING"])
 def test_video_status_preserves_failure_stage(client: TestClient, db: Session, failed_stage: str) -> None:
     user = seed_user(db, 1)
     authenticate(client, user)

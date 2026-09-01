@@ -1,6 +1,8 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path as FilePath
 from typing import Annotated, Literal
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, Query, UploadFile, status
@@ -46,11 +48,52 @@ from app.services.model_comparison import ModelComparisonDataError, load_model_c
 from app.services.ai_inference_client import get_ai_inference_client
 from app.services.model_deployment import activate_model, get_model_deployment_status, list_model_deployment_history, rollback_model
 from app.services.admin_operations_briefing import create_admin_operations_briefing, get_admin_operations_briefing_status
-from app.api.detections import IMAGE_CONTENT_TYPES, IMAGE_MAX_BYTES, WEBCAM_FRAME_MAX_BYTES, save_upload_file
+from app.api.detections import WEBCAM_FRAME_MAX_BYTES
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 KST = ZoneInfo("Asia/Seoul")
 FOUND_ITEM_STATUSES = {"DETECTED", "RECOVERED", "AVAILABLE", "CLAIM_PENDING", "RETURNED", "DISPOSED", "ARCHIVED"}
+ADMIN_IMAGE_CONTENT_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
+ADMIN_IMAGE_MAX_BYTES = 20 * 1024 * 1024
+UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+
+def admin_upload_root() -> FilePath:
+    configured = FilePath(get_settings().UPLOAD_DIR)
+    root = configured if configured.is_absolute() else FilePath(__file__).resolve().parents[2] / configured
+    return root.resolve()
+
+
+async def save_admin_upload_file(
+    file: UploadFile,
+    *,
+    current_user: User,
+    allowed_types: dict[str, str],
+    max_bytes: int,
+) -> tuple[FilePath, str]:
+    content_type = (file.content_type or "").split(";")[0].strip().lower()
+    if content_type not in allowed_types:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Unsupported media type")
+    relative_key = FilePath("detections") / "user" / str(current_user.id) / f"{uuid4().hex}{allowed_types[content_type]}"
+    root = admin_upload_root()
+    destination = (root / relative_key).resolve()
+    if not destination.is_relative_to(root):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid upload path")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    total_bytes = 0
+    try:
+        with destination.open("wb") as output:
+            while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+                total_bytes += len(chunk)
+                if total_bytes > max_bytes:
+                    raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Uploaded file is too large")
+                output.write(chunk)
+        if total_bytes == 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty")
+        return destination, relative_key.as_posix()
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
 
 
 @router.get("/ai-report", response_model=AdminAiReportResponse, summary="AI 운영 탐지 품질 집계")
@@ -390,7 +433,12 @@ async def detect_image(
     camera = db.scalar(select(Camera).where(Camera.id == camera_id, Camera.is_active.is_(True)))
     if camera is None:
         raise HTTPException(status_code=422, detail="활성 카메라를 선택해 주세요.")
-    media_path, media_key = await save_upload_file(file, current_user=current_admin, allowed_types=IMAGE_CONTENT_TYPES, max_bytes=IMAGE_MAX_BYTES)
+    media_path, media_key = await save_admin_upload_file(
+        file,
+        current_user=current_admin,
+        allowed_types=ADMIN_IMAGE_CONTENT_TYPES,
+        max_bytes=ADMIN_IMAGE_MAX_BYTES,
+    )
     try:
         event = create_operation_detection_event(db, current_admin=current_admin, camera=camera, source_type="IMAGE", media_key=media_key)
         process_detection_event(db, event_id=event.id, media_path=media_path, inference_service=inference_service)
@@ -416,7 +464,7 @@ async def register_mobile_waste(
     camera = db.scalar(select(Camera).where(Camera.id == camera_id, Camera.is_active.is_(True)))
     if camera is None:
         raise HTTPException(status_code=422, detail="활성 카메라를 선택해 주세요.")
-    media_path, media_key = await save_upload_file(
+    media_path, media_key = await save_admin_upload_file(
         file,
         current_user=current_admin,
         allowed_types={"image/jpeg": ".jpg"},

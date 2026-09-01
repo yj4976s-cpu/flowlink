@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
@@ -11,7 +11,7 @@ from app.models import DetectionEvent, VideoJob
 from app.repositories.detections import USER_ANALYSIS_PURPOSE
 
 
-ACTIVE_VIDEO_JOB_STAGES = {"QUEUED", "ANALYZING", "RENDERING", "SAVING"}
+ACTIVE_VIDEO_JOB_STAGES = {"QUEUED", "NORMALIZING", "ANALYZING", "RENDERING", "SAVING"}
 
 
 def get_upload_policy(settings: Settings) -> dict[str, object]:
@@ -87,8 +87,10 @@ def get_user_storage_usage(db: Session, *, user_id: int, settings: Settings) -> 
         DetectionEvent.user_id == user_id,
         DetectionEvent.purpose == USER_ANALYSIS_PURPOSE,
         DetectionEvent.status != "FAILED",
-        DetectionEvent.original_media_url.is_not(None),
-        DetectionEvent.original_media_bytes.is_(None),
+        or_(
+            and_(DetectionEvent.original_media_url.is_not(None), DetectionEvent.original_media_bytes.is_(None)),
+            and_(DetectionEvent.result_media_url.is_not(None), DetectionEvent.result_media_bytes.is_(None)),
+        ),
     )
     has_unknown_legacy_usage = bool(db.scalar(unknown_statement) or 0)
     limit_bytes = settings.USER_MEDIA_STORAGE_LIMIT_BYTES

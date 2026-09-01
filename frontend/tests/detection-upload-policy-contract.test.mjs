@@ -36,6 +36,16 @@ test("upload validation uses server policy values and refreshes usage after muta
   assert.match(workbenchSource, /await refreshStorageUsage\(\)/);
 });
 
+test("detection errors expose only safe upload details", () => {
+  const safeSection = apiSource.slice(apiSource.indexOf("function safeErrorMessageFromBody"));
+  assert.match(apiSource, /readSafeDetectionErrorMessage/);
+  assert.match(apiSource, /readSafeXhrDetectionErrorMessage/);
+  assert.match(apiSource, /MODEL_UNAVAILABLE_DETAILS/);
+  assert.match(apiSource, /SAFE_UPLOAD_ERROR_DETAILS/);
+  assert.match(apiSource, /SAFE_UPLOAD_ERROR_DETAILS\.has\(detail\)/);
+  assert.doesNotMatch(safeSection, /if \(typeof detail === "string"\) return detail/);
+});
+
 test("policy card keeps mobile-friendly wrapping styles", () => {
   assert.match(cssSource, /\.policyCard/);
   assert.match(cssSource, /\.policyStats[\s\S]*flex-wrap: wrap/);

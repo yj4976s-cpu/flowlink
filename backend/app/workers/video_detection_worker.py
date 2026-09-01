@@ -15,6 +15,7 @@ from app.models import DetectionEvent, VideoJob
 from app.repositories.detections import claim_next_queued_video_job, fail_detection_event
 from app.services.detection_inference import DetectionInferenceService
 from app.services.detections import process_detection_event
+from app.services.user_media_uploads import normalize_user_video_in_place
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,49 @@ def resolve_job_media_path(event: DetectionEvent) -> Path:
     return candidate
 
 
+def _candidate_media_paths(event: DetectionEvent) -> list[Path]:
+    paths: list[Path] = []
+    try:
+        original = resolve_job_media_path(event)
+    except RuntimeError:
+        original = None
+    if original is not None:
+        paths.append(original)
+        paths.extend(
+            candidate
+            for candidate in original.parent.glob(f"{original.stem}*")
+            if candidate.is_file() and candidate not in paths
+        )
+    upload_root = Path(get_settings().UPLOAD_DIR).resolve()
+    for media_url in (event.result_media_url,):
+        if not media_url:
+            continue
+        candidate = (upload_root / media_url.removeprefix("/uploads/")).resolve()
+        if candidate.is_relative_to(upload_root) and candidate.is_file() and candidate not in paths:
+            paths.append(candidate)
+    return paths
+
+
+def cleanup_video_event_files(event: DetectionEvent) -> None:
+    for path in _candidate_media_paths(event):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("failed to cleanup video media path category=media-cleanup")
+
+
+def clear_video_event_media_state(event: DetectionEvent) -> None:
+    event.original_media_bytes = 0
+    event.result_media_url = None
+    event.result_media_bytes = 0
+
+
+def mark_video_failed_and_cleanup(db: Session, *, event: DetectionEvent, message: str) -> None:
+    cleanup_video_event_files(event)
+    clear_video_event_media_state(event)
+    fail_detection_event(db, event=event, message=message, completed_at=utc_now())
+
+
 def fail_stale_jobs(db: Session) -> int:
     threshold = utc_now() - timedelta(seconds=get_settings().VIDEO_JOB_STALE_SECONDS)
     jobs = db.scalars(
@@ -38,11 +82,10 @@ def fail_stale_jobs(db: Session) -> int:
         )
     ).all()
     for job in jobs:
-        fail_detection_event(
+        mark_video_failed_and_cleanup(
             db,
             event=job.detection_event,
             message="Video processing exceeded the safe execution window",
-            completed_at=utc_now(),
         )
     if jobs:
         db.commit()
@@ -61,6 +104,16 @@ def process_one_job(db: Session, *, inference_service: DetectionInferenceService
         return False
     try:
         media_path = resolve_job_media_path(job.detection_event)
+        if job.detection_event.purpose == "USER_ANALYSIS":
+            job.processing_stage = "NORMALIZING"
+            job.updated_at = utc_now()
+            db.commit()
+            normalized_bytes = normalize_user_video_in_place(media_path, settings=get_settings())
+            db.refresh(job)
+            job.detection_event.original_media_bytes = normalized_bytes
+            job.processing_stage = "ANALYZING"
+            job.updated_at = utc_now()
+            db.commit()
         process_detection_event(
             db,
             event_id=job.detection_event_id,
@@ -72,13 +125,16 @@ def process_one_job(db: Session, *, inference_service: DetectionInferenceService
     except Exception:
         db.rollback()
         event = db.get(DetectionEvent, job.detection_event_id)
-        if event is not None and event.status != "FAILED":
-            fail_detection_event(
-                db,
-                event=event,
-                message="Video processing failed",
-                completed_at=utc_now(),
-            )
+        if event is not None:
+            cleanup_video_event_files(event)
+            clear_video_event_media_state(event)
+            if event.status != "FAILED":
+                fail_detection_event(
+                    db,
+                    event=event,
+                    message="Video processing failed",
+                    completed_at=utc_now(),
+                )
             db.commit()
         logger.error("video job failed job_id=%s event_id=%s category=processing", job.id, job.detection_event_id)
     return True

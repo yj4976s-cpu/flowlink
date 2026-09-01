@@ -305,12 +305,12 @@ CREATE TABLE video_jobs (
         ),
 
     processing_stage VARCHAR(20) NOT NULL DEFAULT 'QUEUED'
-        CHECK (processing_stage IN ('QUEUED', 'ANALYZING', 'RENDERING', 'SAVING', 'COMPLETED', 'FAILED')),
+        CHECK (processing_stage IN ('QUEUED', 'NORMALIZING', 'ANALYZING', 'RENDERING', 'SAVING', 'COMPLETED', 'FAILED')),
 
     processed_frames INTEGER NOT NULL DEFAULT 0 CHECK (processed_frames >= 0),
     total_frames INTEGER CHECK (total_frames IS NULL OR total_frames > 0),
     failed_stage VARCHAR(20)
-        CHECK (failed_stage IS NULL OR failed_stage IN ('QUEUED', 'ANALYZING', 'RENDERING', 'SAVING')),
+        CHECK (failed_stage IS NULL OR failed_stage IN ('QUEUED', 'NORMALIZING', 'ANALYZING', 'RENDERING', 'SAVING')),
 
     tracking_algorithm VARCHAR(20) NOT NULL DEFAULT 'BYTE_TRACK'
         CHECK (
@@ -1014,6 +1014,15 @@ CREATE INDEX idx_detection_events_user_purpose_created
     ON detection_events (
         user_id,
         purpose,
+        created_at DESC
+    );
+
+CREATE INDEX idx_detection_events_user_media_usage
+    ON detection_events (
+        user_id,
+        purpose,
+        status,
+        source_type,
         created_at DESC
     );
 

@@ -24,7 +24,8 @@ test("video upload uses XHR while image upload keeps fetch", () => {
 });
 
 test("workbench maps the durable server stages and polls once per second", () => {
-  assert.match(workbenchSource, /"queued" \| "analyzing" \| "rendering" \| "saving"/);
+  assert.match(workbenchSource, /"queued" \| "normalizing" \| "analyzing" \| "rendering" \| "saving"/);
+  assert.match(workbenchSource, /stage === "NORMALIZING"/);
   assert.match(workbenchSource, /getVideoProcessingStatus\(accepted\.detection_event_id/);
   assert.match(workbenchSource, /window\.setTimeout\(resolve, 1000\)/);
   assert.match(workbenchSource, /processingStateForStage/);
@@ -43,7 +44,7 @@ test("analysis shows only actual frame progress while rendering and saving remai
 });
 
 test("failed video steps preserve the stage that actually failed", () => {
-  assert.match(apiSource, /failed_stage: "QUEUED" \| "ANALYZING" \| "RENDERING" \| "SAVING" \| null/);
+  assert.match(apiSource, /failed_stage: "QUEUED" \| "NORMALIZING" \| "ANALYZING" \| "RENDERING" \| "SAVING" \| null/);
   assert.match(workbenchSource, /activeStageForServerStatus/);
   assert.match(workbenchSource, /getVideoStepState/);
   assert.match(workbenchSource, /setVideoFailedFromStage\("uploading"\)/);

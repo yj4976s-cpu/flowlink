@@ -2,6 +2,7 @@
 
 import json
 import math
+import warnings
 import shutil
 import subprocess
 from io import BytesIO
@@ -47,6 +48,14 @@ async def read_limited_upload(upload: UploadFile, *, max_bytes: int) -> bytes:
 
 def _is_animated_webp(image: Image.Image) -> bool:
     return image.format == "WEBP" and getattr(image, "is_animated", False) and getattr(image, "n_frames", 1) > 1
+
+
+def _verify_image_dimensions_before_load(image: Image.Image, *, max_pixels: int) -> None:
+    width, height = image.size
+    if width <= 0 or height <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid image dimensions")
+    if width * height > max_pixels:
+        raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Image dimensions are too large.")
 
 
 def _to_clean_rgb(image: Image.Image) -> Image.Image:
@@ -114,30 +123,36 @@ async def save_normalized_user_image(
 
     payload = await read_limited_upload(upload, max_bytes=settings.USER_IMAGE_SOURCE_MAX_BYTES)
     try:
-        with Image.open(BytesIO(payload)) as probe:
-            if _is_animated_webp(probe):
-                raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Animated WebP images are not supported.")
-            probe.verify()
-        with Image.open(BytesIO(payload)) as source:
-            source.load()
-            if source.format not in {"JPEG", "PNG", "WEBP"}:
-                raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Only JPG, PNG, and WebP images are supported.")
-            if source.width <= 0 or source.height <= 0:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid image dimensions")
-            if source.width * source.height > settings.USER_IMAGE_SOURCE_MAX_PIXELS:
-                raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Image dimensions are too large.")
-            clean = _to_clean_rgb(source)
-            try:
-                normalized_payload = _encode_jpeg_under_limits(
-                    clean,
-                    target_bytes=settings.USER_IMAGE_NORMALIZED_TARGET_BYTES,
-                    hard_max_bytes=settings.USER_IMAGE_NORMALIZED_HARD_MAX_BYTES,
-                    max_edge=settings.USER_IMAGE_NORMALIZED_MAX_EDGE,
-                )
-            finally:
-                clean.close()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(BytesIO(payload)) as probe:
+                if _is_animated_webp(probe):
+                    raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Animated WebP images are not supported.")
+                _verify_image_dimensions_before_load(probe, max_pixels=settings.USER_IMAGE_SOURCE_MAX_PIXELS)
+                probe.verify()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(BytesIO(payload)) as source:
+                if source.format not in {"JPEG", "PNG", "WEBP"}:
+                    raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Only JPG, PNG, and WebP images are supported.")
+                _verify_image_dimensions_before_load(source, max_pixels=settings.USER_IMAGE_SOURCE_MAX_PIXELS)
+                source.load()
+                clean = _to_clean_rgb(source)
+                try:
+                    normalized_payload = _encode_jpeg_under_limits(
+                        clean,
+                        target_bytes=settings.USER_IMAGE_NORMALIZED_TARGET_BYTES,
+                        hard_max_bytes=settings.USER_IMAGE_NORMALIZED_HARD_MAX_BYTES,
+                        max_edge=settings.USER_IMAGE_NORMALIZED_MAX_EDGE,
+                    )
+                finally:
+                    clean.close()
     except HTTPException:
         raise
+    except Image.DecompressionBombError as exc:
+        raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Image dimensions are too large.") from exc
+    except Image.DecompressionBombWarning as exc:
+        raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Image dimensions are too large.") from exc
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Uploaded file is not a valid image") from exc
 
@@ -159,7 +174,10 @@ def _ffmpeg_bin(name: str) -> str:
 
 
 def _run_command(command: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, shell=False, capture_output=True, text=True, timeout=timeout, check=False)
+    try:
+        return subprocess.run(command, shell=False, capture_output=True, text=True, timeout=timeout, check=False)
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Video processing timed out") from exc
 
 
 def _parse_rate(value: str | None) -> float | None:
@@ -277,7 +295,7 @@ def normalize_video_to_mp4(raw_path: Path, destination: Path, *, source_probe: d
     temp_output.replace(destination)
 
 
-async def save_normalized_user_video(
+async def save_user_video_upload(
     upload: UploadFile,
     *,
     current_user: User,
@@ -289,10 +307,8 @@ async def save_normalized_user_video(
         raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Only MP4 videos are supported.")
     relative_key = user_detection_key(current_user, ".mp4")
     destination = resolve_destination(upload_root, relative_key)
-    raw_path = destination.with_name(f"{destination.stem}.upload.tmp.mp4")
-    raw_path.unlink(missing_ok=True)
     try:
-        with raw_path.open("wb") as output:
+        with destination.open("wb") as output:
             total_bytes = 0
             while chunk := await upload.read(UPLOAD_CHUNK_BYTES):
                 total_bytes += len(chunk)
@@ -301,14 +317,27 @@ async def save_normalized_user_video(
                 output.write(chunk)
         if total_bytes == 0:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty")
-        source_probe = ffprobe_video(raw_path, settings=settings)
-        validate_video_probe(source_probe, settings=settings)
-        normalize_video_to_mp4(raw_path, destination, source_probe=source_probe, settings=settings)
-        output_probe = ffprobe_video(destination, settings=settings)
-        validate_video_probe(output_probe, settings=settings)
         return destination, relative_key.as_posix(), destination.stat().st_size
     except Exception:
         destination.unlink(missing_ok=True)
         raise
-    finally:
-        raw_path.unlink(missing_ok=True)
+
+
+def validate_saved_user_video(path: Path, *, settings: Settings) -> dict[str, float | int | str | None]:
+    probe = ffprobe_video(path, settings=settings)
+    validate_video_probe(probe, settings=settings)
+    return probe
+
+
+def normalize_user_video_in_place(path: Path, *, settings: Settings) -> int:
+    source_probe = validate_saved_user_video(path, settings=settings)
+    normalized_path = path.with_name(f"{path.stem}.normalized.final{path.suffix}")
+    try:
+        normalize_video_to_mp4(path, normalized_path, source_probe=source_probe, settings=settings)
+        normalized_size = normalized_path.stat().st_size
+        normalized_path.replace(path)
+        validate_saved_user_video(path, settings=settings)
+        return normalized_size
+    except Exception:
+        normalized_path.unlink(missing_ok=True)
+        raise

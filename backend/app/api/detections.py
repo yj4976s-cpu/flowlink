@@ -4,7 +4,6 @@ import logging
 from io import BytesIO
 from pathlib import Path
 from typing import Annotated
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Path as ApiPath, Query, UploadFile, status
 from PIL import Image, UnidentifiedImageError
@@ -37,11 +36,11 @@ from app.services.detections import (
     DetectionModelUnavailableError,
     SAFE_VIDEO_FAILURE_MESSAGE,
     SAFE_VIDEO_TIMEOUT_MESSAGE,
-    create_user_detection_event,
+    create_user_detection_event_after_quota,
     process_detection_event,
 )
 from app.services.user_media_policy import ensure_user_analysis_quota, get_upload_policy, get_user_storage_usage
-from app.services.user_media_uploads import save_normalized_user_image, save_normalized_user_video
+from app.services.user_media_uploads import save_normalized_user_image, save_user_video_upload, validate_saved_user_video
 from app.services.webcam_inference import (
     WebcamDetectionFrame,
     WebcamInferenceService,
@@ -54,17 +53,8 @@ router = APIRouter(prefix="/api/detections", tags=["detections"])
 logger = logging.getLogger(__name__)
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
-IMAGE_CONTENT_TYPES = {
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-    "image/webp": ".webp",
-}
-VIDEO_CONTENT_TYPES = {"video/mp4": ".mp4"}
-IMAGE_MAX_BYTES = 20 * 1024 * 1024
-VIDEO_MAX_BYTES = 100 * 1024 * 1024
 WEBCAM_FRAME_MAX_BYTES = 2 * 1024 * 1024
 WEBCAM_FRAME_MAX_PIXELS = 4_000_000
-UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 
 def resolve_upload_root() -> Path:
@@ -87,43 +77,6 @@ def remove_detection_media(media_url: str, upload_root: Path) -> None:
         target.unlink(missing_ok=True)
     except OSError:
         logger.warning("Failed to remove detection media: %s", target, exc_info=True)
-
-
-async def save_upload_file(
-    upload: UploadFile,
-    *,
-    current_user: User,
-    allowed_types: dict[str, str],
-    max_bytes: int,
-) -> tuple[Path, str]:
-    content_type = upload.content_type or ""
-    suffix = allowed_types.get(content_type)
-    if suffix is None:
-        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Unsupported media type")
-
-    upload_root = resolve_upload_root()
-    relative_key = Path("detections") / "user" / str(current_user.id) / f"{uuid4().hex}{suffix}"
-    destination = (upload_root / relative_key).resolve()
-    if not destination.is_relative_to(upload_root):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid upload path")
-
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    total_bytes = 0
-
-    try:
-        with destination.open("wb") as output:
-            while chunk := await upload.read(UPLOAD_CHUNK_BYTES):
-                total_bytes += len(chunk)
-                if total_bytes > max_bytes:
-                    raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Uploaded file is too large")
-                output.write(chunk)
-        if total_bytes == 0:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty")
-    except Exception:
-        destination.unlink(missing_ok=True)
-        raise
-
-    return destination, relative_key.as_posix()
 
 
 def get_latest_user_event_or_404(db: Session, *, event_id: int, user_id: int) -> DetectionEventResponse:
@@ -204,6 +157,7 @@ async def detect_image(
 ) -> DetectionEventResponse:
     settings = get_settings()
     upload_root = resolve_upload_root()
+    ensure_user_analysis_quota(db, user_id=current_user.id, source_type="IMAGE", incoming_bytes=0, settings=settings)
     media_path, media_key, media_bytes = await save_normalized_user_image(
         file,
         current_user=current_user,
@@ -211,17 +165,13 @@ async def detect_image(
         settings=settings,
     )
     try:
-        ensure_user_analysis_quota(db, user_id=current_user.id, source_type="IMAGE", incoming_bytes=media_bytes, settings=settings)
-    except Exception:
-        media_path.unlink(missing_ok=True)
-        raise
-    try:
-        event = create_user_detection_event(
+        event = create_user_detection_event_after_quota(
             db,
             current_user=current_user,
             source_type="IMAGE",
             media_key=media_key,
             original_media_bytes=media_bytes,
+            settings=settings,
         )
     except Exception:
         media_path.unlink(missing_ok=True)
@@ -244,26 +194,28 @@ async def detect_video(
     file: Annotated[UploadFile, File(description="탐지할 영상")],
 ) -> VideoDetectionAcceptedResponse:
     settings = get_settings()
+    # Cheap preflight only; the final quota check is locked together with event creation below.
     ensure_user_analysis_quota(db, user_id=current_user.id, source_type="VIDEO", incoming_bytes=0, settings=settings)
     upload_root = resolve_upload_root()
-    media_path, media_key, media_bytes = await save_normalized_user_video(
+    media_path, media_key, media_bytes = await save_user_video_upload(
         file,
         current_user=current_user,
         upload_root=upload_root,
         settings=settings,
     )
     try:
-        ensure_user_analysis_quota(db, user_id=current_user.id, source_type="VIDEO", incoming_bytes=media_bytes, settings=settings)
+        await run_in_threadpool(validate_saved_user_video, media_path, settings=settings)
     except Exception:
         media_path.unlink(missing_ok=True)
         raise
     try:
-        event = create_user_detection_event(
+        event = create_user_detection_event_after_quota(
             db,
             current_user=current_user,
             source_type="VIDEO",
             media_key=media_key,
             original_media_bytes=media_bytes,
+            settings=settings,
         )
     except Exception:
         media_path.unlink(missing_ok=True)
