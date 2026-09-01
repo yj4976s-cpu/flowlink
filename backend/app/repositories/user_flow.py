@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -34,9 +34,25 @@ FOUND_ITEM_LIFECYCLE_STATUSES = ("DETECTED", "RECOVERED", "AVAILABLE", "CLAIM_PE
 ACTIVE_OWNERSHIP_CLAIM_STATUSES = ("PENDING", "APPROVED")
 PERSONAL_ITEM_GROUP = "PERSONAL_ITEM"
 WASTE_GROUP = "WASTE"
+ADMIN_AI_REPORT_DAYS = (7, 30, 90)
 
 
-def get_admin_ai_report_data(db: Session) -> dict:
+def admin_report_period_window(days: int, *, now: datetime | None = None) -> tuple[datetime, datetime, list[str]]:
+    if days not in ADMIN_AI_REPORT_DAYS:
+        raise ValueError("Unsupported admin report period")
+    generated_at = now or datetime.now(UTC)
+    if generated_at.tzinfo is None:
+        generated_at = generated_at.replace(tzinfo=UTC)
+    generated_at = generated_at.astimezone(UTC)
+    today_kst = generated_at.astimezone(KST).date()
+    first_day = today_kst - timedelta(days=days - 1)
+    period_start = datetime.combine(first_day, time.min, tzinfo=KST).astimezone(UTC)
+    dates = [(first_day + timedelta(days=offset)).isoformat() for offset in range(days)]
+    return period_start, generated_at, dates
+
+
+def get_admin_ai_report_data(db: Session, *, days: int = 30, now: datetime | None = None) -> dict:
+    period_start, period_end, trend_dates = admin_report_period_window(days, now=now)
     reviewed = DetectedObject.processing_status.in_(("CONFIRMED", "REJECTED"))
     corrected = and_(
         DetectedObject.processing_status == "CONFIRMED",
@@ -49,6 +65,16 @@ def get_admin_ai_report_data(db: Session) -> dict:
         .join(DetectionEvent.__table__, DetectedObject.detection_event_id == DetectionEvent.id)
         .join(ObjectClass.__table__, DetectedObject.object_class_id == ObjectClass.id)
     )
+    period_event = and_(DetectionEvent.created_at >= period_start, DetectionEvent.created_at <= period_end)
+    period_detected = and_(DetectedObject.detected_at >= period_start, DetectedObject.detected_at <= period_end)
+    active_found_item = FoundItem.status != "ARCHIVED"
+    personal_items = FoundItem.object_class_id.in_(
+        select(ObjectClass.id).where(ObjectClass.group_code == PERSONAL_ITEM_GROUP)
+    )
+    active_match_candidate = MatchCandidate.found_item.has(active_found_item)
+
+    def count(model, *conditions) -> int:
+        return int(db.scalar(select(func.count(model.id)).where(*conditions)) or 0)
 
     summary = db.execute(
         select(
@@ -56,7 +82,7 @@ def get_admin_ai_report_data(db: Session) -> dict:
             func.avg(DetectedObject.confidence),
             func.sum(case((reviewed, 1), else_=0)),
             func.sum(case((corrected, 1), else_=0)),
-        ).select_from(base_join).where(operational)
+        ).select_from(base_join).where(operational, period_detected)
     ).one()
 
     class_rows = db.execute(
@@ -69,10 +95,27 @@ def get_admin_ai_report_data(db: Session) -> dict:
             func.sum(case((corrected, 1), else_=0)).label("corrected_count"),
         )
         .select_from(base_join)
-        .where(operational)
+        .where(operational, period_detected)
         .group_by(ObjectClass.code, ObjectClass.name_ko)
         .order_by(func.count(DetectedObject.id).desc(), ObjectClass.code)
     ).all()
+    active_class_rows = db.execute(
+        select(ObjectClass.code, ObjectClass.name_ko)
+        .where(ObjectClass.is_active.is_(True))
+        .order_by(ObjectClass.display_order, ObjectClass.code)
+    ).all()
+    class_metrics_by_code = {
+        row[0]: {
+            "code": row[0],
+            "name": row[1],
+            "count": int(row[2] or 0),
+            "ratio": round((row[2] or 0) / max(1, int(summary[0] or 0)), 4) if summary[0] else 0.0,
+            "average_confidence": row[3],
+            "reviewed": int(row[4] or 0),
+            "corrected": int(row[5] or 0),
+        }
+        for row in class_rows
+    }
 
     bucket = case(
         (DetectedObject.confidence < Decimal("0.5"), "under_05"),
@@ -85,7 +128,7 @@ def get_admin_ai_report_data(db: Session) -> dict:
     bucket_counts = dict(db.execute(
         select(bucket, func.count(DetectedObject.id))
         .select_from(DetectedObject.__table__.join(DetectionEvent.__table__))
-        .where(operational)
+        .where(operational, period_detected)
         .group_by(bucket)
     ).all())
     bucket_labels = (
@@ -104,14 +147,116 @@ def get_admin_ai_report_data(db: Session) -> dict:
         .join(DetectedObject, DetectedObject.object_class_id == ObjectClass.id)
         .join(DetectionEvent, DetectedObject.detection_event_id == DetectionEvent.id)
         .join(final_class, DetectedObject.final_class_code == final_class.code)
-        .where(operational, corrected)
+        .where(operational, corrected, period_detected)
         .group_by(ObjectClass.code, ObjectClass.name_ko, final_class.code, final_class.name_ko)
         .order_by(func.count(DetectedObject.id).desc(), ObjectClass.code, final_class.code)
     ).all()
 
+    trend = {date: {"detection_count": 0, "detected_object_count": 0, "found_item_count": 0, "match_count": 0, "returned_count": 0} for date in trend_dates}
+
+    def increment_by_kst_date(values, key: str) -> None:
+        for value in values:
+            date = _as_kst(value).date().isoformat()
+            if date in trend:
+                trend[date][key] += 1
+
+    increment_by_kst_date(
+        db.scalars(select(DetectionEvent.created_at).where(operational, period_event)).all(),
+        "detection_count",
+    )
+    increment_by_kst_date(
+        db.scalars(
+            select(DetectedObject.detected_at)
+            .join(DetectionEvent, DetectedObject.detection_event_id == DetectionEvent.id)
+            .where(operational, period_detected)
+        ).all(),
+        "detected_object_count",
+    )
+    increment_by_kst_date(
+        db.scalars(select(FoundItem.created_at).where(FoundItem.created_at >= period_start, FoundItem.created_at <= period_end, personal_items, active_found_item)).all(),
+        "found_item_count",
+    )
+    increment_by_kst_date(
+        db.scalars(select(MatchCandidate.created_at).where(MatchCandidate.created_at >= period_start, MatchCandidate.created_at <= period_end, active_match_candidate)).all(),
+        "match_count",
+    )
+    increment_by_kst_date(
+        db.scalars(select(OwnershipClaim.updated_at).where(OwnershipClaim.updated_at >= period_start, OwnershipClaim.updated_at <= period_end, OwnershipClaim.status == "RETURNED")).all(),
+        "returned_count",
+    )
+
+    original_class = aliased(ObjectClass)
+    final_class_for_waste = aliased(ObjectClass)
+    waste_collection_completed = (
+        select(ProcessingHistory.id)
+        .where(
+            ProcessingHistory.entity_type == "DETECTED_OBJECT",
+            ProcessingHistory.entity_id == DetectedObject.id,
+            ProcessingHistory.action_type == "WASTE_COLLECTION_COMPLETED",
+        )
+        .exists()
+    )
+    effective_waste_class = or_(
+        and_(DetectedObject.final_class_code.is_not(None), final_class_for_waste.group_code == WASTE_GROUP),
+        and_(DetectedObject.final_class_code.is_(None), original_class.group_code == WASTE_GROUP),
+    )
+    waste_collection_pending = int(db.scalar(
+        select(func.count(DetectedObject.id))
+        .join(DetectionEvent, DetectedObject.detection_event_id == DetectionEvent.id)
+        .join(original_class, DetectedObject.object_class_id == original_class.id)
+        .outerjoin(final_class_for_waste, DetectedObject.final_class_code == final_class_for_waste.code)
+        .where(
+            DetectionEvent.purpose == "OPERATION",
+            DetectedObject.processing_status == "CONFIRMED",
+            effective_waste_class,
+            ~waste_collection_completed,
+        )
+    ) or 0)
+
+    operation_summary = {
+        "operation_detection_events": count(DetectionEvent, operational, period_event),
+        "detected_objects": int(summary[0] or 0),
+        "reviewed_objects": int(summary[2] or 0),
+        "corrected_objects": int(summary[3] or 0),
+        "official_found_items": count(FoundItem, FoundItem.created_at >= period_start, FoundItem.created_at <= period_end, personal_items, active_found_item),
+        "waste_items": count(FoundItem, FoundItem.created_at >= period_start, FoundItem.created_at <= period_end, FoundItem.object_class_id.in_(select(ObjectClass.id).where(ObjectClass.group_code == WASTE_GROUP)), active_found_item),
+        "lost_reports": count(LostReport, LostReport.created_at >= period_start, LostReport.created_at <= period_end),
+        "match_candidates": count(MatchCandidate, MatchCandidate.created_at >= period_start, MatchCandidate.created_at <= period_end, active_match_candidate),
+        "ownership_claims": count(OwnershipClaim, OwnershipClaim.created_at >= period_start, OwnershipClaim.created_at <= period_end),
+        "approved_claims": count(OwnershipClaim, OwnershipClaim.updated_at >= period_start, OwnershipClaim.updated_at <= period_end, OwnershipClaim.status.in_(("APPROVED", "RETURNED"))),
+        "returned_items": count(OwnershipClaim, OwnershipClaim.updated_at >= period_start, OwnershipClaim.updated_at <= period_end, OwnershipClaim.status == "RETURNED"),
+        "average_confidence": summary[1],
+    }
+    queue_tasks = [
+        {"key": "operation_detection_pending", "label": "탐지 검토 대기", "count": count(DetectedObject, DetectedObject.processing_status == "PENDING", DetectedObject.detection_event.has(DetectionEvent.purpose == "OPERATION")), "href": "/admin/detections"},
+        {"key": "waste_collection_pending", "label": "폐기물 수거 대기", "count": waste_collection_pending, "href": "/admin/detections?followUp=WASTE_PENDING"},
+        {"key": "citizen_review_pending", "label": "시민 제보 검토 대기", "count": count(CitizenReport, CitizenReport.status == "PENDING"), "href": "/admin/citizen-reports?status=PENDING"},
+        {"key": "ownership_claim_pending", "label": "소유권 요청 검토 대기", "count": count(OwnershipClaim, OwnershipClaim.status == "PENDING"), "href": "/admin/ownership-claims?status=PENDING"},
+        {"key": "ownership_return_pending", "label": "승인 후 반환 대기", "count": count(OwnershipClaim, OwnershipClaim.status == "APPROVED"), "href": "/admin/ownership-claims?status=APPROVED"},
+    ]
+    max_stage_count = max(1, operation_summary["operation_detection_events"], operation_summary["reviewed_objects"], operation_summary["official_found_items"], operation_summary["match_candidates"], operation_summary["approved_claims"], operation_summary["returned_items"])
+
     return {
+        "period_days": days,
+        "period_start": period_start,
+        "period_end": period_end,
+        "generated_at": period_end,
+        "operation_summary": operation_summary,
+        "queue_tasks": queue_tasks,
+        "daily_trend": [{"date": date, **values} for date, values in trend.items()],
+        "operation_flow": [
+            {"key": "operation_detection_events", "label": "AI 운영 탐지", "count": operation_summary["operation_detection_events"], "ratio": round(operation_summary["operation_detection_events"] / max_stage_count, 4)},
+            {"key": "reviewed_objects", "label": "관리자 검토", "count": operation_summary["reviewed_objects"], "ratio": round(operation_summary["reviewed_objects"] / max_stage_count, 4)},
+            {"key": "official_found_items", "label": "공식 발견물", "count": operation_summary["official_found_items"], "ratio": round(operation_summary["official_found_items"] / max_stage_count, 4)},
+            {"key": "match_candidates", "label": "매칭 후보", "count": operation_summary["match_candidates"], "ratio": round(operation_summary["match_candidates"] / max_stage_count, 4)},
+            {"key": "approved_claims", "label": "소유권 승인", "count": operation_summary["approved_claims"], "ratio": round(operation_summary["approved_claims"] / max_stage_count, 4)},
+            {"key": "returned_items", "label": "반환 완료", "count": operation_summary["returned_items"], "ratio": round(operation_summary["returned_items"] / max_stage_count, 4)},
+        ],
         "summary": {"total": summary[0], "average_confidence": summary[1], "reviewed": summary[2] or 0, "corrected": summary[3] or 0},
-        "class_metrics": [{"code": row[0], "name": row[1], "count": row[2], "average_confidence": row[3], "reviewed": row[4] or 0, "corrected": row[5] or 0} for row in class_rows],
+        "class_metrics": [
+            class_metrics_by_code.get(code, {"code": code, "name": name, "count": 0, "ratio": 0.0, "average_confidence": None, "reviewed": 0, "corrected": 0})
+            for code, name in active_class_rows
+        ],
         "confidence_distribution": [{"key": key, "label": label, "count": bucket_counts.get(key, 0)} for key, label in bucket_labels],
         "correction_patterns": [{"predicted_code": row[0], "predicted_name": row[1], "final_code": row[2], "final_name": row[3], "count": row[4]} for row in correction_rows],
     }

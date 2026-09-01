@@ -22,6 +22,7 @@ from app.services.matching import create_match_candidates_for_found_item, reconc
 from app.services.geocoding import Coordinates
 from app.services.detection_inference import DetectionBBox, DetectionInferenceResult, DetectionPrediction, get_inference_service
 from app.services.copilot_providers import ChatStatus, ProviderResponseError, ProviderResult
+from app.repositories.user_flow import admin_report_period_window, get_admin_ai_report_data
 
 
 @pytest.fixture
@@ -230,7 +231,7 @@ def test_admin_archive_requires_admin_and_blocks_active_claim(client: TestClient
 
 def test_admin_ai_report_aggregates_only_operational_objects(client: TestClient, db: Session) -> None:
     seed_admin(db)
-    now = datetime(2026, 1, 2, tzinfo=UTC)
+    now = datetime.now(UTC)
     seed_detection(db, object_id=10, event_id=20, detected_at=now, confidence="0.5500", processing_status="PENDING")
     seed_detection(db, object_id=11, event_id=21, detected_at=now, confidence="0.6500", processing_status="CONFIRMED")
     seed_detection(db, object_id=12, event_id=22, detected_at=now, confidence="0.7500", processing_status="REJECTED")
@@ -247,7 +248,10 @@ def test_admin_ai_report_aggregates_only_operational_objects(client: TestClient,
     assert response.status_code == 200
     body = response.json()
     assert body["summary"] == {"total": 5, "average_confidence": "0.75", "reviewed": 3, "corrected": 1}
-    assert body["class_metrics"] == [{"code": "BAG", "name": db.get(ObjectClass, 1).name_ko, "count": 5, "average_confidence": "0.75", "reviewed": 3, "corrected": 1}]
+    assert body["class_metrics"] == [
+        {"code": "BAG", "name": db.get(ObjectClass, 1).name_ko, "count": 5, "ratio": 1.0, "average_confidence": "0.75", "reviewed": 3, "corrected": 1},
+        {"code": "FOOTWEAR", "name": "신발", "count": 0, "ratio": 0.0, "average_confidence": None, "reviewed": 0, "corrected": 0},
+    ]
     assert [item["count"] for item in body["confidence_distribution"]] == [0, 1, 1, 1, 1, 1]
     assert body["correction_patterns"] == [{"predicted_code": "BAG", "predicted_name": db.get(ObjectClass, 1).name_ko, "final_code": "FOOTWEAR", "final_name": "신발", "count": 1}]
 
@@ -261,6 +265,51 @@ def test_admin_ai_report_handles_empty_data_and_requires_admin(client: TestClien
     assert body["summary"] == {"total": 0, "average_confidence": None, "reviewed": 0, "corrected": 0}
     assert body["class_metrics"] == [] and body["correction_patterns"] == []
     assert len(body["confidence_distribution"]) == 6
+    assert body["period_days"] == 30
+    assert len(body["daily_trend"]) == 30
+    assert sum(item["detection_count"] for item in body["daily_trend"]) == 0
+
+
+@pytest.mark.parametrize("days", [7, 30, 90])
+def test_admin_ai_report_period_window_uses_kst_calendar_days(days: int) -> None:
+    period_start, period_end, trend_dates = admin_report_period_window(days, now=datetime(2026, 9, 1, 15, 30, tzinfo=UTC))
+
+    assert period_start.astimezone(UTC).tzinfo is UTC
+    assert period_end.isoformat() == "2026-09-01T15:30:00+00:00"
+    assert len(trend_dates) == days
+    assert trend_dates[-1] == "2026-09-02"
+
+
+def test_admin_ai_report_rejects_unsupported_days(client: TestClient, db: Session) -> None:
+    seed_admin(db); login(client)
+
+    assert client.get("/api/admin/ai-report?days=14").status_code == 422
+
+
+def test_admin_ai_report_separates_period_metrics_from_current_backlog(db: Session) -> None:
+    seed_admin(db)
+    now = datetime(2026, 9, 1, 15, 30, tzinfo=UTC)
+    period_start, _, _ = admin_report_period_window(7, now=now)
+    before = period_start - timedelta(seconds=1)
+    inside = period_start
+    seed_detection(db, object_id=101, event_id=201, detected_at=inside, confidence="0.8000", processing_status="PENDING")
+    seed_detection(db, object_id=102, event_id=202, detected_at=before, confidence="0.9900", processing_status="PENDING")
+    seed_detection(db, object_id=103, event_id=203, detected_at=inside, confidence="0.1000", purpose="USER_ANALYSIS", processing_status="PENDING")
+
+    body = get_admin_ai_report_data(db, days=7, now=now)
+
+    assert body["operation_summary"]["operation_detection_events"] == 1
+    assert body["summary"]["total"] == 1
+    assert sum(item["detection_count"] for item in body["daily_trend"]) == 1
+    assert sum(item["detected_object_count"] for item in body["daily_trend"]) == 1
+    assert body["daily_trend"][0]["detection_count"] == 1
+    assert body["queue_tasks"][0]["count"] == 2
+    assert body["queue_tasks"][0]["href"] == "/admin/detections"
+    assert body["queue_tasks"][1]["href"] == "/admin/detections?followUp=WASTE_PENDING"
+    assert body["queue_tasks"][2]["href"] == "/admin/citizen-reports?status=PENDING"
+    assert body["queue_tasks"][3]["href"] == "/admin/ownership-claims?status=PENDING"
+    assert body["queue_tasks"][4]["href"] == "/admin/ownership-claims?status=APPROVED"
+    assert "USER_ANALYSIS" not in str(body["operation_summary"])
 
 
 def admin_briefing_dashboard() -> dict:

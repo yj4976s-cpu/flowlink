@@ -100,8 +100,11 @@ async def save_admin_upload_file(
 def get_admin_ai_report(
     current_admin: Annotated[User, Depends(require_admin)],
     db: Annotated[Session, Depends(get_db)],
+    days: Annotated[int, Query()] = 30,
 ) -> AdminAiReportResponse:
-    return AdminAiReportResponse.model_validate(get_admin_ai_report_data(db))
+    if days not in (7, 30, 90):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported report period")
+    return AdminAiReportResponse.model_validate(get_admin_ai_report_data(db, days=days))
 
 
 @router.get("/ai-report/operations-briefing/status", response_model=AdminOperationsBriefingStatus, summary="운영 AI 브리핑 연결 상태")
