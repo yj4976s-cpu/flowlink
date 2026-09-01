@@ -62,10 +62,16 @@ test("login CTA is prominent for users but absent from admin and social registra
   assert.match(authSource, /!isLogin && !isSocialRegistration && <PasswordField id="password-confirm"/);
 });
 
-test("guest desktop and mobile headers expose register only in the guest branch", () => {
-  assert.match(headerSource, /currentUser \? \([\s\S]*: \(\s*<>[\s\S]*href="\/login"[\s\S]*href="\/register"/);
-  assert.equal((headerSource.match(/href="\/register"/g) ?? []).length, 2);
+test("guest desktop header prioritizes login and lost report without a standalone register CTA", () => {
+  assert.match(headerSource, /className="header-actions-divider" aria-hidden="true"/);
+  assert.match(headerSource, /className="header-guest-actions"[\s\S]*className="header-login-cta" href="\/login"[\s\S]*className="button button-primary header-cta" href="\/lost-reports\/new"/);
+  assert.doesNotMatch(headerSource, /className="button button-secondary header-register-cta" href="\/register"/);
+  assert.equal((headerSource.match(/href="\/register"/g) ?? []).length, 1);
+});
+
+test("mobile guest menu and login page still provide the register path", () => {
   assert.match(headerSource, /href="\/register" onClick=\{closeMenu\}/);
+  assert.match(authSource, /className="auth-signup-cta"[\s\S]*href="\/register"/);
 });
 
 test("MyPage shares the new-password policy without applying it to current password", () => {
