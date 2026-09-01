@@ -300,9 +300,15 @@ export function Header() {
               </div>
             </>
           ) : (
-            <><Link className="login-link" href="/login">로그인</Link><Link className="button button-secondary header-register-cta" href="/register">회원가입</Link></>
+            <>
+              <span className="header-actions-divider" aria-hidden="true" />
+              <div className="header-guest-actions">
+                <Link className="header-login-cta" href="/login">로그인</Link>
+                <Link className="button button-primary header-cta" href="/lost-reports/new">분실 신고하기</Link>
+              </div>
+            </>
           ))}
-          {authResolved && !isAdmin && <Link className="button button-primary header-cta" href="/lost-reports/new">분실 신고하기</Link>}
+          {authResolved && currentUser && !isAdmin && <Link className="button button-primary header-cta" href="/lost-reports/new">분실 신고하기</Link>}
           <button
             ref={buttonRef}
             type="button"
