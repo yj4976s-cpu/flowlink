@@ -42,7 +42,7 @@ def claim_next_queued_video_job(db: Session, *, started_at: datetime) -> int | N
     claimed = db.execute(
         update(VideoJob)
         .where(VideoJob.id == job_id, VideoJob.status == "PROCESSING", VideoJob.processing_stage == "QUEUED")
-        .values(status="PROCESSING", processing_stage="ANALYZING", processing_started_at=started_at, updated_at=started_at)
+        .values(status="PROCESSING", processing_stage="NORMALIZING", processing_started_at=started_at, updated_at=started_at)
     )
     return job_id if claimed.rowcount == 1 else None
 
@@ -162,7 +162,7 @@ def fail_detection_event(
     if event.video_job is not None:
         failed_stage = event.video_job.processing_stage
         event.video_job.status = "FAILED"
-        event.video_job.failed_stage = failed_stage if failed_stage in {"QUEUED", "ANALYZING", "RENDERING", "SAVING"} else None
+        event.video_job.failed_stage = failed_stage if failed_stage in {"QUEUED", "NORMALIZING", "ANALYZING", "RENDERING", "SAVING"} else None
         event.video_job.processing_stage = "FAILED"
         event.video_job.error_message = message
         event.video_job.processing_completed_at = completed_at

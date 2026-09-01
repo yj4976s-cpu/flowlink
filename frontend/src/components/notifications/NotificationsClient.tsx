@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/common/Icon";
+import { getNotificationDestination } from "@/lib/notificationRouting";
 import {
   listNotifications,
   markNotificationRead,
@@ -47,6 +48,18 @@ function getTypeMeta(notificationType: string) {
       icon: "check" as const,
     };
   }
+  if (notificationType === "DETECTION_COMPLETED") {
+    return {
+      label: "AI 분석 완료",
+      icon: "scan" as const,
+    };
+  }
+  if (notificationType === "DETECTION_FAILED") {
+    return {
+      label: "AI 분석 실패",
+      icon: "info" as const,
+    };
+  }
   return {
     label: "알림",
     icon: "document" as const,
@@ -63,6 +76,13 @@ function formatNotificationMessage(notification: NotificationResponse) {
 }
 
 function getNotificationAction(notification: NotificationResponse) {
+  const destination = getNotificationDestination(notification);
+  if (destination) {
+    return {
+      href: destination.href,
+      label: destination.action,
+    };
+  }
   if (notification.notification_type === "MATCH_FOUND" && notification.related_type === "LOST_REPORT" && notification.related_id !== null) {
     return {
       href: `/matches?reportId=${notification.related_id}`,

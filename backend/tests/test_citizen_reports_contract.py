@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from io import BytesIO
 
 import pytest
-from fastapi import UploadFile
+from fastapi import HTTPException, UploadFile
 from fastapi.testclient import TestClient
 from PIL import Image
 from sqlalchemy import create_engine
@@ -502,6 +502,45 @@ def test_lost_report_rejects_oversized_unsupported_and_unauthenticated_uploads(c
     gif = BytesIO(); Image.new("RGB", (8, 8), "red").save(gif, format="GIF")
     assert client.post("/api/lost-reports", data=fields, files={"image": ("item.gif", gif.getvalue(), "image/gif")}).status_code == 415
     assert client.post("/api/lost-reports", data=fields, files={"image": ("pretend.png", b"not-an-image", "image/png")}).status_code == 415
+
+
+def test_public_image_rejects_unsafe_image_types_and_large_dimensions(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("app.services.image_uploads.MAX_IMAGE_PIXELS", 4)
+
+    with pytest.raises(HTTPException) as heic:
+        asyncio.run(
+            save_public_image(
+                UploadFile(filename="photo.heic", file=BytesIO(b"not-heic"), headers={"content-type": "image/heic"}),
+                tmp_path,
+            )
+        )
+    assert heic.value.status_code == 415
+
+    animated = BytesIO()
+    Image.new("RGB", (1, 1), "red").save(
+        animated,
+        format="WEBP",
+        save_all=True,
+        append_images=[Image.new("RGB", (1, 1), "blue")],
+    )
+    with pytest.raises(HTTPException) as webp:
+        asyncio.run(
+            save_public_image(
+                UploadFile(filename="animated.webp", file=BytesIO(animated.getvalue()), headers={"content-type": "image/webp"}),
+                tmp_path,
+            )
+        )
+    assert webp.value.status_code == 415
+
+    with pytest.raises(HTTPException) as huge:
+        asyncio.run(
+            save_public_image(
+                UploadFile(filename="huge.jpg", file=BytesIO(image_bytes(width=3, height=3)), headers={"content-type": "image/jpeg"}),
+                tmp_path,
+            )
+        )
+    assert huge.value.status_code == 413
+    assert not list(tmp_path.glob("**/*"))
 
 
 def test_lost_report_db_failure_removes_uploaded_file(client: TestClient, db: Session, tmp_path, monkeypatch) -> None:

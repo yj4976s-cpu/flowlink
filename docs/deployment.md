@@ -253,6 +253,29 @@ Expected:
 
 ## Manual smoke checklist
 
+## User detection media usage backfill
+
+PR #137 adds nullable media byte columns for existing user detection records.
+Before enforcing storage quota on an instance with old uploads, backfill only the
+files that still exist under `UPLOAD_DIR`.
+
+Dry-run:
+
+```bash
+docker compose --env-file .env.production exec backend python scripts/backfill_detection_media_bytes.py
+```
+
+Apply:
+
+```bash
+docker compose --env-file .env.production exec backend python scripts/backfill_detection_media_bytes.py --apply
+```
+
+The script only handles `USER_ANALYSIS` records, refuses paths outside
+`UPLOAD_DIR`, and does not invent sizes for missing legacy files. If old files
+are missing, `/api/detections/me/storage-usage` reports
+`has_unknown_legacy_usage=true` so users can clean old analysis records.
+
 LAN HTTP:
 
 - open `http://mbc-sw.iptime.org:3202`

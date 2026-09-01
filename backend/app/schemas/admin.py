@@ -361,6 +361,7 @@ class AdminAiReportClassMetric(BaseModel):
     code: str
     name: str
     count: int
+    ratio: float = Field(ge=0, le=1)
     average_confidence: Decimal | None = None
     reviewed: int
     corrected: int
@@ -380,7 +381,53 @@ class AdminAiReportCorrectionPattern(BaseModel):
     count: int
 
 
+class AdminAiReportOperationSummary(BaseModel):
+    operation_detection_events: int
+    detected_objects: int
+    reviewed_objects: int
+    corrected_objects: int
+    official_found_items: int
+    waste_items: int
+    lost_reports: int
+    match_candidates: int
+    ownership_claims: int
+    approved_claims: int
+    returned_items: int
+    average_confidence: Decimal | None = None
+
+
+class AdminAiReportQueueTask(BaseModel):
+    key: str
+    label: str
+    count: int
+    href: str
+
+
+class AdminAiReportDailyTrendPoint(BaseModel):
+    date: str
+    detection_count: int
+    detected_object_count: int
+    found_item_count: int
+    match_count: int
+    returned_count: int
+
+
+class AdminAiReportOperationFlowStep(BaseModel):
+    key: str
+    label: str
+    count: int
+    ratio: float = Field(ge=0, le=1)
+
+
 class AdminAiReportResponse(BaseModel):
+    period_days: int
+    period_start: datetime
+    period_end: datetime
+    generated_at: datetime
+    operation_summary: AdminAiReportOperationSummary
+    queue_tasks: list[AdminAiReportQueueTask]
+    daily_trend: list[AdminAiReportDailyTrendPoint]
+    operation_flow: list[AdminAiReportOperationFlowStep]
     summary: AdminAiReportSummary
     class_metrics: list[AdminAiReportClassMetric]
     confidence_distribution: list[AdminAiReportConfidenceBucket]
@@ -418,6 +465,31 @@ class AdminOperationsBriefingResponse(AdminOperationsBriefingStatus):
     metrics: AdminOperationsBriefingMetrics
     priority_task: AdminOperationsBriefingTask | None = None
     tasks: list[AdminOperationsBriefingTask]
+
+
+class AdminNotificationItem(BaseModel):
+    id: int
+    notification_type: str
+    title: str
+    message: str
+    related_type: str
+    related_id: int
+    read_at: datetime | None
+    resolved_at: datetime | None
+    created_at: datetime
+    is_read: bool
+    is_actionable: bool
+
+
+class AdminNotificationListResponse(BaseModel):
+    items: list[AdminNotificationItem]
+    total: int
+    unread_count: int
+    actionable_count: int
+
+
+class AdminNotificationReadAllResponse(BaseModel):
+    marked_read_count: int
 
 
 class AdminModelComparisonEvaluation(BaseModel):

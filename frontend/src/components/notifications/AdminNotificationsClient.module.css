@@ -1,0 +1,40 @@
+.page { min-height: calc(100vh - 172px); width: min(100% - 72px, 1120px); margin: 0 auto; padding: 68px 0 96px; }
+.hero { margin-bottom: 18px; padding: clamp(28px, 5vw, 50px); border: 1px solid var(--color-border); border-radius: 30px; background: radial-gradient(circle at 86% 16%, color-mix(in srgb, var(--color-primary) 14%, transparent), transparent 34%), linear-gradient(135deg, var(--color-surface), color-mix(in srgb, var(--color-primary-soft) 52%, var(--color-surface))); box-shadow: var(--shadow-card); display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 380px); gap: 24px; align-items: end; }
+.eyebrow { margin: 0 0 12px; color: var(--color-primary); font-size: 12px; font-weight: 900; letter-spacing: .12em; }
+.hero h1 { margin: 0; color: var(--color-text); font-family: var(--font-editorial), Batang, serif; font-size: clamp(38px, 5.4vw, 60px); line-height: 1.14; letter-spacing: -.04em; }
+.hero p { max-width: 680px; margin: 18px 0 0; color: var(--color-text-muted); font-size: 16px; line-height: 1.8; word-break: keep-all; }
+.summaryGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.summaryGrid div { min-height: 112px; padding: 18px; border: 1px solid var(--color-border); border-radius: 22px; background: color-mix(in srgb, var(--color-surface) 86%, transparent); display: grid; align-content: center; gap: 8px; }
+.summaryGrid span { color: var(--color-text-muted); font-size: 12px; font-weight: 900; }
+.summaryGrid strong { color: var(--color-text); font-size: 30px; font-weight: 900; font-variant-numeric: tabular-nums; }
+.toolbar { margin: 0 0 26px; padding: 14px; border: 1px solid var(--color-border); border-radius: 24px; background: var(--color-surface); box-shadow: var(--shadow-card); display: flex; justify-content: space-between; gap: 14px; align-items: center; }
+.segmentedControl { padding: 5px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface-soft); display: inline-flex; gap: 5px; flex-wrap: wrap; }
+.segmentedControl button { min-height: 40px; min-width: 94px; border: 0; border-radius: 999px; padding: 0 16px; background: transparent; color: var(--color-text-muted); font: inherit; font-weight: 900; cursor: pointer; transition: background .18s ease, color .18s ease; }
+.segmentedControl button:hover, .segmentedControl button:focus-visible, .segmentedControl button[aria-pressed="true"] { background: var(--color-primary); color: var(--color-on-primary); }
+.segmentedControl button:focus-visible, .moreButton:focus-visible { outline: 3px solid color-mix(in srgb, var(--color-secondary) 56%, transparent); outline-offset: 2px; }
+.liveRegion { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+.listSection { display: grid; gap: 16px; }
+.notificationList { display: grid; gap: 14px; }
+.card, .stateCard { border: 1px solid var(--color-border); border-radius: 26px; background: var(--color-surface); box-shadow: var(--shadow-card); }
+.card { padding: clamp(18px, 3vw, 26px); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 18px; align-items: start; }
+.card[data-status="unread"] { border-color: color-mix(in srgb, var(--color-primary) 46%, var(--color-border)); background: radial-gradient(circle at 3% 0%, color-mix(in srgb, var(--color-primary) 10%, transparent), transparent 28%), var(--color-surface); }
+.card[data-status="resolved"] { background: color-mix(in srgb, var(--color-surface-soft) 42%, var(--color-surface)); }
+.cardIcon { width: 52px; height: 52px; border: 1px solid var(--color-border); border-radius: 18px; background: var(--color-primary-soft); color: var(--color-primary); display: grid; place-items: center; }
+.cardBody { min-width: 0; }
+.cardMeta { margin-bottom: 10px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.cardMeta span, .cardMeta em, .cardMeta time { min-height: 28px; padding: 6px 10px; border-radius: 999px; font-size: 12px; font-weight: 900; }
+.cardMeta span { background: var(--color-primary-soft); color: var(--color-primary); }
+.cardMeta em { background: color-mix(in srgb, var(--color-secondary) 13%, var(--color-surface)); color: var(--color-text); font-style: normal; }
+.cardMeta time { color: var(--color-text-muted); }
+.card h2 { margin: 0; color: var(--color-text); font-size: clamp(20px, 2.4vw, 27px); line-height: 1.35; letter-spacing: -.03em; }
+.card p { margin: 9px 0 0; color: var(--color-text-muted); font-size: 15px; line-height: 1.7; word-break: keep-all; }
+.card small { display: block; margin-top: 10px; color: var(--color-text-muted); font-size: 12px; font-weight: 800; }
+.cardActions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
+.cardActions :global(.button) { white-space: nowrap; }
+.stateCard { min-height: 180px; padding: clamp(24px, 4vw, 36px); color: var(--color-text); display: flex; gap: 16px; align-items: flex-start; }
+.stateCard :global(.icon) { color: var(--color-primary); }
+.stateCard strong { font-size: 18px; line-height: 1.5; }
+.moreButton { justify-self: center; min-height: 44px; padding: 0 22px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface); color: var(--color-primary); font: inherit; font-weight: 900; cursor: pointer; }
+@media (max-width: 900px) { .page { width: min(100% - 40px, 760px); } .hero { grid-template-columns: 1fr; } .card { grid-template-columns: auto minmax(0, 1fr); } .cardActions { grid-column: 1 / -1; justify-content: flex-start; } }
+@media (max-width: 640px) { .page { width: calc(100% - 32px); padding: 52px 0 76px; } .hero, .toolbar, .card, .stateCard { border-radius: 22px; } .hero { padding: 26px 22px; } .summaryGrid { grid-template-columns: 1fr; } .toolbar { align-items: stretch; flex-direction: column; } .segmentedControl, .segmentedControl button, .toolbar :global(.button), .cardActions, .cardActions :global(.button) { width: 100%; } .card { grid-template-columns: 1fr; } .cardIcon { width: 46px; height: 46px; } }
+@media (prefers-reduced-motion: reduce) { .segmentedControl button { transition: none; } }

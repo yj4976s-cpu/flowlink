@@ -182,7 +182,19 @@ CREATE TABLE detection_events (
     original_media_url TEXT NOT NULL
         CHECK (BTRIM(original_media_url) <> ''),
 
+    original_media_bytes BIGINT
+        CHECK (
+            original_media_bytes IS NULL
+            OR original_media_bytes >= 0
+        ),
+
     result_media_url TEXT,
+
+    result_media_bytes BIGINT
+        CHECK (
+            result_media_bytes IS NULL
+            OR result_media_bytes >= 0
+        ),
 
     ai_model_id VARCHAR(100),
 
@@ -293,12 +305,12 @@ CREATE TABLE video_jobs (
         ),
 
     processing_stage VARCHAR(20) NOT NULL DEFAULT 'QUEUED'
-        CHECK (processing_stage IN ('QUEUED', 'ANALYZING', 'RENDERING', 'SAVING', 'COMPLETED', 'FAILED')),
+        CHECK (processing_stage IN ('QUEUED', 'NORMALIZING', 'ANALYZING', 'RENDERING', 'SAVING', 'COMPLETED', 'FAILED')),
 
     processed_frames INTEGER NOT NULL DEFAULT 0 CHECK (processed_frames >= 0),
     total_frames INTEGER CHECK (total_frames IS NULL OR total_frames > 0),
     failed_stage VARCHAR(20)
-        CHECK (failed_stage IS NULL OR failed_stage IN ('QUEUED', 'ANALYZING', 'RENDERING', 'SAVING')),
+        CHECK (failed_stage IS NULL OR failed_stage IN ('QUEUED', 'NORMALIZING', 'ANALYZING', 'RENDERING', 'SAVING')),
 
     tracking_algorithm VARCHAR(20) NOT NULL DEFAULT 'BYTE_TRACK'
         CHECK (
@@ -724,6 +736,7 @@ CREATE TABLE notifications (
         CHECK (
             notification_type IN (
                 'DETECTION_COMPLETED',
+                'DETECTION_FAILED',
                 'MATCH_FOUND',
                 'STATUS_CHANGED',
                 'CITIZEN_REPORT_STATUS'
@@ -743,6 +756,58 @@ CREATE TABLE notifications (
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE UNIQUE INDEX uq_notifications_detection_terminal_once
+ON notifications (user_id, notification_type, related_type, related_id)
+WHERE related_type = 'DETECTION_EVENT'
+  AND notification_type IN ('DETECTION_COMPLETED', 'DETECTION_FAILED');
+
+
+CREATE TABLE admin_notifications (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    notification_type VARCHAR(60) NOT NULL CHECK (
+        notification_type IN (
+            'OPERATION_DETECTION_REVIEW_REQUIRED',
+            'FOUND_ITEM_REGISTRATION_REQUIRED',
+            'WASTE_COLLECTION_REQUIRED',
+            'CITIZEN_REPORT_REVIEW_REQUIRED',
+            'OWNERSHIP_CLAIM_REVIEW_REQUIRED',
+            'OWNERSHIP_RETURN_REQUIRED'
+        )
+    ),
+    title VARCHAR(150) NOT NULL CHECK (BTRIM(title) <> ''),
+    message TEXT NOT NULL CHECK (BTRIM(message) <> ''),
+    related_type VARCHAR(50) NOT NULL CHECK (BTRIM(related_type) <> ''),
+    related_id BIGINT NOT NULL CHECK (related_id > 0),
+    resolved_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX uq_admin_notifications_business_event
+ON admin_notifications (notification_type, related_type, related_id);
+
+CREATE INDEX ix_admin_notifications_created_at
+ON admin_notifications (created_at DESC);
+
+CREATE INDEX ix_admin_notifications_resolved_at
+ON admin_notifications (resolved_at);
+
+CREATE TABLE admin_notification_reads (
+    admin_notification_id BIGINT NOT NULL
+        REFERENCES admin_notifications(id)
+        ON DELETE CASCADE,
+    admin_user_id BIGINT NOT NULL
+        REFERENCES users(id)
+        ON DELETE CASCADE,
+    read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (admin_notification_id, admin_user_id)
+);
+
+CREATE UNIQUE INDEX uq_admin_notification_reads_notification_admin
+ON admin_notification_reads (admin_notification_id, admin_user_id);
+
+CREATE INDEX ix_admin_notification_reads_admin_user
+ON admin_notification_reads (admin_user_id, read_at DESC);
 
 
 -- =========================================================
@@ -1002,6 +1067,15 @@ CREATE INDEX idx_detection_events_user_purpose_created
     ON detection_events (
         user_id,
         purpose,
+        created_at DESC
+    );
+
+CREATE INDEX idx_detection_events_user_media_usage
+    ON detection_events (
+        user_id,
+        purpose,
+        status,
+        source_type,
         created_at DESC
     );
 
