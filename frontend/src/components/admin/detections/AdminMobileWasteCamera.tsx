@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/common/Icon";
 import {
   completeDetectedWasteCollection,
@@ -97,6 +97,8 @@ function OverlayBox({
 export function AdminMobileWasteCamera() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const trackingSessionId = useId();
+  const trackingSessionIdRef = useRef(`admin-webcam-${trackingSessionId}`);
   const stageRef = useRef<HTMLDivElement>(null);
   const detectTimerRef = useRef<number | null>(null);
   const detectAbortRef = useRef<AbortController | null>(null);
@@ -205,7 +207,7 @@ export function AdminMobileWasteCamera() {
     detectAbortRef.current = controller;
     try {
       const blob = await captureFrame();
-      const nextFrame = await detectWebcamFrame(blob, controller.signal);
+      const nextFrame = await detectWebcamFrame(blob, trackingSessionIdRef.current, controller.signal);
       if (controller.signal.aborted || !runningRef.current) return;
       setSnapshot({ frame: nextFrame, blob });
       setError("");

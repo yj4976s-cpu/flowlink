@@ -200,6 +200,36 @@ class AIInferenceClient:
             content_type="image/jpeg",
         )
 
+    def track_webcam_frame(self, image: Image.Image, *, session_id: str) -> AIInferenceVideoResult:
+        payload = BytesIO()
+        image.convert("RGB").save(payload, format="JPEG", quality=90)
+        if not self.base_url or not self.internal_api_key:
+            raise AIInferenceUnavailableError("AI inference service is unavailable")
+        try:
+            response = httpx.post(
+                f"{self.base_url}/api/inference/webcam/frames",
+                headers={"X-Internal-API-Key": self.internal_api_key},
+                data={"session_id": session_id},
+                files={"file": ("webcam-frame.jpg", payload.getvalue(), "image/jpeg")},
+                timeout=self.timeout_seconds,
+            )
+            response.raise_for_status()
+            parsed = AIInferenceVideoResponse.model_validate({
+                **response.json(), "duration_ms": 0, "frame_count": 1, "fps": 1,
+            })
+        except (httpx.RequestError, httpx.HTTPStatusError, ValueError, ValidationError) as exc:
+            raise AIInferenceUnavailableError("AI inference service is unavailable") from exc
+        return AIInferenceVideoResult(
+            media_width=parsed.media_width, media_height=parsed.media_height, duration_ms=0,
+            frame_count=1, fps=1, inference_ms=parsed.inference_ms,
+            tracks=[AIInferenceVideoTrack(
+                model_label=track.label, confidence=track.confidence,
+                bbox=AIInferenceBBox(x=track.bbox.x, y=track.bbox.y, width=track.bbox.width, height=track.bbox.height),
+                track_id=track.track_id, first_seen_ms=track.first_seen_ms,
+                last_seen_ms=track.last_seen_ms, appearance_count=track.appearance_count,
+            ) for track in parsed.tracks],
+        )
+
     def infer_image_bytes(self, payload: bytes, *, filename: str, content_type: str) -> AIInferenceResult:
         if not self.base_url or not self.internal_api_key:
             raise AIInferenceUnavailableError("AI inference service is unavailable")

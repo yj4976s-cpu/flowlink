@@ -39,3 +39,10 @@ class VideoInferenceResponse(BaseModel):
     fps: float = Field(gt=0)
     inference_ms: float = Field(ge=0)
     tracks: list[InferenceVideoTrack] = Field(default_factory=list)
+
+
+class WebcamTrackingResponse(BaseModel):
+    media_width: int
+    media_height: int
+    inference_ms: float = Field(ge=0)
+    tracks: list[InferenceVideoTrack] = Field(default_factory=list)

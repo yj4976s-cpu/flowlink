@@ -66,7 +66,7 @@ class MockWebcamInferenceService(WebcamInferenceService):
     def __init__(self, result: WebcamDetectionFrame | Exception) -> None:
         self.result = result
 
-    def analyze_frame(self, image: Image.Image) -> WebcamDetectionFrame:
+    def analyze_frame(self, image: Image.Image, *, session_id: str = "test") -> WebcamDetectionFrame:
         if isinstance(self.result, Exception):
             raise self.result
         return WebcamDetectionFrame(
@@ -106,6 +106,19 @@ class FakeAIInferenceClient:
             predictions=self.result.predictions,
         )
 
+    def track_webcam_frame(self, image: Image.Image, *, session_id: str) -> AIInferenceVideoResult:
+        self.image_calls += 1
+        assert image.mode == "RGB"
+        assert session_id
+        return AIInferenceVideoResult(
+            media_width=image.width, media_height=image.height, duration_ms=0,
+            frame_count=1, fps=1, inference_ms=self.result.inference_ms,
+            tracks=[AIInferenceVideoTrack(
+                model_label=item.model_label, confidence=item.confidence, bbox=item.bbox,
+                track_id=index, first_seen_ms=0, last_seen_ms=600, appearance_count=3,
+            ) for index, item in enumerate(self.result.predictions, start=1)],
+        )
+
 
 class FailingAIInferenceClient:
     def __init__(self, error: Exception) -> None:
@@ -118,6 +131,9 @@ class FailingAIInferenceClient:
         raise self.error
 
     def infer_image(self, image: Image.Image) -> AIInferenceResult:
+        raise self.error
+
+    def track_webcam_frame(self, image: Image.Image, *, session_id: str) -> AIInferenceVideoResult:
         raise self.error
 
 

@@ -27,6 +27,10 @@ class WebcamDetectionObject:
     class_code: str | None = None
     class_name_ko: str | None = None
     group_code: str | None = None
+    track_id: int | None = None
+    first_seen_ms: int | None = None
+    last_seen_ms: int | None = None
+    appearance_count: int = 1
 
 
 @dataclass(frozen=True)
@@ -46,9 +50,9 @@ class WebcamInferenceService:
     def __init__(self, *, ai_client) -> None:
         self.ai_client = ai_client
 
-    def analyze_frame(self, image: Image.Image) -> WebcamDetectionFrame:
+    def analyze_frame(self, image: Image.Image, *, session_id: str = "legacy") -> WebcamDetectionFrame:
         try:
-            result = self.ai_client.infer_image(image)
+            result = self.ai_client.track_webcam_frame(image, session_id=session_id)
         except RuntimeError as exc:
             raise WebcamInferenceUnavailableError("Webcam detection model is unavailable") from exc
         return WebcamDetectionFrame(
@@ -63,8 +67,12 @@ class WebcamInferenceService:
                     group_code=metadata[1] if metadata else None,
                     confidence=prediction.confidence,
                     bbox=prediction.bbox,
+                    track_id=prediction.track_id,
+                    first_seen_ms=prediction.first_seen_ms,
+                    last_seen_ms=prediction.last_seen_ms,
+                    appearance_count=prediction.appearance_count,
                 )
-                for prediction in result.predictions
+                for prediction in result.tracks
                 for class_code in [model_label_to_class_code(prediction.model_label)]
                 for metadata in [WEBCAM_CLASS_METADATA.get(class_code) if class_code else None]
             ],

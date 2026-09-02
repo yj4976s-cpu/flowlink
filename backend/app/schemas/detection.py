@@ -53,6 +53,10 @@ class WebcamDetectionObjectResponse(BaseModel):
     group_code: str | None = None
     confidence: float
     bbox: DetectionBBoxResponse
+    track_id: int | None = None
+    first_seen_ms: int | None = None
+    last_seen_ms: int | None = None
+    appearance_count: int = 1
 
 
 class WebcamDetectionFrameResponse(BaseModel):

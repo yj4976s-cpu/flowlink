@@ -15,7 +15,50 @@ from app.core.config import get_settings
 from app.main import app
 from app.schemas.inference import InferenceBBox, InferenceVideoTrack, VideoInferenceResponse
 from app.services.inference import ImageInferenceService, InferenceModelUnavailableError, get_inference_service
-from app.services.yolo_runtime import YoloBBox, YoloPrediction, YoloRuntime, get_yolo_runtime
+from app.services.yolo_runtime import (
+    TrackQualityPolicy,
+    YoloBBox,
+    YoloPrediction,
+    YoloRuntime,
+    YoloTrackObservation,
+    YoloTrackPrediction,
+    _aggregate_track_observations,
+    get_yolo_runtime,
+)
+
+
+def test_track_quality_policy_rejects_short_sparse_and_low_confidence_tracks() -> None:
+    policy = TrackQualityPolicy(
+        min_appearances=3,
+        min_duration_ms=500,
+        min_median_confidence=0.5,
+        min_density=0.5,
+        min_dominant_class_ratio=0.7,
+    )
+
+    def observation(frame: int, seen_ms: int, confidence: float, label: str = "bag") -> YoloTrackObservation:
+        return YoloTrackObservation(
+            prediction=YoloTrackPrediction(
+                model_label=label, confidence=confidence,
+                bbox=YoloBBox(x=1, y=2, width=10, height=20), track_id=7,
+                first_seen_ms=seen_ms, last_seen_ms=seen_ms, appearance_count=1,
+            ),
+            frame_index=frame,
+        )
+
+    stable = [observation(0, 0, 0.6), observation(1, 300, 0.8), observation(2, 600, 0.7)]
+    short = [observation(0, 0, 0.9), observation(1, 100, 0.9), observation(2, 200, 0.9)]
+    sparse = [observation(0, 0, 0.9), observation(5, 300, 0.9), observation(10, 600, 0.9)]
+    low_confidence = [observation(0, 0, 0.3), observation(1, 300, 0.4), observation(2, 600, 0.9)]
+
+    tracks = _aggregate_track_observations(
+        {7: stable, 8: short, 9: sparse, 10: low_confidence}, policy=policy,
+    )
+
+    assert len(tracks) == 1
+    assert tracks[0].track_id == 7
+    assert tracks[0].confidence == 0.7
+    assert tracks[0].appearance_count == 3
 
 TEST_INTERNAL_API_KEY = "test-internal-api-key"
 
