@@ -17,7 +17,7 @@ from app.schemas.inference import (
     VideoInferenceResponse,
     WebcamTrackingResponse,
 )
-from app.services.model_runtime_manager import get_active_yolo_runtime_snapshot
+from app.services.model_runtime_manager import ModelRuntimeError, get_active_yolo_runtime_snapshot
 from app.services.yolo_runtime import YoloRuntime, YoloRuntimeUnavailableError
 from app.services.video_progress import VideoProgressReporter
 
@@ -36,7 +36,10 @@ class ImageInferenceService:
     def _runtime_snapshot(self):
         if self.runtime is not None:
             return getattr(self.runtime, "model_id", None), self.runtime
-        snapshot = get_active_yolo_runtime_snapshot()
+        try:
+            snapshot = get_active_yolo_runtime_snapshot()
+        except ModelRuntimeError as exc:
+            raise InferenceModelUnavailableError("AI model is unavailable") from exc
         return snapshot.model_id, snapshot.runtime
 
     def analyze_image_bytes(self, payload: bytes, *, content_type: str) -> ImageInferenceResponse:
@@ -171,7 +174,8 @@ class ImageInferenceService:
     def track_webcam_image(self, image: Image.Image, *, session_id: str) -> WebcamTrackingResponse:
         started_at = perf_counter()
         try:
-            tracks = self.runtime.track_webcam_frame(image, session_id=session_id)
+            _, runtime = self._runtime_snapshot()
+            tracks = runtime.track_webcam_frame(image, session_id=session_id)
         except YoloRuntimeUnavailableError as exc:
             raise InferenceModelUnavailableError("AI model is unavailable") from exc
         inference_ms = (perf_counter() - started_at) * 1000
