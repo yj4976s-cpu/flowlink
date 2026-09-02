@@ -19,6 +19,7 @@ from app.core.config import get_settings
 from app.main import app
 from app.schemas.inference import InferenceBBox, InferenceVideoTrack, VideoInferenceResponse, WebcamTrackingResponse
 from app.services.inference import ImageInferenceService, InferenceModelUnavailableError, get_inference_service
+from app.services.model_runtime_manager import ModelRuntimeError
 from app.services.yolo_runtime import (
     TrackQualityPolicy,
     YoloBBox,
@@ -235,6 +236,70 @@ def test_webcam_endpoint_passes_session_and_returns_stable_contract(client: Test
     assert response.status_code == 200
     assert service.sessions == ["browser-a"]
     assert response.json()["tracks"] == []
+
+
+def test_webcam_service_uses_current_runtime_snapshot_when_not_injected(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, str]] = []
+
+    class SnapshotRuntime:
+        def __init__(self, model_id: str) -> None:
+            self.model_id = model_id
+
+        def track_webcam_frame(self, image: Image.Image, *, session_id: str):
+            calls.append((self.model_id, session_id))
+            assert image.size == (32, 24)
+            return []
+
+    active_snapshot = {
+        "value": types.SimpleNamespace(model_id="model-a", runtime=SnapshotRuntime("model-a"))
+    }
+    monkeypatch.setattr(
+        "app.services.inference.get_active_yolo_runtime_snapshot",
+        lambda: active_snapshot["value"],
+    )
+    service = ImageInferenceService()
+
+    first = service.track_webcam_image(
+        Image.new("RGB", (32, 24)), session_id="user-1:browser-a"
+    )
+    active_snapshot["value"] = types.SimpleNamespace(
+        model_id="model-b", runtime=SnapshotRuntime("model-b")
+    )
+    second = service.track_webcam_image(
+        Image.new("RGB", (32, 24)), session_id="user-1:browser-a"
+    )
+
+    assert calls == [
+        ("model-a", "user-1:browser-a"),
+        ("model-b", "user-1:browser-a"),
+    ]
+    assert first.media_width == second.media_width == 32
+    assert first.media_height == second.media_height == 24
+    assert first.tracks == second.tracks == []
+
+
+def test_webcam_endpoint_returns_safe_503_when_runtime_snapshot_is_unavailable(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def unavailable_snapshot():
+        raise ModelRuntimeError("secret model path: /app/models/private.pt")
+
+    monkeypatch.setattr(
+        "app.services.inference.get_active_yolo_runtime_snapshot",
+        unavailable_snapshot,
+    )
+    app.dependency_overrides[get_inference_service] = lambda: ImageInferenceService()
+
+    response = client.post(
+        "/api/inference/webcam/frames",
+        data={"session_id": "browser-a"},
+        files=webcam_file(),
+        headers=auth_headers(),
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "AI model is unavailable"}
+    assert "/app/models" not in response.text
 
 
 def test_health_does_not_require_model_load(client: TestClient) -> None:
