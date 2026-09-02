@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Response, UploadFile, status
 from PIL import Image, UnidentifiedImageError
 from starlette.concurrency import run_in_threadpool
 
@@ -43,6 +43,8 @@ async def track_webcam_frame(
     session_id: Annotated[str, Form(min_length=1, max_length=160)],
     file: Annotated[UploadFile, File(description="웹캠 JPEG 프레임")],
 ) -> WebcamTrackingResponse:
+    if (file.content_type or "").lower() not in {"image/jpeg", "image/jpg"}:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Unsupported media type")
     payload = await file.read(get_settings().IMAGE_MAX_BYTES + 1)
     if not payload:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty")
@@ -51,6 +53,8 @@ async def track_webcam_frame(
     try:
         with Image.open(BytesIO(payload)) as source:
             source.load()
+            if source.width * source.height > get_settings().IMAGE_MAX_PIXELS:
+                raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Uploaded image has too many pixels")
             image = source.convert("RGB")
     except (UnidentifiedImageError, OSError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid image") from exc
@@ -66,6 +70,7 @@ async def infer_video(
     service: Annotated[ImageInferenceService, Depends(get_inference_service)],
     file: Annotated[UploadFile, File(description="추론할 MP4 영상")],
     render: Annotated[bool, Query()] = False,
+    video_job_id: Annotated[int | None, Header(alias="X-Video-Job-ID", ge=1)] = None,
 ) -> VideoInferenceResponse | Response:
     content_type = file.content_type or ""
     if content_type not in VIDEO_CONTENT_TYPES:
@@ -77,6 +82,8 @@ async def infer_video(
         analyze_options = {"content_type": content_type}
         if rendered_path is not None:
             analyze_options["rendered_video_path"] = rendered_path
+        if video_job_id is not None:
+            analyze_options["video_job_id"] = video_job_id
         result = await run_in_threadpool(service.analyze_video_file, video_path, **analyze_options)
         if not render:
             return result

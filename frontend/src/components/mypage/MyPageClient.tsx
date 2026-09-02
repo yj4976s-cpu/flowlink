@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Icon, type IconName } from "@/components/common/Icon";
 import { AuthApiError, AuthUser, changePassword, deleteAccount, getCurrentUser, updateNickname } from "@/lib/authApi";
+import { getPasswordConditions, isValidNewPassword, PASSWORD_CONDITION_LABELS, PASSWORD_POLICY_MESSAGE, type PasswordConditions as PasswordConditionState } from "@/lib/passwordPolicy";
 import { listMyLostReports, LostReportResponse } from "@/lib/lostReportsApi";
+import { getMyDetectionSummary, type DetectionAnalysisSummary } from "@/lib/detectionApi";
 import { listMyProgressMatches, MatchCandidate, resolveMatchImageUrl } from "@/lib/matchesApi";
 import { listNotifications, NotificationResponse } from "@/lib/notificationsApi";
 import { CitizenReportsApiError, deleteCitizenReport, listMyCitizenReports } from "@/lib/citizenReportsApi";
@@ -15,7 +17,7 @@ import { getItemTypeMeta } from "@/lib/itemTypeMeta";
 import { deriveLostReportProgress, LostReportProgress, type LostReportProgressModel } from "./LostReportProgress";
 import styles from "./MyPageClient.module.css";
 
-type LoadState = { user: AuthUser; reports: LostReportResponse[]; matches: MatchCandidate[]; progressClaims: OwnershipClaimResponse[]; claimActivity: OwnershipClaimResponse[]; notifications: NotificationResponse[]; citizenReports: CitizenReport[] };
+type LoadState = { user: AuthUser; reports: LostReportResponse[]; matches: MatchCandidate[]; progressClaims: OwnershipClaimResponse[]; claimActivity: OwnershipClaimResponse[]; notifications: NotificationResponse[]; citizenReports: CitizenReport[]; analysisSummary: DetectionAnalysisSummary | null };
 type ActivityTab = "reports" | "matches" | "claims" | "citizen";
 type ActivitySort = "newest" | "oldest";
 type FlowNav = "overview" | ActivityTab;
@@ -177,9 +179,17 @@ function LostReportCard({ model, selected }: { model: LostReportCardModel; selec
   </article>;
 }
 
-function PasswordInput({ name, label }: { name: string; label: string }) {
+const passwordConditionKeys = Object.keys(PASSWORD_CONDITION_LABELS) as (keyof PasswordConditionState)[];
+
+function PasswordInput({ name, label, value, onChange, children }: { name: string; label: string; value?: string; onChange?: (value: string) => void; children?: React.ReactNode }) {
   const [visible, setVisible] = useState(false);
-  return <label className={styles.passwordField}><span>{label}</span><span className={styles.inputWithIcon}><input name={name} type={visible ? "text" : "password"} autoComplete={name === "current" ? "current-password" : "new-password"} required /><button type="button" aria-label={visible ? "비밀번호 숨기기" : "비밀번호 보기"} onClick={() => setVisible((value) => !value)}><Icon name={visible ? "eyeOff" : "eye"} size={18} /></button></span></label>;
+  return <div className={styles.passwordField}><label htmlFor={`mypage-password-${name}`}>{label}</label><span className={styles.inputWithIcon}><input id={`mypage-password-${name}`} name={name} type={visible ? "text" : "password"} autoComplete={name === "current" ? "current-password" : "new-password"} required value={value} onChange={onChange ? (event) => onChange(event.currentTarget.value) : undefined} /><button type="button" aria-label={visible ? "비밀번호 숨기기" : "비밀번호 보기"} onClick={() => setVisible((nextVisible) => !nextVisible)}><Icon name={visible ? "eyeOff" : "eye"} size={18} /></button></span>{children}</div>;
+}
+
+function PasswordPolicyGuide({ password, invalid }: { password: string; invalid: boolean }) {
+  const conditions = getPasswordConditions(password);
+  const metCount = passwordConditionKeys.filter((key) => conditions[key]).length;
+  return <div className={`${styles.passwordGuide}${invalid ? ` ${styles.invalidPasswordGuide}` : ""}`} aria-label="새 비밀번호 조건 충족 상태"><div><span>비밀번호 조건</span><b>{metCount} / 5</b></div><ul>{passwordConditionKeys.map((key) => <li key={key} className={conditions[key] ? styles.metCondition : invalid ? styles.unmetCondition : undefined}><span aria-hidden="true">{conditions[key] ? "✓" : "○"}</span>{PASSWORD_CONDITION_LABELS[key]}<span className="sr-only"> {conditions[key] ? "충족" : "미충족"}</span></li>)}</ul></div>;
 }
 
 function ActivityVisual({ icon, imageUrl, label }: { icon: IconName; imageUrl?: string | null; label: string }) {
@@ -215,6 +225,9 @@ export function MyPageClient() {
   const [accountOpen, setAccountOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [passwordError, setPasswordError] = useState("");
+  const [nextPassword, setNextPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordSubmitted, setPasswordSubmitted] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [failedSections, setFailedSections] = useState<string[]>([]);
   const initialActivityTab = isActivityTab(searchParams.get("activity")) ? searchParams.get("activity") as ActivityTab : "reports";
@@ -223,6 +236,10 @@ export function MyPageClient() {
   const [activityPages, setActivityPages] = useState<Record<ActivityTab, number>>(() => ({ reports: 1, matches: 1, claims: 1, citizen: 1, [initialActivityTab]: readPositivePage(searchParams.get("activityPage")) }));
   const [activitySorts, setActivitySorts] = useState<Record<ActivityTab, ActivitySort>>(() => ({ reports: "newest", matches: "newest", claims: "newest", citizen: "newest", [initialActivityTab]: initialActivitySort }));
   const [flowNav, setFlowNav] = useState<FlowNav>("overview");
+
+  const closePasswordDialog = useCallback(() => {
+    setPasswordOpen(false); setPasswordError(""); setNextPassword(""); setConfirmPassword(""); setPasswordSubmitted(false);
+  }, []);
   const [flowMenuOpen, setFlowMenuOpen] = useState(false);
   const [reportFilter, setReportFilter] = useState<ReportFilter>("all");
   const [reportSort, setReportSort] = useState<ReportSort>("newest");
@@ -243,8 +260,8 @@ export function MyPageClient() {
   useEffect(() => {
     const controller = new AbortController();
     getCurrentUser().then(async (user) => {
-      const [reportsResult, notificationsResult, citizenResult] = await Promise.allSettled([
-        listMyLostReports(controller.signal), listNotifications("all", controller.signal), listMyCitizenReports(controller.signal),
+      const [reportsResult, notificationsResult, citizenResult, analysisSummaryResult] = await Promise.allSettled([
+        listMyLostReports(controller.signal), listNotifications("all", controller.signal), listMyCitizenReports(controller.signal), getMyDetectionSummary(30, controller.signal),
       ]);
       if (controller.signal.aborted) return;
       const visibleReportIds = reportsResult.status === "fulfilled" ? reportsResult.value.map((report) => report.id) : [];
@@ -266,6 +283,7 @@ export function MyPageClient() {
       if (claimActivityResult.status === "rejected") failed.push("claimActivity");
       if (notificationsResult.status === "rejected") failed.push("notifications");
       if (citizenResult.status === "rejected") failed.push("citizen");
+      if (analysisSummaryResult.status === "rejected") failed.push("analysisSummary");
       const loadedReports = reportsResult.status === "fulfilled" ? reportsResult.value : [];
       if (requestedReportId !== null) {
         const requestedIndex = [...loadedReports]
@@ -282,6 +300,7 @@ export function MyPageClient() {
         claimActivity: claimActivityResult.status === "fulfilled" ? claimActivityResult.value : [],
         notifications: notificationsResult.status === "fulfilled" ? notificationsResult.value : [],
         citizenReports: citizenResult.status === "fulfilled" ? citizenResult.value : [],
+        analysisSummary: analysisSummaryResult.status === "fulfilled" ? analysisSummaryResult.value : null,
       });
     }).catch((reason: unknown) => {
         if (controller.signal.aborted) return;
@@ -294,11 +313,11 @@ export function MyPageClient() {
   useEffect(() => {
     if (!accountOpen && !passwordOpen && !deleteOpen) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { setAccountOpen(false); setPasswordOpen(false); setDeleteOpen(false); }
+      if (event.key === "Escape") { setAccountOpen(false); if (passwordOpen) closePasswordDialog(); setDeleteOpen(false); }
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [accountOpen, deleteOpen, passwordOpen]);
+  }, [accountOpen, closePasswordDialog, deleteOpen, passwordOpen]);
 
   useEffect(() => {
     if (!flowMenuOpen) return;
@@ -313,6 +332,7 @@ export function MyPageClient() {
     { label: "매칭 결과", value: data.matches.length, href: "/matches", description: data.matches.length ? "유사 후보 확인" : "확인할 후보 없음", icon: "match" as const, tone: "accent" },
     { label: "소유권 확인 요청", value: data.claimActivity.length, href: "#my-activity", description: "요청 진행 상태", icon: "check" as const, tone: "support" },
     { label: "내 발견 제보", value: data.citizenReports.length, href: "/found-items#citizen", description: data.citizenReports.length ? "등록한 제보 확인" : "등록된 제보 없음", icon: "location" as const, tone: "secondary" },
+    { label: "AI 분석 요약", value: data.analysisSummary?.total_analyses ?? 0, href: "/mypage/analysis-report", description: data.analysisSummary ? `최근 30일 · 객체 ${data.analysisSummary.total_detected_objects}개` : "차트 보고서 보기", icon: "scan" as const, tone: "primary" },
   ] : [], [data]);
   const reportCards = useMemo(() => data ? buildLostReportCardModels(data.reports, data.matches, data.progressClaims) : [], [data]);
   const filteredReportCards = useMemo(() => {
@@ -399,11 +419,11 @@ export function MyPageClient() {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const current = String(form.get("current") ?? "");
-    const next = String(form.get("next") ?? "");
-    const confirm = String(form.get("confirm") ?? "");
-    if (next.length < 8) return setPasswordError("새 비밀번호는 8자 이상 입력해주세요.");
-    if (next !== confirm) return setPasswordError("새 비밀번호 확인이 일치하지 않습니다.");
-    try { await changePassword(current, next); setPasswordOpen(false); setPasswordError(""); }
+    setPasswordSubmitted(true);
+    if (!current) return setPasswordError("현재 비밀번호를 입력해주세요.");
+    if (!isValidNewPassword(nextPassword)) return setPasswordError(PASSWORD_POLICY_MESSAGE);
+    if (nextPassword !== confirmPassword) return setPasswordError("새 비밀번호 확인이 일치하지 않습니다.");
+    try { await changePassword(current, nextPassword); closePasswordDialog(); }
     catch (reason) { setPasswordError(reason instanceof AuthApiError ? reason.message : "비밀번호를 변경하지 못했습니다."); }
   };
 
@@ -500,7 +520,7 @@ export function MyPageClient() {
       <div className={styles.danger}><div><strong>회원 탈퇴</strong><span>계정을 삭제하면 다시 복구할 수 없습니다.</span></div><button onClick={() => { setAccountOpen(false); setDeleteOpen(true); }}>회원 탈퇴</button></div>
     </section></div>}
 
-    {passwordOpen && <div className={styles.modalBackdrop} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setPasswordOpen(false)}><section className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="password-title"><button className={styles.modalClose} onClick={() => setPasswordOpen(false)} aria-label="비밀번호 변경 닫기"><Icon name="close" size={20} /></button><h2 id="password-title">비밀번호 변경</h2><form onSubmit={submitPassword}><PasswordInput name="current" label="현재 비밀번호" /><PasswordInput name="next" label="새 비밀번호" /><PasswordInput name="confirm" label="새 비밀번호 확인" />{passwordError && <p className={styles.formError}>{passwordError}</p>}<div className={styles.modalActions}><button type="button" className="button button-secondary" onClick={() => setPasswordOpen(false)}>취소</button><button className="button button-primary">변경</button></div></form></section></div>}
+    {passwordOpen && <div className={styles.modalBackdrop} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && closePasswordDialog()}><section className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="password-title"><button className={styles.modalClose} onClick={closePasswordDialog} aria-label="비밀번호 변경 닫기"><Icon name="close" size={20} /></button><h2 id="password-title">비밀번호 변경</h2><form noValidate onSubmit={submitPassword}><PasswordInput name="current" label="현재 비밀번호" /><PasswordInput name="next" label="새 비밀번호" value={nextPassword} onChange={(value) => { setNextPassword(value); setPasswordError(""); }}><PasswordPolicyGuide password={nextPassword} invalid={passwordSubmitted && !isValidNewPassword(nextPassword)} /></PasswordInput><PasswordInput name="confirm" label="새 비밀번호 확인" value={confirmPassword} onChange={(value) => { setConfirmPassword(value); setPasswordError(""); }}>{confirmPassword && <span className={confirmPassword === nextPassword ? styles.passwordMatch : styles.passwordMismatch} aria-live="polite">{confirmPassword === nextPassword ? "✓ 비밀번호와 일치해요" : "! 비밀번호가 일치하지 않아요"}</span>}</PasswordInput>{passwordError && <p className={styles.formError}>{passwordError}</p>}<div className={styles.modalActions}><button type="button" className="button button-secondary" onClick={closePasswordDialog}>취소</button><button className="button button-primary">비밀번호 변경</button></div></form></section></div>}
     {deleteOpen && <div className={styles.modalBackdrop} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setDeleteOpen(false)}><section className={styles.modal} role="alertdialog" aria-modal="true" aria-labelledby="delete-title"><h2 id="delete-title">정말 탈퇴하시겠어요?</h2><p>계정과 서비스 이용 권한이 비활성화되며 되돌릴 수 없습니다.</p><div className={styles.modalActions}><button className="button button-secondary" onClick={() => setDeleteOpen(false)}>취소</button><button className={styles.deleteButton} onClick={removeAccount}>탈퇴하기</button></div></section></div>}
   </main>;
 }

@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import { DARU_CARD_BACK_ASSETS } from "./game.config";
 import type { GameCard, GameDifficulty, GamePhase } from "./game.types";
 import { MemoryCard } from "./MemoryCard";
+import { calculateMemoryBoardGeometry, memoryBoardGeometryEqual, type MemoryBoardGeometry } from "./memoryBoard.geometry";
 import styles from "./DaruGame.module.css";
 
 export function MemoryBoard({ cards, difficulty, theme, phase, flippedIds, matchedPairIds, locked, hintActive, onFlip }: { cards: GameCard[]; difficulty: GameDifficulty; theme: "dawn" | "day" | "night"; phase: GamePhase; flippedIds: string[]; matchedPairIds: string[]; locked: boolean; hintActive: boolean; onFlip: (card: GameCard) => void }) {
@@ -14,37 +15,28 @@ export function MemoryBoard({ cards, difficulty, theme, phase, flippedIds, match
     const board = boardRef.current;
     const stage = board?.parentElement;
     if (!board || !stage) return;
-    const targets = {
-      easy: { columns: 5, cardWidth: 120, gap: 12 },
-      normal: { columns: 8, cardWidth: 108, gap: 10 },
-      hard: { columns: 10, cardWidth: 104, gap: 8 },
-    } as const;
-    const target = targets[difficulty];
+    let appliedGeometry: MemoryBoardGeometry | null = null;
+    let animationFrame = 0;
     const fitBoard = () => {
       const availableWidth = stage.clientWidth;
       const availableHeight = stage.clientHeight;
       if (!availableWidth || !availableHeight) return;
-      const reflow = window.innerWidth <= 900 || (window.innerHeight <= 520 && window.innerWidth <= 960);
-      const readableWidth = window.innerWidth <= 480 ? 76 : 82;
-      const responsiveColumns = Math.max(4, Math.floor((availableWidth + target.gap) / (readableWidth + target.gap)));
-      const columns = reflow ? Math.min(target.columns, responsiveColumns) : target.columns;
-      const rows = Math.ceil(cards.length / columns);
-      const compactGap = availableHeight < 560 ? Math.max(4, target.gap - 4) : target.gap;
-      const gap = reflow ? Math.max(6, compactGap) : compactGap;
-      const widthFit = (availableWidth - 8 - gap * (columns - 1)) / columns;
-      const heightFit = ((availableHeight - 8 - gap * (rows - 1)) / rows) * 4 / 5;
-      const fittedWidth = Math.min(target.cardWidth, widthFit, reflow ? target.cardWidth : heightFit);
-      const minimumWidth = reflow ? Math.min(readableWidth, widthFit) : Math.min(64, widthFit);
-      const cardWidth = Math.max(minimumWidth, fittedWidth);
-      board.style.setProperty("--daru-card-width", `${Math.floor(cardWidth * 10) / 10}px`);
-      board.style.setProperty("--daru-board-columns", String(columns));
-      board.style.setProperty("--daru-board-gap", `${gap}px`);
-      board.toggleAttribute("data-reflow", reflow);
+      const next = calculateMemoryBoardGeometry({ difficulty, cardCount: cards.length, availableWidth, availableHeight, viewportWidth: window.innerWidth, viewportHeight: window.innerHeight });
+      if (memoryBoardGeometryEqual(appliedGeometry, next)) return;
+      board.style.setProperty("--daru-card-width", `${next.cardWidth}px`);
+      board.style.setProperty("--daru-board-columns", String(next.columns));
+      board.style.setProperty("--daru-board-gap", `${next.gap}px`);
+      board.toggleAttribute("data-reflow", next.reflow);
+      appliedGeometry = next;
     };
-    const observer = new ResizeObserver(fitBoard);
+    const scheduleFit = () => {
+      if (animationFrame) return;
+      animationFrame = window.requestAnimationFrame(() => { animationFrame = 0; fitBoard(); });
+    };
+    const observer = new ResizeObserver(scheduleFit);
     observer.observe(stage);
     fitBoard();
-    return () => observer.disconnect();
+    return () => { observer.disconnect(); if (animationFrame) window.cancelAnimationFrame(animationFrame); };
   }, [cards.length, difficulty]);
   return (
     <div ref={boardRef} className={styles.board} data-difficulty={difficulty} aria-label="다루 카드 게임판" aria-busy={locked}>
@@ -56,7 +48,7 @@ export function MemoryBoard({ cards, difficulty, theme, phase, flippedIds, match
           flipped={phase === "preview" || hintActive || flippedIds.includes(card.id)}
           flipDelayMs={phase === "flipping" ? Math.abs(index - (cards.length - 1) / 2) * 14 : 0}
           matched={matched.has(card.pairId)}
-          locked={locked || hintActive || phase !== "playing"}
+          locked={locked || hintActive || phase !== "playing" || (flippedIds.length >= 2 && !flippedIds.includes(card.id) && !matched.has(card.pairId))}
           onFlip={() => onFlip(card)}
         />
       ))}

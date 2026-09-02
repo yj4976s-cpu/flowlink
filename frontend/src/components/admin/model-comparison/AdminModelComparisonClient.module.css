@@ -1,0 +1,1557 @@
+.page {
+  width: min(100% - 64px, 1240px);
+  margin: 0 auto;
+  padding: 42px 0 80px;
+  color: var(--color-text);
+}
+
+.intro {
+  margin-bottom: 18px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.intro p,
+.panelTitle span {
+  margin: 0 0 8px;
+  color: var(--color-primary);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .13em;
+}
+
+.intro h1 {
+  margin: 0;
+  font-family: var(--font-editorial), Batang, serif;
+  font-size: clamp(34px, 4vw, 50px);
+  letter-spacing: -.04em;
+}
+
+.intro span {
+  display: block;
+  max-width: 720px;
+  margin-top: 8px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.intro a {
+  flex: none;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 24%, var(--color-border));
+  border-radius: 999px;
+  color: var(--color-primary);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.notice,
+.panel,
+.modelCard,
+.deployCard,
+.metricRow {
+  border: 1px solid var(--color-border);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--color-primary) 4%, transparent), transparent 44%), var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
+.notice {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  display: flex;
+  gap: 10px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.notice p {
+  margin: 0;
+}
+
+.notice :global(.icon) {
+  flex: none;
+  color: var(--color-primary);
+}
+
+.modelHero {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 74px minmax(0, 1fr) minmax(240px, .82fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.modelCard,
+.deployCard,
+.metricRow,
+.panel {
+  border-radius: 22px;
+}
+
+.modelCard,
+.deployCard {
+  min-width: 0;
+  min-height: 188px;
+  padding: 20px;
+  border: 1px solid var(--color-border);
+  background:
+    radial-gradient(circle at 92% 10%, color-mix(in srgb, var(--model-tone) 13%, transparent), transparent 33%),
+    linear-gradient(145deg, color-mix(in srgb, var(--model-tone) 7%, transparent), transparent 52%),
+    var(--color-surface);
+  box-shadow: var(--shadow-card);
+  display: grid;
+  align-content: space-between;
+  gap: 16px;
+}
+
+.modelCard {
+  --model-tone: var(--color-primary);
+}
+
+.modelCard[data-highlight] {
+  --model-tone: var(--color-accent);
+}
+
+.modelCard > div,
+.deployCard {
+  min-width: 0;
+}
+
+.modelCard span,
+.deployCard span,
+.modelCard small,
+.deployCard small,
+.metricCell small,
+.notes,
+.empty {
+  color: var(--color-text-muted);
+}
+
+.modelCard span,
+.deployCard span {
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.modelCard strong,
+.deployCard strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 21px;
+  line-height: 1.25;
+  word-break: keep-all;
+}
+
+.modelCard small,
+.deployCard small {
+  display: block;
+  margin-top: 7px;
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.modelCard ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.modelCard li {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--model-tone) 10%, var(--color-surface-soft));
+  color: var(--model-tone);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.modelCard footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--model-tone) 18%, var(--color-border));
+}
+
+.modelCard footer b {
+  color: var(--model-tone);
+  font-size: 20px;
+}
+
+.modelCard footer span {
+  text-align: right;
+  font-size: 10px;
+}
+
+.compareBadge {
+  min-height: 188px;
+  display: grid;
+  place-items: center;
+}
+
+.compareBadge span {
+  position: relative;
+  z-index: 1;
+  width: 48px;
+  height: 48px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 24%, var(--color-border));
+  border-radius: 18px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+  color: var(--color-primary);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.compareBadge i {
+  position: absolute;
+  width: 1px;
+  height: 128px;
+  background: linear-gradient(180deg, transparent, var(--color-border), transparent);
+}
+
+.deployCard {
+  --model-tone: var(--color-success);
+}
+
+.metricPanel {
+  overflow: hidden;
+}
+
+.metricShowcase {
+  margin-bottom: 16px;
+  padding: 20px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 14%, var(--color-border));
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 12% 16%, color-mix(in srgb, var(--color-secondary) 14%, transparent), transparent 32%),
+    radial-gradient(circle at 92% 18%, color-mix(in srgb, var(--color-accent) 10%, transparent), transparent 34%),
+    linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 5%, transparent), transparent 56%),
+    var(--color-surface-soft);
+  display: grid;
+  gap: 16px;
+}
+
+.metricShowcaseCopy {
+  min-width: 0;
+  padding: 18px 20px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 10%, var(--color-border));
+  border-radius: 20px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 5%, transparent), transparent 64%),
+    color-mix(in srgb, var(--color-surface) 91%, transparent);
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto;
+  grid-template-areas:
+    "eyebrow stats"
+    "title stats"
+    "copy stats"
+    "legend stats";
+  column-gap: 24px;
+  row-gap: 8px;
+  align-items: center;
+}
+
+.metricShowcaseCopy > span {
+  grid-area: eyebrow;
+  color: var(--color-accent);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: .14em;
+}
+
+.metricShowcaseCopy > strong {
+  grid-area: title;
+  color: var(--color-text);
+  font-size: clamp(22px, 2.4vw, 32px);
+  line-height: 1.22;
+  letter-spacing: -.035em;
+}
+
+.metricShowcaseCopy p {
+  grid-area: copy;
+  max-width: 680px;
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.metricShowcaseLegend {
+  grid-area: legend;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.metricShowcaseLegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.metricShowcaseLegend span::before {
+  content: "";
+  width: 22px;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--color-secondary), var(--color-primary));
+}
+
+.metricShowcaseLegend span:last-child::before {
+  background: linear-gradient(90deg, var(--color-accent), var(--color-primary));
+}
+
+.metricShowcaseStats {
+  grid-area: stats;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  min-width: min(440px, 42vw);
+}
+
+.metricShowcaseStats div {
+  min-width: 0;
+  padding: 13px 14px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 7%, var(--color-border));
+  border-radius: 17px;
+  background: var(--color-surface-soft);
+}
+
+.metricShowcaseStats dt {
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.metricShowcaseStats dd {
+  margin: 5px 0 0;
+  color: var(--color-text);
+  font-size: 18px;
+  font-weight: 950;
+}
+
+.metricLineChart {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 10%, var(--color-border));
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--color-surface) 96%, transparent), color-mix(in srgb, var(--color-surface-soft) 88%, transparent));
+}
+
+.modelSizeRibbon {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--color-surface-soft) 78%, transparent);
+  display: grid;
+  gap: 10px;
+}
+
+.metricBoardHeader {
+  margin-bottom: 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.metricBoardHeader span {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.metricBoardHeader span:last-child {
+  text-align: right;
+}
+
+.metricBoardHeader strong {
+  padding: 9px 14px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--color-primary) 12%, var(--color-surface-soft)), color-mix(in srgb, var(--color-accent) 12%, var(--color-surface-soft)));
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.metricUnifiedChart {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 9%, var(--color-border));
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--color-surface) 96%, transparent), color-mix(in srgb, var(--color-surface-soft) 88%, transparent));
+}
+
+.metricSlopeChart {
+  width: 100%;
+  display: block;
+  overflow: visible;
+}
+
+.metricSlopeChartMobile {
+  display: none;
+}
+
+.metricSlopeHead,
+.metricSlopeTitle,
+.metricSlopeName,
+.metricSlopeValue,
+.metricSlopeDelta,
+.metricSlopePending {
+  font-weight: 900;
+}
+
+.metricSlopeHead {
+  fill: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.metricSlopeTitle {
+  fill: var(--color-text);
+  font-size: 13px;
+}
+
+.metricSlopeName {
+  fill: var(--color-text);
+  font-size: 15px;
+}
+
+.metricSlopeValue,
+.metricSlopeDelta,
+.metricSlopePending {
+  fill: var(--color-text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.metricSlopeDelta[data-tone="better"],
+.metricSlopeDelta[data-tone="new"] {
+  fill: var(--color-success);
+}
+
+.metricSlopeDelta[data-tone="worse"] {
+  fill: var(--color-accent);
+}
+
+.metricSlopeDivider {
+  stroke: color-mix(in srgb, var(--color-border) 52%, transparent);
+  stroke-width: 1;
+}
+
+.metricSlopeTrack {
+  stroke: url("#metricSlopeLine-desktop");
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+
+.metricSlopeChartMobile .metricSlopeTrack {
+  stroke: url("#metricSlopeLine-mobile");
+}
+
+.metricSlopeTrack[data-empty] {
+  stroke: color-mix(in srgb, var(--color-text-muted) 34%, transparent);
+  stroke-dasharray: 7 7;
+}
+
+.metricSlopePointBefore,
+.metricSlopePointAfter {
+  stroke: var(--color-surface);
+  stroke-width: 4;
+}
+
+.metricSlopePointBefore {
+  fill: var(--color-primary);
+}
+
+.metricSlopePointAfter {
+  fill: var(--color-accent);
+}
+
+.metricSlopePointBefore[data-empty],
+.metricSlopePointAfter[data-empty] {
+  fill: color-mix(in srgb, var(--color-text-muted) 42%, transparent);
+}
+
+.visualPanel {
+  overflow: hidden;
+  border-color: color-mix(in srgb, var(--color-primary) 16%, var(--color-border));
+  background:
+    radial-gradient(circle at 8% 12%, color-mix(in srgb, var(--color-secondary) 12%, transparent), transparent 30%),
+    radial-gradient(circle at 92% 20%, color-mix(in srgb, var(--color-accent) 10%, transparent), transparent 32%),
+    var(--color-surface);
+}
+
+.visualGrid {
+  display: grid;
+  grid-template-columns: minmax(220px, .88fr) minmax(280px, 1.22fr) minmax(220px, .88fr);
+  grid-template-areas:
+    "before radar after"
+    "size size size";
+  gap: 14px;
+  align-items: stretch;
+}
+
+.coverageCard,
+.radarCard,
+.sizeCard {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 14%, var(--color-border));
+  border-radius: 20px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--chart-tone, var(--color-primary)) 6%, transparent), transparent 60%),
+    color-mix(in srgb, var(--color-surface) 92%, var(--color-surface-soft));
+}
+
+.coverageCard {
+  --chart-tone: var(--color-primary);
+  grid-area: before;
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+}
+
+.coverageCard[data-highlight] {
+  --chart-tone: var(--color-accent);
+  grid-area: after;
+}
+
+.coverageDial {
+  width: 104px;
+  aspect-ratio: 1;
+  border-radius: 31px;
+  background:
+    radial-gradient(circle, var(--color-surface) 0 56%, transparent 58%),
+    conic-gradient(var(--chart-tone) var(--coverage), color-mix(in srgb, var(--chart-tone) 10%, var(--color-surface-soft)) 0);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--chart-tone) 18%, transparent),
+    0 16px 28px color-mix(in srgb, var(--chart-tone) 14%, transparent);
+  display: grid;
+  place-content: center;
+  text-align: center;
+}
+
+.coverageDial strong {
+  color: var(--chart-tone);
+  font-size: 25px;
+  line-height: 1;
+}
+
+.coverageDial span,
+.coverageCard > div > span,
+.radarCard header span,
+.sizeCard header span {
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .1em;
+}
+
+.coverageCard h3,
+.radarCard header strong,
+.sizeCard header strong {
+  display: block;
+  margin: 5px 0 0;
+  color: var(--color-text);
+  font-size: 17px;
+  line-height: 1.25;
+}
+
+.coverageCard p,
+.coverageCard small,
+.radarCard p,
+.sizeCard p {
+  margin: 8px 0 0;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.coverageCard > div > i {
+  display: block;
+  height: 8px;
+  margin-top: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--color-surface-soft);
+  box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+.coverageCard > div > i b {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--chart-tone), color-mix(in srgb, var(--chart-tone) 42%, var(--color-secondary)));
+}
+
+.radarCard {
+  grid-area: radar;
+  display: grid;
+  grid-template-columns: minmax(150px, 190px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+}
+
+.radarCard svg {
+  width: min(100%, 190px);
+  aspect-ratio: 1;
+  overflow: visible;
+}
+
+.radarGrid polygon {
+  fill: none;
+  stroke: color-mix(in srgb, var(--color-primary) 14%, var(--color-border));
+  stroke-width: 1;
+}
+
+.radarGrid line {
+  stroke: color-mix(in srgb, var(--color-text-muted) 16%, transparent);
+  stroke-width: 1;
+}
+
+.radarBefore,
+.radarAfter {
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+}
+
+.radarBefore {
+  fill: color-mix(in srgb, var(--color-primary) 13%, transparent);
+  stroke: var(--color-primary);
+}
+
+.radarAfter {
+  fill: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  stroke: var(--color-accent);
+}
+
+.radarCard text {
+  fill: var(--color-text-muted);
+  font-size: 8px;
+  font-weight: 800;
+  text-anchor: middle;
+}
+
+.radarLegend {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.radarLegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.radarLegend span::before {
+  content: "";
+  width: 18px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--color-primary);
+}
+
+.radarLegend span:last-child::before {
+  background: var(--color-accent);
+}
+
+.sizeCard {
+  grid-area: size;
+  display: grid;
+  gap: 12px;
+}
+
+.sizeCard header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sizeBar {
+  display: grid;
+  grid-template-columns: minmax(140px, .5fr) minmax(140px, 1fr) 72px;
+  align-items: center;
+  gap: 12px;
+}
+
+.sizeBar span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sizeBar i {
+  height: 14px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--color-surface-soft);
+  box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+.sizeBar i b {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--color-secondary), var(--color-primary));
+}
+
+.sizeBar[data-highlight] i b {
+  background: linear-gradient(90deg, var(--color-accent), var(--color-primary));
+}
+
+.sizeBar strong {
+  color: var(--color-text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.metricRows {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.metricRow {
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 12%, var(--color-border));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 4%, transparent), transparent 58%),
+    var(--color-surface-soft);
+  display: grid;
+  gap: 12px;
+}
+
+.metricLabel,
+.classCard header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.metricLabel strong {
+  font-size: 14px;
+}
+
+.metricLabel b,
+.classCard header > b {
+  width: fit-content;
+  flex: none;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: 10px;
+}
+
+.metricLabel b[data-tone="better"],
+.classCard header > b[data-tone="better"],
+.classCard header > b[data-tone="new"] {
+  background: color-mix(in srgb, var(--color-success) 13%, var(--color-surface-soft));
+  color: var(--color-success);
+}
+
+.metricLabel b[data-tone="worse"],
+.classCard header > b[data-tone="worse"] {
+  background: color-mix(in srgb, var(--color-accent) 13%, var(--color-surface-soft));
+  color: var(--color-accent);
+}
+
+.metricLabel b[data-tone="missing"],
+.classCard header > b[data-tone="missing"] {
+  background: var(--color-surface-soft);
+  color: var(--color-text-muted);
+}
+
+.metricBar {
+  display: grid;
+  grid-template-columns: minmax(92px, .7fr) minmax(110px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.metricBar span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metricBar i {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--color-surface);
+  box-shadow: inset 0 0 0 1px var(--color-border);
+}
+
+.metricBar i b {
+  display: block;
+  height: 100%;
+  min-width: 4px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--color-secondary), var(--color-primary));
+}
+
+.metricBar[data-highlight] i b {
+  background: linear-gradient(90deg, var(--color-accent), var(--color-primary));
+}
+
+.metricBar[data-empty] i b,
+.metricBar[data-zero] i b {
+  min-width: 0;
+}
+
+.metricBar[data-empty] {
+  opacity: .72;
+}
+
+.metricBar strong {
+  color: var(--color-text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.panel {
+  margin-top: 18px;
+  padding: 22px;
+}
+
+.panel[data-highlight] {
+  border-color: color-mix(in srgb, var(--color-accent) 32%, var(--color-border));
+}
+
+.panelTitle h2 {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: -.025em;
+}
+
+.panelTitle p {
+  margin: 7px 0 18px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.classCards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.classCard {
+  --class-tone: var(--color-primary);
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--class-tone) 20%, var(--color-border));
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--class-tone) 10%, transparent), transparent 35%),
+    var(--color-surface-soft);
+}
+
+.classCard[data-accent="hat"] {
+  --class-tone: var(--color-accent);
+}
+
+.classCard[data-accent="trash"] {
+  --class-tone: var(--color-success);
+}
+
+.classCard[data-accent="footwear"] {
+  --class-tone: var(--color-secondary);
+}
+
+.classCard header span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.classCard header strong {
+  font-size: 17px;
+}
+
+.classCard header small {
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .08em;
+}
+
+.classMiniChart {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 16px;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--class-tone) 7%, transparent), transparent 58%),
+    var(--color-surface);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.classMiniChart div {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.classMiniChart span,
+.classMiniChart strong {
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.classMiniChart span {
+  color: var(--color-text-muted);
+}
+
+.classMiniChart strong {
+  width: fit-content;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: var(--color-surface-soft);
+  color: var(--color-text-muted);
+}
+
+.classMiniChart i {
+  height: 34px;
+  overflow: hidden;
+  border-radius: 12px;
+  background:
+    repeating-linear-gradient(135deg, color-mix(in srgb, var(--color-border) 65%, transparent) 0 1px, transparent 1px 7px),
+    color-mix(in srgb, var(--color-surface-soft) 86%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-border) 72%, transparent);
+  display: flex;
+  align-items: end;
+}
+
+.classMiniChart i b {
+  display: block;
+  width: 100%;
+  height: 7px;
+  min-height: 7px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--class-tone), color-mix(in srgb, var(--class-tone) 48%, var(--color-secondary)));
+}
+
+.classMiniChart div[data-tone="missing"] i b {
+  width: 0 !important;
+}
+
+.classMiniChart div[data-tone="missing"] strong {
+  background: var(--color-surface-soft);
+  color: var(--color-text-muted);
+}
+
+.classMiniChart div[data-tone="neutral"] strong {
+  background: color-mix(in srgb, var(--class-tone) 10%, var(--color-surface-soft));
+  color: var(--class-tone);
+}
+
+.classMiniChart div[data-tone="better"] strong {
+  background: color-mix(in srgb, var(--color-success) 12%, var(--color-surface-soft));
+  color: var(--color-success);
+}
+
+.classCompare {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.classCompare > div {
+  min-width: 0;
+  padding: 12px;
+  border-radius: 15px;
+  background: var(--color-surface);
+}
+
+.classCompare em {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.metricCell {
+  display: grid;
+  gap: 4px;
+}
+
+.unsupported {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.trainGrid,
+.evalGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.trainGrid div,
+.evalGrid div {
+  min-width: 0;
+  padding: 11px;
+  border-radius: 14px;
+  background: var(--color-surface-soft);
+}
+
+.trainGrid dt,
+.evalGrid dt {
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.trainGrid dd,
+.evalGrid dd {
+  margin: 5px 0 0;
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 850;
+  overflow-wrap: anywhere;
+}
+
+.notes {
+  margin: 14px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.empty {
+  min-height: 120px;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--color-border);
+  border-radius: 16px;
+  background: var(--color-surface-soft);
+  font-size: 12px;
+}
+
+.examples {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.examples article {
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  background: var(--color-surface-soft);
+  display: grid;
+  gap: 8px;
+}
+
+.examples img {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  border-radius: 12px;
+  background: var(--color-surface);
+}
+
+.state {
+  min-height: 420px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.state > div {
+  display: flex;
+  gap: 6px;
+}
+
+.state i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  animation: modelComparisonLoading .8s ease-in-out infinite alternate;
+}
+
+.state i:nth-child(2) {
+  animation-delay: .15s;
+}
+
+.state i:nth-child(3) {
+  animation-delay: .3s;
+}
+
+.state strong {
+  color: var(--color-text);
+}
+
+.page a:focus-visible,
+.page button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--color-primary) 28%, transparent);
+  outline-offset: 2px;
+}
+
+.deploymentPanel {
+  margin-bottom: 16px;
+  border-color: color-mix(in srgb, var(--color-success) 20%, var(--color-border));
+}
+
+.deploymentHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.deploymentActions {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.deploymentActions button,
+.runtimeModels button,
+.confirmModal button {
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.deploymentActions button:last-child,
+.runtimeModels button:not(:disabled),
+.confirmModal footer button:last-child {
+  border-color: color-mix(in srgb, var(--color-primary) 28%, var(--color-border));
+  background: var(--color-primary);
+  color: var(--color-primary-contrast, #fff);
+}
+
+.deploymentActions button:disabled,
+.runtimeModels button:disabled,
+.confirmModal button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+.runtimeGrid,
+.runtimeModels {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.runtimeGrid {
+  margin-top: 18px;
+}
+
+.runtimeGrid article,
+.runtimeModels article,
+.historyList article {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 18px;
+  background: var(--color-surface-soft);
+  display: grid;
+  gap: 7px;
+}
+
+.runtimeGrid span,
+.runtimeModels span,
+.historyList span {
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .08em;
+}
+
+.runtimeGrid strong,
+.runtimeModels strong,
+.historyList strong {
+  overflow-wrap: anywhere;
+}
+
+.runtimeGrid small,
+.runtimeModels small,
+.historyList small,
+.runtimeModels em {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.runtimeModels {
+  margin-top: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.runtimeModels article[data-active] {
+  border-color: color-mix(in srgb, var(--color-success) 36%, var(--color-border));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--color-success) 8%, transparent), transparent 62%),
+    var(--color-surface-soft);
+}
+
+.deploymentError,
+.deploymentInfo,
+.deploymentNotice {
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.deploymentError {
+  border: 1px solid color-mix(in srgb, var(--color-danger, #ef4444) 26%, var(--color-border));
+  color: var(--color-danger, #ef4444);
+  background: color-mix(in srgb, var(--color-danger, #ef4444) 8%, var(--color-surface));
+}
+
+.deploymentInfo {
+  border: 1px solid color-mix(in srgb, var(--color-primary) 18%, var(--color-border));
+  color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-surface));
+}
+
+.deploymentNotice {
+  border: 1px solid color-mix(in srgb, var(--color-success) 24%, var(--color-border));
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 8%, var(--color-surface));
+}
+
+.modalBackdrop {
+  position: fixed;
+  z-index: 240;
+  inset: 0;
+  padding: 24px;
+  background: rgb(8 16 36 / 52%);
+  backdrop-filter: blur(5px);
+  display: grid;
+  place-items: center;
+}
+
+.confirmModal {
+  width: min(100%, 560px);
+  max-height: min(720px, calc(100dvh - 48px));
+  overflow-y: auto;
+  padding: 22px;
+  border: 1px solid var(--color-border);
+  border-radius: 24px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+  display: grid;
+  gap: 16px;
+}
+
+.confirmModal dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.confirmModal p[role="note"] {
+  margin: 0;
+  padding: 12px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--color-accent) 9%, var(--color-surface-soft));
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.confirmModal footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.historyList {
+  display: grid;
+  gap: 10px;
+}
+
+.historyList article {
+  grid-template-columns: 100px minmax(0, 1fr) minmax(120px, .6fr) auto;
+  align-items: center;
+}
+
+.historyList b {
+  justify-self: end;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: var(--color-surface);
+  font-size: 10px;
+}
+
+.historyList b[data-status="SUCCEEDED"] {
+  color: var(--color-success);
+}
+
+.historyList b[data-status="FAILED"] {
+  color: var(--color-danger, #ef4444);
+}
+
+@keyframes modelComparisonLoading {
+  to {
+    opacity: .3;
+    transform: translateY(-3px);
+  }
+}
+
+@media (max-width: 980px) {
+  .modelHero,
+  .metricShowcase,
+  .metricRows,
+  .runtimeGrid,
+  .runtimeModels,
+  .split {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .visualGrid {
+    grid-template-areas:
+      "before after"
+      "radar radar"
+      "size size";
+  }
+
+  .metricShowcaseCopy {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "eyebrow"
+      "title"
+      "copy"
+      "legend"
+      "stats";
+  }
+
+  .metricShowcaseStats {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .compareBadge {
+    display: none;
+  }
+
+  .panel {
+    overflow-x: auto;
+  }
+}
+
+@media (max-width: 680px) {
+  .page {
+    width: calc(100% - 28px);
+    padding-top: 28px;
+  }
+
+  .metricPanel {
+    padding: 16px 12px;
+  }
+
+  .metricShowcase {
+    padding: 12px;
+    gap: 12px;
+  }
+
+  .metricShowcaseCopy,
+  .metricLineChart {
+    padding: 14px;
+  }
+
+  .metricShowcaseCopy > strong {
+    font-size: 22px;
+  }
+
+  .metricShowcaseCopy p {
+    font-size: 13px;
+  }
+
+  .intro {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .modelHero,
+  .metricShowcase,
+  .visualGrid,
+  .metricRows,
+  .runtimeGrid,
+  .runtimeModels,
+  .classCards,
+  .split,
+  .trainGrid,
+  .evalGrid,
+  .examples {
+    grid-template-columns: 1fr;
+  }
+
+  .visualGrid {
+    grid-template-areas:
+      "before"
+      "after"
+      "radar"
+      "size";
+  }
+
+  .coverageCard,
+  .radarCard,
+  .sizeBar {
+    grid-template-columns: 1fr;
+  }
+
+  .coverageDial,
+  .radarCard svg {
+    justify-self: center;
+  }
+
+  .metricShowcaseStats,
+  .classMiniChart {
+    grid-template-columns: 1fr;
+  }
+
+  .metricBoardHeader {
+    grid-template-columns: 1fr;
+  }
+
+  .metricBoardHeader {
+    justify-items: start;
+  }
+
+  .metricBoardHeader span:last-child {
+    text-align: left;
+  }
+
+  .metricLineChart {
+    overflow-x: visible;
+  }
+
+  .metricUnifiedChart {
+    padding: 10px;
+  }
+
+  .metricSlopeChartDesktop {
+    display: none;
+  }
+
+  .metricSlopeChartMobile {
+    display: block;
+  }
+
+  .sizeCard header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .sizeBar strong {
+    text-align: left;
+  }
+
+  .modelCard,
+  .deployCard {
+    min-height: 154px;
+  }
+
+  .metricBar,
+  .classCompare {
+    grid-template-columns: 1fr;
+  }
+
+  .metricBar i {
+    width: 100%;
+  }
+
+  .deploymentHead,
+  .confirmModal footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .deploymentActions {
+    justify-content: stretch;
+  }
+
+  .deploymentActions button,
+  .confirmModal button {
+    width: 100%;
+  }
+
+  .confirmModal dl,
+  .historyList article {
+    grid-template-columns: 1fr;
+  }
+
+  .historyList b {
+    justify-self: start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .state i {
+    animation: none;
+  }
+}

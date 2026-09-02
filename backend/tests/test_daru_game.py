@@ -1,6 +1,7 @@
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+import random
 from uuid import UUID, uuid4
 
 import pytest
@@ -16,8 +17,8 @@ from app.core.config import get_settings
 from app.core.security import utc_now
 from app.db.session import Base, get_db
 from app.main import app
-from app.models import DaruGameRun, DaruGameRunAction, DaruGameStat, User
-from app.services.daru_game import DIFFICULTY_CONFIG, GAME_RUN_MAX_AGE, HARD_ADDITIONAL_CARD_IDS, NORMAL_CARD_IDS, GameRunExpiredError, _ensure_not_expired, _round_to_tenth, calculate_detection_power, calculate_hint_score, calculate_memory_accuracy, calculate_speed_score, detection_metrics, game_run_lock_query, is_better, rank_for, ranking_query, select_card_ids
+from app.models import DaruGamePlayRecord, DaruGameRun, DaruGameRunAction, DaruGameStat, User
+from app.services.daru_game import DIFFICULTY_CONFIG, GAME_RUN_MAX_AGE, HARD_ADDITIONAL_CARD_IDS, NORMAL_CARD_IDS, GameRunExpiredError, _ensure_not_expired, _round_to_tenth, calculate_detection_power, calculate_hint_score, calculate_memory_accuracy, calculate_speed_score, constrained_shuffle, create_shuffled_deck, detection_metrics, game_run_lock_query, has_adjacent_pair, has_adjacent_pair_for_columns, is_better, rank_for, ranking_query, select_card_ids, soft_delete_all_play_records, soft_delete_play_record
 
 
 @compiles(BigInteger, "sqlite")
@@ -29,7 +30,7 @@ def compile_big_integer_for_sqlite(_type, _compiler, **_kwargs) -> str:
 def db() -> Iterator[Session]:
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine, class_=Session, expire_on_commit=False)
+    factory = sessionmaker(bind=engine, class_=Session, autoflush=False, expire_on_commit=False)
     with factory() as session:
         yield session
 
@@ -38,6 +39,14 @@ def add_user(db: Session, user_id: int, nickname: str, role: str = "USER") -> Us
     now = utc_now()
     user = User(id=user_id, email=f"{nickname}@example.com", password_hash="unused", nickname=nickname, role=role, active=True, terms_agreed_at=now, privacy_agreed_at=now, created_at=now, updated_at=now)
     db.add(user); db.commit(); return user
+
+
+def add_ranked_stat(db: Session, user: User, *, score: str, attempts: int, elapsed: int, achieved: datetime, difficulty: str = "EASY") -> DaruGameStat:
+    record = DaruGamePlayRecord(user_id=user.id, difficulty=difficulty, detection_power=Decimal(score), attempts=attempts, elapsed_seconds=elapsed, max_combo=5, hints_used=0, earned_daru_points=0, completed=True, within_time_limit=True, score_version=2, achieved_at=achieved, created_at=achieved)
+    db.add(record); db.flush()
+    stat = DaruGameStat(user_id=user.id, difficulty=difficulty, best_detection_power=Decimal(score), score_version=2, best_attempts=attempts, best_elapsed_seconds=elapsed, best_combo=5, best_hints_used=0, total_daru_points=0, play_count=1, best_achieved_at=achieved, ranking_record_id=record.id, created_at=achieved, updated_at=achieved)
+    db.add(stat)
+    return stat
 
 
 def create_run(client: TestClient, db: Session, difficulty: str, *, age_seconds: int | None = None) -> str:
@@ -75,6 +84,8 @@ def test_detection_power_uses_each_difficulty_config() -> None:
 def test_hard_balance_config_uses_twenty_pairs_and_new_timing() -> None:
     assert DIFFICULTY_CONFIG["HARD"] == {
         "pairs": 20,
+        "columns": 10,
+        "supported_columns": (4, 5, 6, 7, 8, 9, 10),
         "time_limit_seconds": 280,
         "speed_benchmark_seconds": 200,
         "combo_target": 8,
@@ -242,6 +253,36 @@ def test_hard_card_selection_can_produce_different_deterministic_subsets() -> No
     second = select_card_ids("HARD", FrontLoadingRandom(["shoe-found", "backpack-found", "proud", "styrofoam"]))
     assert first[16:] != second[16:]
     assert len(set(first[16:])) == len(set(second[16:])) == 4
+
+
+@pytest.mark.parametrize(
+    ("difficulty", "card_count", "pair_count"),
+    [("EASY", 20, 10), ("NORMAL", 32, 16), ("HARD", 40, 20)],
+)
+def test_constrained_shuffle_avoids_adjacent_pairs_across_one_hundred_decks(difficulty: str, card_count: int, pair_count: int) -> None:
+    supported_columns = DIFFICULTY_CONFIG[difficulty]["supported_columns"]
+    decks = [create_shuffled_deck(difficulty, random.Random(seed)) for seed in range(100)]
+    assert all(len(deck) == card_count for deck in decks)
+    assert all(len(set(deck)) == pair_count for deck in decks)
+    assert all(all(deck.count(pair_id) == 2 for pair_id in set(deck)) for deck in decks)
+    assert all(not has_adjacent_pair_for_columns(deck, supported_columns) for deck in decks)
+    assert len({tuple(deck) for deck in decks}) > 90
+
+
+@pytest.mark.parametrize("difficulty", ["EASY", "NORMAL", "HARD"])
+def test_constrained_shuffle_fallback_is_randomized_and_valid(difficulty: str) -> None:
+    supported_columns = DIFFICULTY_CONFIG[difficulty]["supported_columns"]
+    desktop_columns = DIFFICULTY_CONFIG[difficulty]["columns"]
+    pair_ids = select_card_ids(difficulty, random.Random(0))
+    deck = [pair_id for pair_id in pair_ids for _copy in range(2)]
+    results = [constrained_shuffle(deck, supported_columns, random.Random(seed), max_attempts=0) for seed in range(20)]
+    for result in results:
+        assert sorted(result) == sorted(deck)
+        assert not has_adjacent_pair_for_columns(result, supported_columns)
+        assert result[:len(result) // 2] != result[len(result) // 2:]
+        positions = {pair_id: [index for index, value in enumerate(result) if value == pair_id] for pair_id in pair_ids}
+        assert not all(second - first == desktop_columns * 2 for first, second in positions.values())
+    assert len({tuple(result) for result in results}) > 15
 
 
 @pytest.mark.parametrize(("difficulty", "card_count"), [("EASY", 20), ("NORMAL", 32), ("HARD", 40)])
@@ -477,6 +518,51 @@ def test_server_timestamp_controls_elapsed_and_timeout(client: TestClient, db: S
     assert payload["leaderboard_rank"] == 1
 
 
+def test_result_immediately_ranks_first_completed_record_with_autoflush_disabled(client: TestClient, db: Session) -> None:
+    assert db.autoflush is False
+    competitor = add_user(db, 2, "competitor")
+    add_ranked_stat(db, competitor, score="80.0", attempts=15, elapsed=60, achieved=utc_now())
+    db.commit()
+    run_id, _run = start_authoritative_run(client, db, elapsed_seconds=1)
+    complete_pairs(client, run_id, 10)
+
+    result = client.post("/api/daru-game/results", json=action_json(run_id=run_id))
+    leaderboard = client.get("/api/daru-game/leaderboard?difficulty=EASY")
+
+    assert result.status_code == leaderboard.status_code == 200
+    assert result.json()["leaderboard_rank"] == 1
+    assert leaderboard.json()["my_entry"]["rank"] == 1
+
+
+def test_result_immediately_uses_lower_latest_record_rank_with_autoflush_disabled(client: TestClient, db: Session) -> None:
+    assert db.autoflush is False
+    now = utc_now()
+    for index, score in enumerate(("95.0", "94.0", "90.0", "85.0", "80.0"), 2):
+        competitor = add_user(db, index, f"competitor-{index}")
+        add_ranked_stat(db, competitor, score=score, attempts=10 + index, elapsed=40 + index, achieved=now + timedelta(seconds=index))
+    db.commit()
+    best_run_id, _run = start_authoritative_run(client, db, elapsed_seconds=1)
+    complete_pairs(client, best_run_id, 10)
+    assert client.post("/api/daru-game/results", json=action_json(run_id=best_run_id)).json()["leaderboard_rank"] == 1
+    latest_run_id, _run = start_authoritative_run(client, db, elapsed_seconds=121)
+    complete_pairs(client, latest_run_id, 10)
+
+    result = client.post("/api/daru-game/results", json=action_json(run_id=latest_run_id))
+    leaderboard = client.get("/api/daru-game/leaderboard?difficulty=EASY")
+    history = client.get("/api/daru-game/history?difficulty=EASY&page=1&page_size=5")
+    stat = db.scalar(select(DaruGameStat).where(DaruGameStat.user_id == 1, DaruGameStat.difficulty == "EASY"))
+
+    assert result.status_code == leaderboard.status_code == history.status_code == 200
+    assert result.json()["metrics"]["detection_power"] == 75.0
+    assert result.json()["leaderboard_rank"] == leaderboard.json()["my_entry"]["rank"] == 6
+    assert leaderboard.json()["my_entry"]["detection_power"] == 75.0
+    assert leaderboard.json()["my_best"]["best_detection_power"] == 100.0
+    assert [item["detection_power"] for item in history.json()["items"]] == [75.0, 100.0]
+    assert history.json()["items"][0]["is_ranking_record"] is True
+    assert history.json()["items"][1]["is_best"] is True
+    assert stat is not None and stat.ranking_record_id == history.json()["items"][0]["id"]
+
+
 def test_hard_server_timeout_uses_new_280_second_limit(client: TestClient, db: Session) -> None:
     run_id, _run = start_authoritative_run(client, db, "HARD", elapsed_seconds=281)
     complete_pairs(client, run_id, 20)
@@ -528,9 +614,9 @@ def test_v2_ranking_orders_score_attempts_elapsed_then_achieved_at(db: Session) 
     now = utc_now()
     users = [add_user(db, index, nickname) for index, nickname in enumerate(["score", "lower", "attempt", "time", "first"], 1)]
     rows = [(users[0], "90.5", 20, 100, now - timedelta(minutes=5)), (users[1], "90.4", 10, 50, now), (users[2], "90.5", 18, 110, now), (users[3], "90.5", 18, 90, now), (users[4], "90.5", 18, 90, now - timedelta(minutes=9))]
-    for user, score, attempts, elapsed, achieved in rows: db.add(DaruGameStat(user_id=user.id, difficulty="EASY", best_detection_power=Decimal(score), score_version=2, best_attempts=attempts, best_elapsed_seconds=elapsed, best_combo=5, best_hints_used=0, total_daru_points=0, play_count=1, best_achieved_at=achieved, created_at=now, updated_at=now))
+    for user, score, attempts, elapsed, achieved in rows: add_ranked_stat(db, user, score=score, attempts=attempts, elapsed=elapsed, achieved=achieved)
     db.commit()
-    assert [nickname for _stat, nickname in db.execute(ranking_query("EASY")).all()] == ["first", "time", "attempt", "score", "lower"]
+    assert [nickname for _stat, _record, nickname in db.execute(ranking_query("EASY")).all()] == ["first", "time", "attempt", "score", "lower"]
 
 
 def test_leaderboard_returns_top_three_paged_general_rows_and_my_rank(client: TestClient, db: Session) -> None:
@@ -539,7 +625,7 @@ def test_leaderboard_returns_top_three_paged_general_rows_and_my_rank(client: Te
     users.append(db.get(User, 1))
     for index, user in enumerate(users):
         assert user is not None
-        db.add(DaruGameStat(user_id=user.id, difficulty="EASY", best_detection_power=Decimal(str(99 - index)), score_version=2, best_attempts=10 + index, best_elapsed_seconds=40 + index, best_combo=5, best_hints_used=0, total_daru_points=0, play_count=1, best_achieved_at=now + timedelta(seconds=index), created_at=now, updated_at=now))
+        add_ranked_stat(db, user, score=str(99 - index), attempts=10 + index, elapsed=40 + index, achieved=now + timedelta(seconds=index))
     db.commit()
 
     response = client.get("/api/daru-game/leaderboard?difficulty=EASY&page=2&page_size=5")
@@ -553,6 +639,374 @@ def test_leaderboard_returns_top_three_paged_general_rows_and_my_rank(client: Te
     assert payload["page"] == 2
     assert payload["page_size"] == 5
     assert payload["total_pages"] == 2
+
+
+def history_record(db: Session, *, user_id: int = 1, score: str, achieved: datetime, completed: bool = True) -> DaruGamePlayRecord:
+    record = DaruGamePlayRecord(user_id=user_id, difficulty="EASY", detection_power=Decimal(score), attempts=10, elapsed_seconds=60, max_combo=5, hints_used=0, earned_daru_points=100, completed=completed, within_time_limit=completed, score_version=2, achieved_at=achieved, created_at=achieved)
+    db.add(record); db.flush(); return record
+
+
+def test_history_latest_clear_updates_ranking_but_not_best_and_partial_updates_neither(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    best = history_record(db, score="95.0", achieved=now)
+    latest = history_record(db, score="70.0", achieved=now + timedelta(seconds=1))
+    partial = history_record(db, score="50.0", achieved=now + timedelta(seconds=2), completed=False)
+    stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=best.detection_power, score_version=2, best_attempts=best.attempts, best_elapsed_seconds=best.elapsed_seconds, best_combo=best.max_combo, best_hints_used=best.hints_used, total_daru_points=300, play_count=3, best_achieved_at=best.achieved_at, ranking_record_id=latest.id, created_at=now, updated_at=now)
+    db.add(stat); db.commit()
+    leaderboard_payload = client.get("/api/daru-game/leaderboard?difficulty=EASY").json()
+    assert leaderboard_payload["my_entry"]["detection_power"] == 70.0
+    assert leaderboard_payload["my_best"]["best_detection_power"] == 95.0
+    items = client.get("/api/daru-game/history?difficulty=EASY&page=1&page_size=5").json()["items"]
+    assert [item["id"] for item in items] == [partial.id, latest.id, best.id]
+    assert items[0]["completed"] is False
+    assert items[1]["is_ranking_record"] is True
+    assert items[2]["is_best"] is True
+
+
+@pytest.mark.parametrize(
+    ("pointer_version", "pointer_deleted", "other_count", "expected_total", "expected_protected", "expected_deletable"),
+    [
+        (2, False, 5, 6, 1, 5),
+        (1, False, 5, 6, 1, 5),
+        (2, True, 5, 5, 0, 5),
+        (2, False, 0, 1, 1, 0),
+    ],
+    ids=["current-ranking", "old-version-ranking", "deleted-ranking", "ranking-only"],
+)
+def test_history_management_metadata_matches_active_ranking_protection(
+    client: TestClient,
+    db: Session,
+    pointer_version: int,
+    pointer_deleted: bool,
+    other_count: int,
+    expected_total: int,
+    expected_protected: int,
+    expected_deletable: int,
+) -> None:
+    now = utc_now()
+    pointer = history_record(db, score="90.0", achieved=now)
+    pointer.score_version = pointer_version
+    if pointer_deleted:
+        pointer.deleted_at = now
+    others = [history_record(db, score=str(80 - index), achieved=now + timedelta(seconds=index + 1)) for index in range(other_count)]
+    best = others[0] if others else pointer
+    stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=best.detection_power, score_version=2, best_attempts=best.attempts, best_elapsed_seconds=best.elapsed_seconds, best_combo=best.max_combo, best_hints_used=best.hints_used, total_daru_points=600, play_count=6, best_achieved_at=best.achieved_at, ranking_record_id=pointer.id, created_at=now, updated_at=now)
+    db.add(stat); db.commit()
+
+    payload = client.get("/api/daru-game/history?difficulty=EASY&page=1&page_size=5").json()
+
+    assert payload["total"] == expected_total
+    assert payload["protected_count"] == expected_protected
+    assert payload["deletable_count"] == expected_deletable
+    if pointer_version == 1 and not pointer_deleted:
+        assert client.get("/api/daru-game/leaderboard?difficulty=EASY").json()["my_entry"] is None
+
+
+def test_history_metadata_identifies_active_deletable_best(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    best = history_record(db, score="95.0", achieved=now)
+    ranking = history_record(db, score="80.0", achieved=now + timedelta(seconds=1))
+    stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=best.detection_power, score_version=2, best_attempts=best.attempts, best_elapsed_seconds=best.elapsed_seconds, best_combo=best.max_combo, best_hints_used=best.hints_used, total_daru_points=200, play_count=2, best_achieved_at=best.achieved_at, ranking_record_id=ranking.id, created_at=now, updated_at=now)
+    db.add(stat); db.commit()
+
+    payload = client.get("/api/daru-game/history?difficulty=EASY").json()
+
+    assert payload["deletable_best_record_id"] == best.id
+    assert payload["has_deletable_best"] is True
+
+
+def test_history_metadata_excludes_ranking_protected_best(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    best = history_record(db, score="95.0", achieved=now)
+    stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=best.detection_power, score_version=2, best_attempts=best.attempts, best_elapsed_seconds=best.elapsed_seconds, best_combo=best.max_combo, best_hints_used=best.hints_used, total_daru_points=100, play_count=1, best_achieved_at=best.achieved_at, ranking_record_id=best.id, created_at=now, updated_at=now)
+    db.add(stat); db.commit()
+
+    payload = client.get("/api/daru-game/history?difficulty=EASY").json()
+
+    assert payload["deletable_best_record_id"] is None
+    assert payload["has_deletable_best"] is False
+
+
+def test_history_metadata_ignores_old_score_version_best(client: TestClient, db: Session) -> None:
+    old_best = history_record(db, score="99.0", achieved=utc_now())
+    old_best.score_version = 1
+    db.commit()
+
+    payload = client.get("/api/daru-game/history?difficulty=EASY").json()
+
+    assert payload["deletable_best_record_id"] is None
+    assert payload["has_deletable_best"] is False
+
+
+def test_history_metadata_uses_active_fallback_after_previous_best_deleted(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    deleted_best = history_record(db, score="95.0", achieved=now)
+    deleted_best.deleted_at = now + timedelta(seconds=1)
+    active_best = history_record(db, score="82.0", achieved=now + timedelta(seconds=2))
+    stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=active_best.detection_power, score_version=2, best_attempts=active_best.attempts, best_elapsed_seconds=active_best.elapsed_seconds, best_combo=active_best.max_combo, best_hints_used=active_best.hints_used, total_daru_points=200, play_count=2, best_achieved_at=active_best.achieved_at, ranking_record_id=None, created_at=now, updated_at=now)
+    db.add(stat); db.commit()
+
+    payload = client.get("/api/daru-game/history?difficulty=EASY").json()
+
+    assert payload["deletable_best_record_id"] == active_best.id
+    assert payload["has_deletable_best"] is True
+
+
+def test_deleting_ranking_record_never_revives_an_older_record(client: TestClient, db: Session) -> None:
+    now = utc_now(); best = history_record(db, score="95.0", achieved=now); ranking = history_record(db, score="70.0", achieved=now + timedelta(seconds=1))
+    stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=best.detection_power, score_version=2, best_attempts=10, best_elapsed_seconds=60, best_combo=5, best_hints_used=0, total_daru_points=200, play_count=2, best_achieved_at=best.achieved_at, ranking_record_id=ranking.id, created_at=now, updated_at=now)
+    db.add(stat); db.commit()
+    assert client.delete(f"/api/daru-game/history/{ranking.id}").status_code == 204
+    db.refresh(stat)
+    assert stat.ranking_record_id == ranking.id
+    assert stat.best_detection_power == Decimal("95.0")
+    assert client.get("/api/daru-game/leaderboard?difficulty=EASY").json()["my_entry"] is None
+
+
+def test_deleting_best_recomputes_best_while_delete_all_preserves_progress(db: Session) -> None:
+    now = utc_now(); best = history_record(db, score="95.0", achieved=now); second = history_record(db, score="82.0", achieved=now + timedelta(seconds=1)); ranking = history_record(db, score="70.0", achieved=now + timedelta(seconds=2))
+    stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=best.detection_power, score_version=2, best_attempts=10, best_elapsed_seconds=60, best_combo=5, best_hints_used=0, total_daru_points=777, play_count=9, best_achieved_at=best.achieved_at, ranking_record_id=ranking.id, created_at=now, updated_at=now)
+    db.add(stat); db.commit()
+    assert soft_delete_play_record(db, user_id=1, record_id=best.id) is not None
+    db.refresh(stat); assert stat.best_detection_power == Decimal("82.0"); assert stat.ranking_record_id == ranking.id
+    assert soft_delete_all_play_records(db, user_id=1) == 1
+    db.refresh(stat); assert stat.best_detection_power == Decimal("70.0"); assert stat.ranking_record_id == ranking.id
+    assert stat.total_daru_points == 777; assert stat.play_count == 9
+
+
+def test_deleting_current_version_best_never_revives_an_old_score_version(db: Session) -> None:
+    now = utc_now()
+    old_best = history_record(db, score="99.0", achieved=now)
+    old_best.score_version = 1
+    current_best = history_record(db, score="90.0", achieved=now + timedelta(seconds=1))
+    current_second = history_record(db, score="80.0", achieved=now + timedelta(seconds=2))
+    stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=current_best.detection_power, score_version=2, best_attempts=current_best.attempts, best_elapsed_seconds=current_best.elapsed_seconds, best_combo=current_best.max_combo, best_hints_used=current_best.hints_used, total_daru_points=777, play_count=9, best_achieved_at=current_best.achieved_at, ranking_record_id=current_second.id, created_at=now, updated_at=now)
+    db.add(stat); db.commit()
+
+    assert soft_delete_play_record(db, user_id=1, record_id=current_best.id) is not None
+
+    db.refresh(stat)
+    assert stat.best_detection_power == Decimal("80.0")
+    assert stat.best_achieved_at == current_second.achieved_at.replace(tzinfo=None)
+    assert stat.ranking_record_id == current_second.id
+    assert stat.total_daru_points == 777 and stat.play_count == 9
+
+
+def test_deleting_only_current_version_best_leaves_best_empty(db: Session) -> None:
+    now = utc_now()
+    old_best = history_record(db, score="99.0", achieved=now)
+    old_best.score_version = 1
+    current_best = history_record(db, score="90.0", achieved=now + timedelta(seconds=1))
+    stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=current_best.detection_power, score_version=2, best_attempts=current_best.attempts, best_elapsed_seconds=current_best.elapsed_seconds, best_combo=current_best.max_combo, best_hints_used=current_best.hints_used, total_daru_points=777, play_count=9, best_achieved_at=current_best.achieved_at, ranking_record_id=current_best.id, created_at=now, updated_at=now)
+    db.add(stat); db.commit()
+
+    assert soft_delete_play_record(db, user_id=1, record_id=current_best.id) is not None
+
+    db.refresh(stat)
+    assert stat.best_detection_power == Decimal("0.0")
+    assert stat.best_attempts is None
+    assert stat.best_elapsed_seconds is None
+    assert stat.best_combo == 0
+    assert stat.best_hints_used is None
+    assert stat.best_achieved_at is None
+    assert stat.ranking_record_id == current_best.id
+    assert stat.total_daru_points == 777 and stat.play_count == 9
+
+
+def test_restore_recomputes_best_but_preserves_ranking_pointer(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    best = history_record(db, score="95.0", achieved=now)
+    latest = history_record(db, score="70.0", achieved=now + timedelta(seconds=1))
+    stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=best.detection_power, score_version=2, best_attempts=best.attempts, best_elapsed_seconds=best.elapsed_seconds, best_combo=best.max_combo, best_hints_used=best.hints_used, total_daru_points=200, play_count=2, best_achieved_at=best.achieved_at, ranking_record_id=latest.id, created_at=now, updated_at=now)
+    db.add(stat); db.commit()
+
+    assert client.delete(f"/api/daru-game/history/{latest.id}").status_code == 204
+    db.refresh(stat); assert stat.ranking_record_id == latest.id
+    assert client.post(f"/api/daru-game/history/{latest.id}/restore").status_code == 204
+    db.refresh(stat); db.refresh(latest)
+    assert latest.deleted_at is None
+    assert stat.ranking_record_id == latest.id
+    assert stat.best_detection_power == Decimal("95.0")
+
+    assert client.delete(f"/api/daru-game/history/{best.id}").status_code == 204
+    db.refresh(stat); assert stat.best_detection_power == Decimal("70.0")
+    assert client.post(f"/api/daru-game/history/{best.id}/restore").status_code == 204
+    db.refresh(stat)
+    assert stat.best_detection_power == Decimal("95.0")
+    assert client.post(f"/api/daru-game/history/{best.id}/restore").status_code == 404
+
+
+def test_restore_old_ranking_record_does_not_replace_a_new_game_pointer(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    best = history_record(db, score="95.0", achieved=now)
+    old_ranking = history_record(db, score="70.0", achieved=now + timedelta(seconds=1))
+    stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=best.detection_power, score_version=2, best_attempts=best.attempts, best_elapsed_seconds=best.elapsed_seconds, best_combo=best.max_combo, best_hints_used=best.hints_used, total_daru_points=200, play_count=2, best_achieved_at=best.achieved_at, ranking_record_id=old_ranking.id, created_at=now, updated_at=now)
+    db.add(stat); db.commit()
+    assert client.delete(f"/api/daru-game/history/{old_ranking.id}").status_code == 204
+    new_ranking = history_record(db, score="82.0", achieved=now + timedelta(seconds=2))
+    stat.ranking_record_id = new_ranking.id
+    db.commit()
+
+    assert client.post(f"/api/daru-game/history/{old_ranking.id}/restore").status_code == 204
+    db.refresh(stat)
+    assert stat.ranking_record_id == new_ranking.id
+    assert stat.best_detection_power == Decimal("95.0")
+
+
+def test_history_paginates_five_five_two_and_rejects_foreign_delete(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    for index in range(12): history_record(db, score=str(60 + index), achieved=now + timedelta(seconds=index))
+    other = add_user(db, 2, "other"); foreign = history_record(db, user_id=other.id, score="99.0", achieved=now)
+    db.commit()
+    pages = [client.get(f"/api/daru-game/history?difficulty=EASY&page={page}&page_size=5").json() for page in (1, 2, 3)]
+    assert [len(payload["items"]) for payload in pages] == [5, 5, 2]
+    assert all(payload["total_pages"] == 3 for payload in pages)
+    assert client.delete(f"/api/daru-game/history/{foreign.id}").status_code == 404
+
+
+def test_batch_history_delete_is_atomic_and_rejects_foreign_records(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    mine = [history_record(db, score=str(90 - index), achieved=now + timedelta(seconds=index)) for index in range(2)]
+    other = add_user(db, 2, "batch-other")
+    foreign = history_record(db, user_id=other.id, score="99.0", achieved=now)
+    db.commit()
+
+    response = client.post("/api/daru-game/history/delete", json={"record_ids": [mine[0].id, foreign.id]})
+
+    assert response.status_code == 404
+    db.expire_all()
+    assert all(db.get(DaruGamePlayRecord, record.id).deleted_at is None for record in [*mine, foreign])
+
+
+def test_batch_history_delete_protects_ranking_and_recomputes_best(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    best = history_record(db, score="95.0", achieved=now)
+    second = history_record(db, score="82.0", achieved=now + timedelta(seconds=1))
+    ranking = history_record(db, score="70.0", achieved=now + timedelta(seconds=2))
+    stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=best.detection_power, score_version=2, best_attempts=10, best_elapsed_seconds=60, best_combo=5, best_hints_used=0, total_daru_points=300, play_count=3, best_achieved_at=best.achieved_at, ranking_record_id=ranking.id, created_at=now, updated_at=now)
+    db.add(stat); db.commit()
+
+    response = client.post("/api/daru-game/history/delete", json={"record_ids": [best.id, ranking.id]})
+
+    assert response.status_code == 404
+    db.refresh(best); db.refresh(ranking)
+    assert best.deleted_at is None and ranking.deleted_at is None
+
+    response = client.post("/api/daru-game/history/delete", json={"record_ids": [best.id]})
+    assert response.status_code == 200 and response.json() == {"deleted_count": 1}
+    db.refresh(stat)
+    assert stat.best_detection_power == Decimal("82.0")
+    assert stat.ranking_record_id == ranking.id
+    assert stat.total_daru_points == 300 and stat.play_count == 3
+
+
+def test_batch_history_delete_supports_entire_difficulty_with_exclusions(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    easy = [history_record(db, score=str(80 + index), achieved=now + timedelta(seconds=index)) for index in range(7)]
+    normal = history_record(db, score="88.0", achieved=now, completed=True)
+    normal.difficulty = "NORMAL"
+    db.commit()
+
+    response = client.post("/api/daru-game/history/delete", json={"difficulty": "EASY", "exclude_record_ids": [easy[-1].id]})
+
+    assert response.status_code == 200
+    assert response.json() == {"deleted_count": 6}
+    db.expire_all()
+    assert db.get(DaruGamePlayRecord, easy[-1].id).deleted_at is None
+    assert db.get(DaruGamePlayRecord, normal.id).deleted_at is None
+    assert all(db.get(DaruGamePlayRecord, record.id).deleted_at is not None for record in easy[:-1])
+
+
+def test_all_history_cleanup_returns_actual_count_and_preserves_each_ranking_record(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    easy_ranking = history_record(db, score="90.0", achieved=now)
+    easy_other = history_record(db, score="80.0", achieved=now + timedelta(seconds=1))
+    normal_ranking = history_record(db, score="85.0", achieved=now)
+    normal_ranking.difficulty = "NORMAL"
+    normal_other = history_record(db, score="75.0", achieved=now + timedelta(seconds=1))
+    normal_other.difficulty = "NORMAL"
+    db.flush()
+    db.add_all([
+        DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=easy_ranking.detection_power, score_version=2, best_attempts=easy_ranking.attempts, best_elapsed_seconds=easy_ranking.elapsed_seconds, best_combo=easy_ranking.max_combo, best_hints_used=easy_ranking.hints_used, total_daru_points=400, play_count=4, best_achieved_at=easy_ranking.achieved_at, ranking_record_id=easy_ranking.id, created_at=now, updated_at=now),
+        DaruGameStat(user_id=1, difficulty="NORMAL", best_detection_power=normal_ranking.detection_power, score_version=2, best_attempts=normal_ranking.attempts, best_elapsed_seconds=normal_ranking.elapsed_seconds, best_combo=normal_ranking.max_combo, best_hints_used=normal_ranking.hints_used, total_daru_points=300, play_count=3, best_achieved_at=normal_ranking.achieved_at, ranking_record_id=normal_ranking.id, created_at=now, updated_at=now),
+    ])
+    db.commit()
+
+    response = client.delete("/api/daru-game/history")
+
+    assert response.status_code == 200
+    assert response.json() == {"deleted_count": 2}
+    db.expire_all()
+    assert db.get(DaruGamePlayRecord, easy_ranking.id).deleted_at is None
+    assert db.get(DaruGamePlayRecord, normal_ranking.id).deleted_at is None
+    assert db.get(DaruGamePlayRecord, easy_other.id).deleted_at is not None
+    assert db.get(DaruGamePlayRecord, normal_other.id).deleted_at is not None
+
+
+def test_batch_history_delete_requires_authentication(client: TestClient) -> None:
+    app.dependency_overrides.pop(get_current_user)
+    assert client.post("/api/daru-game/history/delete", json={"record_ids": [1]}).status_code == 401
+
+
+def test_trash_paginates_by_latest_deletion_and_corrects_last_page(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    records = [history_record(db, score=str(60 + index), achieved=now + timedelta(seconds=index)) for index in range(12)]
+    db.commit()
+    for index, record in enumerate(records):
+        record.deleted_at = now + timedelta(minutes=index)
+    db.commit()
+
+    pages = [client.get(f"/api/daru-game/history/trash?difficulty=EASY&page={page}&page_size=5").json() for page in (1, 2, 3)]
+    assert [len(payload["items"]) for payload in pages] == [5, 5, 2]
+    assert all(payload["total_pages"] == 3 for payload in pages)
+    assert pages[0]["items"][0]["id"] == records[-1].id
+    assert pages[0]["items"][0]["deleted_at"] is not None
+
+    for item in pages[2]["items"]:
+        assert client.delete(f"/api/daru-game/history/{item['id']}/permanent").status_code == 204
+    corrected = client.get("/api/daru-game/history/trash?difficulty=EASY&page=3&page_size=5").json()
+    assert corrected["page"] == 2 and corrected["total_pages"] == 2
+
+
+def test_permanent_delete_only_accepts_owned_trashed_records_and_clears_pointer(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    record = history_record(db, score="90.0", achieved=now)
+    record.deleted_at = now
+    stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=Decimal("0.0"), score_version=2, best_attempts=None, best_elapsed_seconds=None, best_combo=0, best_hints_used=None, total_daru_points=100, play_count=1, best_achieved_at=None, ranking_record_id=record.id, created_at=now, updated_at=now)
+    other = add_user(db, 2, "trash-other")
+    foreign = history_record(db, user_id=other.id, score="88.0", achieved=now)
+    foreign.deleted_at = now
+    active = history_record(db, score="77.0", achieved=now)
+    db.add(stat); db.commit()
+
+    trash_ids = {item["id"] for item in client.get("/api/daru-game/history/trash?difficulty=EASY").json()["items"]}
+    assert foreign.id not in trash_ids
+    assert client.post(f"/api/daru-game/history/{foreign.id}/restore").status_code == 404
+    assert client.delete(f"/api/daru-game/history/{foreign.id}/permanent").status_code == 404
+    assert client.delete(f"/api/daru-game/history/{active.id}/permanent").status_code == 404
+    assert client.delete(f"/api/daru-game/history/{record.id}/permanent").status_code == 204
+    db.expire_all()
+    assert db.get(DaruGamePlayRecord, record.id) is None
+    assert db.get(DaruGameStat, stat.id).ranking_record_id is None
+    assert client.post(f"/api/daru-game/history/{record.id}/restore").status_code == 404
+
+
+def test_empty_trash_is_difficulty_scoped_and_preserves_active_records(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    easy_deleted = [history_record(db, score=str(80 + index), achieved=now + timedelta(seconds=index)) for index in range(3)]
+    for record in easy_deleted:
+        record.deleted_at = now
+    normal_deleted = history_record(db, score="75.0", achieved=now)
+    normal_deleted.difficulty = "NORMAL"; normal_deleted.deleted_at = now
+    active = history_record(db, score="70.0", achieved=now)
+    db.commit()
+
+    response = client.delete("/api/daru-game/history/trash?difficulty=EASY")
+    assert response.status_code == 200 and response.json() == {"deleted_count": 3}
+    db.expire_all()
+    assert all(db.get(DaruGamePlayRecord, record.id) is None for record in easy_deleted)
+    assert db.get(DaruGamePlayRecord, normal_deleted.id) is not None
+    assert db.get(DaruGamePlayRecord, active.id) is not None
 
 
 def test_game_run_actions_lock_the_row() -> None:

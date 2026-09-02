@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Iterator
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from PIL import Image
 from sqlalchemy import BigInteger, create_engine
@@ -19,7 +22,7 @@ from app.core.config import get_settings
 from app.core.security import create_access_token, utc_now
 from app.db.session import Base, get_db
 from app.main import app
-from app.models import Camera, DetectedObject, DetectionEvent, ObjectClass, User, VideoJob
+from app.models import Camera, DetectedObject, DetectionEvent, Notification, ObjectClass, User, VideoJob
 from app.services.ai_inference_client import (
     AIInferenceBBox,
     AIInferencePrediction,
@@ -35,6 +38,13 @@ from app.services.detection_inference import (
     DetectionPrediction,
     model_label_to_class_code,
 )
+from app.services.detection_notifications import (
+    SAFE_VIDEO_TIMEOUT_MESSAGE,
+    VIDEO_TIMEOUT_ERROR_CODE,
+    ensure_detection_terminal_notification,
+    is_video_timeout_error,
+)
+from app.services.user_analysis_reports import KST, analysis_period_window, build_user_analysis_summary
 from app.services.webcam_inference import (
     WebcamDetectionFrame,
     WebcamDetectionObject,
@@ -42,6 +52,9 @@ from app.services.webcam_inference import (
     WebcamInferenceUnavailableError,
     get_webcam_inference_service,
 )
+from app.services.user_media_uploads import _run_command, validate_video_probe
+from app.repositories.detections import claim_next_queued_video_job, fail_detection_event
+from app.workers.video_detection_worker import fail_stale_jobs, process_one_job
 
 
 @compiles(BigInteger, "sqlite")
@@ -57,8 +70,9 @@ class MockInferenceService(DetectionInferenceService):
         assert media_path.exists()
         return self.result
 
-    def analyze_video(self, media_path: Path) -> DetectionInferenceResult:
+    def analyze_video(self, media_path: Path, *, video_job_id: int | None = None) -> DetectionInferenceResult:
         assert media_path.exists()
+        assert video_job_id is not None
         return self.result
 
 
@@ -83,6 +97,7 @@ class FakeAIInferenceClient:
         self.video_result = video_result
         self.file_calls = 0
         self.video_file_calls = 0
+        self.video_job_ids: list[int | None] = []
         self.image_calls = 0
 
     def infer_image_file(self, media_path: Path) -> AIInferenceResult:
@@ -90,8 +105,9 @@ class FakeAIInferenceClient:
         assert media_path.exists()
         return self.result
 
-    def infer_video_file(self, media_path: Path) -> AIInferenceVideoResult:
+    def infer_video_file(self, media_path: Path, *, video_job_id: int | None = None) -> AIInferenceVideoResult:
         self.video_file_calls += 1
+        self.video_job_ids.append(video_job_id)
         assert media_path.exists()
         assert self.video_result is not None
         return self.video_result
@@ -100,6 +116,7 @@ class FakeAIInferenceClient:
         self.image_calls += 1
         assert image.mode == "RGB"
         return AIInferenceResult(
+            model_id=self.result.model_id,
             media_width=image.width,
             media_height=image.height,
             inference_ms=self.result.inference_ms,
@@ -127,7 +144,7 @@ class FailingAIInferenceClient:
     def infer_image_file(self, media_path: Path) -> AIInferenceResult:
         raise self.error
 
-    def infer_video_file(self, media_path: Path) -> AIInferenceVideoResult:
+    def infer_video_file(self, media_path: Path, *, video_job_id: int | None = None) -> AIInferenceVideoResult:
         raise self.error
 
     def infer_image(self, image: Image.Image) -> AIInferenceResult:
@@ -145,6 +162,8 @@ class FailingAIInferenceClient:
         ("AQUATIC_PLANT", "AQUATIC_PLANT"),
         ("aquatic_plant", "AQUATIC_PLANT"),
         ("aquatic plant", "AQUATIC_PLANT"),
+        ("HAT", "HAT"),
+        ("hat", "HAT"),
     ],
 )
 def test_flowlink_custom_model_labels_map_directly(model_label: str, expected: str) -> None:
@@ -176,6 +195,26 @@ def client(db: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iter
 
     settings = get_settings()
     monkeypatch.setattr(settings, "UPLOAD_DIR", str(tmp_path / "uploads"))
+
+    async def fake_save_user_video_upload(upload, *, current_user, upload_root, settings):
+        suffix = ".mp4"
+        relative_key = Path("detections") / "user" / str(current_user.id) / f"{uuid4().hex}{suffix}"
+        destination = upload_root / relative_key
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        payload = await upload.read()
+        destination.write_bytes(payload or b"raw-video")
+        return destination, relative_key.as_posix(), destination.stat().st_size
+
+    def fake_validate_saved_user_video(media_path: Path, *, settings):
+        return None
+
+    def fake_normalize_user_video_in_place(media_path: Path, *, settings):
+        media_path.write_bytes(b"normalized-video")
+        return media_path.stat().st_size
+
+    monkeypatch.setattr("app.api.detections.save_user_video_upload", fake_save_user_video_upload)
+    monkeypatch.setattr("app.api.detections.validate_saved_user_video", fake_validate_saved_user_video)
+    monkeypatch.setattr("app.workers.video_detection_worker.normalize_user_video_in_place", fake_normalize_user_video_in_place)
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as test_client:
         yield test_client
@@ -231,8 +270,8 @@ def override_webcam_inference(result: WebcamDetectionFrame | Exception) -> None:
     app.dependency_overrides[get_webcam_inference_service] = lambda: MockWebcamInferenceService(result)
 
 
-def image_file(content: bytes = b"image-bytes") -> dict[str, tuple[str, BytesIO, str]]:
-    return {"file": ("sample.jpg", BytesIO(content), "image/jpeg")}
+def image_file(content: bytes | None = None) -> dict[str, tuple[str, BytesIO, str]]:
+    return {"file": ("sample.jpg", BytesIO(jpeg_payload() if content is None else content), "image/jpeg")}
 
 
 def jpeg_payload(*, width: int = 64, height: int = 48) -> bytes:
@@ -308,6 +347,7 @@ def test_default_image_inference_uses_backend_ai_client(client: TestClient, db: 
     authenticate(client, user)
     fake_client = FakeAIInferenceClient(
         AIInferenceResult(
+            model_id="flowlink-4class-hat-v7",
             media_width=80,
             media_height=60,
             inference_ms=18.2,
@@ -328,10 +368,12 @@ def test_default_image_inference_uses_backend_ai_client(client: TestClient, db: 
     assert fake_client.file_calls == 1
     body = response.json()
     assert body["status"] == "COMPLETED"
+    assert body["ai_model_id"] == "flowlink-4class-hat-v7"
     assert body["media_width"] == 80
     assert body["media_height"] == 60
     assert body["detected_objects"][0]["class_code"] == "BAG"
     assert body["detected_objects"][0]["confidence"] == 0.87
+    assert db.query(DetectionEvent).one().ai_model_id == "flowlink-4class-hat-v7"
 
 
 def test_default_video_inference_uses_backend_ai_client_and_preserves_tracks(client: TestClient, db: Session) -> None:
@@ -343,6 +385,7 @@ def test_default_video_inference_uses_backend_ai_client_and_preserves_tracks(cli
     fake_client = FakeAIInferenceClient(
         AIInferenceResult(media_width=1, media_height=1, inference_ms=0, predictions=[]),
         video_result=AIInferenceVideoResult(
+            model_id="flowlink-4class-hat-v7",
             media_width=640,
             media_height=360,
             duration_ms=2800,
@@ -385,27 +428,46 @@ def test_default_video_inference_uses_backend_ai_client_and_preserves_tracks(cli
 
     response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
 
-    assert response.status_code == 201
-    assert fake_client.video_file_calls == 1
+    assert response.status_code == 202
+    assert fake_client.video_file_calls == 0
     body = response.json()
-    assert body["status"] == "COMPLETED"
-    assert body["media_width"] == 640
-    assert body["media_height"] == 360
-    assert [item["class_code"] for item in body["detected_objects"]] == ["FOOTWEAR", "BALL", "TRASH"]
-    assert body["detected_objects"][0]["track_id"] == 4
-    assert body["detected_objects"][0]["first_seen_ms"] == 133
-    assert body["detected_objects"][0]["last_seen_ms"] == 2200
-    assert body["detected_objects"][0]["appearance_count"] == 41
+    assert body["status"] == "PROCESSING"
+    assert body["stage"] == "QUEUED"
+    event = db.query(DetectionEvent).one()
+    job = db.query(VideoJob).one()
+    assert event.status == "PROCESSING"
+    assert event.result_media_url is None
+    assert job.status == "PROCESSING"
+    assert job.processing_stage == "QUEUED"
+    assert job.processing_progress == 0
+
+    assert process_one_job(db, inference_service=DetectionInferenceService(ai_client=fake_client)) is True
+    assert fake_client.video_job_ids == [job.id]
+    db.expire_all()
     event = db.query(DetectionEvent).one()
     job = db.query(VideoJob).one()
     assert event.status == "COMPLETED"
+    assert event.ai_model_id == "flowlink-4class-hat-v7"
     assert event.result_media_url is not None
     assert event.result_media_url.endswith("-result.mp4")
+    assert [item.object_class.code for item in event.detected_objects] == ["FOOTWEAR", "BALL", "TRASH"]
+    assert event.detected_objects[0].track_id == 4
+    assert event.detected_objects[0].first_seen_ms == 133
+    assert event.detected_objects[0].last_seen_ms == 2200
+    assert event.detected_objects[0].appearance_count == 41
     assert job.status == "COMPLETED"
+    assert job.processing_stage == "COMPLETED"
     assert job.processing_progress == 100
+    notification = db.query(Notification).one()
+    assert notification.notification_type == "DETECTION_COMPLETED"
+    assert notification.related_type == "DETECTION_EVENT"
+    assert notification.related_id == event.id
+    assert "3" in notification.message
+    assert "secret" not in notification.message
+    assert ".pt" not in notification.message
 
 
-def test_video_detection_processes_event_through_threadpool(
+def test_video_detection_validates_saved_video_through_threadpool(
     client: TestClient,
     db: Session,
     monkeypatch: pytest.MonkeyPatch,
@@ -423,9 +485,9 @@ def test_video_detection_processes_event_through_threadpool(
 
     response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
 
-    assert response.status_code == 201
+    assert response.status_code == 202
     assert called["value"] is True
-    assert response.json()["status"] == "COMPLETED"
+    assert response.json()["stage"] == "QUEUED"
 
 
 def test_webcam_inference_uses_backend_ai_client() -> None:
@@ -531,6 +593,29 @@ def test_detection_inference_maps_ai_unavailable_to_service_error(tmp_path: Path
         service.analyze_image(image_path)
 
 
+def test_video_timeout_is_not_reported_as_model_unavailable(tmp_path: Path) -> None:
+    from app.services.ai_inference_client import AIInferenceTimeoutError
+    from app.services.detection_inference import DetectionInferenceTimeoutError
+
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"mp4")
+    service = DetectionInferenceService(ai_client=FailingAIInferenceClient(AIInferenceTimeoutError("slow")))
+
+    with pytest.raises(DetectionInferenceTimeoutError, match="AI video inference timed out"):
+        service.analyze_video(video_path)
+
+
+def test_video_generic_ai_unavailable_keeps_existing_safe_handling(tmp_path: Path) -> None:
+    from app.services.ai_inference_client import AIInferenceUnavailableError
+
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"mp4")
+    service = DetectionInferenceService(ai_client=FailingAIInferenceClient(AIInferenceUnavailableError("down")))
+
+    with pytest.raises(DetectionInferenceUnavailableError, match="AI detection model is not configured"):
+        service.analyze_video(video_path)
+
+
 def test_image_inference_deduplicates_overlapping_same_class_predictions(
     client: TestClient,
     db: Session,
@@ -571,6 +656,9 @@ def test_image_inference_deduplicates_overlapping_same_class_predictions(
 def test_invalid_image_inference_marks_event_failed(client: TestClient, db: Session) -> None:
     user = seed_user(db, 1)
     authenticate(client, user)
+    app.dependency_overrides[get_inference_service] = lambda: DetectionInferenceService(
+        ai_client=FailingAIInferenceClient(RuntimeError("broken inference"))
+    )
 
     response = client.post("/api/detections/images", files=image_file())
 
@@ -634,6 +722,421 @@ def test_user_can_only_list_own_user_analysis_events(client: TestClient, db: Ses
     assert own_detail.status_code == 200
     assert other_detail.status_code == 404
     assert operation_detail.status_code == 404
+
+
+def test_user_analysis_summary_requires_user_role_and_supported_period(client: TestClient, db: Session) -> None:
+    admin = seed_user(db, 1, role="ADMIN")
+    user = seed_user(db, 2)
+
+    assert client.get("/api/detections/me/summary").status_code == 401
+
+    authenticate(client, admin)
+    assert client.get("/api/detections/me/summary").status_code == 403
+
+    authenticate(client, user)
+    assert client.get("/api/detections/me/summary?days=14").status_code == 422
+
+
+def test_user_analysis_summary_scopes_private_completed_object_stats(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    other = seed_user(db, 2)
+    seed_object_class(db, 1, "BALL")
+    seed_object_class(db, 2, "FOOTWEAR")
+    seed_object_class(db, 3, "TRASH", group_code="WASTE")
+    seed_object_class(db, 4, "HAT")
+    now = utc_now()
+
+    db.add_all(
+        [
+            DetectionEvent(
+                id=101,
+                user_id=user.id,
+                purpose="USER_ANALYSIS",
+                source_type="IMAGE",
+                original_media_url="detections/user/1/private-image.jpg",
+                ai_model_id="safe-model-id",
+                media_width=100,
+                media_height=80,
+                status="COMPLETED",
+                captured_at=now - timedelta(days=1),
+                processing_completed_at=now - timedelta(days=1),
+                created_at=now - timedelta(days=1),
+                updated_at=now - timedelta(days=1),
+            ),
+            DetectionEvent(
+                id=102,
+                user_id=user.id,
+                purpose="USER_ANALYSIS",
+                source_type="VIDEO",
+                original_media_url="detections/user/1/failed-video.mp4",
+                status="FAILED",
+                error_message="secret stacktrace /srv/private/model.pt",
+                captured_at=now - timedelta(days=2),
+                processing_completed_at=now - timedelta(days=2),
+                created_at=now - timedelta(days=2),
+                updated_at=now - timedelta(days=2),
+            ),
+            DetectionEvent(
+                id=103,
+                user_id=user.id,
+                purpose="USER_ANALYSIS",
+                source_type="VIDEO",
+                original_media_url="detections/user/1/processing-video.mp4",
+                status="PROCESSING",
+                captured_at=now,
+                processing_started_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+            DetectionEvent(
+                id=104,
+                user_id=user.id,
+                purpose="OPERATION",
+                source_type="IMAGE",
+                original_media_url="detections/operation/excluded.jpg",
+                status="COMPLETED",
+                captured_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+            DetectionEvent(
+                id=105,
+                user_id=other.id,
+                purpose="USER_ANALYSIS",
+                source_type="IMAGE",
+                original_media_url="detections/user/2/excluded.jpg",
+                status="COMPLETED",
+                captured_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+        ]
+    )
+    db.add_all(
+        [
+            DetectedObject(
+                id=201,
+                detection_event_id=101,
+                object_class_id=1,
+                processing_status="PENDING",
+                confidence=Decimal("0.9500"),
+                bbox_x=Decimal("1"),
+                bbox_y=Decimal("2"),
+                bbox_width=Decimal("30"),
+                bbox_height=Decimal("40"),
+                appearance_count=1,
+                detected_at=now,
+                created_at=now,
+            ),
+            DetectedObject(
+                id=202,
+                detection_event_id=101,
+                object_class_id=4,
+                processing_status="PENDING",
+                confidence=Decimal("0.4900"),
+                bbox_x=Decimal("5"),
+                bbox_y=Decimal("6"),
+                bbox_width=Decimal("10"),
+                bbox_height=Decimal("11"),
+                appearance_count=1,
+                detected_at=now,
+                created_at=now,
+            ),
+            DetectedObject(
+                id=203,
+                detection_event_id=102,
+                object_class_id=3,
+                processing_status="PENDING",
+                confidence=Decimal("0.9900"),
+                bbox_x=Decimal("1"),
+                bbox_y=Decimal("1"),
+                bbox_width=Decimal("5"),
+                bbox_height=Decimal("5"),
+                appearance_count=1,
+                detected_at=now,
+                created_at=now,
+            ),
+            DetectedObject(
+                id=204,
+                detection_event_id=104,
+                object_class_id=3,
+                processing_status="PENDING",
+                confidence=Decimal("0.9900"),
+                bbox_x=Decimal("1"),
+                bbox_y=Decimal("1"),
+                bbox_width=Decimal("5"),
+                bbox_height=Decimal("5"),
+                appearance_count=1,
+                detected_at=now,
+                created_at=now,
+            ),
+            DetectedObject(
+                id=205,
+                detection_event_id=105,
+                object_class_id=1,
+                processing_status="PENDING",
+                confidence=Decimal("0.9900"),
+                bbox_x=Decimal("1"),
+                bbox_y=Decimal("1"),
+                bbox_width=Decimal("5"),
+                bbox_height=Decimal("5"),
+                appearance_count=1,
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+    )
+    db.commit()
+    authenticate(client, user)
+
+    response = client.get("/api/detections/me/summary?days=30")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_analyses"] == 3
+    assert body["completed_count"] == 1
+    assert body["failed_count"] == 1
+    assert body["in_progress_count"] == 1
+    assert body["image_count"] == 1
+    assert body["video_count"] == 2
+    assert body["total_detected_objects"] == 2
+    assert body["average_confidence"] == 0.72
+    assert [item["class_code"] for item in body["class_distribution"]] == ["BALL", "FOOTWEAR", "TRASH", "HAT"]
+    assert {item["class_code"]: item["count"] for item in body["class_distribution"]} == {
+        "BALL": 1,
+        "FOOTWEAR": 0,
+        "TRASH": 0,
+        "HAT": 1,
+    }
+    assert {item["code"]: item["count"] for item in body["confidence_distribution"]} == {
+        "GE_90": 1,
+        "GE_70": 0,
+        "GE_50": 0,
+        "LT_50": 1,
+    }
+    assert [event["id"] for event in body["recent_events"]] == [103, 101, 102]
+    assert "original_media_url" not in response.text
+    assert "secret stacktrace" not in response.text
+    assert "/srv/private" not in response.text
+
+
+@pytest.mark.parametrize(
+    ("days", "expected_start_date"),
+    [(7, "2026-08-26"), (30, "2026-08-03"), (90, "2026-06-04")],
+)
+def test_user_analysis_summary_uses_kst_calendar_period_start(days: int, expected_start_date: str) -> None:
+    period_start, period_end, trend_dates = analysis_period_window(
+        days,
+        now=datetime(2026, 9, 1, 14, 30, tzinfo=UTC),
+    )
+
+    assert period_start.astimezone(KST).isoformat() == f"{expected_start_date}T00:00:00+09:00"
+    assert period_end.isoformat() == "2026-09-01T14:30:00+00:00"
+    assert trend_dates[0] == expected_start_date
+    assert trend_dates[-1] == "2026-09-01"
+    assert len(trend_dates) == days
+
+
+def test_user_analysis_summary_kst_boundary_matches_daily_trend(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    seed_object_class(db, 1, "BALL")
+    generated_at = datetime(2026, 9, 1, 15, 30, tzinfo=UTC)  # 2026-09-02 00:30 KST
+    included_start = datetime(2026, 8, 26, 15, 0, tzinfo=UTC)  # 2026-08-27 00:00 KST
+    excluded_before_start = included_start - timedelta(microseconds=1)
+    included_before_now = generated_at - timedelta(minutes=1)
+    excluded_after_now = generated_at + timedelta(seconds=1)
+
+    db.add_all(
+        [
+            DetectionEvent(id=401, user_id=user.id, purpose="USER_ANALYSIS", source_type="IMAGE", original_media_url="a.jpg", status="COMPLETED", captured_at=included_start, processing_completed_at=included_start, created_at=included_start, updated_at=included_start),
+            DetectionEvent(id=402, user_id=user.id, purpose="USER_ANALYSIS", source_type="VIDEO", original_media_url="b.mp4", status="COMPLETED", captured_at=included_before_now, processing_completed_at=included_before_now, created_at=included_before_now, updated_at=included_before_now),
+            DetectionEvent(id=403, user_id=user.id, purpose="USER_ANALYSIS", source_type="IMAGE", original_media_url="old.jpg", status="COMPLETED", captured_at=excluded_before_start, processing_completed_at=excluded_before_start, created_at=excluded_before_start, updated_at=excluded_before_start),
+            DetectionEvent(id=404, user_id=user.id, purpose="USER_ANALYSIS", source_type="IMAGE", original_media_url="future.jpg", status="COMPLETED", captured_at=excluded_after_now, processing_completed_at=excluded_after_now, created_at=excluded_after_now, updated_at=excluded_after_now),
+        ]
+    )
+    db.add_all(
+        [
+            DetectedObject(id=501, detection_event_id=401, object_class_id=1, processing_status="PENDING", confidence=Decimal("0.8000"), bbox_x=Decimal("1"), bbox_y=Decimal("1"), bbox_width=Decimal("5"), bbox_height=Decimal("5"), appearance_count=1, detected_at=included_start, created_at=included_start),
+            DetectedObject(id=502, detection_event_id=402, object_class_id=1, processing_status="PENDING", confidence=Decimal("0.9000"), bbox_x=Decimal("1"), bbox_y=Decimal("1"), bbox_width=Decimal("5"), bbox_height=Decimal("5"), appearance_count=1, detected_at=included_before_now, created_at=included_before_now),
+            DetectedObject(id=503, detection_event_id=403, object_class_id=1, processing_status="PENDING", confidence=Decimal("0.9900"), bbox_x=Decimal("1"), bbox_y=Decimal("1"), bbox_width=Decimal("5"), bbox_height=Decimal("5"), appearance_count=1, detected_at=excluded_before_start, created_at=excluded_before_start),
+            DetectedObject(id=504, detection_event_id=404, object_class_id=1, processing_status="PENDING", confidence=Decimal("0.9900"), bbox_x=Decimal("1"), bbox_y=Decimal("1"), bbox_width=Decimal("5"), bbox_height=Decimal("5"), appearance_count=1, detected_at=excluded_after_now, created_at=excluded_after_now),
+        ]
+    )
+    db.commit()
+
+    body = build_user_analysis_summary(db, user_id=user.id, days=7, now=generated_at).model_dump()
+
+    assert body["period_start"] == included_start
+    assert body["period_end"] == generated_at
+    assert body["total_analyses"] == 2
+    assert body["total_detected_objects"] == 2
+    assert sum(item["analysis_count"] for item in body["daily_trend"]) == body["total_analyses"]
+    assert sum(item["object_count"] for item in body["daily_trend"]) == body["total_detected_objects"]
+    assert body["daily_trend"][0] == {"date": "2026-08-27", "analysis_count": 1, "object_count": 1}
+    assert body["daily_trend"][-1] == {"date": "2026-09-02", "analysis_count": 1, "object_count": 1}
+
+
+def test_user_analysis_summary_empty_period_has_consistent_zero_totals(db: Session) -> None:
+    user = seed_user(db, 1)
+
+    body = build_user_analysis_summary(
+        db,
+        user_id=user.id,
+        days=30,
+        now=datetime(2026, 9, 1, 4, 0, tzinfo=UTC),
+    ).model_dump()
+
+    assert body["total_analyses"] == 0
+    assert body["total_detected_objects"] == 0
+    assert sum(item["analysis_count"] for item in body["daily_trend"]) == 0
+    assert len(body["daily_trend"]) == 30
+
+
+def test_video_terminal_notifications_are_safe_and_idempotent(db: Session) -> None:
+    user = seed_user(db, 1)
+    now = utc_now()
+    completed_event = DetectionEvent(
+        id=301,
+        user_id=user.id,
+        purpose="USER_ANALYSIS",
+        source_type="VIDEO",
+        original_media_url="detections/user/1/video.mp4",
+        status="COMPLETED",
+        captured_at=now,
+        processing_completed_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    failed_event = DetectionEvent(
+        id=302,
+        user_id=user.id,
+        purpose="USER_ANALYSIS",
+        source_type="VIDEO",
+        original_media_url="detections/user/1/failed.mp4",
+        status="FAILED",
+        error_message="stacktrace with /app/models/secret.pt",
+        captured_at=now,
+        processing_completed_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    image_event = DetectionEvent(
+        id=303,
+        user_id=user.id,
+        purpose="USER_ANALYSIS",
+        source_type="IMAGE",
+        original_media_url="detections/user/1/image.jpg",
+        status="COMPLETED",
+        captured_at=now,
+        processing_completed_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    operation_event = DetectionEvent(
+        id=304,
+        user_id=user.id,
+        purpose="OPERATION",
+        source_type="VIDEO",
+        original_media_url="detections/operation/video.mp4",
+        status="COMPLETED",
+        captured_at=now,
+        processing_completed_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add_all([completed_event, failed_event, image_event, operation_event])
+    db.commit()
+
+    assert ensure_detection_terminal_notification(db, event=completed_event) is not None
+    assert ensure_detection_terminal_notification(db, event=completed_event) is None
+    assert ensure_detection_terminal_notification(db, event=failed_event) is not None
+    assert ensure_detection_terminal_notification(db, event=image_event) is None
+    assert ensure_detection_terminal_notification(db, event=operation_event) is None
+    db.commit()
+
+    notifications = db.query(Notification).order_by(Notification.related_id, Notification.notification_type).all()
+    assert [(item.notification_type, item.related_type, item.related_id) for item in notifications] == [
+        ("DETECTION_COMPLETED", "DETECTION_EVENT", 301),
+        ("DETECTION_FAILED", "DETECTION_EVENT", 302),
+    ]
+    assert "analysis-report?eventId" not in " ".join(item.message for item in notifications)
+    assert "secret.pt" not in " ".join(item.message for item in notifications)
+    assert "/app/models" not in " ".join(item.message for item in notifications)
+
+
+def test_video_notification_unique_conflict_preserves_completed_event(
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = seed_user(db, 1)
+    seed_object_class(db, 1, "BALL")
+    now = utc_now()
+    event = DetectionEvent(
+        id=351,
+        user_id=user.id,
+        purpose="USER_ANALYSIS",
+        source_type="VIDEO",
+        original_media_url="detections/user/1/video.mp4",
+        result_media_url="detections/user/1/video-result.mp4",
+        result_media_bytes=128,
+        status="COMPLETED",
+        captured_at=now,
+        processing_completed_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(event)
+    db.add(
+        DetectedObject(
+            id=451,
+            detection_event_id=351,
+            object_class_id=1,
+            processing_status="PENDING",
+            confidence=Decimal("0.9100"),
+            bbox_x=Decimal("1"),
+            bbox_y=Decimal("1"),
+            bbox_width=Decimal("5"),
+            bbox_height=Decimal("5"),
+            appearance_count=2,
+            detected_at=now,
+            created_at=now,
+        )
+    )
+    db.commit()
+
+    real_scalar = db.scalar
+    inserted_racing_notification = False
+
+    def racing_scalar(statement, *args, **kwargs):
+        nonlocal inserted_racing_notification
+        if not inserted_racing_notification and "notifications" in str(statement):
+            inserted_racing_notification = True
+            db.add(
+                Notification(
+                    user_id=user.id,
+                    notification_type="DETECTION_COMPLETED",
+                    title="이미 생성된 알림",
+                    message="경쟁 트랜잭션이 먼저 만든 알림",
+                    related_type="DETECTION_EVENT",
+                    related_id=event.id,
+                    created_at=now,
+                )
+            )
+            db.flush()
+            return None
+        return real_scalar(statement, *args, **kwargs)
+
+    monkeypatch.setattr(db, "scalar", racing_scalar)
+
+    assert ensure_detection_terminal_notification(db, event=event) is None
+    db.commit()
+    db.expire_all()
+
+    stored = db.get(DetectionEvent, event.id)
+    assert stored.status == "COMPLETED"
+    assert stored.result_media_url == "detections/user/1/video-result.mp4"
+    assert db.query(DetectedObject).filter(DetectedObject.detection_event_id == event.id).count() == 1
+    assert db.query(Notification).filter(Notification.related_id == event.id).count() == 1
 
 
 def test_user_can_delete_own_detection_history_event(client: TestClient, db: Session, tmp_path: Path) -> None:
@@ -819,6 +1322,347 @@ def test_upload_validation_rejects_empty_unsupported_and_oversized_files(client:
     assert oversized_response.status_code == 413
 
 
+def test_upload_policy_returns_safe_public_limits(client: TestClient) -> None:
+    response = client.get("/api/detections/upload-policy")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["image"]["source_max_bytes"] == 20 * 1024 * 1024
+    assert body["image"]["normalized_hard_max_bytes"] == 5 * 1024 * 1024
+    assert body["video"]["max_bytes"] == 100 * 1024 * 1024
+    assert body["video"]["max_duration_seconds"] == 30
+    assert body["quota"]["media_storage_bytes"] == 1024 * 1024 * 1024
+
+
+def test_storage_usage_counts_only_user_analysis_media(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    other = seed_user(db, 2)
+    authenticate(client, user)
+    now = utc_now()
+    db.add_all(
+        [
+            DetectionEvent(
+                user_id=user.id,
+                purpose="USER_ANALYSIS",
+                source_type="IMAGE",
+                original_media_url="detections/user/1/a.jpg",
+                original_media_bytes=100,
+                result_media_bytes=None,
+                status="COMPLETED",
+                captured_at=now,
+                processing_started_at=now,
+                processing_completed_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+            DetectionEvent(
+                user_id=user.id,
+                purpose="USER_ANALYSIS",
+                source_type="VIDEO",
+                original_media_url="detections/user/1/b.mp4",
+                original_media_bytes=200,
+                result_media_url="detections/user/1/b-result.mp4",
+                result_media_bytes=300,
+                status="COMPLETED",
+                captured_at=now,
+                processing_started_at=now,
+                processing_completed_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+            DetectionEvent(
+                user_id=user.id,
+                purpose="OPERATION",
+                source_type="IMAGE",
+                original_media_url="detections/admin/c.jpg",
+                original_media_bytes=999,
+                status="COMPLETED",
+                captured_at=now,
+                processing_started_at=now,
+                processing_completed_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+            DetectionEvent(
+                user_id=other.id,
+                purpose="USER_ANALYSIS",
+                source_type="IMAGE",
+                original_media_url="detections/user/2/d.jpg",
+                original_media_bytes=999,
+                status="COMPLETED",
+                captured_at=now,
+                processing_started_at=now,
+                processing_completed_at=now,
+                created_at=now,
+                updated_at=now,
+            ),
+        ]
+    )
+    db.commit()
+
+    response = client.get("/api/detections/me/storage-usage")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["used_bytes"] == 600
+    assert body["image_count_last_24h"] == 1
+    assert body["video_count_last_24h"] == 1
+    assert body["active_video_jobs"] == 0
+    assert body["has_unknown_legacy_usage"] is False
+
+
+def test_storage_usage_flags_legacy_media_with_unknown_bytes(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    now = utc_now()
+    db.add(
+        DetectionEvent(
+            user_id=user.id,
+            purpose="USER_ANALYSIS",
+            source_type="VIDEO",
+            original_media_url="detections/user/1/legacy.mp4",
+            original_media_bytes=None,
+            result_media_url="detections/user/1/legacy-result.mp4",
+            result_media_bytes=None,
+            status="COMPLETED",
+            captured_at=now,
+            processing_started_at=now,
+            processing_completed_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db.commit()
+
+    response = client.get("/api/detections/me/storage-usage")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["used_bytes"] == 0
+    assert body["has_unknown_legacy_usage"] is True
+
+
+def test_image_detection_records_normalized_file_size(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    seed_object_class(db, 1, "BAG")
+    authenticate(client, user)
+    override_inference(DetectionInferenceResult(media_width=64, media_height=48, detections=[]))
+
+    response = client.post("/api/detections/images", files=image_file(jpeg_payload(width=64, height=48)))
+
+    assert response.status_code == 201
+    event = db.query(DetectionEvent).one()
+    stored = Path(get_settings().UPLOAD_DIR) / event.original_media_url
+    assert stored.exists()
+    assert event.original_media_bytes == stored.stat().st_size
+    assert response.json()["original_media_bytes"] == stored.stat().st_size
+
+
+def test_image_quota_rejects_recent_limit_without_persisting_media(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "USER_IMAGE_ROLLING_24H_LIMIT", 1)
+    now = utc_now()
+    db.add(
+        DetectionEvent(
+            user_id=user.id,
+            purpose="USER_ANALYSIS",
+            source_type="IMAGE",
+            original_media_url="detections/user/1/existing.jpg",
+            original_media_bytes=10,
+            status="COMPLETED",
+            captured_at=now,
+            processing_started_at=now,
+            processing_completed_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db.commit()
+
+    response = client.post("/api/detections/images", files=image_file(jpeg_payload()))
+
+    assert response.status_code == 429
+    assert db.query(DetectionEvent).count() == 1
+    upload_root = Path(get_settings().UPLOAD_DIR)
+    assert not list((upload_root / "detections" / "user" / str(user.id)).glob("*.jpg"))
+
+
+def test_video_active_job_quota_rejects_second_upload(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    now = utc_now()
+    event = DetectionEvent(
+        user_id=user.id,
+        purpose="USER_ANALYSIS",
+        source_type="VIDEO",
+        original_media_url="detections/user/1/active.mp4",
+        original_media_bytes=100,
+        status="PROCESSING",
+        captured_at=now,
+        processing_started_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(event)
+    db.flush()
+    db.add(
+        VideoJob(
+            detection_event_id=event.id,
+            status="PROCESSING",
+            processing_stage="ANALYZING",
+            processing_progress=30,
+            processed_frames=10,
+            tracking_algorithm="BYTE_TRACK",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db.commit()
+
+    response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
+
+    assert response.status_code == 409
+    assert db.query(DetectionEvent).count() == 1
+
+
+def test_video_duration_migration_matches_nullable_schema_and_constraints() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    migration = (repo_root / "database/migrations/20260901_04_add_video_job_duration.sql").read_text(encoding="utf-8")
+    schema = (repo_root / "database/schema.sql").read_text(encoding="utf-8")
+    column = VideoJob.__table__.c.video_duration_seconds
+
+    assert "ADD COLUMN IF NOT EXISTS video_duration_seconds NUMERIC(6, 2)" in migration
+    assert "video_duration_seconds NUMERIC(6, 2)" in schema
+    assert "video_duration_seconds IS NULL" in migration
+    assert "video_duration_seconds > 0" in migration
+    assert "video_duration_seconds <= 30" in migration
+    assert "video_jobs_video_duration_seconds_check" in migration
+    assert column.nullable is True
+    assert str(column.type) == "NUMERIC(6, 2)"
+
+
+def test_video_upload_stores_probe_duration_and_detail_exposes_it(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+
+    def probe_with_duration(media_path: Path, *, settings):
+        assert media_path.exists()
+        return {"duration": 12.345, "width": 640, "height": 360, "fps": 30}
+
+    monkeypatch.setattr("app.api.detections.validate_saved_user_video", probe_with_duration)
+
+    response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
+
+    assert response.status_code == 202
+    event = db.query(DetectionEvent).one()
+    job = db.query(VideoJob).one()
+    assert job.video_duration_seconds == Decimal("12.35")
+
+    detail_response = client.get(f"/api/detections/{event.id}")
+
+    assert detail_response.status_code == 200
+    assert detail_response.json()["video_duration_seconds"] == 12.35
+
+
+def test_video_detail_allows_existing_rows_without_duration(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    now = utc_now()
+    event = DetectionEvent(
+        user_id=user.id,
+        purpose="USER_ANALYSIS",
+        source_type="VIDEO",
+        original_media_url="detections/user/1/legacy.mp4",
+        original_media_bytes=100,
+        status="COMPLETED",
+        captured_at=now,
+        processing_started_at=now,
+        processing_completed_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(event)
+    db.flush()
+    db.add(
+        VideoJob(
+            detection_event_id=event.id,
+            status="COMPLETED",
+            processing_stage="COMPLETED",
+            processing_progress=100,
+            processed_frames=10,
+            tracking_algorithm="BYTE_TRACK",
+            video_duration_seconds=None,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    db.commit()
+
+    response = client.get(f"/api/detections/{event.id}")
+
+    assert response.status_code == 200
+    assert response.json()["video_duration_seconds"] is None
+
+
+def test_video_probe_failure_cleans_staged_upload_without_event(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+
+    def reject_probe(media_path: Path, *, settings):
+        raise HTTPException(status_code=415, detail="Uploaded file is not a valid MP4 video")
+
+    monkeypatch.setattr("app.api.detections.validate_saved_user_video", reject_probe)
+
+    response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
+
+    assert response.status_code == 415
+    assert db.query(DetectionEvent).count() == 0
+    assert not list((Path(get_settings().UPLOAD_DIR) / "detections" / "user" / str(user.id)).glob("*.mp4"))
+
+
+def test_video_probe_validation_rejects_bad_duration_and_source_dimensions() -> None:
+    settings = get_settings()
+
+    validate_video_probe({"format_name": "mov,mp4,m4a,3gp,3g2,mj2", "width": 1920, "height": 1080, "duration": 30, "fps": 30}, settings=settings)
+    with pytest.raises(HTTPException) as long_video:
+        validate_video_probe({"format_name": "mov,mp4,m4a,3gp,3g2,mj2", "width": 1920, "height": 1080, "duration": 31, "fps": 30}, settings=settings)
+    with pytest.raises(HTTPException) as huge_video:
+        validate_video_probe({"format_name": "mov,mp4,m4a,3gp,3g2,mj2", "width": 5000, "height": 1080, "duration": 10, "fps": 30}, settings=settings)
+    with pytest.raises(HTTPException) as invalid_format:
+        validate_video_probe({"format_name": "matroska,webm", "width": 1920, "height": 1080, "duration": 10, "fps": 30}, settings=settings)
+
+    assert long_video.value.status_code == 413
+    assert huge_video.value.status_code == 413
+    assert invalid_format.value.status_code == 415
+
+
+def test_video_command_timeout_is_reported_as_safe_gateway_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=["ffprobe"], timeout=1)
+
+    monkeypatch.setattr(subprocess, "run", raise_timeout)
+
+    with pytest.raises(HTTPException) as exc:
+        _run_command(["ffprobe"], timeout=1)
+
+    assert exc.value.status_code == 504
+    assert exc.value.detail == "Video processing timed out"
+
+
 @pytest.mark.parametrize("role", ["USER", "ADMIN"])
 def test_webcam_detection_frame_is_allowed_for_user_and_admin(client: TestClient, db: Session, role: str) -> None:
     user = seed_user(db, 1, role=role)
@@ -855,6 +1699,30 @@ def test_webcam_detection_frame_is_allowed_for_user_and_admin(client: TestClient
     assert db.query(DetectionEvent).count() == 0
     assert db.query(DetectedObject).count() == 0
     assert db.query(VideoJob).count() == 0
+
+
+def test_webcam_session_ids_are_scoped_by_user_and_browser(client: TestClient, db: Session) -> None:
+    captured: list[str] = []
+
+    class RecordingWebcamService:
+        def analyze_frame(self, image: Image.Image, *, session_id: str) -> WebcamDetectionFrame:
+            captured.append(session_id)
+            return WebcamDetectionFrame(
+                media_width=image.width, media_height=image.height, inference_ms=0, detected_objects=[]
+            )
+
+    app.dependency_overrides[get_webcam_inference_service] = lambda: RecordingWebcamService()
+    first_user = seed_user(db, 101)
+    second_user = seed_user(db, 202)
+
+    authenticate(client, first_user)
+    client.post("/api/detections/webcam/frame", data={"session_id": "tab-a"}, files=webcam_file())
+    client.post("/api/detections/webcam/frame", data={"session_id": "tab-b"}, files=webcam_file())
+    authenticate(client, second_user)
+    client.post("/api/detections/webcam/frame", data={"session_id": "tab-a"}, files=webcam_file())
+
+    assert captured == ["101:tab-a", "101:tab-b", "202:tab-a"]
+    assert db.query(DetectionEvent).count() == 0
 
 
 def test_webcam_detection_rejects_invalid_frames(client: TestClient, db: Session) -> None:
@@ -897,16 +1765,242 @@ def test_video_detection_creates_video_job(client: TestClient, db: Session) -> N
 
     response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
 
-    assert response.status_code == 201
-    assert response.json()["status"] == "COMPLETED"
+    assert response.status_code == 202
+    assert response.json()["status"] == "PROCESSING"
+    event = db.query(DetectionEvent).one()
+    assert event.status == "PROCESSING"
+    job = db.query(VideoJob).one()
+    assert job.detection_event_id == response.json()["detection_event_id"]
+    assert job.status == "PROCESSING"
+    assert job.processing_stage == "QUEUED"
+    assert job.processing_progress == 0
+    assert job.processing_completed_at is None
+    assert job.error_message is None
+
+
+def test_video_worker_completes_queued_job_and_zero_detection_is_success(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
+    assert response.status_code == 202
+
+    service = MockInferenceService(
+        DetectionInferenceResult(media_width=320, media_height=180, detections=[], rendered_video=b"rendered")
+    )
+    assert process_one_job(db, inference_service=service) is True
+
+    event = db.query(DetectionEvent).one()
+    job = db.query(VideoJob).one()
+    assert event.status == "COMPLETED"
+    assert event.detected_objects == []
+    assert job.status == "COMPLETED"
+    assert job.processing_stage == "COMPLETED"
+    assert job.processing_progress == 100
+
+
+def test_video_worker_normalizes_user_video_before_inference(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class AssertingInferenceService:
+        def analyze_video(self, media_path: Path, *, video_job_id: int | None = None) -> DetectionInferenceResult:
+            assert media_path.read_bytes() == b"worker-normalized"
+            return DetectionInferenceResult(media_width=320, media_height=180, detections=[], rendered_video=b"rendered")
+
+    def fake_normalize(media_path: Path, *, settings):
+        assert media_path.read_bytes() == b"mp4"
+        media_path.write_bytes(b"worker-normalized")
+        return media_path.stat().st_size
+
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    monkeypatch.setattr("app.workers.video_detection_worker.normalize_user_video_in_place", fake_normalize)
+
+    response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
+
+    assert response.status_code == 202
+    assert process_one_job(db, inference_service=AssertingInferenceService()) is True
     event = db.query(DetectionEvent).one()
     assert event.status == "COMPLETED"
+    assert event.original_media_bytes == len(b"worker-normalized")
+
+
+def test_video_worker_cleans_original_and_result_when_result_exceeds_storage_quota(
+    client: TestClient,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
+    assert response.status_code == 202
+    event = db.get(DetectionEvent, response.json()["detection_event_id"])
+    media_path = Path(get_settings().UPLOAD_DIR) / event.original_media_url
+    assert media_path.exists()
+    rendered = b"result-video-too-large"
+    monkeypatch.setattr(get_settings(), "USER_MEDIA_STORAGE_LIMIT_BYTES", len(b"normalized-video") + len(rendered) - 1)
+
+    service = MockInferenceService(
+        DetectionInferenceResult(media_width=320, media_height=180, detections=[], rendered_video=rendered)
+    )
+
+    assert process_one_job(db, inference_service=service) is True
+    db.expire_all()
+    failed_event = db.get(DetectionEvent, event.id)
+    assert failed_event.status == "FAILED"
+    assert failed_event.original_media_bytes == 0
+    assert failed_event.result_media_url is None
+    assert failed_event.result_media_bytes == 0
+    assert not list(media_path.parent.glob(f"{media_path.stem}*"))
+
+
+def test_video_worker_records_safe_timeout_message(client: TestClient, db: Session) -> None:
+    from app.services.detection_inference import DetectionInferenceTimeoutError
+
+    class TimeoutInferenceService:
+        def analyze_video(self, media_path: Path, *, video_job_id: int | None = None) -> DetectionInferenceResult:
+            raise DetectionInferenceTimeoutError("AI video inference timed out")
+
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
+    assert response.status_code == 202
+
+    assert process_one_job(db, inference_service=TimeoutInferenceService()) is True
+
+    event = db.query(DetectionEvent).one()
     job = db.query(VideoJob).one()
-    assert job.detection_event_id == response.json()["id"]
-    assert job.status == "COMPLETED"
-    assert job.processing_progress == 100
-    assert job.processing_completed_at is not None
-    assert job.error_message is None
+    assert event.status == "FAILED"
+    assert job.status == "FAILED"
+    assert job.failed_stage == "ANALYZING"
+    assert event.error_message == VIDEO_TIMEOUT_ERROR_CODE
+    assert "model is not configured" not in event.error_message
+    notification = db.query(Notification).one()
+    assert notification.notification_type == "DETECTION_FAILED"
+    assert notification.message == "영상 분석 시간이 예상보다 길어 중단되었습니다. 다시 시도해주세요."
+    authenticate(client, user)
+    status_response = client.get(f"/api/detections/{event.id}/processing-status")
+    assert status_response.json()["error_message"] == SAFE_VIDEO_TIMEOUT_MESSAGE
+
+
+def test_video_status_is_owner_scoped_and_internal_progress_requires_key(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = seed_user(db, 1)
+    other = seed_user(db, 2)
+    authenticate(client, owner)
+    accepted = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")}).json()
+    event_id = accepted["detection_event_id"]
+    job_id = accepted["video_job_id"]
+
+    response = client.get(f"/api/detections/{event_id}/processing-status")
+    assert response.status_code == 200
+    assert response.json()["stage"] == "QUEUED"
+    assert response.json()["analysis_progress"] is None
+
+    authenticate(client, other)
+    assert client.get(f"/api/detections/{event_id}/processing-status").status_code == 404
+    client.cookies.clear()
+    assert client.get(f"/api/detections/{event_id}/processing-status").status_code == 401
+
+    key = "flowlink-test-ai-internal-key-32-chars"
+    monkeypatch.setattr(get_settings(), "AI_INTERNAL_API_KEY", key)
+    endpoint = f"/api/internal/video-jobs/{job_id}/progress"
+    assert client.post(endpoint, json={"stage": "ANALYZING", "processed_frames": 3, "total_frames": 10}).status_code == 403
+    assert client.post(endpoint, headers={"X-Internal-API-Key": "wrong"}, json={"stage": "ANALYZING"}).status_code == 403
+    assert client.post(endpoint, headers={"X-Internal-API-Key": key}, json={"stage": "ANALYZING", "processed_frames": 298, "total_frames": 300}).status_code == 204
+    db.expire_all()
+    job = db.get(VideoJob, job_id)
+    assert job.processing_stage == "ANALYZING"
+    assert job.processed_frames == 298
+    assert job.total_frames == 300
+
+    assert client.post(endpoint, headers={"X-Internal-API-Key": key}, json={"stage": "RENDERING"}).status_code == 204
+    db.expire_all()
+    job = db.get(VideoJob, job_id)
+    assert job.processing_stage == "RENDERING"
+    assert job.processed_frames == 298
+    authenticate(client, owner)
+    status_response = client.get(f"/api/detections/{event_id}/processing-status")
+    assert status_response.json()["stage"] == "RENDERING"
+    assert status_response.json()["analysis_progress"] == 99
+
+
+def test_video_job_claim_is_single_use_and_stale_processing_fails(client: TestClient, db: Session) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
+
+    claimed_at = utc_now() - timedelta(seconds=get_settings().VIDEO_JOB_STALE_SECONDS + 1)
+    job_id = claim_next_queued_video_job(db, started_at=claimed_at)
+    db.commit()
+    assert job_id is not None
+    assert claim_next_queued_video_job(db, started_at=utc_now()) is None
+    assert fail_stale_jobs(db) == 1
+    db.expire_all()
+    job = db.get(VideoJob, job_id)
+    assert job.status == "FAILED"
+    assert job.processing_stage == "FAILED"
+    assert job.failed_stage == "NORMALIZING"
+    notification = db.query(Notification).one()
+    assert notification.notification_type == "DETECTION_FAILED"
+    assert notification.message == "영상 분석 시간이 예상보다 길어 중단되었습니다. 다시 시도해주세요."
+
+
+@pytest.mark.parametrize("failed_stage", ["QUEUED", "NORMALIZING", "ANALYZING", "RENDERING", "SAVING"])
+def test_video_status_preserves_failure_stage(client: TestClient, db: Session, failed_stage: str) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    accepted = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")}).json()
+    event = db.get(DetectionEvent, accepted["detection_event_id"])
+    event.video_job.processing_stage = failed_stage
+    fail_detection_event(db, event=event, message="safe failure", completed_at=utc_now())
+    db.commit()
+
+    response = client.get(f"/api/detections/{event.id}/processing-status")
+    assert response.status_code == 200
+    assert response.json()["status"] == "FAILED"
+    assert response.json()["stage"] == "FAILED"
+    assert response.json()["failed_stage"] == failed_stage
+    assert response.json()["error_message"] == "영상 분석을 완료하지 못했어요. 잠시 후 다시 시도해주세요."
+
+
+@pytest.mark.parametrize(
+    ("stored_message", "expected_message"),
+    [
+        (
+            "영상 분석 시간이 예상보다 길어 중단되었어요. 잠시 후 다시 시도해주세요.",
+            "영상 분석 시간이 예상보다 길어 중단되었어요. 잠시 후 다시 시도해주세요.",
+        ),
+        (
+            "httpx failure at C:/private/video.mp4 using secret-key",
+            "영상 분석을 완료하지 못했어요. 잠시 후 다시 시도해주세요.",
+        ),
+    ],
+)
+def test_video_status_exposes_only_whitelisted_failure_messages(
+    client: TestClient,
+    db: Session,
+    stored_message: str,
+    expected_message: str,
+) -> None:
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    accepted = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")}).json()
+    event = db.get(DetectionEvent, accepted["detection_event_id"])
+    event.video_job.processing_stage = "ANALYZING"
+    fail_detection_event(db, event=event, message=stored_message, completed_at=utc_now())
+    db.commit()
+
+    response = client.get(f"/api/detections/{event.id}/processing-status")
+
+    assert response.status_code == 200
+    if is_video_timeout_error(stored_message):
+        expected_message = SAFE_VIDEO_TIMEOUT_MESSAGE
+    assert response.json()["error_message"] == expected_message
+    assert "secret-key" not in response.text
+    assert "C:/private" not in response.text
 
 
 def test_video_detection_fails_when_rendered_result_video_is_missing(client: TestClient, db: Session) -> None:
@@ -916,12 +2010,12 @@ def test_video_detection_fails_when_rendered_result_video_is_missing(client: Tes
 
     response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
 
-    assert response.status_code == 500
+    assert response.status_code == 202
     event = db.query(DetectionEvent).one()
     job = db.query(VideoJob).one()
-    assert event.status == "FAILED"
+    assert event.status == "PROCESSING"
     assert event.result_media_url is None
-    assert job.status == "FAILED"
+    assert job.status == "PROCESSING"
 
 
 def test_video_detection_removes_rendered_result_video_when_db_save_fails(
@@ -959,8 +2053,8 @@ def test_video_detection_removes_rendered_result_video_when_db_save_fails(
 
     response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
 
-    assert response.status_code == 500
-    assert db.query(DetectionEvent).one().status == "FAILED"
+    assert response.status_code == 202
+    assert db.query(DetectionEvent).one().status == "PROCESSING"
     assert db.query(DetectedObject).count() == 0
     assert not list((tmp_path / "uploads").glob("detections/user/1/*-result.mp4"))
 

@@ -90,5 +90,5 @@ export function NotificationToastHost({ user }: { user: AuthUser | null }) {
   };
 
   if (!toasts.length) return null;
-  return <aside className={styles.host} aria-label="새 알림" aria-live="polite">{toasts.map((notification) => <Toast key={notification.id} notification={notification} onClose={() => close(notification.id)} onAction={() => void act(notification)} />)}</aside>;
+  return <aside className={styles.host} data-notification-toast="true" aria-label="새 알림" aria-live="polite">{toasts.map((notification) => <Toast key={notification.id} notification={notification} onClose={() => close(notification.id)} onAction={() => void act(notification)} />)}</aside>;
 }

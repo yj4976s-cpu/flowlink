@@ -20,10 +20,6 @@ export interface DaruDirectGreetingState {
   pageVisible: boolean;
 }
 
-export interface DaruDirectGreetingCompletionState extends DaruDirectGreetingState {
-  reducedMotion: boolean;
-}
-
 export interface DaruMobileBubbleAnchorInput {
   viewportWidth: number;
   stageLeft: number;
@@ -83,8 +79,8 @@ export function canCompleteDirectGreetingMove({
   return mode === "active" && !guideOpen && !occluded && !dragging && pageVisible;
 }
 
-export function shouldPlaceDirectGreetingImmediately(state: DaruDirectGreetingCompletionState) {
-  return state.reducedMotion && canCompleteDirectGreetingMove(state);
+export function shouldReduceDaruMovement(reducedMotion: boolean, mobileViewport: boolean) {
+  return reducedMotion && !mobileViewport;
 }
 
 export function resolveMobileBubbleAnchor({

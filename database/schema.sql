@@ -182,7 +182,21 @@ CREATE TABLE detection_events (
     original_media_url TEXT NOT NULL
         CHECK (BTRIM(original_media_url) <> ''),
 
+    original_media_bytes BIGINT
+        CHECK (
+            original_media_bytes IS NULL
+            OR original_media_bytes >= 0
+        ),
+
     result_media_url TEXT,
+
+    result_media_bytes BIGINT
+        CHECK (
+            result_media_bytes IS NULL
+            OR result_media_bytes >= 0
+        ),
+
+    ai_model_id VARCHAR(100),
 
     media_width INTEGER
         CHECK (
@@ -224,6 +238,45 @@ CREATE TABLE detection_events (
 );
 
 
+CREATE TABLE ai_model_deployment_events (
+    id BIGSERIAL PRIMARY KEY,
+
+    requested_by BIGINT
+        REFERENCES users(id)
+        ON DELETE SET NULL,
+
+    request_id VARCHAR(120) NOT NULL UNIQUE,
+
+    action VARCHAR(20) NOT NULL
+        CHECK (
+            action IN (
+                'ACTIVATE',
+                'ROLLBACK'
+            )
+        ),
+
+    requested_model_id VARCHAR(100),
+    from_model_id VARCHAR(100),
+    to_model_id VARCHAR(100),
+
+    status VARCHAR(20) NOT NULL DEFAULT 'REQUESTED'
+        CHECK (
+            status IN (
+                'REQUESTED',
+                'SUCCEEDED',
+                'FAILED'
+            )
+        ),
+
+    failure_code VARCHAR(80),
+    requested_at TIMESTAMPTZ NOT NULL,
+    completed_at TIMESTAMPTZ
+);
+
+ALTER TABLE public.ai_model_deployment_events
+ENABLE ROW LEVEL SECURITY;
+
+
 -- =========================================================
 -- 5. 영상 추적 작업
 -- VIDEO 탐지 실행의 진행 상태와 추적 설정
@@ -250,6 +303,14 @@ CREATE TABLE video_jobs (
         CHECK (
             processing_progress BETWEEN 0 AND 100
         ),
+
+    processing_stage VARCHAR(20) NOT NULL DEFAULT 'QUEUED'
+        CHECK (processing_stage IN ('QUEUED', 'NORMALIZING', 'ANALYZING', 'RENDERING', 'SAVING', 'COMPLETED', 'FAILED')),
+
+    processed_frames INTEGER NOT NULL DEFAULT 0 CHECK (processed_frames >= 0),
+    total_frames INTEGER CHECK (total_frames IS NULL OR total_frames > 0),
+    failed_stage VARCHAR(20)
+        CHECK (failed_stage IS NULL OR failed_stage IN ('QUEUED', 'NORMALIZING', 'ANALYZING', 'RENDERING', 'SAVING')),
 
     tracking_algorithm VARCHAR(20) NOT NULL DEFAULT 'BYTE_TRACK'
         CHECK (
@@ -675,6 +736,7 @@ CREATE TABLE notifications (
         CHECK (
             notification_type IN (
                 'DETECTION_COMPLETED',
+                'DETECTION_FAILED',
                 'MATCH_FOUND',
                 'STATUS_CHANGED',
                 'CITIZEN_REPORT_STATUS'
@@ -694,6 +756,58 @@ CREATE TABLE notifications (
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE UNIQUE INDEX uq_notifications_detection_terminal_once
+ON notifications (user_id, notification_type, related_type, related_id)
+WHERE related_type = 'DETECTION_EVENT'
+  AND notification_type IN ('DETECTION_COMPLETED', 'DETECTION_FAILED');
+
+
+CREATE TABLE admin_notifications (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    notification_type VARCHAR(60) NOT NULL CHECK (
+        notification_type IN (
+            'OPERATION_DETECTION_REVIEW_REQUIRED',
+            'FOUND_ITEM_REGISTRATION_REQUIRED',
+            'WASTE_COLLECTION_REQUIRED',
+            'CITIZEN_REPORT_REVIEW_REQUIRED',
+            'OWNERSHIP_CLAIM_REVIEW_REQUIRED',
+            'OWNERSHIP_RETURN_REQUIRED'
+        )
+    ),
+    title VARCHAR(150) NOT NULL CHECK (BTRIM(title) <> ''),
+    message TEXT NOT NULL CHECK (BTRIM(message) <> ''),
+    related_type VARCHAR(50) NOT NULL CHECK (BTRIM(related_type) <> ''),
+    related_id BIGINT NOT NULL CHECK (related_id > 0),
+    resolved_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX uq_admin_notifications_business_event
+ON admin_notifications (notification_type, related_type, related_id);
+
+CREATE INDEX ix_admin_notifications_created_at
+ON admin_notifications (created_at DESC);
+
+CREATE INDEX ix_admin_notifications_resolved_at
+ON admin_notifications (resolved_at);
+
+CREATE TABLE admin_notification_reads (
+    admin_notification_id BIGINT NOT NULL
+        REFERENCES admin_notifications(id)
+        ON DELETE CASCADE,
+    admin_user_id BIGINT NOT NULL
+        REFERENCES users(id)
+        ON DELETE CASCADE,
+    read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (admin_notification_id, admin_user_id)
+);
+
+CREATE UNIQUE INDEX uq_admin_notification_reads_notification_admin
+ON admin_notification_reads (admin_notification_id, admin_user_id);
+
+CREATE INDEX ix_admin_notification_reads_admin_user
+ON admin_notification_reads (admin_user_id, read_at DESC);
 
 
 -- =========================================================
@@ -753,6 +867,31 @@ CREATE TABLE public.daru_game_stats (
 
 ALTER TABLE public.daru_game_stats
 ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE public.daru_game_play_records (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    difficulty VARCHAR(10) NOT NULL CHECK (difficulty IN ('EASY', 'NORMAL', 'HARD')),
+    detection_power NUMERIC(4,1) NOT NULL CHECK (detection_power BETWEEN 0 AND 100),
+    attempts INTEGER NOT NULL CHECK (attempts >= 0),
+    elapsed_seconds INTEGER NOT NULL CHECK (elapsed_seconds > 0),
+    max_combo INTEGER NOT NULL CHECK (max_combo >= 0),
+    hints_used SMALLINT NOT NULL CHECK (hints_used BETWEEN 0 AND 2),
+    earned_daru_points BIGINT NOT NULL DEFAULT 0 CHECK (earned_daru_points >= 0),
+    completed BOOLEAN NOT NULL,
+    within_time_limit BOOLEAN NOT NULL,
+    score_version INTEGER NOT NULL DEFAULT 2 CHECK (score_version IN (1, 2)),
+    achieved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ
+);
+CREATE INDEX ix_daru_game_play_records_user_difficulty_achieved ON public.daru_game_play_records (user_id, difficulty, achieved_at);
+CREATE INDEX ix_daru_game_play_records_user_difficulty_deleted ON public.daru_game_play_records (user_id, difficulty, deleted_at);
+ALTER TABLE public.daru_game_play_records ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.daru_game_stats ADD COLUMN ranking_record_id BIGINT
+    REFERENCES public.daru_game_play_records(id) ON DELETE SET NULL;
+CREATE INDEX ix_daru_game_stats_ranking_record_id ON public.daru_game_stats (ranking_record_id);
 
 CREATE TABLE public.daru_game_runs (
     id UUID PRIMARY KEY,
@@ -931,6 +1070,18 @@ CREATE INDEX idx_detection_events_user_purpose_created
         created_at DESC
     );
 
+CREATE INDEX idx_detection_events_user_media_usage
+    ON detection_events (
+        user_id,
+        purpose,
+        status,
+        source_type,
+        created_at DESC
+    );
+
+CREATE INDEX ix_ai_model_deployment_events_requested_at
+    ON ai_model_deployment_events (requested_at DESC);
+
 CREATE INDEX idx_detected_objects_event
     ON detected_objects (detection_event_id);
 
@@ -1067,6 +1218,9 @@ CREATE INDEX idx_processing_histories_entity
 
 CREATE INDEX idx_video_jobs_status
     ON video_jobs (status);
+CREATE INDEX idx_video_jobs_queue
+    ON video_jobs (created_at, id)
+    WHERE status = 'PROCESSING' AND processing_stage = 'QUEUED';
 
 CREATE TABLE copilot_conversations (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, public_id VARCHAR(36) NOT NULL UNIQUE, user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE, title VARCHAR(120) NOT NULL, context_type VARCHAR(30) NOT NULL DEFAULT 'GENERAL', context_entity_id BIGINT, summary TEXT, summary_updated_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_message_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), deleted_at TIMESTAMPTZ);
 CREATE TABLE copilot_messages (id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, conversation_id BIGINT NOT NULL REFERENCES copilot_conversations(id) ON DELETE CASCADE, role VARCHAR(12) NOT NULL CHECK (role IN ('USER','ASSISTANT')), content TEXT NOT NULL, presentation_type VARCHAR(30) NOT NULL DEFAULT 'TEXT', presentation JSONB, client_message_id VARCHAR(64), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(conversation_id,client_message_id));
@@ -1094,6 +1248,7 @@ VALUES
     ('BAG', '가방', 'PERSONAL_ITEM', 11),
     ('UMBRELLA', '우산', 'PERSONAL_ITEM', 12),
     ('FOOTWEAR', '신발·슬리퍼류', 'PERSONAL_ITEM', 13),
+    ('HAT', '모자', 'PERSONAL_ITEM', 14),
     -- AI 모델 클래스가 아닌 관리자 재분류용 서비스 클래스
     ('UNKNOWN', '미확인 부유물', 'UNKNOWN', 99)
 ON CONFLICT (code)

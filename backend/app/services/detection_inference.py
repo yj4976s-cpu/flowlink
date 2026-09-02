@@ -31,9 +31,14 @@ class DetectionInferenceResult:
     media_height: int | None
     detections: list[DetectionPrediction]
     rendered_video: bytes | None = None
+    model_id: str | None = None
 
 
 class DetectionInferenceUnavailableError(RuntimeError):
+    pass
+
+
+class DetectionInferenceTimeoutError(RuntimeError):
     pass
 
 
@@ -48,10 +53,11 @@ MODEL_LABEL_TO_CLASS_CODE = {
     "footwear": "FOOTWEAR",
     "shoe": "FOOTWEAR",
     "sneaker": "FOOTWEAR",
+    "hat": "HAT",
     "bottle": "TRASH",
     "cup": "TRASH",
 }
-KNOWN_CLASS_CODES = {"TRASH", "BRANCH", "AQUATIC_PLANT", "BALL", "BAG", "UMBRELLA", "FOOTWEAR"}
+KNOWN_CLASS_CODES = {"TRASH", "BRANCH", "AQUATIC_PLANT", "BALL", "BAG", "UMBRELLA", "FOOTWEAR", "HAT"}
 SAME_CLASS_OVERLAP_THRESHOLD = 0.5
 
 
@@ -136,13 +142,16 @@ class DetectionInferenceService:
             media_width=result.media_width,
             media_height=result.media_height,
             detections=deduplicate_same_class_detections(detections),
+            model_id=result.model_id,
         )
 
-    def analyze_video(self, media_path: Path) -> DetectionInferenceResult:
-        from app.services.ai_inference_client import AIInferenceUnavailableError
+    def analyze_video(self, media_path: Path, *, video_job_id: int | None = None) -> DetectionInferenceResult:
+        from app.services.ai_inference_client import AIInferenceTimeoutError, AIInferenceUnavailableError
 
         try:
-            result = self.ai_client.infer_video_file(media_path)
+            result = self.ai_client.infer_video_file(media_path, video_job_id=video_job_id) if video_job_id is not None else self.ai_client.infer_video_file(media_path)
+        except AIInferenceTimeoutError as exc:
+            raise DetectionInferenceTimeoutError("AI video inference timed out") from exc
         except AIInferenceUnavailableError as exc:
             raise DetectionInferenceUnavailableError("AI detection model is not configured") from exc
         except RuntimeError as exc:
@@ -169,6 +178,7 @@ class DetectionInferenceService:
             media_height=result.media_height,
             detections=detections,
             rendered_video=result.rendered_video,
+            model_id=result.model_id,
         )
 
 

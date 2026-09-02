@@ -17,7 +17,9 @@ from app.schemas.inference import (
     VideoInferenceResponse,
     WebcamTrackingResponse,
 )
-from app.services.yolo_runtime import YoloRuntime, YoloRuntimeUnavailableError, get_yolo_runtime
+from app.services.model_runtime_manager import get_active_yolo_runtime_snapshot
+from app.services.yolo_runtime import YoloRuntime, YoloRuntimeUnavailableError
+from app.services.video_progress import VideoProgressReporter
 
 IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 VIDEO_CONTENT_TYPES = {"video/mp4"}
@@ -28,8 +30,14 @@ class InferenceModelUnavailableError(RuntimeError):
 
 
 class ImageInferenceService:
-    def __init__(self, *, runtime: YoloRuntime) -> None:
+    def __init__(self, *, runtime: YoloRuntime | None = None) -> None:
         self.runtime = runtime
+
+    def _runtime_snapshot(self):
+        if self.runtime is not None:
+            return getattr(self.runtime, "model_id", None), self.runtime
+        snapshot = get_active_yolo_runtime_snapshot()
+        return snapshot.model_id, snapshot.runtime
 
     def analyze_image_bytes(self, payload: bytes, *, content_type: str) -> ImageInferenceResponse:
         settings = get_settings()
@@ -64,12 +72,14 @@ class ImageInferenceService:
 
         started_at = perf_counter()
         try:
-            predictions = self.runtime.predict(rgb_image)
+            model_id, runtime = self._runtime_snapshot()
+            predictions = runtime.predict(rgb_image)
         except YoloRuntimeUnavailableError as exc:
             raise InferenceModelUnavailableError("AI model is unavailable") from exc
         inference_ms = (perf_counter() - started_at) * 1000
 
         return ImageInferenceResponse(
+            model_id=model_id,
             media_width=rgb_image.width,
             media_height=rgb_image.height,
             inference_ms=round(inference_ms, 2),
@@ -94,6 +104,7 @@ class ImageInferenceService:
         *,
         content_type: str,
         rendered_video_path: Path | None = None,
+        video_job_id: int | None = None,
     ) -> VideoInferenceResponse:
         settings = get_settings()
         if content_type not in VIDEO_CONTENT_TYPES:
@@ -108,19 +119,30 @@ class ImageInferenceService:
 
         started_at = perf_counter()
         try:
+            model_id, runtime = self._runtime_snapshot()
             tracking_options = {
                 "fps": metadata["fps"],
                 "media_width": metadata["media_width"],
                 "media_height": metadata["media_height"],
+                "total_frames": metadata["frame_count"],
             }
+            if video_job_id is not None:
+                reporter = VideoProgressReporter(job_id=video_job_id)
+                reporter.report("ANALYZING", 0, metadata["frame_count"], force=True)
+                tracking_options["progress_callback"] = (
+                    lambda stage, processed, total, force: reporter.report(
+                        stage, processed, total, force=force
+                    )
+                )
             if rendered_video_path is not None:
                 tracking_options["rendered_video_path"] = rendered_video_path
-            tracks = self.runtime.track_video(video_path, **tracking_options)
+            tracks = runtime.track_video(video_path, **tracking_options)
         except YoloRuntimeUnavailableError as exc:
             raise InferenceModelUnavailableError("AI model is unavailable") from exc
         inference_ms = (perf_counter() - started_at) * 1000
 
         return VideoInferenceResponse(
+            model_id=model_id,
             media_width=metadata["media_width"],
             media_height=metadata["media_height"],
             duration_ms=int(round(duration_seconds * 1000)),
@@ -198,4 +220,4 @@ class ImageInferenceService:
 
 @lru_cache
 def get_inference_service() -> ImageInferenceService:
-    return ImageInferenceService(runtime=get_yolo_runtime())
+    return ImageInferenceService()

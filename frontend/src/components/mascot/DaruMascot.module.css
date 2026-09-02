@@ -6,13 +6,22 @@
   width: 154px;
   pointer-events: none;
   background: transparent;
-  translate: var(--daru-x, 0) var(--daru-y, 0);
-  transition: opacity 180ms ease, transform 180ms ease, translate 230ms cubic-bezier(.3,.08,.22,1);
+  transform: translate3d(var(--daru-x, 0px), var(--daru-y, 0px), 0);
+  will-change: transform;
+  transition: opacity 180ms ease, transform 230ms cubic-bezier(.3,.08,.22,1);
 }
 .stage[data-dragging] { z-index: 46; transition: none; }
-.stage[data-roaming] { transition: opacity 180ms ease, transform 180ms ease, translate var(--daru-roam-duration, 2200ms) cubic-bezier(.45,0,.22,1); }
+.stage[data-roaming] { transition: opacity 180ms ease, transform var(--daru-roam-duration, 2200ms) cubic-bezier(.45,0,.22,1); }
+.stage[data-game-safe][data-roaming] { transition: opacity 180ms ease, transform var(--daru-roam-duration, 2200ms) cubic-bezier(.2,.1,.8,.9); }
 .stage[data-guide-open] { z-index: 48; }
-.stage[data-occluded] { opacity: 0; transform: translateY(10px); visibility: hidden; pointer-events: none; transition: opacity 180ms ease, transform 180ms ease, visibility 0s linear 180ms; }
+.stage[data-game-safe] {
+  bottom: max(20px, env(safe-area-inset-bottom));
+}
+.stage[data-game-safe][data-mode="active"] {
+  transform: translate3d(var(--daru-x, 0px), var(--daru-y, 0px), 0);
+}
+.stage[data-game-safe] .character { cursor: pointer; }
+.stage[data-occluded] { opacity: 0; transform: translate3d(var(--daru-x, 0px), calc(var(--daru-y, 0px) + 10px), 0); visibility: hidden; pointer-events: none; transition: opacity 180ms ease, transform 180ms ease, visibility 0s linear 180ms; }
 .mascot { position: relative; display: grid; justify-items: center; background: transparent; }
 .character {
   appearance: none;
@@ -141,4 +150,12 @@
 @media (max-width: 1024px) { .stage { right: 91px; width: 122px; }.character { width: 112px; height: 112px; }.bubble { right: 8px; max-width: 190px; font-size: 11px; } }
 @media (min-width: 601px) { .character { user-select: none; -webkit-user-select: none; } }
 @media (max-width: 600px) { .stage { right: 76px; bottom: max(12px, env(safe-area-inset-bottom)); width: 92px; }.character, .mascot[data-mode="quiet"] .character { width: 88px; height: 88px; cursor: pointer; }.guideTrigger { right: -2px; bottom: 4px; width: 23px; height: 23px; }.bubble { display: none; }.mascot[data-direct-greeting] .bubble { position: absolute; z-index: 210; right: auto; left: var(--daru-mobile-bubble-left-offset, -4px); bottom: calc(100% + 2px); display: block; width: var(--daru-mobile-bubble-width, min(220px, calc(100vw - 24px))); max-width: calc(100vw - 24px); padding: 10px 13px 11px; border-radius: 18px 18px 8px 18px; font-size: 11px; line-height: 1.45; pointer-events: none; }.mascot[data-direct-greeting][data-bubble-side="right"] .bubble { border-radius: 18px 18px 18px 8px; }.mascot[data-direct-greeting][data-bubble-side="left"] .bubble::after { right: 12px; left: auto; }.mascot[data-direct-greeting][data-bubble-side="right"] .bubble::after { right: auto; left: 12px; transform: rotate(55deg) skew(8deg, 8deg); }.guidePanel[data-viewport-layer] { position: fixed; z-index: 200; top: auto; right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); left: max(12px, env(safe-area-inset-left)); width: auto; max-width: 480px; max-height: calc(100dvh - max(24px, env(safe-area-inset-top)) - max(24px, env(safe-area-inset-bottom))); margin-inline: auto; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 18px; border-radius: 22px; } }
+@media (max-width: 600px) {
+  .stage[data-game-safe] {
+    bottom: max(8px, env(safe-area-inset-bottom));
+  }
+  .stage[data-game-safe] .guideTrigger { right: -1px; bottom: 1px; }
+}
+@media (max-width: 600px) { .daruImage, .spriteImage { filter: drop-shadow(0 5px 8px color-mix(in srgb, var(--color-text) 10%, transparent)); }.contactShadow { filter: none; opacity: .42; }.bubble { backdrop-filter: none; box-shadow: 0 8px 18px var(--bubble-glow), 0 2px 6px color-mix(in srgb, var(--color-text) 5%, transparent); } }
 @media (prefers-reduced-motion: reduce) { .stage, .character, .renderer, .bubble, .guidePanel { animation: none !important; transition: none !important; }.mascot[data-action] .character, .mascot[data-action] .renderer { transform: none; } }
+@media (max-width: 600px) and (prefers-reduced-motion: reduce) { .stage { transition: opacity 180ms ease, transform 230ms cubic-bezier(.3,.08,.22,1) !important; }.stage[data-roaming] { transition: opacity 180ms ease, transform var(--daru-roam-duration, 2200ms) cubic-bezier(.45,0,.22,1) !important; }.stage[data-game-safe][data-roaming] { transition: opacity 180ms ease, transform var(--daru-roam-duration, 2200ms) cubic-bezier(.2,.1,.8,.9) !important; }.stage[data-dragging] { transition: none !important; }.stage[data-occluded] { transition: opacity 180ms ease, transform 180ms ease, visibility 0s linear 180ms !important; } }

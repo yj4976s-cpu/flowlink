@@ -19,6 +19,7 @@ from app.services.detection_inference import (
     DetectionPrediction,
     bbox_iou,
 )
+from app.services.admin_notifications import sync_detected_object_follow_up_notifications
 from app.services.detections import SAFE_MODEL_UNAVAILABLE_MESSAGE, utc_now
 
 TRASH_CODE = "TRASH"
@@ -194,6 +195,7 @@ def register_mobile_waste_candidate(
             original_media_url=media_key,
             media_width=result.media_width,
             media_height=result.media_height,
+            ai_model_id=result.model_id,
             status="COMPLETED",
             captured_at=now,
             processing_started_at=now,
@@ -234,6 +236,7 @@ def register_mobile_waste_candidate(
             note=MOBILE_WASTE_NOTE,
             created_at=now if now.tzinfo is not None else now.replace(tzinfo=UTC),
         ))
+        sync_detected_object_follow_up_notifications(db, detected_object)
         db.commit()
         db.refresh(detected_object)
         return detected_object

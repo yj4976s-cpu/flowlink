@@ -1,6 +1,8 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path as FilePath
 from typing import Annotated, Literal
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, Query, UploadFile, status
@@ -8,6 +10,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.auth import require_admin
+from app.core.config import Settings, get_settings
 from app.core.security import utc_now
 from app.db.session import get_db
 from app.models import Camera, CommunityComment, CommunityPost, FoundItem, ProcessingHistory, User
@@ -25,7 +28,7 @@ from app.repositories.user_flow import (
     list_ownership_claims,
     waste_collection_completed_ids,
 )
-from app.schemas.admin import AdminAiReportResponse, AdminCameraResponse, AdminCommunityPostListResponse, AdminDashboardResponse, AdminDetectedObjectCollectionResponse, AdminDetectedObjectFoundItemResponse, AdminDetectionEventResponse, AdminFoundItemListResponse, AdminMobileWasteRegistrationResponse, AdminOwnershipClaimResponse, AdminUserListResponse, DetectedObjectUpdateRequest
+from app.schemas.admin import AdminAiReportResponse, AdminCameraResponse, AdminCommunityPostListResponse, AdminDashboardResponse, AdminDetectedObjectCollectionResponse, AdminDetectedObjectFoundItemResponse, AdminDetectionEventResponse, AdminFoundItemListResponse, AdminMobileWasteRegistrationResponse, AdminModelComparisonResponse, AdminModelDeploymentHistoryResponse, AdminModelDeploymentRequest, AdminModelDeploymentRollbackRequest, AdminModelDeploymentStatusResponse, AdminModelDeploymentSwitchResponse, AdminNotificationItem, AdminNotificationListResponse, AdminNotificationReadAllResponse, AdminOperationsBriefingResponse, AdminOperationsBriefingStatus, AdminOwnershipClaimResponse, AdminUserListResponse, DetectedObjectUpdateRequest
 from app.schemas.citizen_report import AdminCitizenReportResponse, AdminCitizenReportUpdateRequest, ResolveCitizenReportRequest
 from app.schemas.common import MessageResponse
 from app.schemas.found_item import FoundItemUpdateRequest
@@ -41,19 +44,200 @@ from app.services.matching import reconcile_match_candidates_for_found_item
 from app.services.geocoding import GeocodingError, geocode_location
 from app.services.found_item_images import representative_found_item_image_url
 from app.services.mobile_waste import register_mobile_waste_candidate
-from app.api.detections import IMAGE_CONTENT_TYPES, IMAGE_MAX_BYTES, WEBCAM_FRAME_MAX_BYTES, save_upload_file
+from app.services.model_comparison import ModelComparisonDataError, load_model_comparison
+from app.services.ai_inference_client import get_ai_inference_client
+from app.services.model_deployment import activate_model, get_model_deployment_status, list_model_deployment_history, rollback_model
+from app.services.admin_operations_briefing import create_admin_operations_briefing, get_admin_operations_briefing_status
+from app.services.admin_notifications import (
+    mark_admin_notification_read,
+    mark_all_admin_notifications_read,
+    list_admin_notifications,
+    sync_detected_object_follow_up_notifications,
+)
+from app.api.detections import WEBCAM_FRAME_MAX_BYTES
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 KST = ZoneInfo("Asia/Seoul")
 FOUND_ITEM_STATUSES = {"DETECTED", "RECOVERED", "AVAILABLE", "CLAIM_PENDING", "RETURNED", "DISPOSED", "ARCHIVED"}
+ADMIN_NOTIFICATION_FILTERS = {"all", "unread", "actionable", "resolved"}
+ADMIN_IMAGE_CONTENT_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
+ADMIN_IMAGE_MAX_BYTES = 20 * 1024 * 1024
+UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+
+def admin_upload_root() -> FilePath:
+    configured = FilePath(get_settings().UPLOAD_DIR)
+    root = configured if configured.is_absolute() else FilePath(__file__).resolve().parents[2] / configured
+    return root.resolve()
+
+
+async def save_admin_upload_file(
+    file: UploadFile,
+    *,
+    current_user: User,
+    allowed_types: dict[str, str],
+    max_bytes: int,
+) -> tuple[FilePath, str]:
+    content_type = (file.content_type or "").split(";")[0].strip().lower()
+    if content_type not in allowed_types:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Unsupported media type")
+    relative_key = FilePath("detections") / "user" / str(current_user.id) / f"{uuid4().hex}{allowed_types[content_type]}"
+    root = admin_upload_root()
+    destination = (root / relative_key).resolve()
+    if not destination.is_relative_to(root):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid upload path")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    total_bytes = 0
+    try:
+        with destination.open("wb") as output:
+            while chunk := await file.read(UPLOAD_CHUNK_BYTES):
+                total_bytes += len(chunk)
+                if total_bytes > max_bytes:
+                    raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Uploaded file is too large")
+                output.write(chunk)
+        if total_bytes == 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty")
+        return destination, relative_key.as_posix()
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
 
 
 @router.get("/ai-report", response_model=AdminAiReportResponse, summary="AI 운영 탐지 품질 집계")
 def get_admin_ai_report(
     current_admin: Annotated[User, Depends(require_admin)],
     db: Annotated[Session, Depends(get_db)],
+    days: Annotated[int, Query()] = 30,
 ) -> AdminAiReportResponse:
-    return AdminAiReportResponse.model_validate(get_admin_ai_report_data(db))
+    if days not in (7, 30, 90):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported report period")
+    return AdminAiReportResponse.model_validate(get_admin_ai_report_data(db, days=days))
+
+
+@router.get("/notifications", response_model=AdminNotificationListResponse, summary="관리자 알림 목록 조회")
+def list_admin_notification_center(
+    current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    filter: Annotated[str, Query(pattern="^(all|unread|actionable|resolved)$")] = "all",
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> AdminNotificationListResponse:
+    if filter not in ADMIN_NOTIFICATION_FILTERS:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid admin notification filter")
+    return AdminNotificationListResponse.model_validate(
+        list_admin_notifications(
+            db,
+            admin_user_id=current_admin.id,
+            notification_filter=filter,  # type: ignore[arg-type]
+            skip=skip,
+            limit=limit,
+        )
+    )
+
+
+@router.patch("/notifications/{id}/read", response_model=AdminNotificationItem, summary="관리자 알림 개별 읽음")
+def mark_admin_notification_as_read(
+    id: Annotated[int, Path(ge=1)],
+    current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+) -> AdminNotificationItem:
+    item = mark_admin_notification_read(db, notification_id=id, admin_user_id=current_admin.id)
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Admin notification not found")
+    return AdminNotificationItem.model_validate(item)
+
+
+@router.post("/notifications/read-all", response_model=AdminNotificationReadAllResponse, summary="관리자 알림 전체 읽음")
+def mark_all_admin_notifications_as_read(
+    current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+) -> AdminNotificationReadAllResponse:
+    return AdminNotificationReadAllResponse(
+        marked_read_count=mark_all_admin_notifications_read(db, admin_user_id=current_admin.id)
+    )
+
+
+@router.get("/ai-report/operations-briefing/status", response_model=AdminOperationsBriefingStatus, summary="운영 AI 브리핑 연결 상태")
+def get_admin_operations_briefing_connection_status(
+    current_admin: Annotated[User, Depends(require_admin)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AdminOperationsBriefingStatus:
+    del current_admin
+    return AdminOperationsBriefingStatus.model_validate(get_admin_operations_briefing_status(settings))
+
+
+@router.post("/ai-report/operations-briefing", response_model=AdminOperationsBriefingResponse, summary="운영 AI 브리핑 수동 생성")
+async def generate_admin_operations_briefing(
+    current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AdminOperationsBriefingResponse:
+    del current_admin
+    return AdminOperationsBriefingResponse.model_validate(await create_admin_operations_briefing(db, settings))
+
+
+@router.get("/model-comparison", response_model=AdminModelComparisonResponse, summary="관리자 모델 비교 평가 결과")
+def get_admin_model_comparison(
+    current_admin: Annotated[User, Depends(require_admin)],
+) -> AdminModelComparisonResponse:
+    del current_admin
+    try:
+        return load_model_comparison()
+    except ModelComparisonDataError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Model comparison data is unavailable",
+        ) from exc
+
+
+@router.get("/model-deployment", response_model=AdminModelDeploymentStatusResponse, summary="관리자 모델 런타임 상태 조회")
+def get_admin_model_deployment(
+    current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+) -> AdminModelDeploymentStatusResponse:
+    del current_admin
+    return get_model_deployment_status(db, get_ai_inference_client())
+
+
+@router.get("/model-deployment/history", response_model=AdminModelDeploymentHistoryResponse, summary="관리자 모델 전환 이력 조회")
+def get_admin_model_deployment_history(
+    current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> AdminModelDeploymentHistoryResponse:
+    del current_admin
+    return AdminModelDeploymentHistoryResponse(events=list_model_deployment_history(db, limit=limit))
+
+
+@router.post("/model-deployment/activate", response_model=AdminModelDeploymentSwitchResponse, summary="관리자 모델 활성화")
+def activate_admin_model(
+    request: AdminModelDeploymentRequest,
+    current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+) -> AdminModelDeploymentSwitchResponse:
+    return activate_model(
+        db,
+        admin=current_admin,
+        ai_client=get_ai_inference_client(),
+        model_id=request.model_id,
+        expected_active_model_id=request.expected_active_model_id,
+        request_id=request.request_id,
+    )
+
+
+@router.post("/model-deployment/rollback", response_model=AdminModelDeploymentSwitchResponse, summary="관리자 모델 롤백")
+def rollback_admin_model(
+    request: AdminModelDeploymentRollbackRequest,
+    current_admin: Annotated[User, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+) -> AdminModelDeploymentSwitchResponse:
+    return rollback_model(
+        db,
+        admin=current_admin,
+        ai_client=get_ai_inference_client(),
+        expected_active_model_id=request.expected_active_model_id,
+        request_id=request.request_id,
+    )
 
 
 def detected_object_payload(item, *, collected_ids: set[int] | None = None, operational: bool = True) -> dict:
@@ -91,6 +275,7 @@ def detection_event_payload(event, *, collected_ids: set[int] | None = None) -> 
         "source_type": event.source_type,
         "original_media_url": event.original_media_url,
         "result_media_url": event.result_media_url,
+        "ai_model_id": event.ai_model_id,
         "status": event.status,
         "captured_at": event.captured_at,
         "processing_started_at": event.processing_started_at,
@@ -301,7 +486,12 @@ async def detect_image(
     camera = db.scalar(select(Camera).where(Camera.id == camera_id, Camera.is_active.is_(True)))
     if camera is None:
         raise HTTPException(status_code=422, detail="활성 카메라를 선택해 주세요.")
-    media_path, media_key = await save_upload_file(file, current_user=current_admin, allowed_types=IMAGE_CONTENT_TYPES, max_bytes=IMAGE_MAX_BYTES)
+    media_path, media_key = await save_admin_upload_file(
+        file,
+        current_user=current_admin,
+        allowed_types=ADMIN_IMAGE_CONTENT_TYPES,
+        max_bytes=ADMIN_IMAGE_MAX_BYTES,
+    )
     try:
         event = create_operation_detection_event(db, current_admin=current_admin, camera=camera, source_type="IMAGE", media_key=media_key)
         process_detection_event(db, event_id=event.id, media_path=media_path, inference_service=inference_service)
@@ -327,7 +517,7 @@ async def register_mobile_waste(
     camera = db.scalar(select(Camera).where(Camera.id == camera_id, Camera.is_active.is_(True)))
     if camera is None:
         raise HTTPException(status_code=422, detail="활성 카메라를 선택해 주세요.")
-    media_path, media_key = await save_upload_file(
+    media_path, media_key = await save_admin_upload_file(
         file,
         current_user=current_admin,
         allowed_types={"image/jpeg": ".jpg"},
@@ -434,6 +624,7 @@ def update_detected_object(
             linked_found_item.updated_at = utc_now()
             reconcile_match_candidates_for_found_item(db, linked_found_item)
     db.add(ProcessingHistory(actor_user_id=current_admin.id, entity_type="DETECTED_OBJECT", entity_id=item.id, action_type="DETECTED_OBJECT_REVIEWED", previous_status=previous_status, new_status=item.processing_status, note=item.admin_memo, created_at=utc_now()))
+    sync_detected_object_follow_up_notifications(db, item)
     db.commit()
     return MessageResponse(message="Detected object updated")
 

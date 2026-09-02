@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -35,6 +35,10 @@ class User(Base):
         back_populates="reviewer", foreign_keys="OwnershipClaim.reviewed_by"
     )
     notifications: Mapped[list[Notification]] = relationship(back_populates="user")
+    admin_notification_reads: Mapped[list[AdminNotificationRead]] = relationship(
+        back_populates="admin_user",
+        passive_deletes=True,
+    )
     detection_events: Mapped[list[DetectionEvent]] = relationship(back_populates="user")
     citizen_reports: Mapped[list[CitizenReport]] = relationship(back_populates="user", foreign_keys="CitizenReport.user_id")
     citizen_sightings: Mapped[list[CitizenSighting]] = relationship(back_populates="user")
@@ -43,6 +47,7 @@ class User(Base):
     copilot_conversations: Mapped[list[CopilotConversation]] = relationship(back_populates="user")
     social_accounts: Mapped[list[UserSocialAccount]] = relationship(back_populates="user", passive_deletes=True)
     daru_game_stats: Mapped[list[DaruGameStat]] = relationship(back_populates="user", passive_deletes=True)
+    daru_game_play_records: Mapped[list[DaruGamePlayRecord]] = relationship(back_populates="user", passive_deletes=True)
     daru_game_runs: Mapped[list[DaruGameRun]] = relationship(back_populates="user", passive_deletes=True)
 
 
@@ -78,6 +83,7 @@ class DaruGameStat(Base):
         CheckConstraint("total_daru_points >= 0", name="ck_daru_game_stats_points"),
         CheckConstraint("play_count >= 0", name="ck_daru_game_stats_play_count"),
         UniqueConstraint("user_id", "difficulty", name="uq_daru_game_stats_user_difficulty"),
+        Index("ix_daru_game_stats_ranking_record_id", "ranking_record_id"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
@@ -92,10 +98,41 @@ class DaruGameStat(Base):
     total_daru_points: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     play_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     best_achieved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    ranking_record_id: Mapped[int | None] = mapped_column(ForeignKey("daru_game_play_records.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
 
     user: Mapped[User] = relationship(back_populates="daru_game_stats")
+    ranking_record: Mapped[DaruGamePlayRecord | None] = relationship(foreign_keys=[ranking_record_id], post_update=True)
+
+
+class DaruGamePlayRecord(Base):
+    __tablename__ = "daru_game_play_records"
+    __table_args__ = (
+        CheckConstraint("difficulty IN ('EASY', 'NORMAL', 'HARD')", name="ck_daru_game_play_records_difficulty"),
+        CheckConstraint("detection_power BETWEEN 0 AND 100", name="ck_daru_game_play_records_detection_power"),
+        CheckConstraint("attempts >= 0 AND elapsed_seconds > 0 AND max_combo >= 0 AND hints_used BETWEEN 0 AND 2 AND earned_daru_points >= 0", name="ck_daru_game_play_records_metrics"),
+        Index("ix_daru_game_play_records_user_difficulty_achieved", "user_id", "difficulty", "achieved_at"),
+        Index("ix_daru_game_play_records_user_difficulty_deleted", "user_id", "difficulty", "deleted_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    difficulty: Mapped[str] = mapped_column(String(10), nullable=False)
+    detection_power: Mapped[Decimal] = mapped_column(Numeric(4, 1), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False)
+    elapsed_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_combo: Mapped[int] = mapped_column(Integer, nullable=False)
+    hints_used: Mapped[int] = mapped_column(Integer, nullable=False)
+    earned_daru_points: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    completed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    within_time_limit: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    score_version: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    achieved_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+    user: Mapped[User] = relationship(back_populates="daru_game_play_records")
 
 
 class DaruGameRun(Base):
@@ -186,7 +223,10 @@ class DetectionEvent(Base):
     purpose: Mapped[str] = mapped_column(String(20), nullable=False, default="OPERATION")
     source_type: Mapped[str] = mapped_column(String(10), nullable=False)
     original_media_url: Mapped[str] = mapped_column(Text, nullable=False)
+    original_media_bytes: Mapped[int | None] = mapped_column(BigInteger)
     result_media_url: Mapped[str | None] = mapped_column(Text)
+    result_media_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    ai_model_id: Mapped[str | None] = mapped_column(String(100))
     media_width: Mapped[int | None] = mapped_column(Integer)
     media_height: Mapped[int | None] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")
@@ -203,6 +243,30 @@ class DetectionEvent(Base):
     video_job: Mapped[VideoJob | None] = relationship(back_populates="detection_event", uselist=False)
 
 
+class AiModelDeploymentEvent(Base):
+    __tablename__ = "ai_model_deployment_events"
+    __table_args__ = (
+        CheckConstraint("action IN ('ACTIVATE', 'ROLLBACK')", name="ck_ai_model_deployment_events_action"),
+        CheckConstraint("status IN ('REQUESTED', 'SUCCEEDED', 'FAILED')", name="ck_ai_model_deployment_events_status"),
+        UniqueConstraint("request_id", name="uq_ai_model_deployment_events_request_id"),
+        Index("ix_ai_model_deployment_events_requested_at", "requested_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    requested_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    request_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    action: Mapped[str] = mapped_column(String(20), nullable=False)
+    requested_model_id: Mapped[str | None] = mapped_column(String(100))
+    from_model_id: Mapped[str | None] = mapped_column(String(100))
+    to_model_id: Mapped[str | None] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="REQUESTED")
+    failure_code: Mapped[str | None] = mapped_column(String(80))
+    requested_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+    requester: Mapped[User | None] = relationship()
+
+
 class VideoJob(Base):
     __tablename__ = "video_jobs"
 
@@ -212,6 +276,10 @@ class VideoJob(Base):
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")
     processing_progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    processing_stage: Mapped[str] = mapped_column(String(20), nullable=False, default="QUEUED")
+    processed_frames: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_frames: Mapped[int | None] = mapped_column(Integer)
+    failed_stage: Mapped[str | None] = mapped_column(String(20))
     tracking_algorithm: Mapped[str] = mapped_column(String(20), nullable=False, default="BYTE_TRACK")
     video_duration_seconds: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
     processing_started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
@@ -412,6 +480,22 @@ class OwnershipClaim(Base):
 
 class Notification(Base):
     __tablename__ = "notifications"
+    __table_args__ = (
+        Index(
+            "uq_notifications_detection_terminal_once",
+            "user_id",
+            "notification_type",
+            "related_type",
+            "related_id",
+            unique=True,
+            postgresql_where=text(
+                "related_type = 'DETECTION_EVENT' AND notification_type IN ('DETECTION_COMPLETED', 'DETECTION_FAILED')"
+            ),
+            sqlite_where=text(
+                "related_type = 'DETECTION_EVENT' AND notification_type IN ('DETECTION_COMPLETED', 'DETECTION_FAILED')"
+            ),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
@@ -424,6 +508,61 @@ class Notification(Base):
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
 
     user: Mapped[User] = relationship(back_populates="notifications")
+
+
+class AdminNotification(Base):
+    __tablename__ = "admin_notifications"
+    __table_args__ = (
+        CheckConstraint(
+            "notification_type IN ('OPERATION_DETECTION_REVIEW_REQUIRED', 'FOUND_ITEM_REGISTRATION_REQUIRED', 'WASTE_COLLECTION_REQUIRED', 'CITIZEN_REPORT_REVIEW_REQUIRED', 'OWNERSHIP_CLAIM_REVIEW_REQUIRED', 'OWNERSHIP_RETURN_REQUIRED')",
+            name="ck_admin_notifications_type",
+        ),
+        CheckConstraint("related_id > 0", name="ck_admin_notifications_related_id"),
+        UniqueConstraint(
+            "notification_type",
+            "related_type",
+            "related_id",
+            name="uq_admin_notifications_business_event",
+        ),
+        Index("ix_admin_notifications_created_at", "created_at"),
+        Index("ix_admin_notifications_resolved_at", "resolved_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    notification_type: Mapped[str] = mapped_column(String(60), nullable=False)
+    title: Mapped[str] = mapped_column(String(150), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    related_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    related_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+    reads: Mapped[list[AdminNotificationRead]] = relationship(
+        back_populates="notification",
+        passive_deletes=True,
+    )
+
+
+class AdminNotificationRead(Base):
+    __tablename__ = "admin_notification_reads"
+    __table_args__ = (
+        UniqueConstraint(
+            "admin_notification_id",
+            "admin_user_id",
+            name="uq_admin_notification_reads_notification_admin",
+        ),
+        Index("ix_admin_notification_reads_admin_user", "admin_user_id", "read_at"),
+    )
+
+    admin_notification_id: Mapped[int] = mapped_column(
+        ForeignKey("admin_notifications.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    admin_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    read_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+    notification: Mapped[AdminNotification] = relationship(back_populates="reads")
+    admin_user: Mapped[User] = relationship(back_populates="admin_notification_reads")
 
 
 class CommunityPost(Base):

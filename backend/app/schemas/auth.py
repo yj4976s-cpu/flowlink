@@ -1,14 +1,31 @@
 from datetime import datetime
-import re
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-PASSWORD_POLICY_MESSAGE = "비밀번호는 영문과 숫자를 조합해 8~128자로 입력해주세요."
-PASSWORD_PATTERN = re.compile(r"^(?=.*[A-Za-z])(?=.*[0-9]).{8,128}$")
+PASSWORD_POLICY_MESSAGE = "비밀번호는 8~128자이며 영문 대문자, 영문 소문자, 숫자, 특수문자를 각각 1개 이상 포함해야 합니다."
+PASSWORD_MIN_LENGTH = 8
+PASSWORD_MAX_LENGTH = 128
+
+
+def is_ascii_punctuation(character: str) -> bool:
+    code_point = ord(character)
+    return (
+        33 <= code_point <= 47
+        or 58 <= code_point <= 64
+        or 91 <= code_point <= 96
+        or 123 <= code_point <= 126
+    )
 
 
 def validate_new_password(value: str) -> str:
-    if not PASSWORD_PATTERN.fullmatch(value):
+    valid = (
+        PASSWORD_MIN_LENGTH <= len(value) <= PASSWORD_MAX_LENGTH
+        and any("A" <= character <= "Z" for character in value)
+        and any("a" <= character <= "z" for character in value)
+        and any("0" <= character <= "9" for character in value)
+        and any(is_ascii_punctuation(character) for character in value)
+    )
+    if not valid:
         raise ValueError(PASSWORD_POLICY_MESSAGE)
     return value
 

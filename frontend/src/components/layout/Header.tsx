@@ -8,6 +8,7 @@ import { Icon } from "@/components/common/Icon";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { NotificationToastHost } from "@/components/notifications/NotificationToastHost";
 import { NotificationCenter } from "@/components/notifications/NotificationCenter";
+import { AdminNotificationCenter } from "@/components/notifications/AdminNotificationCenter";
 import { DaruSettings } from "@/components/mascot";
 import { AuthUser, getCurrentUser, logout as logoutRequest } from "@/lib/authApi";
 import { AUTH_CHANGED_EVENT } from "@/lib/authEvents";
@@ -58,9 +59,11 @@ const adminNavigation: readonly NavigationItem[] = [
   {
     label: "운영 분석",
     href: "/admin/ai-report",
-    activePaths: ["/admin/ai-report", "/admin/users", "/admin/community-posts"],
+    activePaths: ["/admin/ai-report", "/admin/model-comparison", "/admin/users", "/admin/community-posts", "/admin/notifications"],
     children: [
       { label: "AI 리포트", href: "/admin/ai-report" },
+      { label: "관리자 알림", href: "/admin/notifications" },
+      { label: "모델 비교", href: "/admin/model-comparison" },
       { label: "사용자 관리", href: "/admin/users" },
       { label: "게시글 관리", href: "/admin/community-posts" },
     ],
@@ -279,7 +282,7 @@ export function Header() {
           <DaruSettings />
           {authResolved && (currentUser ? (
             <>
-              {!isAdmin && <NotificationCenter key={currentUser.id} userId={currentUser.id} open={notificationOpen} onOpenChange={changeNotificationOpen} />}
+              {isAdmin ? <AdminNotificationCenter key={`admin-${currentUser.id}`} user={currentUser} open={notificationOpen} onOpenChange={changeNotificationOpen} /> : <NotificationCenter key={currentUser.id} userId={currentUser.id} open={notificationOpen} onOpenChange={changeNotificationOpen} />}
               <div className="profile-menu-wrap" ref={profileRef}>
                 <button className="profile-trigger" type="button" aria-haspopup="menu" aria-expanded={profileOpen} onClick={() => { setProfileOpen((value) => !value); setNotificationOpen(false); setLogoutConfirm(false); setLogoutError(""); }}>
                   <span className="profile-avatar" aria-hidden="true"><Icon name="user" size={17} /></span>
@@ -299,9 +302,15 @@ export function Header() {
               </div>
             </>
           ) : (
-            <Link className="login-link" href="/login">로그인</Link>
+            <>
+              <span className="header-actions-divider" aria-hidden="true" />
+              <div className="header-guest-actions">
+                <Link className="header-login-cta" href="/login">로그인</Link>
+                <Link className="button button-primary header-cta" href="/lost-reports/new">분실 신고하기</Link>
+              </div>
+            </>
           ))}
-          {authResolved && !isAdmin && <Link className="button button-primary header-cta" href="/lost-reports/new">분실 신고하기</Link>}
+          {authResolved && currentUser && !isAdmin && <Link className="button button-primary header-cta" href="/lost-reports/new">분실 신고하기</Link>}
           <button
             ref={buttonRef}
             type="button"
@@ -334,15 +343,16 @@ export function Header() {
                 </Fragment>
               );
             })}
-            {currentUser ? (
+            {authResolved && (currentUser ? (
               <>
                 {isAdmin && <Link href="/admin" onClick={closeMenu}>관리자 정보</Link>}
+                {isAdmin && <Link href="/admin/notifications" onClick={closeMenu}>관리자 알림</Link>}
                 {!isAdmin && <Link href="/notifications" onClick={closeMenu}>알림</Link>}
                 <button className="mobile-auth-button" type="button" onClick={requestLogout}>로그아웃</button>
               </>
             ) : (
-              <Link href="/login" onClick={closeMenu}>로그인</Link>
-            )}
+              <><Link href="/login" onClick={closeMenu}>로그인</Link><Link href="/register" onClick={closeMenu}>회원가입</Link></>
+            ))}
             {!isAdmin && <Link className="button button-primary" href="/lost-reports/new" onClick={closeMenu}>분실 신고하기</Link>}
           </nav>
         </div>

@@ -21,5 +21,11 @@ export function getNotificationDestination(notification: NotificationResponse): 
   if (notification.notification_type === "CITIZEN_REPORT_STATUS" && notification.related_type === "CITIZEN_REPORT") {
     return { label: "발견 제보 상태", icon: "document", href: "/mypage#my-activity", action: "내 제보 확인하기" };
   }
+  if (notification.notification_type === "DETECTION_COMPLETED" && notification.related_type === "DETECTION_EVENT" && notification.related_id !== null) {
+    return { label: "AI 분석 완료", icon: "scan", href: `/mypage/analysis-report?eventId=${notification.related_id}`, action: "분석 보고서 보기" };
+  }
+  if (notification.notification_type === "DETECTION_FAILED" && notification.related_type === "DETECTION_EVENT" && notification.related_id !== null) {
+    return { label: "AI 분석 실패", icon: "info", href: `/mypage/analysis-report?eventId=${notification.related_id}`, action: "분석 결과 확인하기" };
+  }
   return null;
 }

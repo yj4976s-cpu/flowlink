@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/common/Icon";
 import { DetectionApiError, WebcamDetectionFrame, WebcamDetectionObject, detectWebcamFrame } from "@/lib/detectionApi";
+import { createPrefixedRequestId } from "@/lib/requestId";
 import { getContainedMediaRect, getContainedMediaRectStyle, getOverlayPercentageStyle, normalizeBBoxForDisplayMedia } from "./detectionOverlayGeometry";
 import styles from "./DetectionWorkbench.module.css";
 
@@ -142,8 +143,7 @@ function WebcamOverlayBox({
 export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidate, reportModalOpen, completedReportClassCode }: WebcamDetectionPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const trackingSessionId = useId();
-  const trackingSessionIdRef = useRef(`webcam-${trackingSessionId}`);
+  const [trackingSessionId] = useState(() => createPrefixedRequestId("user-webcam"));
   const previewRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const loopGenerationRef = useRef(0);
@@ -334,7 +334,7 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
       const controller = new AbortController();
       abortControllerRef.current = controller;
       try {
-        const nextFrame = await detectWebcamFrame(blob, trackingSessionIdRef.current, controller.signal);
+        const nextFrame = await detectWebcamFrame(blob, trackingSessionId, controller.signal);
         if (!mountedRef.current || generation !== loopGenerationRef.current) return;
         setFrame(nextFrame);
         onFrame(nextFrame);

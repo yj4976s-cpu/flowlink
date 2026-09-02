@@ -6,7 +6,7 @@ import {
   mobileDestinationCandidates,
   resolveMobileBubbleAnchor,
   resolveMobileRoamBounds,
-  shouldPlaceDirectGreetingImmediately,
+  shouldReduceDaruMovement,
 } from "../src/components/mascot/daru.mobile-roaming.ts";
 
 function bounds(viewportWidth) {
@@ -72,20 +72,11 @@ test("direct greeting completion only moves while the current state is safe", ()
   assert.equal(canCompleteDirectGreetingMove({ ...safe, pageVisible: false }), false);
 });
 
-test("reduced motion does not block the direct greeting completion guard", () => {
-  const state = {
-    mode: "active",
-    guideOpen: false,
-    occluded: false,
-    dragging: false,
-    pageVisible: true,
-    reducedMotion: true,
-  };
-
-  assert.equal(canCompleteDirectGreetingMove(state), true);
-  assert.equal(shouldPlaceDirectGreetingImmediately(state), true);
-  assert.equal(shouldPlaceDirectGreetingImmediately({ ...state, guideOpen: true }), false);
-  assert.equal(shouldPlaceDirectGreetingImmediately({ ...state, reducedMotion: false }), false);
+test("mobile viewport keeps Daru movement available even when reduced motion is reported", () => {
+  assert.equal(shouldReduceDaruMovement(true, false), true);
+  assert.equal(shouldReduceDaruMovement(true, true), false);
+  assert.equal(shouldReduceDaruMovement(false, false), false);
+  assert.equal(shouldReduceDaruMovement(false, true), false);
 });
 
 function assertBubbleMargin(viewportWidth, stageLeft, stageWidth, bubbleWidth, preferredSide) {
