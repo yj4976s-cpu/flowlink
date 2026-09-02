@@ -102,7 +102,7 @@
 .state button { border: 0; background: transparent; color: var(--color-primary); font: inherit; font-size: 12px; font-weight: 850; cursor: pointer; }
 .state.error :global(.icon) { color: var(--color-error); }
 
-.drawerBackdrop { position: fixed; z-index: 120; inset: 0; background: color-mix(in srgb, var(--color-page) 46%, transparent); backdrop-filter: blur(3px); display: flex; justify-content: flex-end; }
+.drawerBackdrop { position: fixed; z-index: 230; inset: 0; background: color-mix(in srgb, var(--color-page) 46%, transparent); backdrop-filter: blur(3px); display: flex; justify-content: flex-end; }
 .drawer { width: min(620px, 94vw); height: 100%; border-left: 1px solid var(--color-border); background: var(--color-surface); box-shadow: var(--shadow-floating); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; animation: drawerIn 220ms ease both; }
 .drawerHeader { padding: 20px 22px; border-bottom: 1px solid var(--color-border); display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
 .drawerHeader h2 { margin: 0 0 9px; font-size: 26px; letter-spacing: -.035em; }
@@ -133,14 +133,14 @@
 .success, .saveError { margin: 12px 0 0; padding: 9px 11px; border-radius: 9px; font-size: 11px; }
 .success { background: color-mix(in srgb, var(--color-success) 8%, var(--color-surface)); color: var(--color-success); }
 .saveError { background: color-mix(in srgb, var(--color-error) 8%, var(--color-surface)); color: var(--color-error); }
-.drawerFooter { padding: 13px 18px; border-top: 1px solid var(--color-border); background: color-mix(in srgb, var(--color-surface-elevated) 92%, transparent); display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+.drawerFooter { position: relative; z-index: 2; padding: 13px 18px max(13px, calc(13px + env(safe-area-inset-bottom))); border-top: 1px solid var(--color-border); background: color-mix(in srgb, var(--color-surface-elevated) 96%, transparent); display: flex; justify-content: flex-end; align-items: center; gap: 8px; backdrop-filter: blur(10px); }
 .drawerFooter > span { margin-right: auto; color: var(--color-text-muted); font-size: 10px; }
 .drawerFooter :global(.button) { min-height: 39px; padding: 9px 15px; font-size: 11px; }
 .archiveButton { min-height: 39px; padding: 9px 15px; border: 1px solid color-mix(in srgb, var(--color-error) 38%, var(--color-border)); border-radius: 999px; background: color-mix(in srgb, var(--color-error) 7%, var(--color-surface)); color: var(--color-error); font: inherit; font-size: 11px; font-weight: 850; cursor: pointer; }
 .archiveButton:hover:not(:disabled) { background: color-mix(in srgb, var(--color-error) 13%, var(--color-surface)); }
 .archiveButton:disabled { opacity: .52; cursor: not-allowed; }
 
-.confirmBackdrop { position: fixed; z-index: 180; inset: 0; padding: 20px; background: color-mix(in srgb, var(--color-page) 58%, transparent); display: grid; place-items: center; }
+.confirmBackdrop { position: fixed; z-index: 250; inset: 0; padding: 20px; background: color-mix(in srgb, var(--color-page) 58%, transparent); display: grid; place-items: center; }
 .confirmDialog { width: min(100%, 420px); padding: 22px; border: 1px solid var(--color-border); border-radius: 18px; background: var(--color-surface-elevated); box-shadow: var(--shadow-floating); }
 .confirmDialog :global(.icon) { color: var(--color-primary); }.confirmDialog h2 { margin: 11px 0 7px; font-size: 18px; }.confirmDialog p { margin: 0; color: var(--color-text-muted); font-size: 12px; line-height: 1.65; }.confirmDialog > div { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }.confirmDialog :global(.button) { min-height: 39px; padding: 9px 14px; font-size: 11px; }
 .scopeNote { margin: 12px 3px 0; color: var(--color-text-muted); font-size: 10px; }
@@ -188,7 +188,7 @@
   .drawerHeader h2 { font-size: 22px; }.image { aspect-ratio: 4 / 3; }
   .readSection dl { grid-template-columns: 1fr; }.readSection dl .wide { grid-column: auto; }
   .coordinateGrid { grid-template-columns: 1fr; }
-  .drawerFooter { position: sticky; bottom: 0; display: grid; grid-template-columns: 1fr 1fr; }.drawerFooter > span { grid-column: 1 / -1; }.drawerFooter :global(.button) { width: 100%; }
+  .drawerFooter { position: sticky; bottom: 0; display: grid; grid-template-columns: 1fr 1fr; padding-bottom: max(14px, calc(14px + env(safe-area-inset-bottom))); }.drawerFooter > span { grid-column: 1 / -1; }.drawerFooter :global(.button) { width: 100%; }
   .confirmDialog > div { flex-direction: column-reverse; }.confirmDialog :global(.button) { width: 100%; }
 }
 
