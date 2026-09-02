@@ -16,6 +16,7 @@ from PIL import Image
 from app.core.config import BACKEND_AI_DIR, REPO_ROOT, get_settings
 
 INTERMEDIATE_VIDEO_CODEC = "mp4v"
+BASE_TRACK_COUNT_LOCK = Lock()
 
 
 @dataclass(frozen=True)
@@ -160,7 +161,7 @@ class YoloRuntime:
         intermediate_video_path: Path | None = None
         frames_written = 0
         processed_frame_count = 0
-        with self._inference_lock:
+        with self._inference_lock, BASE_TRACK_COUNT_LOCK:
             tracking_error: Exception | None = None
             try:
                 if rendered_video_path is not None:
@@ -252,6 +253,7 @@ class YoloRuntime:
                 self._expire_webcam_sessions(now)
                 session = self._webcam_sessions.get(session_id)
                 if session is None:
+                    self._evict_webcam_session_for_capacity()
                     session = WebcamTrackSession(
                         tracker=self._new_byte_tracker(), observations={}, appearance_counts={},
                         class_counts={}, first_seen_ms={}, last_seen_ms={}, last_seen_frame={}, tracker_count=0, frame_index=0,
@@ -318,22 +320,25 @@ class YoloRuntime:
         from ultralytics.utils import IterableSimpleNamespace, YAML
         from ultralytics.utils.checks import check_yaml
 
-        config = IterableSimpleNamespace(**YAML.load(check_yaml("bytetrack.yaml")))
-        previous_id = BaseTrack._count
-        tracker = BYTETracker(args=config)
-        BaseTrack._count = previous_id
-        return tracker
+        with BASE_TRACK_COUNT_LOCK:
+            previous_id = BaseTrack._count
+            try:
+                config = IterableSimpleNamespace(**YAML.load(check_yaml("bytetrack.yaml")))
+                return BYTETracker(args=config)
+            finally:
+                BaseTrack._count = previous_id
 
     def _update_webcam_tracker(self, session: WebcamTrackSession, detections, image):
         from ultralytics.trackers.basetrack import BaseTrack
 
-        original_count = BaseTrack._count
-        try:
-            BaseTrack._count = session.tracker_count
-            return session.tracker.update(detections, image)
-        finally:
-            session.tracker_count = BaseTrack._count
-            BaseTrack._count = original_count
+        with BASE_TRACK_COUNT_LOCK:
+            original_count = BaseTrack._count
+            try:
+                BaseTrack._count = session.tracker_count
+                return session.tracker.update(detections, image)
+            finally:
+                session.tracker_count = BaseTrack._count
+                BaseTrack._count = original_count
 
     def _remove_stale_webcam_tracks(self, session: WebcamTrackSession) -> None:
         stale_ids = [
@@ -360,10 +365,14 @@ class YoloRuntime:
         for track_id, observations in session.observations.items():
             if not observations:
                 continue
-            class_counts = session.class_counts[track_id]
-            dominant_label, dominant_count = max(class_counts.items(), key=lambda item: (item[1], item[0]))
+            window_class_counts = Counter(item.prediction.model_label for item in observations)
+            if not window_class_counts:
+                continue
+            dominant_label, dominant_count = max(window_class_counts.items(), key=lambda item: (item[1], item[0]))
             representative_samples = [item for item in observations if item.prediction.model_label == dominant_label]
             confidences = [item.prediction.confidence for item in representative_samples]
+            if not representative_samples or not confidences:
+                continue
             first_seen = session.first_seen_ms[track_id]
             last_seen = session.last_seen_ms[track_id]
             appearance_count = session.appearance_counts[track_id]
@@ -374,7 +383,7 @@ class YoloRuntime:
                 or last_seen - first_seen < self.track_quality.min_duration_ms
                 or statistics.median(confidences) < self.track_quality.min_median_confidence
                 or density < self.track_quality.min_density
-                or dominant_count / appearance_count < self.track_quality.min_dominant_class_ratio
+                or dominant_count / len(observations) < self.track_quality.min_dominant_class_ratio
             ):
                 continue
             representative = representative_samples[-1].prediction
@@ -390,6 +399,8 @@ class YoloRuntime:
                    if now - value.last_accessed_at > self.webcam_session_ttl_seconds]
         for key in expired:
             self._webcam_sessions.pop(key, None)
+
+    def _evict_webcam_session_for_capacity(self) -> None:
         while len(self._webcam_sessions) >= self.webcam_max_sessions:
             oldest = min(self._webcam_sessions, key=lambda key: self._webcam_sessions[key].last_accessed_at)
             self._webcam_sessions.pop(oldest, None)
