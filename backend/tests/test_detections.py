@@ -80,7 +80,7 @@ class MockWebcamInferenceService(WebcamInferenceService):
     def __init__(self, result: WebcamDetectionFrame | Exception) -> None:
         self.result = result
 
-    def analyze_frame(self, image: Image.Image) -> WebcamDetectionFrame:
+    def analyze_frame(self, image: Image.Image, *, session_id: str = "test") -> WebcamDetectionFrame:
         if isinstance(self.result, Exception):
             raise self.result
         return WebcamDetectionFrame(
@@ -123,6 +123,19 @@ class FakeAIInferenceClient:
             predictions=self.result.predictions,
         )
 
+    def track_webcam_frame(self, image: Image.Image, *, session_id: str) -> AIInferenceVideoResult:
+        self.image_calls += 1
+        assert image.mode == "RGB"
+        assert session_id
+        return AIInferenceVideoResult(
+            media_width=image.width, media_height=image.height, duration_ms=0,
+            frame_count=1, fps=1, inference_ms=self.result.inference_ms,
+            tracks=[AIInferenceVideoTrack(
+                model_label=item.model_label, confidence=item.confidence, bbox=item.bbox,
+                track_id=index, first_seen_ms=0, last_seen_ms=600, appearance_count=3,
+            ) for index, item in enumerate(self.result.predictions, start=1)],
+        )
+
 
 class FailingAIInferenceClient:
     def __init__(self, error: Exception) -> None:
@@ -135,6 +148,9 @@ class FailingAIInferenceClient:
         raise self.error
 
     def infer_image(self, image: Image.Image) -> AIInferenceResult:
+        raise self.error
+
+    def track_webcam_frame(self, image: Image.Image, *, session_id: str) -> AIInferenceVideoResult:
         raise self.error
 
 
@@ -1683,6 +1699,30 @@ def test_webcam_detection_frame_is_allowed_for_user_and_admin(client: TestClient
     assert db.query(DetectionEvent).count() == 0
     assert db.query(DetectedObject).count() == 0
     assert db.query(VideoJob).count() == 0
+
+
+def test_webcam_session_ids_are_scoped_by_user_and_browser(client: TestClient, db: Session) -> None:
+    captured: list[str] = []
+
+    class RecordingWebcamService:
+        def analyze_frame(self, image: Image.Image, *, session_id: str) -> WebcamDetectionFrame:
+            captured.append(session_id)
+            return WebcamDetectionFrame(
+                media_width=image.width, media_height=image.height, inference_ms=0, detected_objects=[]
+            )
+
+    app.dependency_overrides[get_webcam_inference_service] = lambda: RecordingWebcamService()
+    first_user = seed_user(db, 101)
+    second_user = seed_user(db, 202)
+
+    authenticate(client, first_user)
+    client.post("/api/detections/webcam/frame", data={"session_id": "tab-a"}, files=webcam_file())
+    client.post("/api/detections/webcam/frame", data={"session_id": "tab-b"}, files=webcam_file())
+    authenticate(client, second_user)
+    client.post("/api/detections/webcam/frame", data={"session_id": "tab-a"}, files=webcam_file())
+
+    assert captured == ["101:tab-a", "101:tab-b", "202:tab-a"]
+    assert db.query(DetectionEvent).count() == 0
 
 
 def test_webcam_detection_rejects_invalid_frames(client: TestClient, db: Session) -> None:

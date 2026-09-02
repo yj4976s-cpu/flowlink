@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/common/Icon";
 import { DetectionApiError, WebcamDetectionFrame, WebcamDetectionObject, detectWebcamFrame } from "@/lib/detectionApi";
+import { createPrefixedRequestId } from "@/lib/requestId";
 import { getContainedMediaRect, getContainedMediaRectStyle, getOverlayPercentageStyle, normalizeBBoxForDisplayMedia } from "./detectionOverlayGeometry";
 import styles from "./DetectionWorkbench.module.css";
 
@@ -54,7 +55,8 @@ const WEBCAM_FRAME_INTERVAL_MS = 300;
 const WEBCAM_JPEG_QUALITY = 0.8;
 export const WEBCAM_REPORT_CANDIDATE_TTL_MS = 8000;
 const WEBCAM_REPORT_CANDIDATE_LIMIT = 3;
-export const WEBCAM_AUTO_REPORT_STABLE_FRAMES = 3;
+// The AI service already emits only tracks that passed the shared stability policy.
+export const WEBCAM_AUTO_REPORT_STABLE_FRAMES = 1;
 export const WEBCAM_AUTO_REPORT_COOLDOWN_MS = 3000;
 const reportableClassCodes = new Set(["BAG", "UMBRELLA", "FOOTWEAR", "BALL"]);
 
@@ -141,6 +143,7 @@ function WebcamOverlayBox({
 export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidate, reportModalOpen, completedReportClassCode }: WebcamDetectionPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [trackingSessionId] = useState(() => createPrefixedRequestId("user-webcam"));
   const previewRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const loopGenerationRef = useRef(0);
@@ -331,7 +334,7 @@ export function WebcamDetectionPanel({ onFrame, onStatusChange, onReportCandidat
       const controller = new AbortController();
       abortControllerRef.current = controller;
       try {
-        const nextFrame = await detectWebcamFrame(blob, controller.signal);
+        const nextFrame = await detectWebcamFrame(blob, trackingSessionId, controller.signal);
         if (!mountedRef.current || generation !== loopGenerationRef.current) return;
         setFrame(nextFrame);
         onFrame(nextFrame);

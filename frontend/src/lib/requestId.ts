@@ -20,3 +20,8 @@ export function createRequestId(cryptoApi: RequestIdCrypto | undefined = globalT
     hex.slice(10, 16).join(""),
   ].join("-");
 }
+
+export function createPrefixedRequestId(prefix: string, cryptoApi?: RequestIdCrypto): string {
+  if (!/^[a-z][a-z0-9-]*$/.test(prefix)) throw new Error("Invalid request ID prefix");
+  return `${prefix}-${createRequestId(cryptoApi)}`;
+}

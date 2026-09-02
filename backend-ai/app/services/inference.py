@@ -15,6 +15,7 @@ from app.schemas.inference import (
     InferencePrediction,
     InferenceVideoTrack,
     VideoInferenceResponse,
+    WebcamTrackingResponse,
 )
 from app.services.model_runtime_manager import get_active_yolo_runtime_snapshot
 from app.services.yolo_runtime import YoloRuntime, YoloRuntimeUnavailableError
@@ -164,6 +165,30 @@ class ImageInferenceService:
                     appearance_count=track.appearance_count,
                 )
                 for track in tracks
+            ],
+        )
+
+    def track_webcam_image(self, image: Image.Image, *, session_id: str) -> WebcamTrackingResponse:
+        started_at = perf_counter()
+        try:
+            tracks = self.runtime.track_webcam_frame(image, session_id=session_id)
+        except YoloRuntimeUnavailableError as exc:
+            raise InferenceModelUnavailableError("AI model is unavailable") from exc
+        inference_ms = (perf_counter() - started_at) * 1000
+        return WebcamTrackingResponse(
+            media_width=image.width,
+            media_height=image.height,
+            inference_ms=round(inference_ms, 2),
+            tracks=[
+                InferenceVideoTrack(
+                    label=track.model_label,
+                    confidence=track.confidence,
+                    bbox=InferenceBBox(x=track.bbox.x, y=track.bbox.y, width=track.bbox.width, height=track.bbox.height),
+                    track_id=track.track_id,
+                    first_seen_ms=track.first_seen_ms,
+                    last_seen_ms=track.last_seen_ms,
+                    appearance_count=track.appearance_count,
+                ) for track in tracks
             ],
         )
 

@@ -163,6 +163,10 @@ export type WebcamDetectionObject = {
   group_code: string | null;
   confidence: number;
   bbox: DetectionBBox;
+  track_id: number | null;
+  first_seen_ms: number | null;
+  last_seen_ms: number | null;
+  appearance_count: number;
 };
 
 export type WebcamDetectionFrame = {
@@ -348,9 +352,10 @@ export function getVideoProcessingStatus(eventId: number, signal?: AbortSignal) 
   return requestJson<VideoProcessingStatus>(buildApiUrl(`/api/detections/${eventId}/processing-status`), { signal });
 }
 
-export function detectWebcamFrame(blob: Blob, signal?: AbortSignal) {
+export function detectWebcamFrame(blob: Blob, sessionId: string, signal?: AbortSignal) {
   const formData = new FormData();
   formData.append("file", blob, "webcam-frame.jpg");
+  formData.append("session_id", sessionId);
   return requestJson<WebcamDetectionFrame>(buildApiUrl("/api/detections/webcam/frame"), {
     method: "POST",
     body: formData,

@@ -24,7 +24,7 @@ from app.services.model_registry import (
     registered_model_path,
     validate_model_class_names,
 )
-from app.services.yolo_runtime import YoloRuntime, YoloRuntimeUnavailableError
+from app.services.yolo_runtime import TrackQualityPolicy, YoloRuntime, YoloRuntimeUnavailableError
 
 
 class ModelRuntimeError(RuntimeError):
@@ -254,6 +254,18 @@ class ModelRuntimeManager:
             model_id=model.id,
             display_name=model.display_name,
             expected_classes=list(model.expected_classes),
+            track_quality=TrackQualityPolicy(
+                min_appearances=self._settings.TRACK_MIN_APPEARANCES,
+                min_duration_ms=self._settings.TRACK_MIN_DURATION_MS,
+                min_median_confidence=self._settings.TRACK_MIN_MEDIAN_CONFIDENCE,
+                min_density=self._settings.TRACK_MIN_DENSITY,
+                min_dominant_class_ratio=self._settings.TRACK_MIN_DOMINANT_CLASS_RATIO,
+            ),
+            webcam_session_ttl_seconds=self._settings.WEBCAM_TRACK_SESSION_TTL_SECONDS,
+            webcam_max_sessions=self._settings.WEBCAM_TRACK_MAX_SESSIONS,
+            webcam_observation_window=self._settings.WEBCAM_TRACK_OBSERVATION_WINDOW,
+            webcam_max_tracks=self._settings.WEBCAM_TRACK_MAX_TRACKS,
+            webcam_stale_frames=self._settings.WEBCAM_TRACK_STALE_FRAMES,
         )
 
     def _validated_runtime(self, model: RegisteredModel) -> YoloRuntime:
