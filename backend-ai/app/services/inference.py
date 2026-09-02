@@ -171,7 +171,8 @@ class ImageInferenceService:
     def track_webcam_image(self, image: Image.Image, *, session_id: str) -> WebcamTrackingResponse:
         started_at = perf_counter()
         try:
-            tracks = self.runtime.track_webcam_frame(image, session_id=session_id)
+            _, runtime = self._runtime_snapshot()
+            tracks = runtime.track_webcam_frame(image, session_id=session_id)
         except YoloRuntimeUnavailableError as exc:
             raise InferenceModelUnavailableError("AI model is unavailable") from exc
         inference_ms = (perf_counter() - started_at) * 1000
