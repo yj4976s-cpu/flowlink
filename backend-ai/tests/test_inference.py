@@ -237,6 +237,28 @@ def test_webcam_endpoint_passes_session_and_returns_stable_contract(client: Test
     assert response.json()["tracks"] == []
 
 
+def test_webcam_service_uses_current_runtime_snapshot_when_not_injected(monkeypatch: pytest.MonkeyPatch) -> None:
+    sessions: list[str] = []
+
+    class SnapshotRuntime:
+        def track_webcam_frame(self, image: Image.Image, *, session_id: str):
+            sessions.append(session_id)
+            assert image.size == (32, 24)
+            return []
+
+    snapshot = types.SimpleNamespace(model_id="active-model", runtime=SnapshotRuntime())
+    monkeypatch.setattr("app.services.inference.get_active_yolo_runtime_snapshot", lambda: snapshot)
+
+    response = ImageInferenceService().track_webcam_image(
+        Image.new("RGB", (32, 24)), session_id="user-1:browser-a"
+    )
+
+    assert sessions == ["user-1:browser-a"]
+    assert response.media_width == 32
+    assert response.media_height == 24
+    assert response.tracks == []
+
+
 def test_health_does_not_require_model_load(client: TestClient) -> None:
     response = client.get("/health")
 
