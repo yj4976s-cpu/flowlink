@@ -5,12 +5,13 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Response, UploadFile, status
+from PIL import Image, UnidentifiedImageError
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import get_settings
 from app.core.security import require_internal_api_key
-from app.schemas.inference import ImageInferenceResponse, VideoInferenceResponse
+from app.schemas.inference import ImageInferenceResponse, VideoInferenceResponse, WebcamTrackingResponse
 from app.services.inference import ImageInferenceService, InferenceModelUnavailableError, get_inference_service
 
 router = APIRouter(prefix="/api/inference", tags=["inference"])
@@ -31,6 +32,34 @@ async def infer_image(
             payload,
             content_type=file.content_type or "",
         )
+    except InferenceModelUnavailableError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI model is unavailable") from exc
+
+
+@router.post("/webcam/frames", response_model=WebcamTrackingResponse, summary="웹캠 세션 ByteTrack 추론")
+async def track_webcam_frame(
+    _: Annotated[None, Depends(require_internal_api_key)],
+    service: Annotated[ImageInferenceService, Depends(get_inference_service)],
+    session_id: Annotated[str, Form(min_length=1, max_length=160)],
+    file: Annotated[UploadFile, File(description="웹캠 JPEG 프레임")],
+) -> WebcamTrackingResponse:
+    if (file.content_type or "").lower() not in {"image/jpeg", "image/jpg"}:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Unsupported media type")
+    payload = await file.read(get_settings().IMAGE_MAX_BYTES + 1)
+    if not payload:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty")
+    if len(payload) > get_settings().IMAGE_MAX_BYTES:
+        raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Uploaded file is too large")
+    try:
+        with Image.open(BytesIO(payload)) as source:
+            source.load()
+            if source.width * source.height > get_settings().IMAGE_MAX_PIXELS:
+                raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Uploaded image has too many pixels")
+            image = source.convert("RGB")
+    except (UnidentifiedImageError, OSError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid image") from exc
+    try:
+        return await run_in_threadpool(service.track_webcam_image, image, session_id=session_id)
     except InferenceModelUnavailableError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI model is unavailable") from exc
 

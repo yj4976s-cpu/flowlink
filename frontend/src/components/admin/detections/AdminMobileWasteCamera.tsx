@@ -10,6 +10,7 @@ import {
   type AdminCamera,
 } from "@/lib/adminDetectionsApi";
 import { detectWebcamFrame, type WebcamDetectionFrame, type WebcamDetectionObject } from "@/lib/detectionApi";
+import { createPrefixedRequestId } from "@/lib/requestId";
 import {
   getContainedMediaRect,
   getContainedMediaRectStyle,
@@ -127,6 +128,7 @@ function OverlayBox({
 export function AdminMobileWasteCamera() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [trackingSessionId] = useState(() => createPrefixedRequestId("admin-webcam"));
   const stageRef = useRef<HTMLDivElement>(null);
   const detectTimerRef = useRef<number | null>(null);
   const detectAbortRef = useRef<AbortController | null>(null);
@@ -321,7 +323,7 @@ export function AdminMobileWasteCamera() {
     detectAbortRef.current = controller;
     try {
       const blob = await captureFrame();
-      const nextFrame = await detectWebcamFrame(blob, controller.signal);
+      const nextFrame = await detectWebcamFrame(blob, trackingSessionId, controller.signal);
       if (controller.signal.aborted || !runningRef.current) return;
       setSnapshot({ frame: nextFrame, blob });
       setError("");
@@ -343,7 +345,7 @@ export function AdminMobileWasteCamera() {
         }, FRAME_INTERVAL_MS);
       }
     }
-  }, [captureFrame, clearTimer]);
+  }, [captureFrame, clearTimer, trackingSessionId]);
 
   useEffect(() => {
     analyzeFrameRef.current = () => {

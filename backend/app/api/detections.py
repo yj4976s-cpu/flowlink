@@ -6,7 +6,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, Path as ApiPath, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Path as ApiPath, Query, UploadFile, status
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
@@ -157,6 +157,10 @@ def webcam_frame_response(frame: WebcamDetectionFrame) -> WebcamDetectionFrameRe
                     width=detected.bbox.width,
                     height=detected.bbox.height,
                 ),
+                track_id=detected.track_id,
+                first_seen_ms=detected.first_seen_ms,
+                last_seen_ms=detected.last_seen_ms,
+                appearance_count=detected.appearance_count,
             )
             for detected in frame.detected_objects
         ],
@@ -287,11 +291,15 @@ async def detect_webcam_frame(
     current_user: Annotated[User, Depends(get_current_user)],
     inference_service: Annotated[WebcamInferenceService, Depends(get_webcam_inference_service)],
     file: Annotated[UploadFile, File(description="탐지할 웹캠 JPEG 프레임")],
+    session_id: Annotated[str | None, Form(min_length=1, max_length=100)] = None,
 ) -> WebcamDetectionFrameResponse:
-    del current_user
     image = await read_webcam_frame(file)
     try:
-        result = await run_in_threadpool(inference_service.analyze_frame, image)
+        result = await run_in_threadpool(
+            inference_service.analyze_frame,
+            image,
+            session_id=f"{current_user.id}:{session_id or 'default'}",
+        )
     except WebcamInferenceUnavailableError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Webcam detection model is unavailable") from exc
     return webcam_frame_response(result)

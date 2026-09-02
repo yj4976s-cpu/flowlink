@@ -8,3 +8,4 @@ Pillow==11.3.0
 ultralytics==8.4.117
 lap==0.5.13
 imageio-ffmpeg==0.6.0
+tzdata==2025.3

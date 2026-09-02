@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 import subprocess
 import sys
+import threading
+import time
 import types
 from zipfile import ZipFile
 
@@ -14,10 +17,53 @@ from PIL import Image
 
 from app.core.config import get_settings
 from app.main import app
-from app.schemas.inference import InferenceBBox, InferenceVideoTrack, VideoInferenceResponse
+from app.schemas.inference import InferenceBBox, InferenceVideoTrack, VideoInferenceResponse, WebcamTrackingResponse
 from app.services.inference import ImageInferenceService, InferenceModelUnavailableError, get_inference_service
-from app.services.yolo_runtime import YoloBBox, YoloPrediction, YoloRuntime, get_yolo_runtime
+from app.services.yolo_runtime import (
+    TrackQualityPolicy,
+    YoloBBox,
+    YoloPrediction,
+    YoloRuntime,
+    YoloTrackObservation,
+    YoloTrackPrediction,
+    _aggregate_track_observations,
+    get_yolo_runtime,
+)
 from app.services.video_progress import VideoProgressReporter
+
+
+def test_track_quality_policy_rejects_short_sparse_and_low_confidence_tracks() -> None:
+    policy = TrackQualityPolicy(
+        min_appearances=3,
+        min_duration_ms=500,
+        min_median_confidence=0.5,
+        min_density=0.5,
+        min_dominant_class_ratio=0.7,
+    )
+
+    def observation(frame: int, seen_ms: int, confidence: float, label: str = "bag") -> YoloTrackObservation:
+        return YoloTrackObservation(
+            prediction=YoloTrackPrediction(
+                model_label=label, confidence=confidence,
+                bbox=YoloBBox(x=1, y=2, width=10, height=20), track_id=7,
+                first_seen_ms=seen_ms, last_seen_ms=seen_ms, appearance_count=1,
+            ),
+            frame_index=frame,
+        )
+
+    stable = [observation(0, 0, 0.6), observation(1, 300, 0.8), observation(2, 600, 0.7)]
+    short = [observation(0, 0, 0.9), observation(1, 100, 0.9), observation(2, 200, 0.9)]
+    sparse = [observation(0, 0, 0.9), observation(5, 300, 0.9), observation(10, 600, 0.9)]
+    low_confidence = [observation(0, 0, 0.3), observation(1, 300, 0.4), observation(2, 600, 0.9)]
+
+    tracks = _aggregate_track_observations(
+        {7: stable, 8: short, 9: sparse, 10: low_confidence}, policy=policy,
+    )
+
+    assert len(tracks) == 1
+    assert tracks[0].track_id == 7
+    assert tracks[0].confidence == 0.7
+    assert tracks[0].appearance_count == 3
 
 TEST_INTERNAL_API_KEY = "test-internal-api-key"
 
@@ -82,6 +128,18 @@ class FakeVideoService:
         )
 
 
+class FakeWebcamService:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.sessions: list[str] = []
+
+    def track_webcam_image(self, image: Image.Image, *, session_id: str) -> WebcamTrackingResponse:
+        self.sessions.append(session_id)
+        if self.fail:
+            raise InferenceModelUnavailableError("secret /app/models/model.pt")
+        return WebcamTrackingResponse(media_width=image.width, media_height=image.height, inference_ms=1.2, tracks=[])
+
+
 @pytest.fixture(autouse=True)
 def configure_internal_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(get_settings(), "AI_INTERNAL_API_KEY", TEST_INTERNAL_API_KEY)
@@ -118,6 +176,65 @@ def image_file(content: bytes | None = None, content_type: str = "image/jpeg"):
 
 def video_file(content: bytes = b"fake-mp4", content_type: str = "video/mp4"):
     return {"file": ("sample.mp4", BytesIO(content), content_type)}
+
+
+def webcam_file(content: bytes | None = None, content_type: str = "image/jpeg"):
+    return {"file": ("frame.jpg", BytesIO(image_payload() if content is None else content), content_type)}
+
+
+def test_webcam_endpoint_requires_internal_key_and_valid_jpeg(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    service = FakeWebcamService()
+    app.dependency_overrides[get_inference_service] = lambda: service
+
+    missing_key = client.post("/api/inference/webcam/frames", data={"session_id": "one"}, files=webcam_file())
+    unsupported = client.post(
+        "/api/inference/webcam/frames", data={"session_id": "one"}, files=webcam_file(content_type="image/png"), headers=auth_headers()
+    )
+    empty = client.post(
+        "/api/inference/webcam/frames", data={"session_id": "one"}, files=webcam_file(content=b""), headers=auth_headers()
+    )
+    corrupt = client.post(
+        "/api/inference/webcam/frames", data={"session_id": "one"}, files=webcam_file(content=b"not-jpeg"), headers=auth_headers()
+    )
+    monkeypatch.setattr(get_settings(), "IMAGE_MAX_BYTES", 4)
+    oversized = client.post(
+        "/api/inference/webcam/frames", data={"session_id": "one"}, files=webcam_file(content=b"12345"), headers=auth_headers()
+    )
+
+    assert [missing_key.status_code, unsupported.status_code, empty.status_code, corrupt.status_code, oversized.status_code] == [403, 415, 400, 400, 413]
+    assert service.sessions == []
+
+
+def test_webcam_endpoint_rejects_excessive_pixels_and_hides_internal_errors(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(get_settings(), "IMAGE_MAX_PIXELS", 4)
+    app.dependency_overrides[get_inference_service] = lambda: FakeWebcamService()
+    too_large = client.post(
+        "/api/inference/webcam/frames", data={"session_id": "one"}, files=webcam_file(content=image_payload(width=3, height=2)), headers=auth_headers()
+    )
+    app.dependency_overrides[get_inference_service] = lambda: FakeWebcamService(fail=True)
+    monkeypatch.setattr(get_settings(), "IMAGE_MAX_PIXELS", 1000)
+    failed = client.post(
+        "/api/inference/webcam/frames", data={"session_id": "one"}, files=webcam_file(), headers=auth_headers()
+    )
+
+    assert too_large.status_code == 413
+    assert failed.status_code == 503
+    assert failed.json() == {"detail": "AI model is unavailable"}
+
+
+def test_webcam_endpoint_passes_session_and_returns_stable_contract(client: TestClient) -> None:
+    service = FakeWebcamService()
+    app.dependency_overrides[get_inference_service] = lambda: service
+
+    response = client.post(
+        "/api/inference/webcam/frames", data={"session_id": "browser-a"}, files=webcam_file(), headers=auth_headers()
+    )
+
+    assert response.status_code == 200
+    assert service.sessions == ["browser-a"]
+    assert response.json()["tracks"] == []
 
 
 def test_health_does_not_require_model_load(client: TestClient) -> None:
@@ -350,6 +467,273 @@ class FakeTrackResult:
 
     def plot(self):
         return b"annotated-frame"
+
+
+class FakeWebcamBoxes:
+    def cpu(self):
+        return self
+
+    def numpy(self):
+        return self
+
+
+class FakeWebcamResult:
+    boxes = FakeWebcamBoxes()
+    orig_img = object()
+
+
+class FakeWebcamModel:
+    names = {0: "bag", 1: "trash"}
+
+    def predict(self, **_kwargs):
+        return [FakeWebcamResult()]
+
+
+class FakeByteTracker:
+    def __init__(self, class_id: int = 0) -> None:
+        self.class_id = class_id
+        self.track_id: int | None = None
+
+    def update(self, _detections, _image):
+        from ultralytics.trackers.basetrack import BaseTrack
+
+        if self.track_id is None:
+            BaseTrack._count += 1
+            self.track_id = BaseTrack._count
+        return [[1, 2, 11, 22, self.track_id, 0.8, self.class_id]]
+
+
+class ChangingClassTracker(FakeByteTracker):
+    def __init__(self, class_ids: list[int]) -> None:
+        super().__init__()
+        self.class_ids = iter(class_ids)
+
+    def update(self, detections, image):
+        self.class_id = next(self.class_ids)
+        return super().update(detections, image)
+
+
+def test_webcam_tracking_bounds_observations_and_preserves_lifetime_counts(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime = YoloRuntime(
+        model_path="fake.pt", confidence=0.5, imgsz=640,
+        webcam_observation_window=3, webcam_max_tracks=2, webcam_stale_frames=10,
+    )
+    runtime._model = FakeWebcamModel()
+    monkeypatch.setattr(runtime, "_new_byte_tracker", lambda: FakeByteTracker())
+    now = [0.0]
+    monkeypatch.setattr("app.services.yolo_runtime.time.monotonic", lambda: now[0])
+    image = Image.new("RGB", (32, 24))
+
+    for _ in range(20):
+        runtime.track_webcam_frame(image, session_id="a")
+        now[0] += 0.1
+
+    session = runtime._webcam_sessions["a"]
+    assert max(map(len, session.observations.values())) <= 3
+    assert sum(session.appearance_counts.values()) == 20
+    assert len(session.observations) <= 2
+
+
+def test_webcam_sessions_isolate_tracker_counter_and_restore_global(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ultralytics.trackers.basetrack import BaseTrack
+
+    runtime = YoloRuntime(model_path="fake.pt", confidence=0.5, imgsz=640)
+    runtime._model = FakeWebcamModel()
+    monkeypatch.setattr(runtime, "_new_byte_tracker", lambda: FakeByteTracker())
+    BaseTrack._count = 77
+    image = Image.new("RGB", (32, 24))
+
+    first_a = runtime.track_webcam_frame(image, session_id="a")
+    first_b = runtime.track_webcam_frame(image, session_id="b")
+    second_a = runtime.track_webcam_frame(image, session_id="a")
+
+    assert [first_a[0].track_id, first_b[0].track_id, second_a[0].track_id] == [1, 1, 1]
+    assert BaseTrack._count == 77
+
+
+def test_webcam_session_ttl_and_lru_eviction(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime = YoloRuntime(
+        model_path="fake.pt", confidence=0.5, imgsz=640,
+        webcam_session_ttl_seconds=5, webcam_max_sessions=2,
+    )
+    runtime._model = FakeWebcamModel()
+    monkeypatch.setattr(runtime, "_new_byte_tracker", lambda: FakeByteTracker())
+    now = [0.0]
+    monkeypatch.setattr("app.services.yolo_runtime.time.monotonic", lambda: now[0])
+    image = Image.new("RGB", (32, 24))
+
+    runtime.track_webcam_frame(image, session_id="oldest")
+    now[0] = 1
+    runtime.track_webcam_frame(image, session_id="newer")
+    now[0] = 2
+    runtime.track_webcam_frame(image, session_id="newest")
+    assert set(runtime._webcam_sessions) == {"newer", "newest"}
+
+    now[0] = 8
+    runtime.track_webcam_frame(image, session_id="after-ttl")
+    assert set(runtime._webcam_sessions) == {"after-ttl"}
+
+
+def test_existing_webcam_session_is_not_evicted_at_capacity(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime = YoloRuntime(model_path="fake.pt", confidence=0.5, imgsz=640, webcam_max_sessions=1)
+    runtime._model = FakeWebcamModel()
+    monkeypatch.setattr(runtime, "_new_byte_tracker", lambda: FakeByteTracker())
+    image = Image.new("RGB", (32, 24))
+
+    runtime.track_webcam_frame(image, session_id="same")
+    runtime.track_webcam_frame(image, session_id="same")
+
+    session = runtime._webcam_sessions["same"]
+    assert session.frame_index == 2
+    assert session.appearance_counts == {1: 2}
+
+    runtime.track_webcam_frame(image, session_id="replacement")
+    assert set(runtime._webcam_sessions) == {"replacement"}
+
+
+def test_accessing_existing_session_does_not_evict_another_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime = YoloRuntime(model_path="fake.pt", confidence=0.5, imgsz=640, webcam_max_sessions=2)
+    runtime._model = FakeWebcamModel()
+    monkeypatch.setattr(runtime, "_new_byte_tracker", lambda: FakeByteTracker())
+    image = Image.new("RGB", (32, 24))
+
+    runtime.track_webcam_frame(image, session_id="a")
+    runtime.track_webcam_frame(image, session_id="b")
+    runtime.track_webcam_frame(image, session_id="a")
+
+    assert set(runtime._webcam_sessions) == {"a", "b"}
+    assert runtime._webcam_sessions["a"].appearance_counts == {1: 2}
+
+
+def test_webcam_class_change_uses_only_bounded_window_statistics(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime = YoloRuntime(
+        model_path="fake.pt", confidence=0.5, imgsz=640,
+        track_quality=TrackQualityPolicy(1, 0, 0.5, 0, 0.67),
+        webcam_observation_window=3,
+    )
+    runtime._model = FakeWebcamModel()
+    monkeypatch.setattr(runtime, "_new_byte_tracker", lambda: ChangingClassTracker([0, 0, 0, 0, 1, 1, 1, 1]))
+    image = Image.new("RGB", (32, 24))
+
+    responses = [runtime.track_webcam_frame(image, session_id="changing") for _ in range(8)]
+
+    assert all(isinstance(response, list) for response in responses)
+    assert responses[-1][0].model_label == "trash"
+    session = runtime._webcam_sessions["changing"]
+    assert len(session.observations[1]) == 3
+    assert session.appearance_counts[1] == 8
+
+
+def test_tracker_update_failure_restores_global_counter(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ultralytics.trackers.basetrack import BaseTrack
+
+    class FailingTracker:
+        def update(self, *_args):
+            BaseTrack._count = 999
+            raise RuntimeError("update failed")
+
+    runtime = YoloRuntime(model_path="fake.pt", confidence=0.5, imgsz=640)
+    session = types.SimpleNamespace(tracker=FailingTracker(), tracker_count=4)
+    BaseTrack._count = 77
+
+    with pytest.raises(RuntimeError, match="update failed"):
+        runtime._update_webcam_tracker(session, object(), object())
+
+    assert session.tracker_count == 999
+    assert BaseTrack._count == 77
+
+
+def test_tracker_creation_failure_restores_global_counter(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ultralytics.trackers import byte_tracker
+    from ultralytics.trackers.basetrack import BaseTrack
+
+    class FailingTracker:
+        def __init__(self, **_kwargs):
+            BaseTrack._count = 999
+            raise RuntimeError("creation failed")
+
+    monkeypatch.setattr(byte_tracker, "BYTETracker", FailingTracker)
+    runtime = YoloRuntime(model_path="fake.pt", confidence=0.5, imgsz=640)
+    BaseTrack._count = 77
+
+    with pytest.raises(RuntimeError, match="creation failed"):
+        runtime._new_byte_tracker()
+
+    assert BaseTrack._count == 77
+
+
+def test_two_runtimes_serialize_global_tracker_counter(monkeypatch: pytest.MonkeyPatch) -> None:
+    active = 0
+    maximum_active = 0
+    state_lock = threading.Lock()
+
+    class SlowTracker(FakeByteTracker):
+        def update(self, detections, image):
+            nonlocal active, maximum_active
+            with state_lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+            time.sleep(0.02)
+            try:
+                return super().update(detections, image)
+            finally:
+                with state_lock:
+                    active -= 1
+
+    runtimes = [YoloRuntime(model_path=f"fake-{index}.pt", confidence=0.5, imgsz=640) for index in range(2)]
+    for runtime in runtimes:
+        runtime._model = FakeWebcamModel()
+        monkeypatch.setattr(runtime, "_new_byte_tracker", lambda: SlowTracker())
+    image = Image.new("RGB", (32, 24))
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda runtime: runtime.track_webcam_frame(image, session_id="tab"), runtimes))
+
+    assert maximum_active == 1
+    assert [result[0].track_id for result in results] == [1, 1]
+
+
+def test_video_generator_holds_global_tracker_lock_until_iteration_finishes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    video_entered = threading.Event()
+    release_video = threading.Event()
+    webcam_updated = threading.Event()
+
+    class SlowVideoModel:
+        names = {}
+
+        def track(self, **_kwargs):
+            video_entered.set()
+            assert release_video.wait(timeout=2)
+            yield FakeTrackResult([])
+
+    class RecordingTracker(FakeByteTracker):
+        def update(self, detections, image):
+            webcam_updated.set()
+            return super().update(detections, image)
+
+    video_runtime = YoloRuntime(model_path="video.pt", confidence=0.5, imgsz=640)
+    video_runtime._model = SlowVideoModel()
+    webcam_runtime = YoloRuntime(model_path="webcam.pt", confidence=0.5, imgsz=640)
+    webcam_runtime._model = FakeWebcamModel()
+    monkeypatch.setattr(webcam_runtime, "_new_byte_tracker", lambda: RecordingTracker())
+    video_path = tmp_path / "sample.mp4"
+    video_path.write_bytes(b"video")
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        video_future = executor.submit(
+            video_runtime.track_video, video_path, fps=1, media_width=32, media_height=24
+        )
+        assert video_entered.wait(timeout=1)
+        webcam_future = executor.submit(
+            webcam_runtime.track_webcam_frame, Image.new("RGB", (32, 24)), session_id="tab"
+        )
+        assert not webcam_updated.wait(timeout=0.05)
+        release_video.set()
+        assert video_future.result(timeout=2) == []
+        assert webcam_future.result(timeout=2)[0].track_id == 1
+        assert webcam_updated.is_set()
 
 
 class FakeTrackModel:

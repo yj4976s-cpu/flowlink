@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createRequestId } from "../src/lib/requestId.ts";
+import { createPrefixedRequestId, createRequestId } from "../src/lib/requestId.ts";
 
 test("createRequestId uses native randomUUID when available", () => {
   assert.equal(createRequestId({ randomUUID: () => "00000000-0000-4000-8000-000000000001", getRandomValues() {} }), "00000000-0000-4000-8000-000000000001");
@@ -22,4 +22,11 @@ test("createRequestId falls back to secure RFC4122 UUID v4 bytes", () => {
 
 test("createRequestId refuses insecure fallback sources", () => {
   assert.throws(() => createRequestId(null), /Secure random generator/);
+});
+
+test("webcam request IDs use distinct role prefixes and secure UUIDs", () => {
+  const cryptoApi = { randomUUID: () => "00000000-0000-4000-8000-000000000001", getRandomValues() {} };
+  assert.equal(createPrefixedRequestId("user-webcam", cryptoApi), "user-webcam-00000000-0000-4000-8000-000000000001");
+  assert.equal(createPrefixedRequestId("admin-webcam", cryptoApi), "admin-webcam-00000000-0000-4000-8000-000000000001");
+  assert.throws(() => createPrefixedRequestId("bad prefix", cryptoApi), /Invalid request ID prefix/);
 });
