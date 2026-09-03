@@ -12,7 +12,7 @@ from app.api.auth import set_login_cookie
 from app.db.session import get_db
 from app.models import DaruGamePlayRecord, DaruGameStat, User
 from app.schemas.daru_game import DaruGameActionInput, DaruGameFlipInput, DaruGameFlipResponse, DaruGameHintResponse, DaruGameHistoryBatchDeleteInput, DaruGameHistoryBatchDeleteResponse, DaruGameHistoryItem, DaruGameHistoryResponse, DaruGameMetrics, DaruGamePreviewResponse, DaruGameRecord, DaruGameResultInput, DaruGameResultResponse, DaruGameRunInput, DaruGameRunResponse, DaruGameRunStateResponse, DaruGameStartResponse, DaruLeaderboardEntry, DaruLeaderboardResponse, Difficulty
-from app.services.daru_game import GameRunConflictError, GameRunExpiredError, GameRunNotFoundError, OutdatedGameRunError, best_record_query, create_game_run, flip_card, game_run_preview, game_run_state, leaderboard_rank, perform_game_action, permanently_delete_play_record, permanently_delete_trash, rank_for, ranking_query, restore_play_record, soft_delete_all_play_records, soft_delete_play_record, soft_delete_play_records, start_gameplay, submit_result, use_game_hint
+from app.services.daru_game import GameRunConflictError, GameRunExpiredError, GameRunNotFoundError, OutdatedGameRunError, ProtectedRankingRecordError, best_record_query, create_game_run, flip_card, game_run_preview, game_run_state, leaderboard_rank, perform_game_action, permanently_delete_play_record, permanently_delete_trash, rank_for, ranking_query, restore_play_record, soft_delete_all_play_records, soft_delete_play_record, soft_delete_play_records, start_gameplay, submit_result, use_game_hint
 
 router = APIRouter(prefix="/api/daru-game", tags=["daru-game"])
 
@@ -146,7 +146,11 @@ def empty_trash(difficulty: Annotated[Difficulty, Query()], current_user: Annota
 
 @router.delete("/history/{record_id}", status_code=204)
 def delete_history_record(record_id: int, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> Response:
-    if soft_delete_play_record(db, user_id=current_user.id, record_id=record_id) is None:
+    try:
+        record = soft_delete_play_record(db, user_id=current_user.id, record_id=record_id)
+    except ProtectedRankingRecordError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if record is None:
         raise HTTPException(status_code=404, detail="Play record not found")
     return Response(status_code=204)
 
@@ -160,7 +164,11 @@ def restore_history_record(record_id: int, current_user: Annotated[User, Depends
 
 @router.delete("/history/{record_id}/permanent", status_code=204)
 def permanently_delete_history_record(record_id: int, current_user: Annotated[User, Depends(require_user)], db: Annotated[Session, Depends(get_db)]) -> Response:
-    if permanently_delete_play_record(db, user_id=current_user.id, record_id=record_id) is None:
+    try:
+        record = permanently_delete_play_record(db, user_id=current_user.id, record_id=record_id)
+    except ProtectedRankingRecordError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if record is None:
         raise HTTPException(status_code=404, detail="Deleted play record not found")
     return Response(status_code=204)
 
@@ -171,13 +179,16 @@ def delete_selected_history(
     current_user: Annotated[User, Depends(require_user)],
     db: Annotated[Session, Depends(get_db)],
 ) -> DaruGameHistoryBatchDeleteResponse:
-    records = soft_delete_play_records(
-        db,
-        user_id=current_user.id,
-        record_ids=payload.record_ids,
-        difficulty=payload.difficulty,
-        exclude_record_ids=payload.exclude_record_ids,
-    )
+    try:
+        records = soft_delete_play_records(
+            db,
+            user_id=current_user.id,
+            record_ids=payload.record_ids,
+            difficulty=payload.difficulty,
+            exclude_record_ids=payload.exclude_record_ids,
+        )
+    except ProtectedRankingRecordError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if records is None:
         raise HTTPException(status_code=404, detail="One or more play records were not found")
     return DaruGameHistoryBatchDeleteResponse(deleted_count=len(records))
