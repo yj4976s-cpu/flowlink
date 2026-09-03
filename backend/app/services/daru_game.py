@@ -418,7 +418,8 @@ def submit_result(db: Session, *, run: DaruGameRun, user_id: int, finish_partial
     db.add(play_record)
     db.flush()
     if completed:
-        stat.ranking_record_id = play_record.id
+        recompute_best(db, stat)
+        improved = stat.ranking_record_id == play_record.id
         db.flush()
     metrics = detection_metrics(difficulty, attempts, elapsed_seconds, max_combo, hints_used, within_time_limit)
     return stat, play_record, improved, {
@@ -533,7 +534,7 @@ def best_record_query(user_id: int, difficulty: str):
             DaruGamePlayRecord.deleted_at.is_(None),
             DaruGamePlayRecord.score_version == CURRENT_SCORE_VERSION,
         )
-        .order_by(DaruGamePlayRecord.detection_power.desc(), DaruGamePlayRecord.attempts.asc(), DaruGamePlayRecord.elapsed_seconds.asc(), DaruGamePlayRecord.achieved_at.asc())
+        .order_by(DaruGamePlayRecord.ranking_score.desc(), DaruGamePlayRecord.achieved_at.asc(), DaruGamePlayRecord.id.asc())
     )
 
 
@@ -546,6 +547,7 @@ def recompute_best(db: Session, stat: DaruGameStat) -> None:
         stat.best_combo = 0
         stat.best_hints_used = None
         stat.best_achieved_at = None
+        stat.ranking_record_id = None
     else:
         stat.score_version = best.score_version
         stat.best_detection_power = best.detection_power
@@ -554,6 +556,7 @@ def recompute_best(db: Session, stat: DaruGameStat) -> None:
         stat.best_combo = best.max_combo
         stat.best_hints_used = best.hints_used
         stat.best_achieved_at = best.achieved_at
+        stat.ranking_record_id = best.id
     stat.updated_at = utc_now()
 
 
@@ -605,8 +608,7 @@ def permanently_delete_play_record(db: Session, *, user_id: int, record_id: int)
         .with_for_update()
     )
     if stat is not None and stat.ranking_record_id == record.id:
-        db.rollback()
-        raise ProtectedRankingRecordError(RANKING_RECORD_DELETE_PROTECTED_MESSAGE)
+        recompute_best(db, stat)
     db.delete(record)
     db.flush()
     if stat is not None:
@@ -632,7 +634,9 @@ def permanently_delete_trash(db: Session, *, user_id: int, difficulty: str) -> i
         .where(DaruGameStat.user_id == user_id, DaruGameStat.difficulty == difficulty)
         .with_for_update()
     )
-    deletable_records = [record for record in records if stat is None or record.id != stat.ranking_record_id]
+    if stat is not None:
+        recompute_best(db, stat)
+    deletable_records = list(records)
     for record in deletable_records:
         db.delete(record)
     db.flush()
@@ -653,21 +657,15 @@ def soft_delete_play_records(
     selected_ids = set(record_ids or [])
     excluded_ids = set(exclude_record_ids or [])
     user_stats = db.scalars(select(DaruGameStat).where(DaruGameStat.user_id == user_id).with_for_update()).all()
-    ranking_ids = {stat.ranking_record_id for stat in user_stats if stat.ranking_record_id is not None}
     query = select(DaruGamePlayRecord).where(
         DaruGamePlayRecord.user_id == user_id,
         DaruGamePlayRecord.deleted_at.is_(None),
     )
     if difficulty is not None:
         query = query.where(DaruGamePlayRecord.difficulty == difficulty)
-        if ranking_ids:
-            query = query.where(DaruGamePlayRecord.id.not_in(ranking_ids))
         if excluded_ids:
             query = query.where(DaruGamePlayRecord.id.not_in(excluded_ids))
     else:
-        if selected_ids & ranking_ids:
-            db.rollback()
-            raise ProtectedRankingRecordError(RANKING_RECORD_DELETE_PROTECTED_MESSAGE)
         query = query.where(DaruGamePlayRecord.id.in_(selected_ids))
     records = db.scalars(query.with_for_update()).all()
     if difficulty is None and {record.id for record in records} != selected_ids:
@@ -690,10 +688,7 @@ def soft_delete_play_records(
 
 def soft_delete_all_play_records(db: Session, *, user_id: int) -> int:
     stats = db.scalars(select(DaruGameStat).where(DaruGameStat.user_id == user_id).with_for_update()).all()
-    ranking_ids = {stat.ranking_record_id for stat in stats if stat.ranking_record_id is not None}
     query = select(DaruGamePlayRecord).where(DaruGamePlayRecord.user_id == user_id, DaruGamePlayRecord.deleted_at.is_(None))
-    if ranking_ids:
-        query = query.where(DaruGamePlayRecord.id.not_in(ranking_ids))
     records = db.scalars(query.with_for_update()).all()
     now = utc_now()
     for record in records:

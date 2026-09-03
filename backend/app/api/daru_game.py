@@ -128,17 +128,14 @@ def history(current_user: Annotated[User, Depends(require_user)], db: Annotated[
     records = db.scalars(select(DaruGamePlayRecord).where(*active).order_by(DaruGamePlayRecord.achieved_at.desc(), DaruGamePlayRecord.id.desc()).offset((current_page - 1) * page_size).limit(page_size)).all()
     stat = db.scalar(select(DaruGameStat).where(DaruGameStat.user_id == current_user.id, DaruGameStat.difficulty == difficulty))
     items = [DaruGameHistoryItem(id=item.id, difficulty=item.difficulty, detection_power=float(item.detection_power), attempts=item.attempts, elapsed_seconds=item.elapsed_seconds, max_combo=item.max_combo, hints_used=item.hints_used, earned_daru_points=item.earned_daru_points, completed=item.completed, within_time_limit=item.within_time_limit, achieved_at=item.achieved_at, deleted_at=None, is_best=bool(stat and item.completed and stat.best_achieved_at == item.achieved_at and stat.best_detection_power == item.detection_power and stat.best_attempts == item.attempts and stat.best_elapsed_seconds == item.elapsed_seconds), is_ranking_record=bool(stat and stat.ranking_record_id == item.id)) for item in records]
-    protected_id = db.scalar(select(DaruGamePlayRecord.id).where(*active, DaruGamePlayRecord.id == stat.ranking_record_id)) if stat and stat.ranking_record_id else None
     best = db.scalar(best_record_query(current_user.id, difficulty).limit(1))
     stats = db.scalars(select(DaruGameStat).where(DaruGameStat.user_id == current_user.id)).all()
     has_deletable_best_any_difficulty = any(
         (candidate := db.scalar(best_record_query(current_user.id, item.difficulty).limit(1))) is not None
-        and candidate.id != item.ranking_record_id
         for item in stats
     )
-    protected_count = int(protected_id is not None)
-    deletable_best_record_id = best.id if best and best.id != protected_id else None
-    return DaruGameHistoryResponse(difficulty=difficulty, items=items, total=total, page=current_page, page_size=page_size, total_pages=total_pages, protected_count=protected_count, deletable_count=max(0, total - protected_count), deletable_best_record_id=deletable_best_record_id, has_deletable_best=deletable_best_record_id is not None, has_deletable_best_any_difficulty=has_deletable_best_any_difficulty)
+    deletable_best_record_id = best.id if best else None
+    return DaruGameHistoryResponse(difficulty=difficulty, items=items, total=total, page=current_page, page_size=page_size, total_pages=total_pages, protected_count=0, deletable_count=total, deletable_best_record_id=deletable_best_record_id, has_deletable_best=deletable_best_record_id is not None, has_deletable_best_any_difficulty=has_deletable_best_any_difficulty)
 
 
 @router.get("/history/trash", response_model=DaruGameHistoryResponse)
