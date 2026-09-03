@@ -873,6 +873,7 @@ CREATE TABLE public.daru_game_play_records (
     user_id BIGINT NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
     difficulty VARCHAR(10) NOT NULL CHECK (difficulty IN ('EASY', 'NORMAL', 'HARD')),
     detection_power NUMERIC(4,1) NOT NULL CHECK (detection_power BETWEEN 0 AND 100),
+    ranking_score NUMERIC(7,4) NOT NULL CHECK (ranking_score BETWEEN 0 AND 100),
     attempts INTEGER NOT NULL CHECK (attempts >= 0),
     elapsed_seconds INTEGER NOT NULL CHECK (elapsed_seconds > 0),
     max_combo INTEGER NOT NULL CHECK (max_combo >= 0),
@@ -887,6 +888,7 @@ CREATE TABLE public.daru_game_play_records (
 );
 CREATE INDEX ix_daru_game_play_records_user_difficulty_achieved ON public.daru_game_play_records (user_id, difficulty, achieved_at);
 CREATE INDEX ix_daru_game_play_records_user_difficulty_deleted ON public.daru_game_play_records (user_id, difficulty, deleted_at);
+CREATE INDEX ix_daru_game_play_records_ranking_score ON public.daru_game_play_records (ranking_score DESC, achieved_at ASC, id ASC);
 ALTER TABLE public.daru_game_play_records ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE public.daru_game_stats ADD COLUMN ranking_record_id BIGINT

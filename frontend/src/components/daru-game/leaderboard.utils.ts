@@ -28,6 +28,6 @@ export function getLeaderboardPageRequest(displayedPage: number, requestedPage: 
   return { page, retry: page === requestedPage };
 }
 
-export function isLeaderboardScoreTie(rank: number, gap: number | null) {
-  return rank > 1 && gap === 0;
+export function isLeaderboardScoreTie(isTied: boolean) {
+  return isTied;
 }

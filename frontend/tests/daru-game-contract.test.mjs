@@ -229,7 +229,8 @@ test("overtime completion and leaderboard copy describe the new ranking policy",
   const resultSource = readFileSync(new URL("../src/components/daru-game/GameResult.tsx", import.meta.url), "utf8");
   assert.match(resultSource, /\{newBest \? newBestTitle : withinTimeLimit \? "다루와 전부 찾았어요!" : "클리어 완료!"\}/);
   assert.match(resultSource, /제한시간을 초과해 속도 점수는 0점으로 반영되었어요/);
-  assert.match(resultSource, /이번 완주 기록이 현재 랭킹 점수로 사용됩니다/);
+  assert.match(resultSource, /새로운 최고 기록이 랭킹 점수로 사용됩니다/);
+  assert.match(resultSource, /플레이 기록은 저장되고 기존 최고 기록과 랭킹은 유지됩니다/);
   assert.match(resultSource, /완주 기록도 개인 최고기록 비교 대상에 포함됩니다/);
   assert.match(leaderboardSource, /제한시간을 초과해도 완주 기록은 등록되며, 속도 점수는 0점으로 계산됩니다/);
 });
@@ -274,7 +275,7 @@ test("history management provides selection mode and accessible individual delet
   assert.match(leaderboardSource, /개 선택/);
   assert.match(leaderboardSource, /선택한 플레이 기록을 휴지통으로 이동/);
   assert.match(leaderboardSource, /전체 선택/);
-  assert.match(leaderboardSource, /!managementMode && !item\.is_ranking_record && <button type="button" aria-label="플레이 기록을 휴지통으로 이동"/);
+  assert.match(leaderboardSource, /!managementMode && <button type="button" aria-label="플레이 기록을 휴지통으로 이동"/);
 });
 
 test("ordinary individual deletion skips the dialog while BEST and multiple deletion keep confirmation", () => {
@@ -304,7 +305,7 @@ test("history delete dialogs reset stale errors and stay open while deleting", (
   assert.match(leaderboardSource, /autoFocus onClick=\{closeDeleteDialog\} disabled=\{deleting\}/);
   assert.match(leaderboardSource, /role="alertdialog"/);
   assert.match(leaderboardSource, /event\.key !== "Tab"/);
-  assert.match(leaderboardSource, /error instanceof DaruGameApiError && error\.status === 409/);
+  assert.doesNotMatch(leaderboardSource, /error instanceof DaruGameApiError && error\.status === 409/);
 });
 
 test("history remains a full-width sibling after the ranking grid", () => {
@@ -357,26 +358,20 @@ test("trash view supports count, pagination, restore, permanent delete, and scop
   assert.match(leaderboardSource, /aria-label="휴지통 페이지"/);
 });
 
-test("ranking records are excluded from selection and expose protected non-actions", () => {
-  assert.match(leaderboardSource, /managementMode && !item\.is_ranking_record/);
-  assert.match(leaderboardSource, /현재 랭킹에 사용 중인 기록은 삭제할 수 없습니다/);
-  assert.match(leaderboardSource, /item\.is_ranking_record && <em data-ranking title=\{RANKING_RECORD_DELETE_PROTECTED_MESSAGE\}>/);
+test("current BEST ranking records remain selectable and move to trash through the existing UX", () => {
+  assert.match(leaderboardSource, /managementMode && <label className=\{styles\.historyCheckbox\}>/);
+  assert.match(leaderboardSource, /item\.is_ranking_record && <em data-ranking>/);
   assert.match(leaderboardSource, /<PawIcon \/> 랭킹 점수/);
-  assert.match(leaderboardSource, /item\.is_ranking_record \? <span className=\{styles\.trashProtected\}/);
-  assert.match(leaderboardSource, /<PawIcon \/> 랭킹 사용 중/);
-  assert.doesNotMatch(leaderboardSource, /item\.is_best \|\| item\.is_ranking_record \? openDeleteDialog/);
-  assert.doesNotMatch(leaderboardSource, /현재 랭킹 기록을 휴지통으로 이동할까요/);
-  assert.doesNotMatch(leaderboardSource, /랭킹에서 제외하고 이동/);
-  assert.doesNotMatch(leaderboardSource, /deletingRanking/);
+  assert.match(leaderboardSource, /!managementMode && <button type="button" aria-label="플레이 기록을 휴지통으로 이동"/);
   assert.match(leaderboardSource, /setHistoryLoading\(true\); setTrashLoading\(true\); setRetryKey/);
   assert.match(leaderboardSource, /const historyBeforeDelete = history/);
-  assert.match(leaderboardSource, /catch \(error\) \{\s*setHistory\(historyBeforeDelete\)/);
+  assert.match(leaderboardSource, /catch \{\s*setHistory\(historyBeforeDelete\)/);
 });
 
-test("trash rendering depends only on the current ranking flag, independently from BEST", () => {
-  assert.match(leaderboardSource, /!managementMode && !item\.is_ranking_record && <button/);
+test("BEST and ranking records use the same deletion controls", () => {
+  assert.match(leaderboardSource, /!managementMode && <button/);
   assert.match(leaderboardSource, /onClick=\{\(\) => item\.is_best \? openDeleteDialog\(item\) : void deleteSingleRecord\(item\)\}/);
-  assert.match(leaderboardSource, /managementMode && !item\.is_ranking_record && <label/);
+  assert.match(leaderboardSource, /managementMode && <label/);
 });
 
 test("every completed ranking-eligible game refreshes ranking and history without requiring a new BEST", () => {
@@ -419,20 +414,20 @@ test("history management is conditional and rare bulk actions stay in a confirme
   assert.match(leaderboardSource, /aria-haspopup="menu" aria-expanded=\{bulkMenuOpen\}/);
   assert.match(leaderboardSource, /openDeleteDialog\("difficulty"\)/);
   assert.match(leaderboardSource, /openDeleteDialog\("all"\)/);
-  assert.match(leaderboardSource, /각 난이도에서 현재 랭킹에 사용 중인 기록은 유지되며/);
+  assert.match(leaderboardSource, /쉬움 · 보통 · 어려움의 모든 플레이 기록이 휴지통으로 이동합니다/);
   assert.match(leaderboardSource, /deleteTarget === "all" \? "기록 정리"/);
   assert.match(leaderboardSource, /setManagementMode\(false\); resetSelection\(\)/);
 });
 
-test("bulk cleanup copy explains ranking protection and uses the server deletion count", () => {
+test("bulk cleanup moves every selected record and uses the server deletion count", () => {
   assert.match(apiSource, /deleteAllDaruGameHistory[\s\S]*deleted_count/);
   assert.match(leaderboardSource, /현재 난이도 기록 정리/);
   assert.doesNotMatch(leaderboardSource, /현재 난이도 기록 전체 정리/);
-  assert.match(leaderboardSource, /각 난이도에서 현재 랭킹에 사용 중인 기록은 유지되며/);
-  assert.match(leaderboardSource, /현재 랭킹에 사용 중인 기록은 유지되며/);
+  assert.match(leaderboardSource, /모든 플레이 기록이 휴지통으로 이동합니다/);
+  assert.match(leaderboardSource, /난이도의 모든 플레이 기록이 휴지통으로 이동합니다/);
   assert.match(leaderboardSource, /deletedCount = result\.deleted_count/);
-  assert.match(leaderboardSource, /정리할 수 있는 기록이 없어요\. 현재 랭킹에 사용 중인 기록은 유지됩니다\./);
-  assert.match(leaderboardSource, /현재 랭킹에 사용 중인 기록을 제외한 플레이 기록 \$\{deletedCount\}개/);
+  assert.match(leaderboardSource, /정리할 수 있는 기록이 없어요\./);
+  assert.match(leaderboardSource, /플레이 기록 \$\{deletedCount\}개를 휴지통으로 이동했어요/);
   assert.doesNotMatch(leaderboardSource, /기록이 모두 휴지통으로 이동합니다/);
 });
 
@@ -507,8 +502,15 @@ test("a failed next-page request retries the displayed next page without skippin
   assert.deepEqual(getLeaderboardPageRequest(2, 2, 1, 4), { page: 3, retry: false });
 });
 
-test("equal scores explain the ranking tie-break instead of showing a zero-point gap", () => {
-  assert.equal(isLeaderboardScoreTie(5, 0), true);
-  assert.equal(isLeaderboardScoreTie(1, 0), false);
-  assert.equal(isLeaderboardScoreTie(5, 0.1), false);
+test("leaderboard uses authoritative precise-score tie metadata", () => {
+  assert.equal(isLeaderboardScoreTie(true), true);
+  assert.equal(isLeaderboardScoreTie(false), false);
+  assert.match(leaderboardSource, /entry\.is_tied && <span className=\{styles\.sharedRankBadge\}>공동<\/span>/);
+  assert.match(leaderboardSource, /entry\.is_tied && <small>공동<\/small>/);
+  assert.match(leaderboardSource, /myEntry && isLeaderboardScoreTie\(myEntry\.is_tied\)/);
+  assert.match(leaderboardSource, /표시 점수는 같지만 정밀 점수에서 차이가 있어요/);
+  assert.match(leaderboardSource, /정밀 점수까지 같으면 공동 순위가 됩니다/);
+  assert.match(leaderboardSource, /topEntries\.length > 3/);
+  assert.match(leaderboardSource, /if \(visible\?\.my_page\) setPage\(visible\.my_page\)/);
+  assert.doesNotMatch(leaderboardSource, /myEntry\.rank - 4/);
 });
