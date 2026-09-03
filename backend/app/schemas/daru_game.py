@@ -134,6 +134,7 @@ class DaruLeaderboardEntry(BaseModel):
     hints_used: int
     achieved_at: datetime
     is_me: bool = False
+    is_tied: bool = False
 
 
 class DaruLeaderboardResponse(BaseModel):
@@ -143,6 +144,9 @@ class DaruLeaderboardResponse(BaseModel):
     my_entry: DaruLeaderboardEntry | None
     my_best: DaruGameRecord | None
     next_rank_score: float | None
+    next_rank: int | None
+    next_rank_gap: float | None
+    my_page: int | None
     total: int
     page: int
     page_size: int
