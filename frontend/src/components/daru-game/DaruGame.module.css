@@ -678,3 +678,24 @@
   color: var(--color-primary);
   font-weight: 800;
 }
+
+.trashActions .trashProtected {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--rank-accent) 32%, var(--color-border));
+  border-radius: 10px;
+  color: var(--rank-accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.trashProtected svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+}
