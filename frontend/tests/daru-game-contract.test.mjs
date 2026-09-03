@@ -364,6 +364,9 @@ test("ranking records are excluded from selection and expose protected non-actio
   assert.match(leaderboardSource, /item\.is_ranking_record \? <span className=\{styles\.historyProtected\}/);
   assert.match(leaderboardSource, /item\.is_ranking_record \? <span className=\{styles\.trashProtected\}/);
   assert.doesNotMatch(leaderboardSource, /item\.is_best \|\| item\.is_ranking_record \? openDeleteDialog/);
+  assert.doesNotMatch(leaderboardSource, /현재 랭킹 기록을 휴지통으로 이동할까요/);
+  assert.doesNotMatch(leaderboardSource, /랭킹에서 제외하고 이동/);
+  assert.doesNotMatch(leaderboardSource, /deletingRanking/);
   assert.match(leaderboardSource, /setHistoryLoading\(true\); setTrashLoading\(true\); setRetryKey/);
 });
 
