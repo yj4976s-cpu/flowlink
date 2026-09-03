@@ -274,8 +274,7 @@ test("history management provides selection mode and accessible individual delet
   assert.match(leaderboardSource, /개 선택/);
   assert.match(leaderboardSource, /선택한 플레이 기록을 휴지통으로 이동/);
   assert.match(leaderboardSource, /전체 선택/);
-  assert.match(leaderboardSource, /!managementMode && \(item\.is_ranking_record \?/);
-  assert.match(leaderboardSource, /aria-label=\{RANKING_RECORD_DELETE_PROTECTED_MESSAGE\}/);
+  assert.match(leaderboardSource, /!managementMode && !item\.is_ranking_record && <button type="button" aria-label="플레이 기록을 휴지통으로 이동"/);
 });
 
 test("ordinary individual deletion skips the dialog while BEST and multiple deletion keep confirmation", () => {
@@ -361,7 +360,8 @@ test("trash view supports count, pagination, restore, permanent delete, and scop
 test("ranking records are excluded from selection and expose protected non-actions", () => {
   assert.match(leaderboardSource, /managementMode && !item\.is_ranking_record/);
   assert.match(leaderboardSource, /현재 랭킹에 반영 중인 기록은 삭제할 수 없습니다/);
-  assert.match(leaderboardSource, /item\.is_ranking_record \? <span className=\{styles\.historyProtected\}/);
+  assert.match(leaderboardSource, /item\.is_ranking_record && <em data-ranking title=\{RANKING_RECORD_DELETE_PROTECTED_MESSAGE\}>/);
+  assert.match(leaderboardSource, /<PawIcon \/> 랭킹 반영 · 보호 중/);
   assert.match(leaderboardSource, /item\.is_ranking_record \? <span className=\{styles\.trashProtected\}/);
   assert.doesNotMatch(leaderboardSource, /item\.is_best \|\| item\.is_ranking_record \? openDeleteDialog/);
   assert.doesNotMatch(leaderboardSource, /현재 랭킹 기록을 휴지통으로 이동할까요/);
@@ -370,6 +370,12 @@ test("ranking records are excluded from selection and expose protected non-actio
   assert.match(leaderboardSource, /setHistoryLoading\(true\); setTrashLoading\(true\); setRetryKey/);
   assert.match(leaderboardSource, /const historyBeforeDelete = history/);
   assert.match(leaderboardSource, /catch \(error\) \{\s*setHistory\(historyBeforeDelete\)/);
+});
+
+test("trash rendering depends only on the current ranking flag, independently from BEST", () => {
+  assert.match(leaderboardSource, /!managementMode && !item\.is_ranking_record && <button/);
+  assert.match(leaderboardSource, /onClick=\{\(\) => item\.is_best \? openDeleteDialog\(item\) : void deleteSingleRecord\(item\)\}/);
+  assert.match(leaderboardSource, /managementMode && !item\.is_ranking_record && <label/);
 });
 
 test("every completed ranking-eligible game refreshes ranking and history without requiring a new BEST", () => {

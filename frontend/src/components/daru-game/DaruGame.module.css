@@ -679,26 +679,6 @@
   font-weight: 800;
 }
 
-.historyManager li > .historyProtected {
-  position: absolute;
-  top: 20px;
-  right: 2px;
-  width: 34px;
-  height: 34px;
-  border-radius: 9px;
-  color: var(--rank-accent);
-  background: color-mix(in srgb, var(--rank-soft) 55%, transparent);
-  display: grid;
-  place-items: center;
-}
-
-.historyProtected svg {
-  width: 17px;
-  height: 17px;
-  fill: none;
-  stroke: currentColor;
-}
-
 .trashActions .trashProtected {
   min-height: 36px;
   padding: 0 10px;
