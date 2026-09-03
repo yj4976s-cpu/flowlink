@@ -20,20 +20,25 @@ function previewResponse(preview: LeaderboardPreview, page: number): DaruLeaderb
   const general = preview.entries.filter((entry) => entry.rank > 3);
   const totalPages = Math.max(1, Math.ceil(general.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
-  const myIndex = preview.myEntry ? preview.entries.findIndex((entry) => entry.rank === preview.myEntry?.rank) : -1;
+  const myIndex = preview.myEntry ? preview.entries.findIndex((entry) => entry.is_me) : -1;
+  const previous = myIndex > 0 ? preview.entries.slice(0, myIndex).findLast((entry) => entry.rank < preview.entries[myIndex].rank) ?? null : null;
   return {
     difficulty: "EASY",
     top_entries: preview.entries.filter((entry) => entry.rank <= 3),
     entries: general.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
     my_entry: preview.myEntry,
     my_best: null,
-    next_rank_score: myIndex > 0 ? preview.entries[myIndex - 1].detection_power : null,
+    next_rank_score: previous?.detection_power ?? null,
+    next_rank: previous?.rank ?? null,
+    next_rank_gap: previous ? Math.max(0, previous.detection_power - preview.entries[myIndex].detection_power) : null,
+    my_page: preview.myEntry && preview.myEntry.rank > 3 ? Math.floor(Math.max(0, myIndex - preview.entries.filter((entry) => entry.rank <= 3).length) / PAGE_SIZE) + 1 : null,
     total: preview.entries.length, page: currentPage, page_size: PAGE_SIZE, total_pages: totalPages,
   };
 }
 
 function score(entry: LeaderboardEntry) { return formatMemoryScore(entry.detection_power); }
 function details(entry: LeaderboardEntry) { return `힌트 ${entry.hints_used}회 · ${entry.attempts}회 · ${formatElapsedTime(entry.elapsed_seconds)}`; }
+function rankLabel(entry: LeaderboardEntry) { return `${entry.is_tied ? "공동 " : ""}${entry.rank}위`; }
 function compactPaginationPages(current: number, total: number) { return Array.from({ length: total }, (_item, index) => index + 1).filter((number) => number === 1 || number === total || Math.abs(number - current) <= 1); }
 function PawIcon() {
   return <svg className={styles.pawIcon} viewBox="0 0 20 20" aria-hidden="true"><circle cx="4.5" cy="6" r="2.2" /><circle cx="9.8" cy="3.9" r="2.2" /><circle cx="15.2" cy="6" r="2.2" /><path d="M10 8.1c-3.5 0-6.3 2.7-6.3 5.6 0 2 1.6 3.2 3.5 2.7.9-.3 1.7-.7 2.8-.7s1.9.4 2.8.7c1.9.5 3.5-.7 3.5-2.7 0-2.9-2.8-5.6-6.3-5.6Z" /></svg>;
@@ -160,8 +165,9 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
   const currentPage = visible?.page ?? page;
   const total = visible?.total ?? 0;
   const isMyRankVisible = Boolean(myEntry && entries.some((entry) => entry.is_me));
-  const gap = myEntry && visible?.next_rank_score !== null && visible?.next_rank_score !== undefined ? Math.max(0, visible.next_rank_score - myEntry.detection_power) : null;
-  const gapMessage = myEntry?.rank === 1 ? "🏆 현재 1위를 지키고 있어요!" : myEntry && isLeaderboardScoreTie(myEntry.rank, gap) ? "동점이에요. 시도 횟수와 플레이 시간으로 순위가 갈려요." : myEntry && gap !== null ? `${myEntry.rank === 4 ? "🥉 TOP 3" : `${myEntry.rank - 1}위`}까지 ${formatMemoryScore(gap)}점 남았어요!` : myEntry ? `현재 ${myEntry.rank}위예요.` : "";
+  const preciseGap = visible?.next_rank_gap ?? null;
+  const sameDisplayedScoreAsNext = Boolean(myEntry && visible?.next_rank_score !== null && visible?.next_rank_score !== undefined && visible.next_rank_score === myEntry.detection_power);
+  const gapMessage = myEntry && isLeaderboardScoreTie(myEntry.is_tied) ? `${rankLabel(myEntry)}예요. 정밀 점수까지 같아 순위를 함께 사용해요.` : myEntry?.rank === 1 ? "🏆 현재 1위를 지키고 있어요!" : myEntry && sameDisplayedScoreAsNext && preciseGap !== null ? "표시 점수는 같지만 정밀 점수에서 차이가 있어요." : myEntry && visible?.next_rank_score !== null && visible?.next_rank_score !== undefined && visible.next_rank !== null ? `${visible.next_rank <= 3 ? `TOP ${visible.next_rank}` : `${visible.next_rank}위`}까지 ${formatMemoryScore(Math.max(0, visible.next_rank_score - myEntry.detection_power))}점 남았어요!` : myEntry ? `현재 ${rankLabel(myEntry)}예요.` : "";
 
   const selectDifficulty = (next: GameDifficulty) => {
     if (next === difficulty) return;
@@ -176,7 +182,7 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
     if (request.retry) setRetryKey((value) => value + 1);
     else setPage(request.page);
   };
-  const goToMyRank = () => { if (myEntry && myEntry.rank > 3) setPage(Math.floor((myEntry.rank - 4) / PAGE_SIZE) + 1); };
+  const goToMyRank = () => { if (visible?.my_page) setPage(visible.my_page); };
   const selectedCount = selectAllDifficulty ? getBulkSelectedCount(history?.deletable_count ?? 0, excludedIds.size) : selectedIds.size;
   const itemSelected = (item: DaruHistoryItem) => selectAllDifficulty ? !excludedIds.has(item.id) : selectedIds.has(item.id);
   const resetSelection = () => { setSelectedIds(new Set()); setSelectedRecords(new Map()); setSelectAllDifficulty(false); setExcludedIds(new Set()); };
@@ -320,7 +326,7 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
   return <section id="daru-leaderboard" className={styles.leaderboard} aria-labelledby="leaderboard-title" aria-busy={loading}>
     <header className={styles.leaderboardHeader}>
       <div><h2 id="leaderboard-title">🏆 다루 메모리 랭킹</h2><p>기억력 · 속도 · 콤보 · 힌트로 결정돼요 · 가장 최근 정상 클리어가 랭킹에 반영돼요</p></div>
-      <details className={styles.rankingInfo}><summary aria-label="메모리 점수 산정 방식 보기">i</summary><div role="note"><strong>메모리 점수</strong><span>기억력 정확도 50%</span><span>탐색 속도 25%</span><span>콤보 15%</span><span>힌트 절약 10%</span><small>제한시간을 초과해도 완주 기록은 등록되며, 속도 점수는 0점으로 계산됩니다.</small><small>동점은 시도 횟수, 플레이 시간, 기록 달성 시각 순으로 결정해요.</small></div></details>
+      <details className={styles.rankingInfo}><summary aria-label="메모리 점수 산정 방식 보기">i</summary><div role="note"><strong>메모리 점수</strong><span>기억력 정확도 50%</span><span>탐색 속도 25%</span><span>콤보 15%</span><span>힌트 절약 10%</span><small>제한시간을 초과해도 완주 기록은 등록되며, 속도 점수는 0점으로 계산됩니다.</small><small>표시 점수가 같을 경우 정밀 점수로 순위를 비교하며, 정밀 점수까지 같으면 공동 순위가 됩니다.</small></div></details>
     </header>
 
     <div className={styles.leaderboardTabs} role="group" aria-label="난이도별 랭킹">
@@ -330,13 +336,13 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
     <div className={styles.leaderboardGrid} data-loading={loading || undefined}>
       <div className={styles.rankingMain}>
         {error && !visible ? <div className={styles.rankingState} role="alert"><strong>랭킹을 불러오지 못했어요.</strong><span>잠시 후 다시 확인해 주세요.</span><button type="button" onClick={() => setRetryKey((value) => value + 1)}>다시 시도</button></div> : topEntries.length === 0 && !loading ? <div className={styles.rankingState}><strong>아직 이 난이도의 기록이 없어요.</strong><span>첫 기록의 주인공이 되어보세요!</span></div> : <>
-          <section className={styles.topSpotlight} aria-label="TOP 3"><h3>TOP 3</h3><ol>{topEntries.map((entry) => <li key={`${entry.rank}-${entry.nickname}`} data-rank={entry.rank} data-me={entry.is_me || undefined}>{entry.rank === 1 && <span className={styles.topLaurel} aria-hidden="true" />}<b className={styles.topMedal}><span aria-hidden="true">{entry.rank}</span><span className={styles.srOnly}>{entry.rank}위</span></b><span className={styles.rankAvatar} aria-hidden="true" /><strong title={entry.nickname}>{entry.nickname}</strong>{entry.is_me && <span className={styles.topMyBadge} aria-label="내 기록"><PawIcon /></span>}<em>{score(entry)}</em><small>{details(entry)}</small></li>)}</ol></section>
-          {total > 3 && <section className={styles.generalRanking} aria-labelledby="general-ranking-title"><div className={styles.rankingSectionTitle}><h3 id="general-ranking-title">다음 순위</h3><span>총 {total}명</span></div><ol className={styles.rankingList}>{entries.map((entry) => <li key={`${entry.rank}-${entry.nickname}`} data-me={entry.is_me || undefined}><b>{entry.rank}</b><span className={styles.rankIdentity}><strong title={entry.nickname}>{entry.nickname}</strong><small>{details(entry)}</small></span>{entry.is_me && <span className={styles.myBadge} aria-label="내 기록"><PawIcon /></span>}<em>{score(entry)}</em></li>)}</ol>{totalPages > 1 && <nav className={styles.rankingPagination} aria-label="일반 랭킹 페이지"><button type="button" aria-label="이전 랭킹 페이지" disabled={currentPage <= 1 || loading} onClick={() => changePage(-1)}><ChevronLeftIcon /></button><span aria-live="polite">{String(currentPage).padStart(2, "0")} / {String(totalPages).padStart(2, "0")}</span><button type="button" aria-label="다음 랭킹 페이지" disabled={currentPage >= totalPages || loading} onClick={() => changePage(1)}><ChevronRightIcon /></button></nav>}</section>}
+          <section className={styles.topSpotlight} aria-label="TOP 3"><h3>TOP 3</h3><ol data-tied={topEntries.some((entry) => entry.is_tied) || undefined} data-expanded={topEntries.length > 3 || undefined}>{topEntries.map((entry) => <li key={`${entry.rank}-${entry.nickname}-${entry.achieved_at}`} data-rank={entry.rank} data-me={entry.is_me || undefined}>{entry.rank === 1 && <span className={styles.topLaurel} aria-hidden="true" />}<b className={styles.topMedal}><span aria-hidden="true">{entry.rank}</span><span className={styles.srOnly}>{rankLabel(entry)}</span></b>{entry.is_tied && <span className={styles.sharedRankBadge}>공동</span>}<span className={styles.rankAvatar} aria-hidden="true" /><strong title={entry.nickname}>{entry.nickname}</strong>{entry.is_me && <span className={styles.topMyBadge} aria-label="내 기록"><PawIcon /></span>}<em>{score(entry)}</em><small>{details(entry)}</small></li>)}</ol></section>
+          {entries.length > 0 && <section className={styles.generalRanking} aria-labelledby="general-ranking-title"><div className={styles.rankingSectionTitle}><h3 id="general-ranking-title">다음 순위</h3><span>총 {total}명</span></div><ol className={styles.rankingList}>{entries.map((entry) => <li key={`${entry.rank}-${entry.nickname}-${entry.achieved_at}`} data-me={entry.is_me || undefined}><b><span>{entry.rank}</span>{entry.is_tied && <small>공동</small>}</b><span className={styles.rankIdentity}><strong title={entry.nickname}>{entry.nickname}</strong><small>{details(entry)}</small></span>{entry.is_me && <span className={styles.myBadge} aria-label="내 기록"><PawIcon /></span>}<em>{score(entry)}</em></li>)}</ol>{totalPages > 1 && <nav className={styles.rankingPagination} aria-label="일반 랭킹 페이지"><button type="button" aria-label="이전 랭킹 페이지" disabled={currentPage <= 1 || loading} onClick={() => changePage(-1)}><ChevronLeftIcon /></button><span aria-live="polite">{String(currentPage).padStart(2, "0")} / {String(totalPages).padStart(2, "0")}</span><button type="button" aria-label="다음 랭킹 페이지" disabled={currentPage >= totalPages || loading} onClick={() => changePage(1)}><ChevronRightIcon /></button></nav>}</section>}
         </>}
         {error && visible && <p className={styles.inlineRankingError} role="alert">새 랭킹을 불러오지 못했어요. <button type="button" onClick={() => setRetryKey((value) => value + 1)}>다시 시도</button></p>}
       </div>
 
-      <aside className={styles.myRankCard} aria-labelledby="my-rank-title"><h3 id="my-rank-title">MY RANK</h3>{myEntry ? <><span className={styles.myRankLabel}><TrophyIcon /> 현재 랭킹</span><div className={styles.myRankScore}><strong>{myEntry.rank <= 3 ? <><span aria-hidden="true">{MEDALS[myEntry.rank - 1]}</span><span className={styles.srOnly}>{myEntry.rank}위</span></> : `${myEntry.rank}위`}</strong><em>{score(myEntry)}</em></div><p title={myEntry.nickname}>{myEntry.nickname}</p><small>{details(myEntry)}</small><div className={styles.rankGap}>{gapMessage}</div>{myEntry.rank <= 3 ? <div className={styles.myRankLocation}><PawIcon /> TOP 3에서 확인 중</div> : isMyRankVisible ? <div className={styles.myRankLocation}><PawIcon /> 현재 순위 확인 중</div> : <button type="button" onClick={goToMyRank}><PawIcon /> 내 순위로 이동 ›</button>}</> : <div className={styles.noMyRank}><strong>현재 랭킹 미등록</strong><span>게임을 한 번 완료하면 다시 랭킹에 등록돼요.</span></div>} {visible?.my_best?.best_attempts != null && <div className={styles.personalBest}><span><CrownIcon /> 개인 BEST</span><strong>{formatMemoryScore(visible.my_best.best_detection_power)}</strong></div>}</aside>
+      <aside className={styles.myRankCard} aria-labelledby="my-rank-title"><h3 id="my-rank-title">MY RANK</h3>{myEntry ? <><span className={styles.myRankLabel}><TrophyIcon /> 현재 랭킹</span><div className={styles.myRankScore}><strong>{myEntry.rank <= 3 ? <><span aria-hidden="true">{MEDALS[myEntry.rank - 1]}</span><span className={styles.srOnly}>{rankLabel(myEntry)}</span></> : rankLabel(myEntry)}{myEntry.is_tied && <small className={styles.sharedRankBadge}>공동</small>}</strong><em>{score(myEntry)}</em></div><p title={myEntry.nickname}>{myEntry.nickname}</p><small>{details(myEntry)}</small><div className={styles.rankGap}>{gapMessage}</div>{myEntry.rank <= 3 ? <div className={styles.myRankLocation}><PawIcon /> TOP 3에서 확인 중</div> : isMyRankVisible ? <div className={styles.myRankLocation}><PawIcon /> 현재 순위 확인 중</div> : <button type="button" onClick={goToMyRank}><PawIcon /> 내 순위로 이동 ›</button>}</> : <div className={styles.noMyRank}><strong>현재 랭킹 미등록</strong><span>게임을 한 번 완료하면 다시 랭킹에 등록돼요.</span></div>} {visible?.my_best?.best_attempts != null && <div className={styles.personalBest}><span><CrownIcon /> 개인 BEST</span><strong>{formatMemoryScore(visible.my_best.best_detection_power)}</strong></div>}</aside>
       {loading && <div className={styles.rankingLoading} role="status">랭킹을 불러오는 중이에요.</div>}
     </div>
     {!preview && <section className={`${styles.playHistory} ${styles.historySummary}`} data-expanded={historyExpanded || undefined} aria-labelledby="play-history-title" aria-busy={historyExpanded ? historyView === "trash" ? trashLoading : historyLoading : recentHistoryLoading}>

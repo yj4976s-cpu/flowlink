@@ -111,15 +111,18 @@ class DaruGamePlayRecord(Base):
     __table_args__ = (
         CheckConstraint("difficulty IN ('EASY', 'NORMAL', 'HARD')", name="ck_daru_game_play_records_difficulty"),
         CheckConstraint("detection_power BETWEEN 0 AND 100", name="ck_daru_game_play_records_detection_power"),
+        CheckConstraint("ranking_score BETWEEN 0 AND 100", name="ck_daru_game_play_records_ranking_score"),
         CheckConstraint("attempts >= 0 AND elapsed_seconds > 0 AND max_combo >= 0 AND hints_used BETWEEN 0 AND 2 AND earned_daru_points >= 0", name="ck_daru_game_play_records_metrics"),
         Index("ix_daru_game_play_records_user_difficulty_achieved", "user_id", "difficulty", "achieved_at"),
         Index("ix_daru_game_play_records_user_difficulty_deleted", "user_id", "difficulty", "deleted_at"),
+        Index("ix_daru_game_play_records_ranking_score", "ranking_score", "achieved_at", "id"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     difficulty: Mapped[str] = mapped_column(String(10), nullable=False)
     detection_power: Mapped[Decimal] = mapped_column(Numeric(4, 1), nullable=False)
+    ranking_score: Mapped[Decimal] = mapped_column(Numeric(7, 4), nullable=False)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False)
     elapsed_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
     max_combo: Mapped[int] = mapped_column(Integer, nullable=False)

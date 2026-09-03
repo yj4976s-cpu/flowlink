@@ -1,6 +1,7 @@
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 import random
 from uuid import UUID, uuid4
 
@@ -18,7 +19,7 @@ from app.core.security import utc_now
 from app.db.session import Base, get_db
 from app.main import app
 from app.models import DaruGamePlayRecord, DaruGameRun, DaruGameRunAction, DaruGameStat, User
-from app.services.daru_game import DIFFICULTY_CONFIG, GAME_RUN_MAX_AGE, HARD_ADDITIONAL_CARD_IDS, NORMAL_CARD_IDS, GameRunExpiredError, _ensure_not_expired, _round_to_tenth, calculate_detection_power, calculate_hint_score, calculate_memory_accuracy, calculate_speed_score, constrained_shuffle, create_shuffled_deck, detection_metrics, game_run_lock_query, has_adjacent_pair, has_adjacent_pair_for_columns, is_better, rank_for, ranking_query, select_card_ids, soft_delete_all_play_records, soft_delete_play_record
+from app.services.daru_game import DIFFICULTY_CONFIG, GAME_RUN_MAX_AGE, HARD_ADDITIONAL_CARD_IDS, NORMAL_CARD_IDS, GameRunExpiredError, _ensure_not_expired, _round_to_tenth, calculate_detection_power, calculate_hint_score, calculate_memory_accuracy, calculate_ranking_score, calculate_speed_score, constrained_shuffle, create_shuffled_deck, detection_metrics, game_run_lock_query, has_adjacent_pair, has_adjacent_pair_for_columns, is_better, rank_for, ranked_leaderboard_subquery, ranking_query, select_card_ids, soft_delete_all_play_records, soft_delete_play_record
 
 
 @compiles(BigInteger, "sqlite")
@@ -41,8 +42,8 @@ def add_user(db: Session, user_id: int, nickname: str, role: str = "USER") -> Us
     db.add(user); db.commit(); return user
 
 
-def add_ranked_stat(db: Session, user: User, *, score: str, attempts: int, elapsed: int, achieved: datetime, difficulty: str = "EASY") -> DaruGameStat:
-    record = DaruGamePlayRecord(user_id=user.id, difficulty=difficulty, detection_power=Decimal(score), attempts=attempts, elapsed_seconds=elapsed, max_combo=5, hints_used=0, earned_daru_points=0, completed=True, within_time_limit=True, score_version=2, achieved_at=achieved, created_at=achieved)
+def add_ranked_stat(db: Session, user: User, *, score: str, attempts: int, elapsed: int, achieved: datetime, difficulty: str = "EASY", ranking_score: str | None = None) -> DaruGameStat:
+    record = DaruGamePlayRecord(user_id=user.id, difficulty=difficulty, detection_power=Decimal(score), ranking_score=Decimal(ranking_score or score), attempts=attempts, elapsed_seconds=elapsed, max_combo=5, hints_used=0, earned_daru_points=0, completed=True, within_time_limit=True, score_version=2, achieved_at=achieved, created_at=achieved)
     db.add(record); db.flush()
     stat = DaruGameStat(user_id=user.id, difficulty=difficulty, best_detection_power=Decimal(score), score_version=2, best_attempts=attempts, best_elapsed_seconds=elapsed, best_combo=5, best_hints_used=0, total_daru_points=0, play_count=1, best_achieved_at=achieved, ranking_record_id=record.id, created_at=achieved, updated_at=achieved)
     db.add(stat)
@@ -610,13 +611,13 @@ def test_v1_first_authoritative_v2_result_preserves_totals(client: TestClient, d
     assert response.json()["record"]["play_count"] == 4
 
 
-def test_v2_ranking_orders_score_attempts_elapsed_then_achieved_at(db: Session) -> None:
+def test_v2_ranking_orders_precise_score_then_achieved_at(db: Session) -> None:
     now = utc_now()
     users = [add_user(db, index, nickname) for index, nickname in enumerate(["score", "lower", "attempt", "time", "first"], 1)]
     rows = [(users[0], "90.5", 20, 100, now - timedelta(minutes=5)), (users[1], "90.4", 10, 50, now), (users[2], "90.5", 18, 110, now), (users[3], "90.5", 18, 90, now), (users[4], "90.5", 18, 90, now - timedelta(minutes=9))]
     for user, score, attempts, elapsed, achieved in rows: add_ranked_stat(db, user, score=score, attempts=attempts, elapsed=elapsed, achieved=achieved)
     db.commit()
-    assert [nickname for _stat, _record, nickname in db.execute(ranking_query("EASY")).all()] == ["first", "time", "attempt", "score", "lower"]
+    assert [nickname for _stat, _record, nickname in db.execute(ranking_query("EASY")).all()] == ["first", "score", "attempt", "time", "lower"]
 
 
 def test_leaderboard_returns_top_three_paged_general_rows_and_my_rank(client: TestClient, db: Session) -> None:
@@ -641,8 +642,129 @@ def test_leaderboard_returns_top_three_paged_general_rows_and_my_rank(client: Te
     assert payload["total_pages"] == 2
 
 
+def test_precise_score_separates_equal_display_scores_without_false_tie(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    first = add_user(db, 2, "precise-first")
+    second = db.get(User, 1)
+    assert second is not None
+    add_ranked_stat(db, first, score="90.0", ranking_score="90.0424", attempts=20, elapsed=100, achieved=now)
+    add_ranked_stat(db, second, score="90.0", ranking_score="89.9581", attempts=10, elapsed=50, achieved=now + timedelta(seconds=1))
+    db.commit()
+
+    payload = client.get("/api/daru-game/leaderboard?difficulty=EASY").json()
+
+    assert [(entry["rank"], entry["detection_power"], entry["is_tied"]) for entry in payload["top_entries"]] == [(1, 90.0, False), (2, 90.0, False)]
+    assert payload["my_entry"]["rank"] == 2
+    assert payload["my_entry"]["is_tied"] is False
+    assert payload["next_rank_score"] == 90.0
+    assert payload["next_rank"] == 1
+    assert payload["next_rank_gap"] == pytest.approx(0.0843)
+
+
+@pytest.mark.parametrize(
+    ("scores", "expected_ranks"),
+    [
+        (["90.0424", "90.0424", "87.5000"], [1, 1, 3]),
+        (["95.0000", "90.0000", "90.0000", "85.0000"], [1, 2, 2, 4]),
+    ],
+)
+def test_leaderboard_uses_competition_ranking_for_precise_ties(client: TestClient, db: Session, scores: list[str], expected_ranks: list[int]) -> None:
+    now = utc_now()
+    users = [db.get(User, 1), *[add_user(db, index + 2, f"tie-{index + 2}") for index in range(len(scores) - 1)]]
+    for index, (user, precise_score) in enumerate(zip(users, scores, strict=True)):
+        assert user is not None
+        add_ranked_stat(db, user, score=str(Decimal(precise_score).quantize(Decimal("0.1"))), ranking_score=precise_score, attempts=30 - index, elapsed=100 - index, achieved=now + timedelta(seconds=index))
+    db.commit()
+
+    payload = client.get("/api/daru-game/leaderboard?difficulty=EASY").json()
+    returned = [*payload["top_entries"], *payload["entries"]]
+
+    assert [entry["rank"] for entry in returned] == expected_ranks
+    assert [entry["is_tied"] for entry in returned] == [expected_ranks.count(rank) > 1 for rank in expected_ranks]
+
+
+def test_precise_ties_use_achieved_time_only_for_display_order(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    later = add_user(db, 2, "later")
+    earlier = db.get(User, 1)
+    assert earlier is not None
+    add_ranked_stat(db, later, score="90.0", ranking_score="90.0424", attempts=5, elapsed=20, achieved=now + timedelta(minutes=1))
+    add_ranked_stat(db, earlier, score="90.0", ranking_score="90.0424", attempts=99, elapsed=500, achieved=now)
+    db.commit()
+
+    payload = client.get("/api/daru-game/leaderboard?difficulty=EASY").json()
+
+    assert [(entry["nickname"], entry["rank"], entry["is_tied"]) for entry in payload["top_entries"]] == [(earlier.nickname, 1, True), (later.nickname, 1, True)]
+
+
+def test_top_three_keeps_every_member_of_a_shared_rank_group(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    users = [db.get(User, 1), *[add_user(db, index, f"top-tie-{index}") for index in range(2, 5)]]
+    for index, user in enumerate(users):
+        assert user is not None
+        add_ranked_stat(db, user, score="90.0", ranking_score="90.0000", attempts=10, elapsed=60, achieved=now + timedelta(seconds=index))
+    db.commit()
+
+    payload = client.get("/api/daru-game/leaderboard?difficulty=EASY").json()
+
+    assert len(payload["top_entries"]) == 4
+    assert [entry["rank"] for entry in payload["top_entries"]] == [1, 1, 1, 1]
+    assert payload["entries"] == []
+
+
+def test_pagination_preserves_shared_rank_and_my_page(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    users = [add_user(db, index, f"page-{index}") for index in range(2, 9)]
+    users.append(db.get(User, 1))
+    precise_scores = ["99", "98", "97", "96", "95", "94", "94", "93"]
+    for index, (user, precise_score) in enumerate(zip(users, precise_scores, strict=True)):
+        assert user is not None
+        add_ranked_stat(db, user, score=precise_score, ranking_score=precise_score, attempts=10, elapsed=60, achieved=now + timedelta(seconds=index))
+    db.commit()
+
+    first_page = client.get("/api/daru-game/leaderboard?difficulty=EASY&page=1&page_size=2").json()
+    second_page = client.get("/api/daru-game/leaderboard?difficulty=EASY&page=2&page_size=2").json()
+    third_page = client.get("/api/daru-game/leaderboard?difficulty=EASY&page=3&page_size=2").json()
+
+    assert [entry["rank"] for entry in first_page["entries"]] == [4, 5]
+    assert [entry["rank"] for entry in second_page["entries"]] == [6, 6]
+    assert [entry["rank"] for entry in third_page["entries"]] == [8]
+    assert third_page["my_entry"]["rank"] == 8
+    assert third_page["my_page"] == 3
+    assert third_page["next_rank"] == 6
+    assert third_page["next_rank_score"] == 94.0
+
+
+def test_ranking_score_uses_same_formula_without_display_rounding() -> None:
+    precise = calculate_ranking_score("EASY", 13, 67, 4, 1)
+
+    assert precise == Decimal("82.0556")
+    assert calculate_detection_power("EASY", 13, 67, 4, 1) == Decimal("82.1")
+
+
+def test_ranked_query_uses_database_competition_rank() -> None:
+    compiled = str(ranked_leaderboard_subquery("EASY").compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})).lower()
+
+    assert "rank() over (order by daru_game_play_records.ranking_score desc)" in compiled
+    assert "count(*) over (partition by daru_game_play_records.ranking_score)" in compiled
+    assert "attempts asc" not in compiled
+    assert "elapsed_seconds asc" not in compiled
+
+
+def test_precise_ranking_migration_backfills_historical_records() -> None:
+    migration = (Path(__file__).resolve().parents[2] / "database" / "migrations" / "20260903_01_daru_precise_ranking_score.sql").read_text(encoding="utf-8")
+
+    assert "ADD COLUMN ranking_score NUMERIC(7,4)" in migration
+    assert "components.memory_score * 0.50::NUMERIC" in migration
+    assert "components.speed_score * 0.25::NUMERIC" in migration
+    assert "components.combo_score * 0.15::NUMERIC" in migration
+    assert "components.hint_score * 0.10::NUMERIC" in migration
+    assert "ALTER COLUMN ranking_score SET NOT NULL" in migration
+    assert "ROUND(" in migration and ",\n    4\n)" in migration
+
+
 def history_record(db: Session, *, user_id: int = 1, score: str, achieved: datetime, completed: bool = True) -> DaruGamePlayRecord:
-    record = DaruGamePlayRecord(user_id=user_id, difficulty="EASY", detection_power=Decimal(score), attempts=10, elapsed_seconds=60, max_combo=5, hints_used=0, earned_daru_points=100, completed=completed, within_time_limit=completed, score_version=2, achieved_at=achieved, created_at=achieved)
+    record = DaruGamePlayRecord(user_id=user_id, difficulty="EASY", detection_power=Decimal(score), ranking_score=Decimal(score), attempts=10, elapsed_seconds=60, max_combo=5, hints_used=0, earned_daru_points=100, completed=completed, within_time_limit=completed, score_version=2, achieved_at=achieved, created_at=achieved)
     db.add(record); db.flush(); return record
 
 

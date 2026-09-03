@@ -9,7 +9,7 @@ import secrets
 from typing import Any, Callable, Sequence
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.security import utc_now
@@ -31,6 +31,7 @@ CARD_IDS_BY_DIFFICULTY = {
 GAME_RUN_MAX_AGE = timedelta(hours=24)
 CURRENT_SCORE_VERSION = 2
 SCORE_TENTH = Decimal("0.1")
+RANKING_SCORE_QUANTUM = Decimal("0.0001")
 DECK_SHUFFLE_MAX_ATTEMPTS = 80
 RANKING_RECORD_DELETE_PROTECTED_MESSAGE = "현재 랭킹에 사용 중인 기록은 삭제할 수 없습니다."
 
@@ -298,35 +299,48 @@ def calculate_hint_score(hints_used: int) -> Decimal:
     return max(Decimal("0"), min(Decimal("100"), Decimal("100") - Decimal(hints_used * 50)))
 
 
-def calculate_speed_score(elapsed_seconds: int, benchmark_seconds: int, time_limit_seconds: int, within_time_limit: bool = True) -> float:
+def _calculate_speed_score_decimal(elapsed_seconds: int, benchmark_seconds: int, time_limit_seconds: int, within_time_limit: bool = True) -> Decimal:
     if not within_time_limit or elapsed_seconds > time_limit_seconds:
-        return 0
-    elapsed = max(1, elapsed_seconds)
-    half_benchmark = benchmark_seconds * 0.5
+        return Decimal("0")
+    elapsed = Decimal(max(1, elapsed_seconds))
+    benchmark = Decimal(benchmark_seconds)
+    time_limit = Decimal(time_limit_seconds)
+    half_benchmark = benchmark / Decimal("2")
     if elapsed <= half_benchmark:
-        return 100
-    if elapsed <= benchmark_seconds:
+        return Decimal("100")
+    if elapsed <= benchmark:
         progress = (elapsed - half_benchmark) / half_benchmark
-        return max(0, min(100, 100 - 20 * progress))
-    overtime_ratio = (elapsed - benchmark_seconds) / (time_limit_seconds - benchmark_seconds)
-    return max(40, min(100, 80 - 40 * overtime_ratio))
+        return max(Decimal("0"), min(Decimal("100"), Decimal("100") - Decimal("20") * progress))
+    overtime_ratio = (elapsed - benchmark) / (time_limit - benchmark)
+    return max(Decimal("40"), min(Decimal("100"), Decimal("80") - Decimal("40") * overtime_ratio))
+
+
+def calculate_speed_score(elapsed_seconds: int, benchmark_seconds: int, time_limit_seconds: int, within_time_limit: bool = True) -> float:
+    return float(_calculate_speed_score_decimal(elapsed_seconds, benchmark_seconds, time_limit_seconds, within_time_limit))
+
+
+def _calculate_weighted_score(difficulty: str, attempts: int, elapsed_seconds: int, max_combo: int, hints_used: int, within_time_limit: bool = True) -> Decimal:
+    config = DIFFICULTY_CONFIG[difficulty]
+    memory = calculate_memory_accuracy(config["pairs"], attempts)
+    speed = _calculate_speed_score_decimal(elapsed_seconds, config["speed_benchmark_seconds"], config["time_limit_seconds"], within_time_limit)
+    combo = min(Decimal("1"), Decimal(max_combo) / Decimal(config["combo_target"])) * Decimal("100")
+    hint = calculate_hint_score(hints_used)
+    return max(Decimal("0"), min(Decimal("100"), memory * Decimal("0.50") + speed * Decimal("0.25") + combo * Decimal("0.15") + hint * Decimal("0.10")))
 
 
 def calculate_detection_power(difficulty: str, attempts: int, elapsed_seconds: int, max_combo: int, hints_used: int, within_time_limit: bool = True) -> Decimal:
-    config = DIFFICULTY_CONFIG[difficulty]
-    memory = calculate_memory_accuracy(config["pairs"], attempts)
-    speed = Decimal(str(calculate_speed_score(elapsed_seconds, config["speed_benchmark_seconds"], config["time_limit_seconds"], within_time_limit)))
-    combo = min(Decimal("1"), Decimal(max_combo) / Decimal(config["combo_target"])) * Decimal("100")
-    hint = calculate_hint_score(hints_used)
-    power = memory * Decimal("0.50") + speed * Decimal("0.25") + combo * Decimal("0.15") + hint * Decimal("0.10")
-    return max(Decimal("0.0"), min(Decimal("100.0"), _round_to_tenth(power)))
+    return _round_to_tenth(_calculate_weighted_score(difficulty, attempts, elapsed_seconds, max_combo, hints_used, within_time_limit))
+
+
+def calculate_ranking_score(difficulty: str, attempts: int, elapsed_seconds: int, max_combo: int, hints_used: int, within_time_limit: bool = True) -> Decimal:
+    return _calculate_weighted_score(difficulty, attempts, elapsed_seconds, max_combo, hints_used, within_time_limit).quantize(RANKING_SCORE_QUANTUM, rounding=ROUND_HALF_UP)
 
 
 def detection_metrics(difficulty: str, attempts: int, elapsed_seconds: int, max_combo: int, hints_used: int, within_time_limit: bool) -> dict[str, Decimal]:
     config = DIFFICULTY_CONFIG[difficulty]
     return {
         "memory_accuracy": _round_to_tenth(calculate_memory_accuracy(config["pairs"], attempts)),
-        "speed_score": _round_to_tenth(Decimal(str(calculate_speed_score(elapsed_seconds, config["speed_benchmark_seconds"], config["time_limit_seconds"], within_time_limit)))),
+        "speed_score": _round_to_tenth(_calculate_speed_score_decimal(elapsed_seconds, config["speed_benchmark_seconds"], config["time_limit_seconds"], within_time_limit)),
         "combo_score": _round_to_tenth(min(Decimal("1"), Decimal(max_combo) / Decimal(config["combo_target"])) * Decimal("100")),
         "hint_score": _round_to_tenth(calculate_hint_score(hints_used)),
         "detection_power": calculate_detection_power(difficulty, attempts, elapsed_seconds, max_combo, hints_used, within_time_limit),
@@ -379,6 +393,7 @@ def submit_result(db: Session, *, run: DaruGameRun, user_id: int, finish_partial
     earned_points = run.earned_daru_points + (config["clear_bonus"] if completed else 0)
     eligible = completed
     power = calculate_detection_power(run.difficulty, run.attempts, elapsed_seconds, run.max_combo, run.hints_used, within_time_limit)
+    ranking_score = calculate_ranking_score(run.difficulty, run.attempts, elapsed_seconds, run.max_combo, run.hints_used, within_time_limit)
     run.consumed_at = now
     difficulty = run.difficulty
     attempts = run.attempts
@@ -394,7 +409,7 @@ def submit_result(db: Session, *, run: DaruGameRun, user_id: int, finish_partial
         improved = _apply_result(stat, eligible=eligible, power=power, attempts=attempts, elapsed_seconds=elapsed_seconds, max_combo=max_combo, hints_used=hints_used, earned_points=earned_points, now=now)
     db.flush()
     play_record = DaruGamePlayRecord(
-        user_id=user_id, difficulty=difficulty, detection_power=power, attempts=attempts,
+        user_id=user_id, difficulty=difficulty, detection_power=power, ranking_score=ranking_score, attempts=attempts,
         elapsed_seconds=elapsed_seconds, max_combo=max_combo, hints_used=hints_used,
         earned_daru_points=earned_points, completed=completed,
         within_time_limit=within_time_limit, score_version=CURRENT_SCORE_VERSION,
@@ -464,14 +479,48 @@ def ranking_query(difficulty: str):
             DaruGamePlayRecord.deleted_at.is_(None),
             User.role == "USER", User.active.is_(True), User.deleted_at.is_(None),
         )
-        .order_by(DaruGamePlayRecord.detection_power.desc(), DaruGamePlayRecord.attempts.asc(), DaruGamePlayRecord.elapsed_seconds.asc(), DaruGamePlayRecord.achieved_at.asc())
+        .order_by(DaruGamePlayRecord.ranking_score.desc(), DaruGamePlayRecord.achieved_at.asc(), DaruGamePlayRecord.id.asc())
+    )
+
+
+def ranked_leaderboard_subquery(difficulty: str):
+    rank_value = func.rank().over(order_by=DaruGamePlayRecord.ranking_score.desc()).label("rank")
+    tie_count = func.count().over(partition_by=DaruGamePlayRecord.ranking_score).label("tie_count")
+    return (
+        select(
+            DaruGameStat.id.label("stat_id"),
+            DaruGameStat.user_id,
+            User.nickname,
+            DaruGamePlayRecord.id.label("record_id"),
+            DaruGamePlayRecord.detection_power,
+            DaruGamePlayRecord.ranking_score,
+            DaruGamePlayRecord.attempts,
+            DaruGamePlayRecord.elapsed_seconds,
+            DaruGamePlayRecord.max_combo,
+            DaruGamePlayRecord.hints_used,
+            DaruGamePlayRecord.achieved_at,
+            rank_value,
+            tie_count,
+        )
+        .join(User, User.id == DaruGameStat.user_id)
+        .join(DaruGamePlayRecord, DaruGamePlayRecord.id == DaruGameStat.ranking_record_id)
+        .where(
+            DaruGameStat.difficulty == difficulty,
+            DaruGamePlayRecord.score_version == CURRENT_SCORE_VERSION,
+            DaruGamePlayRecord.completed.is_(True),
+            DaruGamePlayRecord.deleted_at.is_(None),
+            User.role == "USER",
+            User.active.is_(True),
+            User.deleted_at.is_(None),
+        )
+        .subquery("ranked_daru_leaderboard")
     )
 
 
 def leaderboard_rank(db: Session, stat: DaruGameStat) -> int | None:
-    ranked_ids = [item.id for item, _record, _nickname in db.execute(ranking_query(stat.difficulty)).all()]
-    try: return ranked_ids.index(stat.id) + 1
-    except ValueError: return None
+    ranked = ranked_leaderboard_subquery(stat.difficulty)
+    rank = db.scalar(select(ranked.c.rank).where(ranked.c.stat_id == stat.id))
+    return int(rank) if rank is not None else None
 
 
 def best_record_query(user_id: int, difficulty: str):

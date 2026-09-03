@@ -70,4 +70,5 @@ export interface LeaderboardEntry {
   hints_used: number;
   achieved_at: string;
   is_me: boolean;
+  is_tied: boolean;
 }

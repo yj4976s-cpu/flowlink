@@ -12,7 +12,7 @@ from app.api.auth import set_login_cookie
 from app.db.session import get_db
 from app.models import DaruGamePlayRecord, DaruGameStat, User
 from app.schemas.daru_game import DaruGameActionInput, DaruGameFlipInput, DaruGameFlipResponse, DaruGameHintResponse, DaruGameHistoryBatchDeleteInput, DaruGameHistoryBatchDeleteResponse, DaruGameHistoryItem, DaruGameHistoryResponse, DaruGameMetrics, DaruGamePreviewResponse, DaruGameRecord, DaruGameResultInput, DaruGameResultResponse, DaruGameRunInput, DaruGameRunResponse, DaruGameRunStateResponse, DaruGameStartResponse, DaruLeaderboardEntry, DaruLeaderboardResponse, Difficulty
-from app.services.daru_game import GameRunConflictError, GameRunExpiredError, GameRunNotFoundError, OutdatedGameRunError, ProtectedRankingRecordError, best_record_query, create_game_run, flip_card, game_run_preview, game_run_state, leaderboard_rank, perform_game_action, permanently_delete_play_record, permanently_delete_trash, rank_for, ranking_query, restore_play_record, soft_delete_all_play_records, soft_delete_play_record, soft_delete_play_records, start_gameplay, submit_result, use_game_hint
+from app.services.daru_game import GameRunConflictError, GameRunExpiredError, GameRunNotFoundError, OutdatedGameRunError, ProtectedRankingRecordError, best_record_query, create_game_run, flip_card, game_run_preview, game_run_state, leaderboard_rank, perform_game_action, permanently_delete_play_record, permanently_delete_trash, rank_for, ranked_leaderboard_subquery, restore_play_record, soft_delete_all_play_records, soft_delete_play_record, soft_delete_play_records, start_gameplay, submit_result, use_game_hint
 
 router = APIRouter(prefix="/api/daru-game", tags=["daru-game"])
 
@@ -87,16 +87,30 @@ def run_state(run_id: UUID, current_user: Annotated[User, Depends(require_user)]
 
 @router.get("/leaderboard", response_model=DaruLeaderboardResponse)
 def leaderboard(db: Annotated[Session, Depends(get_db)], current_user: Annotated[User | None, Depends(get_optional_current_user)], difficulty: Annotated[Difficulty, Query()] = "EASY", page: Annotated[int, Query(ge=1)] = 1, page_size: Annotated[int, Query(ge=1, le=20)] = 5) -> DaruLeaderboardResponse:
-    rows = db.execute(ranking_query(difficulty)).all()
-    entries = [DaruLeaderboardEntry(rank=index, nickname=nickname, detection_power=float(record.detection_power), attempts=record.attempts, elapsed_seconds=record.elapsed_seconds, max_combo=record.max_combo, hints_used=record.hints_used, achieved_at=record.achieved_at, is_me=current_user is not None and current_user.role == "USER" and stat.user_id == current_user.id) for index, (stat, record, nickname) in enumerate(rows, 1)]
-    mine = next((entry for entry in entries if entry.is_me), None)
-    general_entries = entries[3:]
-    total_pages = max(1, (len(general_entries) + page_size - 1) // page_size)
+    ranked = ranked_leaderboard_subquery(difficulty)
+    ordering = (ranked.c.ranking_score.desc(), ranked.c.achieved_at.asc(), ranked.c.record_id.asc())
+    total = db.scalar(select(func.count()).select_from(ranked)) or 0
+    top_rows = db.execute(select(ranked).where(ranked.c.rank <= 3).order_by(*ordering)).mappings().all()
+    general_total = db.scalar(select(func.count()).select_from(ranked).where(ranked.c.rank > 3)) or 0
+    total_pages = max(1, (general_total + page_size - 1) // page_size)
     current_page = min(page, total_pages)
     offset = (current_page - 1) * page_size
-    next_rank_score = entries[mine.rank - 2].detection_power if mine and mine.rank > 1 else None
+    general_rows = db.execute(select(ranked).where(ranked.c.rank > 3).order_by(*ordering).offset(offset).limit(page_size)).mappings().all()
+    current_user_id = current_user.id if current_user is not None and current_user.role == "USER" else None
+
+    def entry(row) -> DaruLeaderboardEntry:
+        return DaruLeaderboardEntry(rank=int(row.rank), nickname=row.nickname, detection_power=float(row.detection_power), attempts=row.attempts, elapsed_seconds=row.elapsed_seconds, max_combo=row.max_combo, hints_used=row.hints_used, achieved_at=row.achieved_at, is_me=current_user_id == row.user_id, is_tied=row.tie_count > 1)
+
+    mine_row = db.execute(select(ranked).where(ranked.c.user_id == current_user_id)).mappings().one_or_none() if current_user_id is not None else None
+    mine = entry(mine_row) if mine_row is not None else None
+    rows_before_mine = db.scalar(select(func.count()).select_from(ranked).where(ranked.c.rank > 3, (ranked.c.ranking_score > mine_row.ranking_score) | ((ranked.c.ranking_score == mine_row.ranking_score) & ((ranked.c.achieved_at < mine_row.achieved_at) | ((ranked.c.achieved_at == mine_row.achieved_at) & (ranked.c.record_id < mine_row.record_id)))))) if mine_row is not None and mine_row.rank > 3 else None
+    my_page = (rows_before_mine // page_size) + 1 if rows_before_mine is not None else None
+    previous_row = db.execute(select(ranked).where(ranked.c.ranking_score > mine_row.ranking_score).order_by(ranked.c.ranking_score.asc(), ranked.c.achieved_at.asc(), ranked.c.record_id.asc()).limit(1)).mappings().one_or_none() if mine_row is not None and mine_row.rank > 1 else None
+    next_rank_score = float(previous_row.detection_power) if previous_row is not None else None
+    next_rank = int(previous_row.rank) if previous_row is not None else None
+    next_rank_gap = float(previous_row.ranking_score - mine_row.ranking_score) if previous_row is not None and mine_row is not None else None
     my_stat = db.scalar(select(DaruGameStat).where(DaruGameStat.user_id == current_user.id, DaruGameStat.difficulty == difficulty)) if current_user and current_user.role == "USER" else None
-    return DaruLeaderboardResponse(difficulty=difficulty, top_entries=entries[:3], entries=general_entries[offset:offset + page_size], my_entry=mine, my_best=record_response(my_stat) if my_stat else None, next_rank_score=next_rank_score, total=len(entries), page=current_page, page_size=page_size, total_pages=total_pages)
+    return DaruLeaderboardResponse(difficulty=difficulty, top_entries=[entry(row) for row in top_rows], entries=[entry(row) for row in general_rows], my_entry=mine, my_best=record_response(my_stat) if my_stat else None, next_rank_score=next_rank_score, next_rank=next_rank, next_rank_gap=next_rank_gap, my_page=my_page, total=total, page=current_page, page_size=page_size, total_pages=total_pages)
 
 
 @router.get("/me", response_model=list[DaruGameRecord])
