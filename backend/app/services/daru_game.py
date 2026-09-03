@@ -32,7 +32,7 @@ GAME_RUN_MAX_AGE = timedelta(hours=24)
 CURRENT_SCORE_VERSION = 2
 SCORE_TENTH = Decimal("0.1")
 DECK_SHUFFLE_MAX_ATTEMPTS = 80
-RANKING_RECORD_DELETE_PROTECTED_MESSAGE = "현재 랭킹에 반영 중인 기록은 삭제할 수 없습니다."
+RANKING_RECORD_DELETE_PROTECTED_MESSAGE = "현재 랭킹에 사용 중인 기록은 삭제할 수 없습니다."
 
 
 class GameRunNotFoundError(ValueError):

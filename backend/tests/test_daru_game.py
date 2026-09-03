@@ -758,7 +758,7 @@ def test_deleting_current_ranking_record_returns_conflict_and_preserves_state(cl
     db.add(stat); db.commit()
     response = client.delete(f"/api/daru-game/history/{ranking.id}")
     assert response.status_code == 409
-    assert response.json() == {"detail": "현재 랭킹에 반영 중인 기록은 삭제할 수 없습니다."}
+    assert response.json() == {"detail": "현재 랭킹에 사용 중인 기록은 삭제할 수 없습니다."}
     db.refresh(stat); db.refresh(ranking)
     assert stat.ranking_record_id == ranking.id
     assert stat.best_detection_power == Decimal("95.0")
@@ -894,7 +894,7 @@ def test_batch_history_delete_protects_ranking_and_recomputes_best(client: TestC
     response = client.post("/api/daru-game/history/delete", json={"record_ids": [best.id, ranking.id]})
 
     assert response.status_code == 409
-    assert response.json() == {"detail": "현재 랭킹에 반영 중인 기록은 삭제할 수 없습니다."}
+    assert response.json() == {"detail": "현재 랭킹에 사용 중인 기록은 삭제할 수 없습니다."}
     db.refresh(best); db.refresh(ranking)
     assert best.deleted_at is None and ranking.deleted_at is None
 
@@ -992,7 +992,7 @@ def test_permanent_delete_rejects_owned_trashed_ranking_record(client: TestClien
     assert client.delete(f"/api/daru-game/history/{active.id}/permanent").status_code == 404
     response = client.delete(f"/api/daru-game/history/{record.id}/permanent")
     assert response.status_code == 409
-    assert response.json() == {"detail": "현재 랭킹에 반영 중인 기록은 삭제할 수 없습니다."}
+    assert response.json() == {"detail": "현재 랭킹에 사용 중인 기록은 삭제할 수 없습니다."}
     db.expire_all()
     assert db.get(DaruGamePlayRecord, record.id) is not None
     assert db.get(DaruGameStat, stat.id).ranking_record_id == record.id
@@ -1049,7 +1049,7 @@ def test_completed_game_replaces_ranking_and_releases_previous_record(client: Te
     assert client.delete(f"/api/daru-game/history/{previous.id}").status_code == 204
     protected = client.delete(f"/api/daru-game/history/{new_ranking_id}")
     assert protected.status_code == 409
-    assert protected.json() == {"detail": "현재 랭킹에 반영 중인 기록은 삭제할 수 없습니다."}
+    assert protected.json() == {"detail": "현재 랭킹에 사용 중인 기록은 삭제할 수 없습니다."}
 
 
 def test_partial_game_does_not_replace_or_release_current_ranking(client: TestClient, db: Session) -> None:

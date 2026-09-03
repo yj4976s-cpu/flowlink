@@ -229,7 +229,7 @@ test("overtime completion and leaderboard copy describe the new ranking policy",
   const resultSource = readFileSync(new URL("../src/components/daru-game/GameResult.tsx", import.meta.url), "utf8");
   assert.match(resultSource, /\{newBest \? newBestTitle : withinTimeLimit \? "다루와 전부 찾았어요!" : "클리어 완료!"\}/);
   assert.match(resultSource, /제한시간을 초과해 속도 점수는 0점으로 반영되었어요/);
-  assert.match(resultSource, /이번 완주 기록이 현재 랭킹에 반영됩니다/);
+  assert.match(resultSource, /이번 완주 기록이 현재 랭킹 점수로 사용됩니다/);
   assert.match(resultSource, /완주 기록도 개인 최고기록 비교 대상에 포함됩니다/);
   assert.match(leaderboardSource, /제한시간을 초과해도 완주 기록은 등록되며, 속도 점수는 0점으로 계산됩니다/);
 });
@@ -359,10 +359,11 @@ test("trash view supports count, pagination, restore, permanent delete, and scop
 
 test("ranking records are excluded from selection and expose protected non-actions", () => {
   assert.match(leaderboardSource, /managementMode && !item\.is_ranking_record/);
-  assert.match(leaderboardSource, /현재 랭킹에 반영 중인 기록은 삭제할 수 없습니다/);
+  assert.match(leaderboardSource, /현재 랭킹에 사용 중인 기록은 삭제할 수 없습니다/);
   assert.match(leaderboardSource, /item\.is_ranking_record && <em data-ranking title=\{RANKING_RECORD_DELETE_PROTECTED_MESSAGE\}>/);
   assert.match(leaderboardSource, /<PawIcon \/> 랭킹 점수/);
   assert.match(leaderboardSource, /item\.is_ranking_record \? <span className=\{styles\.trashProtected\}/);
+  assert.match(leaderboardSource, /<PawIcon \/> 랭킹 사용 중/);
   assert.doesNotMatch(leaderboardSource, /item\.is_best \|\| item\.is_ranking_record \? openDeleteDialog/);
   assert.doesNotMatch(leaderboardSource, /현재 랭킹 기록을 휴지통으로 이동할까요/);
   assert.doesNotMatch(leaderboardSource, /랭킹에서 제외하고 이동/);
@@ -418,7 +419,7 @@ test("history management is conditional and rare bulk actions stay in a confirme
   assert.match(leaderboardSource, /aria-haspopup="menu" aria-expanded=\{bulkMenuOpen\}/);
   assert.match(leaderboardSource, /openDeleteDialog\("difficulty"\)/);
   assert.match(leaderboardSource, /openDeleteDialog\("all"\)/);
-  assert.match(leaderboardSource, /각 난이도의 현재 랭킹 반영 기록은 보호되며/);
+  assert.match(leaderboardSource, /각 난이도에서 현재 랭킹에 사용 중인 기록은 유지되며/);
   assert.match(leaderboardSource, /deleteTarget === "all" \? "기록 정리"/);
   assert.match(leaderboardSource, /setManagementMode\(false\); resetSelection\(\)/);
 });
@@ -427,11 +428,11 @@ test("bulk cleanup copy explains ranking protection and uses the server deletion
   assert.match(apiSource, /deleteAllDaruGameHistory[\s\S]*deleted_count/);
   assert.match(leaderboardSource, /현재 난이도 기록 정리/);
   assert.doesNotMatch(leaderboardSource, /현재 난이도 기록 전체 정리/);
-  assert.match(leaderboardSource, /각 난이도의 현재 랭킹 반영 기록은 보호되며/);
-  assert.match(leaderboardSource, /현재 랭킹에 반영 중인 기록은 보호되며/);
+  assert.match(leaderboardSource, /각 난이도에서 현재 랭킹에 사용 중인 기록은 유지되며/);
+  assert.match(leaderboardSource, /현재 랭킹에 사용 중인 기록은 유지되며/);
   assert.match(leaderboardSource, /deletedCount = result\.deleted_count/);
-  assert.match(leaderboardSource, /정리할 수 있는 기록이 없어요\. 현재 랭킹 반영 기록은 유지됩니다\./);
-  assert.match(leaderboardSource, /랭킹 반영 기록을 제외한 플레이 기록 \$\{deletedCount\}개/);
+  assert.match(leaderboardSource, /정리할 수 있는 기록이 없어요\. 현재 랭킹에 사용 중인 기록은 유지됩니다\./);
+  assert.match(leaderboardSource, /현재 랭킹에 사용 중인 기록을 제외한 플레이 기록 \$\{deletedCount\}개/);
   assert.doesNotMatch(leaderboardSource, /기록이 모두 휴지통으로 이동합니다/);
 });
 
