@@ -507,8 +507,15 @@ test("a failed next-page request retries the displayed next page without skippin
   assert.deepEqual(getLeaderboardPageRequest(2, 2, 1, 4), { page: 3, retry: false });
 });
 
-test("equal scores explain the ranking tie-break instead of showing a zero-point gap", () => {
-  assert.equal(isLeaderboardScoreTie(5, 0), true);
-  assert.equal(isLeaderboardScoreTie(1, 0), false);
-  assert.equal(isLeaderboardScoreTie(5, 0.1), false);
+test("leaderboard uses authoritative precise-score tie metadata", () => {
+  assert.equal(isLeaderboardScoreTie(true), true);
+  assert.equal(isLeaderboardScoreTie(false), false);
+  assert.match(leaderboardSource, /entry\.is_tied && <span className=\{styles\.sharedRankBadge\}>공동<\/span>/);
+  assert.match(leaderboardSource, /entry\.is_tied && <small>공동<\/small>/);
+  assert.match(leaderboardSource, /myEntry && isLeaderboardScoreTie\(myEntry\.is_tied\)/);
+  assert.match(leaderboardSource, /표시 점수는 같지만 정밀 점수에서 차이가 있어요/);
+  assert.match(leaderboardSource, /정밀 점수까지 같으면 공동 순위가 됩니다/);
+  assert.match(leaderboardSource, /topEntries\.length > 3/);
+  assert.match(leaderboardSource, /if \(visible\?\.my_page\) setPage\(visible\.my_page\)/);
+  assert.doesNotMatch(leaderboardSource, /myEntry\.rank - 4/);
 });
