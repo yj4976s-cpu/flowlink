@@ -220,6 +220,7 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
   const deleteSingleRecord = async (item: DaruHistoryItem) => {
     if (deleting) return;
     setDeleting(true); setDeleteSuccess(""); setUndoError(false);
+    const historyBeforeDelete = history;
     setHistory((current) => current ? {
       ...current,
       items: current.items.filter((entry) => entry.id !== item.id),
@@ -232,6 +233,7 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
       resetSelection();
       setRetryKey((value) => value + 1);
     } catch (error) {
+      setHistory(historyBeforeDelete);
       setDeleteSuccess(error instanceof DaruGameApiError && error.status === 409 ? RANKING_RECORD_DELETE_PROTECTED_MESSAGE : "플레이 기록을 삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.");
       setHistoryLoading(true); setRetryKey((value) => value + 1);
     } finally { setDeleting(false); }

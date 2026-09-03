@@ -1030,6 +1030,45 @@ def test_previous_ranking_record_becomes_deletable_after_pointer_changes(client:
     assert stat.ranking_record_id == current.id
 
 
+def test_completed_game_replaces_ranking_and_releases_previous_record(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    best = history_record(db, score="100.0", achieved=now)
+    previous = history_record(db, score="80.0", achieved=now + timedelta(seconds=1))
+    stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=best.detection_power, score_version=2, best_attempts=best.attempts, best_elapsed_seconds=best.elapsed_seconds, best_combo=best.max_combo, best_hints_used=best.hints_used, total_daru_points=200, play_count=2, best_achieved_at=best.achieved_at, ranking_record_id=previous.id, created_at=now, updated_at=now)
+    db.add(stat); db.commit()
+    run_id, _run = start_authoritative_run(client, db, elapsed_seconds=90)
+    complete_pairs(client, run_id, 10)
+
+    result = client.post("/api/daru-game/results", json=action_json(run_id=run_id))
+
+    assert result.status_code == 200
+    assert result.json()["is_new_best"] is False
+    db.refresh(stat)
+    new_ranking_id = stat.ranking_record_id
+    assert new_ranking_id not in (None, previous.id)
+    assert client.delete(f"/api/daru-game/history/{previous.id}").status_code == 204
+    protected = client.delete(f"/api/daru-game/history/{new_ranking_id}")
+    assert protected.status_code == 409
+    assert protected.json() == {"detail": "현재 랭킹에 반영 중인 기록은 삭제할 수 없습니다."}
+
+
+def test_partial_game_does_not_replace_or_release_current_ranking(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    ranking = history_record(db, score="80.0", achieved=now)
+    stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=ranking.detection_power, score_version=2, best_attempts=ranking.attempts, best_elapsed_seconds=ranking.elapsed_seconds, best_combo=ranking.max_combo, best_hints_used=ranking.hints_used, total_daru_points=100, play_count=1, best_achieved_at=ranking.achieved_at, ranking_record_id=ranking.id, created_at=now, updated_at=now)
+    db.add(stat); db.commit()
+    run_id, _run = start_authoritative_run(client, db, elapsed_seconds=121)
+    complete_pairs(client, run_id, 2)
+
+    result = client.post("/api/daru-game/results", json=action_json(run_id=run_id, finish_partial=True))
+
+    assert result.status_code == 200
+    assert result.json()["metrics"]["completed"] is False
+    db.refresh(stat)
+    assert stat.ranking_record_id == ranking.id
+    assert client.delete(f"/api/daru-game/history/{ranking.id}").status_code == 409
+
+
 def test_empty_trash_excludes_legacy_trashed_ranking_record(client: TestClient, db: Session) -> None:
     now = utc_now()
     protected = history_record(db, score="90.0", achieved=now)
@@ -1047,6 +1086,22 @@ def test_empty_trash_excludes_legacy_trashed_ranking_record(client: TestClient, 
     assert db.get(DaruGamePlayRecord, protected.id) is not None
     assert db.get(DaruGamePlayRecord, deletable.id) is None
     assert db.get(DaruGameStat, stat.id).ranking_record_id == protected.id
+
+
+def test_legacy_trashed_ranking_becomes_permanently_deletable_after_completed_game(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    legacy = history_record(db, score="80.0", achieved=now)
+    legacy.deleted_at = now
+    stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=Decimal("0.0"), score_version=2, best_attempts=None, best_elapsed_seconds=None, best_combo=0, best_hints_used=None, total_daru_points=100, play_count=1, best_achieved_at=None, ranking_record_id=legacy.id, created_at=now, updated_at=now)
+    db.add(stat); db.commit()
+    run_id, _run = start_authoritative_run(client, db, elapsed_seconds=90)
+    complete_pairs(client, run_id, 10)
+
+    assert client.post("/api/daru-game/results", json=action_json(run_id=run_id)).status_code == 200
+    db.refresh(stat)
+    assert stat.ranking_record_id != legacy.id
+    assert client.delete(f"/api/daru-game/history/{legacy.id}/permanent").status_code == 204
+    assert db.get(DaruGamePlayRecord, legacy.id) is None
 
 
 def test_game_run_actions_lock_the_row() -> None:

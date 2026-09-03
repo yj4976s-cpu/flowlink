@@ -368,6 +368,13 @@ test("ranking records are excluded from selection and expose protected non-actio
   assert.doesNotMatch(leaderboardSource, /랭킹에서 제외하고 이동/);
   assert.doesNotMatch(leaderboardSource, /deletingRanking/);
   assert.match(leaderboardSource, /setHistoryLoading\(true\); setTrashLoading\(true\); setRetryKey/);
+  assert.match(leaderboardSource, /const historyBeforeDelete = history/);
+  assert.match(leaderboardSource, /catch \(error\) \{\s*setHistory\(historyBeforeDelete\)/);
+});
+
+test("every completed ranking-eligible game refreshes ranking and history without requiring a new BEST", () => {
+  assert.match(gameSource, /if \(authoritative\.completed\) setLeaderboardRefresh/);
+  assert.doesNotMatch(gameSource, /if \(response\.is_new_best\) setLeaderboardRefresh/);
 });
 
 test("history selection deletion uses one server request and supports whole-difficulty scope", () => {
