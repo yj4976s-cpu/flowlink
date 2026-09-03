@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, text
+from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, desc, text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -115,7 +115,7 @@ class DaruGamePlayRecord(Base):
         CheckConstraint("attempts >= 0 AND elapsed_seconds > 0 AND max_combo >= 0 AND hints_used BETWEEN 0 AND 2 AND earned_daru_points >= 0", name="ck_daru_game_play_records_metrics"),
         Index("ix_daru_game_play_records_user_difficulty_achieved", "user_id", "difficulty", "achieved_at"),
         Index("ix_daru_game_play_records_user_difficulty_deleted", "user_id", "difficulty", "deleted_at"),
-        Index("ix_daru_game_play_records_ranking_score", "ranking_score", "achieved_at", "id"),
+        Index("ix_daru_game_play_records_ranking_score", desc("ranking_score"), "achieved_at", "id"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)

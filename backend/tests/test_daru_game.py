@@ -12,6 +12,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
+from sqlalchemy.schema import CreateIndex
 
 from app.core.auth import get_current_user, get_optional_current_user
 from app.core.config import get_settings
@@ -853,6 +854,31 @@ def test_history_ranking_uses_best_clear_and_partial_updates_neither(client: Tes
     assert items[1]["is_ranking_record"] is False
     assert items[2]["is_best"] is True
     assert items[2]["is_ranking_record"] is True
+
+
+def test_history_best_identity_uses_only_canonical_ranking_record_id(client: TestClient, db: Session) -> None:
+    now = utc_now()
+    canonical = history_record(db, score="90.0", ranking_score="90.0000", achieved=now)
+    duplicate_metrics = history_record(db, score="90.0", ranking_score="90.0000", achieved=now)
+    stat = DaruGameStat(user_id=1, difficulty="EASY", best_detection_power=canonical.detection_power, score_version=2, best_attempts=canonical.attempts, best_elapsed_seconds=canonical.elapsed_seconds, best_combo=canonical.max_combo, best_hints_used=canonical.hints_used, total_daru_points=200, play_count=2, best_achieved_at=canonical.achieved_at, ranking_record_id=canonical.id, created_at=now, updated_at=now)
+    db.add(stat)
+    db.commit()
+
+    response = client.get("/api/daru-game/history?difficulty=EASY&page=1&page_size=5")
+
+    assert response.status_code == 200
+    items_by_id = {item["id"]: item for item in response.json()["items"]}
+    assert items_by_id[canonical.id]["is_best"] is True
+    assert items_by_id[canonical.id]["is_ranking_record"] is True
+    assert items_by_id[duplicate_metrics.id]["is_best"] is False
+    assert items_by_id[duplicate_metrics.id]["is_ranking_record"] is False
+
+
+def test_ranking_score_orm_index_matches_postgresql_direction() -> None:
+    index = next(index for index in DaruGamePlayRecord.__table__.indexes if index.name == "ix_daru_game_play_records_ranking_score")
+    compiled = str(CreateIndex(index).compile(dialect=postgresql.dialect())).lower()
+
+    assert "(ranking_score desc, achieved_at, id)" in compiled
 
 
 @pytest.mark.parametrize(
