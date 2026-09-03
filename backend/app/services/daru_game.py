@@ -32,6 +32,7 @@ GAME_RUN_MAX_AGE = timedelta(hours=24)
 CURRENT_SCORE_VERSION = 2
 SCORE_TENTH = Decimal("0.1")
 DECK_SHUFFLE_MAX_ATTEMPTS = 80
+RANKING_RECORD_DELETE_PROTECTED_MESSAGE = "현재 랭킹에 반영 중인 기록은 삭제할 수 없습니다."
 
 
 class GameRunNotFoundError(ValueError):
@@ -47,6 +48,10 @@ class GameRunExpiredError(GameRunConflictError):
 
 
 class OutdatedGameRunError(GameRunConflictError):
+    pass
+
+
+class ProtectedRankingRecordError(ValueError):
     pass
 
 
@@ -504,7 +509,7 @@ def recompute_best(db: Session, stat: DaruGameStat) -> None:
 
 
 def soft_delete_play_record(db: Session, *, user_id: int, record_id: int) -> DaruGamePlayRecord | None:
-    records = soft_delete_play_records(db, user_id=user_id, record_ids=[record_id], protect_ranking=False)
+    records = soft_delete_play_records(db, user_id=user_id, record_ids=[record_id])
     return records[0] if records else None
 
 
@@ -551,7 +556,8 @@ def permanently_delete_play_record(db: Session, *, user_id: int, record_id: int)
         .with_for_update()
     )
     if stat is not None and stat.ranking_record_id == record.id:
-        stat.ranking_record_id = None
+        db.rollback()
+        raise ProtectedRankingRecordError(RANKING_RECORD_DELETE_PROTECTED_MESSAGE)
     db.delete(record)
     db.flush()
     if stat is not None:
@@ -572,21 +578,19 @@ def permanently_delete_trash(db: Session, *, user_id: int, difficulty: str) -> i
     ).all()
     if not records:
         return 0
-    deleted_ids = {record.id for record in records}
     stat = db.scalar(
         select(DaruGameStat)
         .where(DaruGameStat.user_id == user_id, DaruGameStat.difficulty == difficulty)
         .with_for_update()
     )
-    if stat is not None and stat.ranking_record_id in deleted_ids:
-        stat.ranking_record_id = None
-    for record in records:
+    deletable_records = [record for record in records if stat is None or record.id != stat.ranking_record_id]
+    for record in deletable_records:
         db.delete(record)
     db.flush()
     if stat is not None:
         recompute_best(db, stat)
     db.commit()
-    return len(records)
+    return len(deletable_records)
 
 
 def soft_delete_play_records(
@@ -596,25 +600,25 @@ def soft_delete_play_records(
     record_ids: list[int] | None = None,
     difficulty: str | None = None,
     exclude_record_ids: list[int] | None = None,
-    protect_ranking: bool = True,
 ) -> list[DaruGamePlayRecord] | None:
     selected_ids = set(record_ids or [])
     excluded_ids = set(exclude_record_ids or [])
-    ranking_ids = set(db.scalars(select(DaruGameStat.ranking_record_id).where(DaruGameStat.user_id == user_id, DaruGameStat.ranking_record_id.is_not(None))).all())
+    user_stats = db.scalars(select(DaruGameStat).where(DaruGameStat.user_id == user_id).with_for_update()).all()
+    ranking_ids = {stat.ranking_record_id for stat in user_stats if stat.ranking_record_id is not None}
     query = select(DaruGamePlayRecord).where(
         DaruGamePlayRecord.user_id == user_id,
         DaruGamePlayRecord.deleted_at.is_(None),
     )
     if difficulty is not None:
         query = query.where(DaruGamePlayRecord.difficulty == difficulty)
-        if protect_ranking and ranking_ids:
+        if ranking_ids:
             query = query.where(DaruGamePlayRecord.id.not_in(ranking_ids))
         if excluded_ids:
             query = query.where(DaruGamePlayRecord.id.not_in(excluded_ids))
     else:
-        if protect_ranking and selected_ids & ranking_ids:
+        if selected_ids & ranking_ids:
             db.rollback()
-            return None
+            raise ProtectedRankingRecordError(RANKING_RECORD_DELETE_PROTECTED_MESSAGE)
         query = query.where(DaruGamePlayRecord.id.in_(selected_ids))
     records = db.scalars(query.with_for_update()).all()
     if difficulty is None and {record.id for record in records} != selected_ids:
@@ -627,19 +631,17 @@ def soft_delete_play_records(
         record.deleted_at = now
     db.flush()
     if affected_difficulties:
-        stats = db.scalars(
-            select(DaruGameStat)
-            .where(DaruGameStat.user_id == user_id, DaruGameStat.difficulty.in_(affected_difficulties))
-            .with_for_update()
-        ).all()
-        for stat in stats:
+        for stat in user_stats:
+            if stat.difficulty not in affected_difficulties:
+                continue
             recompute_best(db, stat)
     db.commit()
     return records
 
 
 def soft_delete_all_play_records(db: Session, *, user_id: int) -> int:
-    ranking_ids = set(db.scalars(select(DaruGameStat.ranking_record_id).where(DaruGameStat.user_id == user_id, DaruGameStat.ranking_record_id.is_not(None))).all())
+    stats = db.scalars(select(DaruGameStat).where(DaruGameStat.user_id == user_id).with_for_update()).all()
+    ranking_ids = {stat.ranking_record_id for stat in stats if stat.ranking_record_id is not None}
     query = select(DaruGamePlayRecord).where(DaruGamePlayRecord.user_id == user_id, DaruGamePlayRecord.deleted_at.is_(None))
     if ranking_ids:
         query = query.where(DaruGamePlayRecord.id.not_in(ranking_ids))
@@ -648,7 +650,6 @@ def soft_delete_all_play_records(db: Session, *, user_id: int) -> int:
     for record in records:
         record.deleted_at = now
     db.flush()
-    stats = db.scalars(select(DaruGameStat).where(DaruGameStat.user_id == user_id).with_for_update()).all()
     for stat in stats:
         recompute_best(db, stat)
     db.commit()

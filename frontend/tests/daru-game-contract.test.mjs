@@ -274,13 +274,13 @@ test("history management provides selection mode and accessible individual delet
   assert.match(leaderboardSource, /개 선택/);
   assert.match(leaderboardSource, /선택한 플레이 기록을 휴지통으로 이동/);
   assert.match(leaderboardSource, /전체 선택/);
-  assert.match(leaderboardSource, /!managementMode && <button type="button" aria-label="플레이 기록을 휴지통으로 이동"/);
+  assert.match(leaderboardSource, /!managementMode && \(item\.is_ranking_record \?/);
+  assert.match(leaderboardSource, /aria-label=\{RANKING_RECORD_DELETE_PROTECTED_MESSAGE\}/);
 });
 
 test("ordinary individual deletion skips the dialog while BEST and multiple deletion keep confirmation", () => {
-  assert.match(leaderboardSource, /item\.is_best \|\| item\.is_ranking_record \? openDeleteDialog\(item\) : void deleteSingleRecord\(item\)/);
+  assert.match(leaderboardSource, /item\.is_best \? openDeleteDialog\(item\) : void deleteSingleRecord\(item\)/);
   assert.match(leaderboardSource, /최고 기록을 휴지통으로 이동할까요/);
-  assert.match(leaderboardSource, /현재 랭킹 기록을 휴지통으로 이동할까요/);
   assert.match(leaderboardSource, /선택한 플레이 기록/);
   assert.match(leaderboardSource, /selectedCount > 0 \? `\$\{selectedCount\}개 휴지통으로 이동` : "휴지통으로 이동"/);
   assert.match(leaderboardSource, /현재 ‘.*’ 기록을 휴지통으로 이동할까요/);
@@ -305,7 +305,7 @@ test("history delete dialogs reset stale errors and stay open while deleting", (
   assert.match(leaderboardSource, /autoFocus onClick=\{closeDeleteDialog\} disabled=\{deleting\}/);
   assert.match(leaderboardSource, /role="alertdialog"/);
   assert.match(leaderboardSource, /event\.key !== "Tab"/);
-  assert.match(leaderboardSource, /catch \{ setDeleteError\(true\); \} finally \{ setDeleting\(false\); \}/);
+  assert.match(leaderboardSource, /error instanceof DaruGameApiError && error\.status === 409/);
 });
 
 test("history remains a full-width sibling after the ranking grid", () => {
@@ -358,11 +358,13 @@ test("trash view supports count, pagination, restore, permanent delete, and scop
   assert.match(leaderboardSource, /aria-label="휴지통 페이지"/);
 });
 
-test("ranking records are excluded from selection and retain a dedicated dialog", () => {
+test("ranking records are excluded from selection and expose protected non-actions", () => {
   assert.match(leaderboardSource, /managementMode && !item\.is_ranking_record/);
-  assert.match(leaderboardSource, /현재 랭킹 기록을 휴지통으로 이동할까요/);
-  assert.match(leaderboardSource, /이전 기록이 자동으로 등록되지는 않아요/);
-  assert.match(leaderboardSource, /랭킹에서 제외하고 이동/);
+  assert.match(leaderboardSource, /현재 랭킹에 반영 중인 기록은 삭제할 수 없습니다/);
+  assert.match(leaderboardSource, /item\.is_ranking_record \? <span className=\{styles\.historyProtected\}/);
+  assert.match(leaderboardSource, /item\.is_ranking_record \? <span className=\{styles\.trashProtected\}/);
+  assert.doesNotMatch(leaderboardSource, /item\.is_best \|\| item\.is_ranking_record \? openDeleteDialog/);
+  assert.match(leaderboardSource, /setHistoryLoading\(true\); setTrashLoading\(true\); setRetryKey/);
 });
 
 test("history selection deletion uses one server request and supports whole-difficulty scope", () => {

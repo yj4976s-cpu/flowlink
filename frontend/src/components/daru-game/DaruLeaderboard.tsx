@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { deleteAllDaruGameHistory, deleteDaruGameHistoryRecord, deleteDaruGameHistorySelection, emptyDaruGameTrash, getDaruGameHistory, getDaruGameTrash, getDaruLeaderboard, permanentlyDeleteDaruGameHistoryRecord, restoreDaruGameHistoryRecord, type DaruHistoryItem, type DaruHistoryResponse, type DaruLeaderboardResponse } from "@/lib/daruGameApi";
+import { DaruGameApiError, deleteAllDaruGameHistory, deleteDaruGameHistoryRecord, deleteDaruGameHistorySelection, emptyDaruGameTrash, getDaruGameHistory, getDaruGameTrash, getDaruLeaderboard, permanentlyDeleteDaruGameHistoryRecord, restoreDaruGameHistoryRecord, type DaruHistoryItem, type DaruHistoryResponse, type DaruLeaderboardResponse } from "@/lib/daruGameApi";
 import { DIFFICULTY_CONFIG } from "./game.config";
 import type { GameDifficulty, LeaderboardEntry } from "./game.types";
 import { formatElapsedTime, formatMemoryScore } from "./game.utils";
@@ -13,6 +13,7 @@ const MEDALS = ["🥇", "🥈", "🥉"] as const;
 
 interface LeaderboardPreview { entries: LeaderboardEntry[]; myEntry: LeaderboardEntry | null; }
 type DeleteTarget = DaruHistoryItem | "selected" | "difficulty" | "all" | { kind: "permanent"; item: DaruHistoryItem } | { kind: "empty-trash" };
+const RANKING_RECORD_DELETE_PROTECTED_MESSAGE = "현재 랭킹에 반영 중인 기록은 삭제할 수 없습니다.";
 function isHistoryItem(target: DeleteTarget): target is DaruHistoryItem { return typeof target === "object" && !("kind" in target); }
 
 function previewResponse(preview: LeaderboardPreview, page: number): DaruLeaderboardResponse {
@@ -72,7 +73,7 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
   const [excludedIds, setExcludedIds] = useState<Set<number>>(() => new Set());
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [deleteSuccess, setDeleteSuccess] = useState("");
   const [undoRecord, setUndoRecord] = useState<DaruHistoryItem | null>(null);
   const [undoing, setUndoing] = useState(false);
@@ -199,8 +200,8 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
   const openHistoryManager = () => { setHistoryView("active"); setHistoryExpanded(true); setBulkMenuOpen(false); setDeleteSuccess(""); };
   const collapseHistoryManager = () => { if (deleting) return; setHistoryExpanded(false); setManagementMode(false); setBulkMenuOpen(false); resetSelection(); setRestoreSuccess(""); window.requestAnimationFrame(() => manageButtonRef.current?.focus()); };
   const leaveManagementMode = () => { if (deleting) return; setManagementMode(false); resetSelection(); setDeleteSuccess(""); };
-  const openDeleteDialog = (target: DeleteTarget) => { dialogTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : manageButtonRef.current; setDeleteError(false); setDeleteTarget(target); };
-  const closeDeleteDialog = () => { if (deleting) return; setDeleteError(false); setDeleteTarget(null); window.requestAnimationFrame(() => dialogTriggerRef.current?.focus()); };
+  const openDeleteDialog = (target: DeleteTarget) => { dialogTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : manageButtonRef.current; setDeleteError(""); setDeleteTarget(target); };
+  const closeDeleteDialog = () => { if (deleting) return; setDeleteError(""); setDeleteTarget(null); window.requestAnimationFrame(() => dialogTriggerRef.current?.focus()); };
   const showUndoToast = (item: DaruHistoryItem) => {
     if (undoTimerRef.current !== null) window.clearTimeout(undoTimerRef.current);
     setUndoError(false); setUndoRecord(item);
@@ -230,8 +231,8 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
       showUndoToast(item);
       resetSelection();
       setRetryKey((value) => value + 1);
-    } catch {
-      setDeleteSuccess("플레이 기록을 삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    } catch (error) {
+      setDeleteSuccess(error instanceof DaruGameApiError && error.status === 409 ? RANKING_RECORD_DELETE_PROTECTED_MESSAGE : "플레이 기록을 삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.");
       setHistoryLoading(true); setRetryKey((value) => value + 1);
     } finally { setDeleting(false); }
   };
@@ -261,7 +262,7 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
     const dialog = dialogRef.current;
     const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? []);
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !deleting) { event.preventDefault(); setDeleteError(false); setDeleteTarget(null); window.requestAnimationFrame(() => dialogTriggerRef.current?.focus()); return; }
+      if (event.key === "Escape" && !deleting) { event.preventDefault(); setDeleteError(""); setDeleteTarget(null); window.requestAnimationFrame(() => dialogTriggerRef.current?.focus()); return; }
       if (event.key !== "Tab") return;
       const items = focusable(); if (items.length === 0) return;
       const first = items[0]; const last = items[items.length - 1];
@@ -273,7 +274,7 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
   }, [deleteTarget, deleting]);
   const confirmDelete = async () => {
     if (!deleteTarget || deleting) return;
-    setDeleting(true); setDeleteError(false);
+    setDeleting(true); setDeleteError("");
     const currentHistoryTotal = history?.total ?? 0;
     try {
       let deletedCount = 1;
@@ -291,7 +292,7 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
           : await deleteDaruGameHistorySelection({ record_ids: [...selectedIds] });
         deletedCount = result.deleted_count;
       } else if (isHistoryItem(deleteTarget)) await deleteDaruGameHistoryRecord(deleteTarget.id);
-      setDeleteError(false); setDeleteTarget(null);
+      setDeleteError(""); setDeleteTarget(null);
       if (deleteTarget === "all" || deleteTarget === "difficulty" || (deleteTarget === "selected" && deletedCount >= currentHistoryTotal)) setManagementMode(false);
       resetSelection();
       if (typeof deleteTarget === "object" && "kind" in deleteTarget) setDeleteSuccess(deleteTarget.kind === "empty-trash" ? `${DIFFICULTY_CONFIG[difficulty].label} 난이도 휴지통을 비웠습니다.` : "플레이 기록을 영구 삭제했습니다.");
@@ -299,13 +300,18 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
       else if (deleteTarget === "all" || deleteTarget === "difficulty") setDeleteSuccess(deletedCount === 0 ? "정리할 수 있는 기록이 없어요. 현재 랭킹 반영 기록은 유지됩니다." : `랭킹 반영 기록을 제외한 플레이 기록 ${deletedCount}개를 휴지통으로 이동했어요.`);
       else setDeleteSuccess(`플레이 기록 ${deletedCount}개를 휴지통으로 이동했습니다.`);
       setHistoryLoading(true); setTrashLoading(true); setRetryKey((value) => value + 1);
-    } catch { setDeleteError(true); } finally { setDeleting(false); }
+    } catch (error) {
+      if (error instanceof DaruGameApiError && error.status === 409) {
+        setDeleteError(""); setDeleteTarget(null); setDeleteSuccess(RANKING_RECORD_DELETE_PROTECTED_MESSAGE);
+        setHistoryLoading(true); setTrashLoading(true); setRetryKey((value) => value + 1);
+      } else setDeleteError("요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    } finally { setDeleting(false); }
   };
   const selectedItems = [...selectedRecords.values()];
   const deletingBest = typeof deleteTarget === "string"
     ? bulkDeleteIncludesBest({ target: deleteTarget, selectAllDifficulty, deletableBestRecordId: history?.deletable_best_record_id, excludedIds, hasDeletableBest: history?.has_deletable_best ?? false, hasDeletableBestAnyDifficulty: history?.has_deletable_best_any_difficulty ?? false, selectedItemsHaveBest: selectedItems.some((item) => item.is_best) })
     : Boolean(deleteTarget && isHistoryItem(deleteTarget) && deleteTarget.is_best);
-  const deletingRanking = Boolean(deleteTarget && isHistoryItem(deleteTarget) && deleteTarget.is_ranking_record);
+  const deletingRanking = false;
   const permanentTarget = deleteTarget && typeof deleteTarget === "object" && "kind" in deleteTarget && deleteTarget.kind === "permanent" ? deleteTarget.item : null;
   const emptyTrashTarget = Boolean(deleteTarget && typeof deleteTarget === "object" && "kind" in deleteTarget && deleteTarget.kind === "empty-trash");
   const dialogRecord = deleteTarget && isHistoryItem(deleteTarget) ? deleteTarget : permanentTarget;
@@ -340,13 +346,13 @@ export function DaruLeaderboard({ refreshKey = 0, preview }: { refreshKey?: numb
         {historyView === "active" ? <>
           <div className={styles.historyManagerToolbar}>{managementMode ? <><span aria-live="polite">{selectedCount}개 선택</span><button type="button" onClick={leaveManagementMode} disabled={deleting}>완료</button></> : <><span>최근 기록부터 표시됩니다.</span><div className={styles.historyToolbarActions}><button type="button" onClick={enterManagementMode} disabled={(history?.total ?? 0) === 0}><ListChecksIcon /> 기록 관리</button><div ref={bulkMenuRef} className={styles.historyBulkMenu}><button type="button" aria-label="기록 관리 옵션" aria-haspopup="menu" aria-expanded={bulkMenuOpen} onClick={() => setBulkMenuOpen((open) => !open)}>⋯</button>{bulkMenuOpen && <div role="menu"><strong>기록 관리 옵션</strong><button type="button" role="menuitem" onClick={() => { setBulkMenuOpen(false); openDeleteDialog("difficulty"); }}>현재 난이도 기록 정리</button><button type="button" role="menuitem" onClick={() => { setBulkMenuOpen(false); openDeleteDialog("all"); }}>모든 난이도 기록 정리</button></div>}</div></div></>}</div>
           {deleteSuccess && <p className={styles.historySuccess} role="status">{deleteSuccess}</p>}
-          <div className={styles.historyManagerListViewport}>{historyLoading && !history ? <div className={styles.historyManagerSkeleton} role="status" aria-label="전체 플레이 기록을 불러오는 중"><i /><i /><i /><i /><i /></div> : !history ? <div className={styles.historyInlineError} role="alert"><span>기록을 불러오지 못했어요.</span><button type="button" onClick={() => { setHistoryLoading(true); setRetryKey((value) => value + 1); }}>다시 시도</button></div> : history.items.length === 0 ? <div className={styles.historyEmpty}><HistoryIcon /><strong>아직 플레이 기록이 없어요.</strong></div> : <ul data-managing={managementMode || undefined}>{history.items.map((item) => <li key={item.id} data-selected={managementMode && itemSelected(item) || undefined}>{managementMode && !item.is_ranking_record && <label className={styles.historyCheckbox}><input type="checkbox" checked={itemSelected(item)} disabled={deleting} onChange={() => toggleItem(item)} aria-label={`${formatMemoryScore(item.detection_power)}점 기록 선택`} /><span aria-hidden="true" /></label>}<time dateTime={item.achieved_at}>{new Intl.DateTimeFormat("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(item.achieved_at))}</time><strong>{formatMemoryScore(item.detection_power)}</strong><span>{item.attempts}회 · {formatElapsedTime(item.elapsed_seconds)} · 최고 콤보 {item.max_combo} · 힌트 {item.hints_used}회</span><div>{!item.completed && <em><ClockIcon /> 미완주</em>}{item.is_best && <em data-best><CrownIcon /> BEST</em>}{item.is_ranking_record && <em data-ranking><PawIcon /> 랭킹 반영</em>}</div>{!managementMode && <button type="button" aria-label="플레이 기록을 휴지통으로 이동" disabled={deleting} onClick={() => item.is_best || item.is_ranking_record ? openDeleteDialog(item) : void deleteSingleRecord(item)}><TrashIcon /></button>}</li>)}</ul>}</div>
+          <div className={styles.historyManagerListViewport}>{historyLoading && !history ? <div className={styles.historyManagerSkeleton} role="status" aria-label="전체 플레이 기록을 불러오는 중"><i /><i /><i /><i /><i /></div> : !history ? <div className={styles.historyInlineError} role="alert"><span>기록을 불러오지 못했어요.</span><button type="button" onClick={() => { setHistoryLoading(true); setRetryKey((value) => value + 1); }}>다시 시도</button></div> : history.items.length === 0 ? <div className={styles.historyEmpty}><HistoryIcon /><strong>아직 플레이 기록이 없어요.</strong></div> : <ul data-managing={managementMode || undefined}>{history.items.map((item) => <li key={item.id} data-selected={managementMode && itemSelected(item) || undefined}>{managementMode && !item.is_ranking_record && <label className={styles.historyCheckbox}><input type="checkbox" checked={itemSelected(item)} disabled={deleting} onChange={() => toggleItem(item)} aria-label={`${formatMemoryScore(item.detection_power)}점 기록 선택`} /><span aria-hidden="true" /></label>}<time dateTime={item.achieved_at}>{new Intl.DateTimeFormat("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(item.achieved_at))}</time><strong>{formatMemoryScore(item.detection_power)}</strong><span>{item.attempts}회 · {formatElapsedTime(item.elapsed_seconds)} · 최고 콤보 {item.max_combo} · 힌트 {item.hints_used}회</span><div>{!item.completed && <em><ClockIcon /> 미완주</em>}{item.is_best && <em data-best><CrownIcon /> BEST</em>}{item.is_ranking_record && <em data-ranking><PawIcon /> 랭킹 반영</em>}</div>{!managementMode && (item.is_ranking_record ? <span className={styles.historyProtected} role="img" aria-label={RANKING_RECORD_DELETE_PROTECTED_MESSAGE} title={RANKING_RECORD_DELETE_PROTECTED_MESSAGE}><PawIcon /></span> : <button type="button" aria-label="플레이 기록을 휴지통으로 이동" disabled={deleting} onClick={() => item.is_best ? openDeleteDialog(item) : void deleteSingleRecord(item)}><TrashIcon /></button>)}</li>)}</ul>}</div>
           {(history?.total_pages ?? 1) > 1 && <nav className={styles.historyManagerPagination} aria-label="전체 기록 페이지"><button type="button" aria-label="이전 기록 페이지" disabled={(history?.page ?? 1) <= 1 || historyLoading} onClick={() => { setHistoryLoading(true); setHistoryPage((value) => Math.max(1, value - 1)); }}><ChevronLeftIcon /></button>{compactPaginationPages(history?.page ?? 1, history?.total_pages ?? 1).map((number) => <button type="button" key={number} aria-label={`전체 기록 ${number}페이지`} aria-current={(history?.page ?? 1) === number ? "page" : undefined} onClick={() => { setHistoryLoading(true); setHistoryPage(number); }}>{number}</button>)}<button type="button" aria-label="다음 기록 페이지" disabled={(history?.page ?? 1) >= (history?.total_pages ?? 1) || historyLoading} onClick={() => { setHistoryLoading(true); setHistoryPage((value) => value + 1); }}><ChevronRightIcon /></button></nav>}
           {managementMode && (history?.total ?? 0) > 0 && <div className={styles.historyManagement}><button type="button" onClick={toggleAll} disabled={deleting}>{selectAllDifficulty && excludedIds.size === 0 ? "선택 해제" : "전체 선택"}</button><span aria-hidden="true">{selectedCount}개 선택</span><button type="button" className={styles.selectedDelete} aria-label="선택한 플레이 기록을 휴지통으로 이동" disabled={selectedCount === 0 || deleting} onClick={() => { const only = selectedCount === 1 && !selectAllDifficulty ? selectedItems[0] : null; if (only) { if (only.is_best) openDeleteDialog(only); else void deleteSingleRecord(only); } else openDeleteDialog("selected"); }}><TrashIcon /> {selectedCount > 0 ? `${selectedCount}개 휴지통으로 이동` : "휴지통으로 이동"}</button></div>}
         </> : <>
           <div className={styles.trashIntro}><p>휴지통에 보관된 기록은 복원하거나 영구 삭제할 수 있어요.</p>{(trash?.total ?? 0) > 0 && <button type="button" onClick={() => openDeleteDialog({ kind: "empty-trash" })}><TrashIcon /> 휴지통 비우기</button>}</div>
           {deleteSuccess && <p className={styles.historySuccess} role="status">{deleteSuccess}</p>}
-          <div className={styles.historyManagerListViewport}>{trashLoading && !trash ? <div className={styles.historyManagerSkeleton} role="status" aria-label="휴지통 기록을 불러오는 중"><i /><i /><i /><i /><i /></div> : !trash ? <div className={styles.historyInlineError} role="alert"><span>휴지통을 불러오지 못했어요.</span><button type="button" onClick={() => { setTrashLoading(true); setRetryKey((value) => value + 1); }}>다시 시도</button></div> : trash.items.length === 0 ? <div className={styles.historyEmpty}><strong>휴지통이 비어 있어요.</strong></div> : <ul className={styles.trashList}>{trash.items.map((item) => <li key={item.id}><time dateTime={item.achieved_at}>{new Intl.DateTimeFormat("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(item.achieved_at))}</time><strong>{formatMemoryScore(item.detection_power)}</strong><span>{item.attempts}회 · {formatElapsedTime(item.elapsed_seconds)} · 최고 콤보 {item.max_combo}<small>삭제됨 {item.deleted_at ? new Intl.DateTimeFormat("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(item.deleted_at)) : ""}</small></span><div className={styles.trashActions}><button type="button" onClick={() => void restoreTrashRecord(item)} disabled={deleting}><RestoreIcon /> 복원</button><button type="button" onClick={() => openDeleteDialog({ kind: "permanent", item })} disabled={deleting}><TrashIcon /> 영구 삭제</button></div></li>)}</ul>}</div>
+          <div className={styles.historyManagerListViewport}>{trashLoading && !trash ? <div className={styles.historyManagerSkeleton} role="status" aria-label="휴지통 기록을 불러오는 중"><i /><i /><i /><i /><i /></div> : !trash ? <div className={styles.historyInlineError} role="alert"><span>휴지통을 불러오지 못했어요.</span><button type="button" onClick={() => { setTrashLoading(true); setRetryKey((value) => value + 1); }}>다시 시도</button></div> : trash.items.length === 0 ? <div className={styles.historyEmpty}><strong>휴지통이 비어 있어요.</strong></div> : <ul className={styles.trashList}>{trash.items.map((item) => <li key={item.id}><time dateTime={item.achieved_at}>{new Intl.DateTimeFormat("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(item.achieved_at))}</time><strong>{formatMemoryScore(item.detection_power)}</strong><span>{item.attempts}회 · {formatElapsedTime(item.elapsed_seconds)} · 최고 콤보 {item.max_combo}<small>삭제됨 {item.deleted_at ? new Intl.DateTimeFormat("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(item.deleted_at)) : ""}</small></span><div className={styles.trashActions}><button type="button" onClick={() => void restoreTrashRecord(item)} disabled={deleting}><RestoreIcon /> 복원</button>{item.is_ranking_record ? <span className={styles.trashProtected} aria-label={RANKING_RECORD_DELETE_PROTECTED_MESSAGE} title={RANKING_RECORD_DELETE_PROTECTED_MESSAGE}><PawIcon /> 랭킹 보호</span> : <button type="button" onClick={() => openDeleteDialog({ kind: "permanent", item })} disabled={deleting}><TrashIcon /> 영구 삭제</button>}</div></li>)}</ul>}</div>
           {(trash?.total_pages ?? 1) > 1 && <nav className={styles.historyManagerPagination} aria-label="휴지통 페이지"><button type="button" aria-label="이전 휴지통 페이지" disabled={(trash?.page ?? 1) <= 1 || trashLoading} onClick={() => { setTrashLoading(true); setTrashPage((value) => Math.max(1, value - 1)); }}><ChevronLeftIcon /></button>{compactPaginationPages(trash?.page ?? 1, trash?.total_pages ?? 1).map((number) => <button type="button" key={number} aria-label={`휴지통 ${number}페이지`} aria-current={(trash?.page ?? 1) === number ? "page" : undefined} onClick={() => { setTrashLoading(true); setTrashPage(number); }}>{number}</button>)}<button type="button" aria-label="다음 휴지통 페이지" disabled={(trash?.page ?? 1) >= (trash?.total_pages ?? 1) || trashLoading} onClick={() => { setTrashLoading(true); setTrashPage((value) => value + 1); }}><ChevronRightIcon /></button></nav>}
         </>}
       </div>
