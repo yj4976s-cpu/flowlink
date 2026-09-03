@@ -264,7 +264,7 @@ test("history is fixed to five records and corrects an invalid last page", () =>
 
 test("history exposes BEST ranking and partial labels with distinct icons", () => {
   assert.match(leaderboardSource, /<CrownIcon \/> BEST/);
-  assert.match(leaderboardSource, /<PawIcon \/> 랭킹 반영/);
+  assert.match(leaderboardSource, /<PawIcon \/> 랭킹 점수/);
   assert.match(leaderboardSource, /<ClockIcon \/> 미완주/);
 });
 
@@ -361,7 +361,7 @@ test("ranking records are excluded from selection and expose protected non-actio
   assert.match(leaderboardSource, /managementMode && !item\.is_ranking_record/);
   assert.match(leaderboardSource, /현재 랭킹에 반영 중인 기록은 삭제할 수 없습니다/);
   assert.match(leaderboardSource, /item\.is_ranking_record && <em data-ranking title=\{RANKING_RECORD_DELETE_PROTECTED_MESSAGE\}>/);
-  assert.match(leaderboardSource, /<PawIcon \/> 랭킹 반영 · 보호 중/);
+  assert.match(leaderboardSource, /<PawIcon \/> 랭킹 점수/);
   assert.match(leaderboardSource, /item\.is_ranking_record \? <span className=\{styles\.trashProtected\}/);
   assert.doesNotMatch(leaderboardSource, /item\.is_best \|\| item\.is_ranking_record \? openDeleteDialog/);
   assert.doesNotMatch(leaderboardSource, /현재 랭킹 기록을 휴지통으로 이동할까요/);
