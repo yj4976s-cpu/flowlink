@@ -14,6 +14,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 from app.core.config import Settings
 from app.models import User
+from app.services.video_diagnostics import log_video_command_result, video_diagnostic_step
 
 UPLOAD_CHUNK_BYTES = 1024 * 1024
 IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -174,10 +175,15 @@ def _ffmpeg_bin(name: str) -> str:
 
 
 def _run_command(command: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
-    try:
-        return subprocess.run(command, shell=False, capture_output=True, text=True, timeout=timeout, check=False)
-    except subprocess.TimeoutExpired as exc:
-        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Video processing timed out") from exc
+    name = Path(command[0]).stem.lower()
+    tool = name if name in {"ffmpeg", "ffprobe"} else "media_command"
+    with video_diagnostic_step(tool.upper()):
+        try:
+            result = subprocess.run(command, shell=False, capture_output=True, text=True, timeout=timeout, check=False)
+        except subprocess.TimeoutExpired as exc:
+            raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Video processing timed out") from exc
+        log_video_command_result(tool, result.returncode, result.stderr or "")
+        return result
 
 
 def _parse_rate(value: str | None) -> float | None:
@@ -292,7 +298,8 @@ def normalize_video_to_mp4(raw_path: Path, destination: Path, *, source_probe: d
     if result.returncode != 0 or not temp_output.exists() or temp_output.stat().st_size <= 0:
         temp_output.unlink(missing_ok=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Video normalization failed")
-    temp_output.replace(destination)
+    with video_diagnostic_step("INSTALL_NORMALIZED_OUTPUT"):
+        temp_output.replace(destination)
 
 
 async def save_user_video_upload(
@@ -330,13 +337,17 @@ def validate_saved_user_video(path: Path, *, settings: Settings) -> dict[str, fl
 
 
 def normalize_user_video_in_place(path: Path, *, settings: Settings) -> int:
-    source_probe = validate_saved_user_video(path, settings=settings)
+    with video_diagnostic_step("VALIDATE_INPUT"):
+        source_probe = validate_saved_user_video(path, settings=settings)
     normalized_path = path.with_name(f"{path.stem}.normalized.final{path.suffix}")
     try:
-        normalize_video_to_mp4(path, normalized_path, source_probe=source_probe, settings=settings)
-        normalized_size = normalized_path.stat().st_size
-        normalized_path.replace(path)
-        validate_saved_user_video(path, settings=settings)
+        with video_diagnostic_step("CONVERT_VIDEO"):
+            normalize_video_to_mp4(path, normalized_path, source_probe=source_probe, settings=settings)
+        with video_diagnostic_step("REPLACE_ORIGINAL"):
+            normalized_size = normalized_path.stat().st_size
+            normalized_path.replace(path)
+        with video_diagnostic_step("VALIDATE_OUTPUT"):
+            validate_saved_user_video(path, settings=settings)
         return normalized_size
     except Exception:
         normalized_path.unlink(missing_ok=True)

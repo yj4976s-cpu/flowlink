@@ -1778,7 +1778,11 @@ def test_video_detection_creates_video_job(client: TestClient, db: Session) -> N
     assert job.error_message is None
 
 
-def test_video_worker_completes_queued_job_and_zero_detection_is_success(client: TestClient, db: Session) -> None:
+def test_video_worker_completes_queued_job_and_zero_detection_is_success(client: TestClient, db: Session, caplog) -> None:
+    import logging
+    from app.services.video_diagnostics import video_job_context
+
+    caplog.set_level(logging.INFO, logger="app.services.video_diagnostics")
     user = seed_user(db, 1)
     authenticate(client, user)
     response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
@@ -1796,6 +1800,52 @@ def test_video_worker_completes_queued_job_and_zero_detection_is_success(client:
     assert job.status == "COMPLETED"
     assert job.processing_stage == "COMPLETED"
     assert job.processing_progress == 100
+    assert video_job_context.get() == (None, None)
+    assert f"job_id={job.id} event_id={event.id} phase=DB_SAVE_NORMALIZED outcome=completed" in caplog.text
+    assert f"job_id={job.id} event_id={event.id} phase=INFERENCE_AND_SAVE outcome=completed" in caplog.text
+
+
+@pytest.mark.parametrize("failure_phase", ["NORMALIZE_VIDEO", "DB_SAVE_NORMALIZED"])
+def test_video_worker_diagnostics_correlate_failures_and_reset_context(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch, caplog, failure_phase: str,
+) -> None:
+    from app.services.video_diagnostics import video_job_context
+
+    user = seed_user(db, 1)
+    authenticate(client, user)
+    response = client.post("/api/detections/videos", files={"file": ("sample.mp4", BytesIO(b"mp4"), "video/mp4")})
+    assert response.status_code == 202
+    accepted = response.json()
+    caplog.clear()
+    original_refresh = db.refresh
+    failed = False
+
+    def fail_normalize(*args, **kwargs):
+        raise PermissionError(13, "secret-token /private/model.pt")
+
+    def fail_refresh(instance, *args, **kwargs):
+        nonlocal failed
+        if isinstance(instance, VideoJob) and not failed:
+            failed = True
+            raise RuntimeError("postgresql://user:password@private/db")
+        return original_refresh(instance, *args, **kwargs)
+
+    if failure_phase == "NORMALIZE_VIDEO":
+        monkeypatch.setattr("app.workers.video_detection_worker.normalize_user_video_in_place", fail_normalize)
+    else:
+        monkeypatch.setattr(db, "refresh", fail_refresh)
+    assert process_one_job(db) is True
+    assert video_job_context.get() == (None, None)
+    assert f"job_id={accepted['video_job_id']} event_id={accepted['detection_event_id']} phase={failure_phase} outcome=failed" in caplog.text
+    assert "secret-token" not in caplog.text
+    assert "/private/" not in caplog.text
+    assert "password" not in caplog.text
+    job = db.get(VideoJob, accepted["video_job_id"])
+    assert job.status == "FAILED"
+    assert job.failed_stage == "NORMALIZING"
+    assert job.error_message == "Video processing failed"
+    status_response = client.get(f"/api/detections/{accepted['detection_event_id']}/processing-status")
+    assert status_response.json()["error_message"] == "영상 분석을 완료하지 못했어요. 잠시 후 다시 시도해주세요."
 
 
 def test_video_worker_normalizes_user_video_before_inference(
