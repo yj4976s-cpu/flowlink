@@ -17,6 +17,7 @@ from app.services.detection_notifications import VIDEO_TIMEOUT_ERROR_CODE, ensur
 from app.services.detection_inference import DetectionInferenceService
 from app.services.detections import process_detection_event
 from app.services.user_media_uploads import normalize_user_video_in_place
+from app.services.video_diagnostics import log_video_failure, video_diagnostic_step, video_job_context
 
 logger = logging.getLogger(__name__)
 
@@ -104,27 +105,35 @@ def process_one_job(db: Session, *, inference_service: DetectionInferenceService
     job = db.get(VideoJob, job_id)
     if job is None:
         return False
+    context_token = video_job_context.set((job_id, job.detection_event_id))
     try:
-        media_path = resolve_job_media_path(job.detection_event)
+        with video_diagnostic_step("RESOLVE_MEDIA"):
+            media_path = resolve_job_media_path(job.detection_event)
         if job.detection_event.purpose == "USER_ANALYSIS":
-            job.processing_stage = "NORMALIZING"
-            job.updated_at = utc_now()
-            db.commit()
-            normalized_bytes = normalize_user_video_in_place(media_path, settings=get_settings())
-            db.refresh(job)
-            job.detection_event.original_media_bytes = normalized_bytes
-            job.processing_stage = "ANALYZING"
-            job.updated_at = utc_now()
-            db.commit()
-        process_detection_event(
-            db,
-            event_id=job.detection_event_id,
-            media_path=media_path,
-            inference_service=inference_service or DetectionInferenceService(),
-            video_job_id=job.id,
-        )
+            with video_diagnostic_step("DB_START_NORMALIZING"):
+                job.processing_stage = "NORMALIZING"
+                job.updated_at = utc_now()
+                db.commit()
+            with video_diagnostic_step("NORMALIZE_VIDEO"):
+                normalized_bytes = normalize_user_video_in_place(media_path, settings=get_settings())
+            with video_diagnostic_step("DB_SAVE_NORMALIZED"):
+                db.refresh(job)
+                job.detection_event.original_media_bytes = normalized_bytes
+                job.processing_stage = "ANALYZING"
+                job.updated_at = utc_now()
+                db.commit()
+        with video_diagnostic_step("INFERENCE_AND_SAVE"):
+            process_detection_event(
+                db,
+                event_id=job.detection_event_id,
+                media_path=media_path,
+                inference_service=inference_service or DetectionInferenceService(),
+                video_job_id=job.id,
+            )
         logger.info("video job completed job_id=%s event_id=%s", job.id, job.detection_event_id)
-    except Exception:
+    except Exception as exc:
+        # Record before rollback/cleanup so a secondary DB error cannot hide the original phase.
+        log_video_failure("PROCESS_JOB", exc)
         db.rollback()
         event = db.get(DetectionEvent, job.detection_event_id)
         if event is not None:
@@ -140,6 +149,8 @@ def process_one_job(db: Session, *, inference_service: DetectionInferenceService
                 ensure_detection_terminal_notification(db, event=event)
             db.commit()
         logger.error("video job failed job_id=%s event_id=%s category=processing", job.id, job.detection_event_id)
+    finally:
+        video_job_context.reset(context_token)
     return True
 
 
@@ -151,7 +162,8 @@ def run_worker() -> None:
             try:
                 fail_stale_jobs(db)
                 processed = process_one_job(db)
-            except Exception:
+            except Exception as exc:
+                log_video_failure("WORKER_LOOP", exc)
                 db.rollback()
                 logger.error("video worker iteration failed category=worker-loop")
                 processed = False
