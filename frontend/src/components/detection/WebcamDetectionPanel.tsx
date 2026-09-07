@@ -5,6 +5,7 @@ import { Icon } from "@/components/common/Icon";
 import { DetectionApiError, WebcamDetectionFrame, WebcamDetectionObject, detectWebcamFrame } from "@/lib/detectionApi";
 import { createPrefixedRequestId } from "@/lib/requestId";
 import { getContainedMediaRect, getContainedMediaRectStyle, getOverlayPercentageStyle, normalizeBBoxForDisplayMedia } from "./detectionOverlayGeometry";
+import { isReportablePersonalItem as isReportableObject } from "./reportablePersonalItems";
 import styles from "./DetectionWorkbench.module.css";
 
 export type WebcamPanelStatus = "idle" | "requesting" | "ready" | "running" | "error";
@@ -58,7 +59,6 @@ const WEBCAM_REPORT_CANDIDATE_LIMIT = 3;
 // The AI service already emits only tracks that passed the shared stability policy.
 export const WEBCAM_AUTO_REPORT_STABLE_FRAMES = 1;
 export const WEBCAM_AUTO_REPORT_COOLDOWN_MS = 3000;
-const reportableClassCodes = new Set(["BAG", "UMBRELLA", "FOOTWEAR", "BALL"]);
 
 const objectLabels: Record<string, string> = {
   backpack: "백팩",
@@ -83,10 +83,6 @@ function getObjectLabel(label: string) {
 
 function getDisplayLabel(object: WebcamDetectionObject) {
   return object.class_name_ko ?? getObjectLabel(object.label);
-}
-
-function isReportableObject(object: WebcamDetectionObject) {
-  return object.group_code === "PERSONAL_ITEM" && Boolean(object.class_code && reportableClassCodes.has(object.class_code));
 }
 
 function getCameraErrorMessage(error: unknown) {

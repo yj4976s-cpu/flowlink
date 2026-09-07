@@ -31,6 +31,7 @@ import type { WebcamPanelStatus, WebcamReportCandidate } from "./WebcamDetection
 import { getContainedMediaRect, getContainedMediaRectStyle, getOverlayPercentageStyle, normalizeBBoxForDisplayMedia } from "./detectionOverlayGeometry";
 import { loadDetectionMediaFile, prepareCurrentDetectionReport, prepareDetectionReportPreview } from "./detectionReportMedia";
 import { waitForDecodedVideoFrame, waitForSeekedDecodedFrame } from "./videoFrameReadiness";
+import { getReportableClassCode, isReportablePersonalItem, reportableClassNames } from "./reportablePersonalItems";
 import styles from "./DetectionWorkbench.module.css";
 
 type DetectionTab = "image" | "video" | "webcam";
@@ -232,21 +233,6 @@ const groupLabels: Record<string, string> = {
   PERSONAL_ITEM: "개인 물품 후보",
   UNKNOWN: "미확인",
 };
-
-const reportableClassNames: Record<string, string> = {
-  BAG: "가방",
-  UMBRELLA: "우산",
-  FOOTWEAR: "신발",
-  BALL: "공",
-};
-
-function getReportableClassCode(value: string | null | undefined) {
-  return value && reportableClassNames[value] ? value : "";
-}
-
-function isReportablePersonalItem(object: Pick<DetectionObject, "class_code" | "group_code">) {
-  return object.group_code === "PERSONAL_ITEM" && Boolean(getReportableClassCode(object.class_code));
-}
 
 function formatBytes(bytes: number) {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
