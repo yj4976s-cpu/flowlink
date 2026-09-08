@@ -15,6 +15,7 @@ WEBCAM_CLASS_METADATA: dict[str, tuple[str, str]] = {
     "BAG": ("가방", "PERSONAL_ITEM"),
     "UMBRELLA": ("우산", "PERSONAL_ITEM"),
     "FOOTWEAR": ("신발", "PERSONAL_ITEM"),
+    "HAT": ("모자", "PERSONAL_ITEM"),
     "BALL": ("공", "PERSONAL_ITEM"),
 }
 
