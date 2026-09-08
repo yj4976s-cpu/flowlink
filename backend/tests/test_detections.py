@@ -1701,6 +1701,46 @@ def test_webcam_detection_frame_is_allowed_for_user_and_admin(client: TestClient
     assert db.query(VideoJob).count() == 0
 
 
+@pytest.mark.parametrize(
+    ("label", "code", "name", "group"),
+    [
+        ("hat", "HAT", "모자", "PERSONAL_ITEM"),
+        ("HAT", "HAT", "모자", "PERSONAL_ITEM"),
+        ("shoe", "FOOTWEAR", "신발", "PERSONAL_ITEM"),
+        ("FOOTWEAR", "FOOTWEAR", "신발", "PERSONAL_ITEM"),
+        ("trash", "TRASH", "폐기물", "WASTE"),
+    ],
+)
+def test_webcam_api_preserves_business_metadata_and_tracks(
+    client: TestClient, db: Session, label: str, code: str, name: str, group: str,
+) -> None:
+    authenticate(client, seed_user(db, 1))
+    fake_client = FakeAIInferenceClient(AIInferenceResult(
+        media_width=64, media_height=48, inference_ms=7.5,
+        predictions=[AIInferencePrediction(
+            model_label=label, confidence=0.91,
+            bbox=AIInferenceBBox(x=1, y=2, width=3, height=4),
+        )],
+    ))
+    # Keep the real business mapping and API serialization; replace only the AI transport.
+    app.dependency_overrides[get_webcam_inference_service] = lambda: WebcamInferenceService(ai_client=fake_client)
+
+    response = client.post("/api/detections/webcam/frame", files=webcam_file())
+
+    assert response.status_code == 200
+    objects = response.json()["detected_objects"]
+    assert len(objects) == 1
+    detected = objects[0]
+    assert (detected["class_code"], detected["class_name_ko"], detected["group_code"]) == (code, name, group)
+    assert detected["label"] == label
+    assert detected["confidence"] == 0.91
+    assert detected["bbox"] == {"x": 1, "y": 2, "width": 3, "height": 4}
+    assert (detected["track_id"], detected["first_seen_ms"], detected["last_seen_ms"], detected["appearance_count"]) == (1, 0, 600, 3)
+    assert db.query(DetectionEvent).count() == 0
+    assert db.query(DetectedObject).count() == 0
+    assert db.query(VideoJob).count() == 0
+
+
 def test_webcam_session_ids_are_scoped_by_user_and_browser(client: TestClient, db: Session) -> None:
     captured: list[str] = []
 
