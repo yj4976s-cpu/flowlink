@@ -157,11 +157,18 @@ def process_one_job(db: Session, *, inference_service: DetectionInferenceService
 def run_worker() -> None:
     logging.basicConfig(level=logging.INFO)
     settings = get_settings()
+    logger.info("video worker started poll_seconds=%s", settings.VIDEO_JOB_POLL_SECONDS)
+    next_idle_log_at = 0.0
     while True:
         with SessionLocal() as db:
             try:
                 fail_stale_jobs(db)
                 processed = process_one_job(db)
+                if not processed:
+                    now = time.monotonic()
+                    if now >= next_idle_log_at:
+                        logger.info("video worker waiting for QUEUED jobs")
+                        next_idle_log_at = now + 30.0
             except Exception as exc:
                 log_video_failure("WORKER_LOOP", exc)
                 db.rollback()
