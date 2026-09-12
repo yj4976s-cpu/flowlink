@@ -1,6 +1,8 @@
 import logging
+import json
 from pathlib import Path
 import subprocess
+import sys
 
 import pytest
 from fastapi import HTTPException
@@ -57,7 +59,7 @@ def test_successful_command_keeps_arguments_and_never_logs_output(monkeypatch, c
 
     def run(args, **kwargs):
         assert args == command
-        assert kwargs == dict(shell=False, capture_output=True, text=True, timeout=20, check=False)
+        assert kwargs == dict(shell=False, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20, check=False)
         return result
 
     monkeypatch.setattr(media.subprocess, "run", run)
@@ -110,6 +112,16 @@ def test_normalization_logs_exact_phase_and_preserves_behavior(tmp_path, monkeyp
             assert f"phase={phase} outcome=completed" in caplog.text
     assert str(source) not in caplog.text
     assert "secret token" not in caplog.text
+
+
+def test_command_decodes_utf8_json_under_korean_windows_locale(monkeypatch):
+    monkeypatch.setattr(subprocess, "_text_encoding", lambda: "cp949")
+    payload = json.dumps({"filename": "C:/Users/유진설/영상.mp4"}, ensure_ascii=False).encode("utf-8")
+    script = f"import sys; sys.stdout.buffer.write({payload!r}); sys.stderr.buffer.write(b'warning: \\xff')"
+    result = media._run_command([sys.executable, "-c", script], timeout=20)
+    assert result.returncode == 0
+    assert json.loads(result.stdout) == {"filename": "C:/Users/유진설/영상.mp4"}
+    assert result.stderr == "warning: \ufffd"
 
 
 def test_normalized_output_install_failure_is_distinguishable(tmp_path, monkeypatch, caplog):

@@ -179,7 +179,12 @@ def _run_command(command: list[str], *, timeout: float) -> subprocess.CompletedP
     tool = name if name in {"ffmpeg", "ffprobe"} else "media_command"
     with video_diagnostic_step(tool.upper()):
         try:
-            result = subprocess.run(command, shell=False, capture_output=True, text=True, timeout=timeout, check=False)
+            # FFprobe JSON is UTF-8, regardless of the Windows system locale.
+            # Replace malformed diagnostic bytes so pipe reader threads cannot fail.
+            result = subprocess.run(
+                command, shell=False, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=timeout, check=False,
+            )
         except subprocess.TimeoutExpired as exc:
             raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Video processing timed out") from exc
         log_video_command_result(tool, result.returncode, result.stderr or "")
